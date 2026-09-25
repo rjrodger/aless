@@ -90,6 +90,9 @@ pub struct Tab {
     pub source_scroll: usize,
     /// Set when this tab shows a directory tree rather than a document.
     pub explorer: Option<Explorer>,
+    /// A document has been loaded (false for a file that has never parsed:
+    /// its pane shows the error report instead of a tree).
+    pub has_doc: bool,
 }
 
 impl Tab {
@@ -119,6 +122,7 @@ impl Tab {
             search: None,
             source_scroll: 0,
             explorer: None,
+            has_doc: true,
         }
     }
 
@@ -158,6 +162,7 @@ impl Tab {
         );
         tab.error = Some(err);
         tab.gone = gone;
+        tab.has_doc = false;
         tab
     }
 
@@ -794,6 +799,7 @@ impl Tab {
         }
 
         self.doc = doc;
+        self.has_doc = true;
         self.format = loaded.format;
         self.source = loaded.source;
         self.rows_dirty = true;
@@ -813,7 +819,9 @@ impl Tab {
 
     /// Parse the current source as another format (`:format yaml`).
     pub fn reformat(&mut self, format: Format, view: View) -> Result<(), LoadError> {
-        let loaded = load::load_str(self.source.clone(), format)?;
+        let origin = self.origin();
+        let loaded =
+            load::load_str(self.source.clone(), format).map_err(|e| e.with_origin(&origin))?;
         self.explicit_format = Some(format);
         self.apply(loaded, view);
         self.error = None;
@@ -958,6 +966,19 @@ impl Tab {
         self.explorer = Some(ex);
         self.focus_node(target, view);
         self.explorer_sync(view);
+    }
+
+    /// How error reports name this tab's source: its path, else its title.
+    pub fn origin(&self) -> String {
+        match &self.path {
+            Some(p) => load::origin_of(p),
+            None => self.title.clone(),
+        }
+    }
+
+    /// Is the pane showing an error report rather than a document?
+    pub fn shows_error_only(&self) -> bool {
+        self.error.is_some() && !self.has_doc && self.explorer.is_none()
     }
 
     pub fn watchable(&self) -> bool {

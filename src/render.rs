@@ -188,6 +188,108 @@ pub fn sanitize(text: String) -> String {
         .collect()
 }
 
+/// A line of text carrying ANSI SGR colour codes (an engine error report)
+/// as styled spans. Other escape sequences are dropped, and what remains
+/// is sanitised like any other text.
+pub fn ansi_line(text: &str) -> Line {
+    let mut line = Line::new();
+    let mut style = Style::PLAIN;
+    let mut buf = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            buf.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                let mut params = String::new();
+                let mut fin = None;
+                for n in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&n) {
+                        fin = Some(n);
+                        break;
+                    }
+                    params.push(n);
+                }
+                if fin == Some('m') {
+                    line.push(std::mem::take(&mut buf), style);
+                    style = apply_sgr(style, &params);
+                }
+            }
+            Some(']') => {
+                while let Some(n) = chars.next() {
+                    if n == '\x07' {
+                        break;
+                    }
+                    if n == '\x1b' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    line.push(buf, style);
+    line
+}
+
+fn apply_sgr(mut style: Style, params: &str) -> Style {
+    let codes: Vec<u32> = if params.is_empty() {
+        vec![0]
+    } else {
+        params.split(';').map(|p| p.parse().unwrap_or(0)).collect()
+    };
+    let color = |n: u32| match n % 10 {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        _ => Color::White,
+    };
+    let mut i = 0;
+    while i < codes.len() {
+        match codes[i] {
+            0 => style = Style::PLAIN,
+            1 => style.bold = true,
+            2 => style.dim = true,
+            4 => style.underline = true,
+            7 => style.reverse = true,
+            22 => {
+                style.bold = false;
+                style.dim = false;
+            }
+            24 => style.underline = false,
+            27 => style.reverse = false,
+            n @ 30..=37 => style.fg = color(n),
+            39 => style.fg = Color::Default,
+            n @ 40..=47 => style.bg = color(n),
+            49 => style.bg = Color::Default,
+            90 => style.fg = Color::Grey,
+            n @ 91..=97 => style.fg = color(n),
+            100 => style.bg = Color::Grey,
+            n @ 101..=107 => style.bg = color(n),
+            // 256-colour and true-colour forms: skip their arguments.
+            38 | 48 => {
+                i += match codes.get(i + 1) {
+                    Some(5) => 2,
+                    Some(2) => 4,
+                    _ => 0,
+                };
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    style
+}
+
 /// The leading part of `s` that fits in `width` columns, and its width.
 fn take_width(s: &str, width: usize) -> (String, usize) {
     let mut out = String::new();
@@ -322,7 +424,16 @@ fn pane_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line> {
     let relative = app.opts.relative;
     let indent = app.opts.indent;
     let ascii = app.opts.ascii;
+    let panel = app.error_panel_rows();
     let tab = app.tab();
+    if tab.shows_error_only() {
+        let report = tab
+            .error
+            .as_ref()
+            .map(|e| e.report.clone())
+            .unwrap_or_default();
+        return report_lines(&report, width, pane_h, "! shows the full report");
+    }
     let rows: Vec<Row> = tab.rows().to_vec();
     let focus = tab.focus;
     let scroll = tab.scroll;
@@ -331,6 +442,81 @@ fn pane_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line> {
     } else {
         0
     };
+    let tree = TreeStyle {
+        width,
+        gutter,
+        numbers,
+        relative,
+        indent,
+        ascii,
+    };
+    if panel > 0 {
+        let report = tab
+            .error
+            .as_ref()
+            .map(|e| e.report.clone())
+            .unwrap_or_default();
+        let mut out = tree_lines(tab, &rows, &tree, pane_h - panel, scroll, focus);
+        let mut rule = Line::new();
+        let label = " parse error · ! shows the full report ";
+        let dash = if ascii { "-" } else { "─" };
+        rule.push(dash.repeat(2), ERROR);
+        rule.push(label, ERROR.bold());
+        rule.push(dash.repeat(width.saturating_sub(label.width() + 2)), ERROR);
+        rule.fit(width, Style::PLAIN);
+        out.push(rule);
+        out.extend(report_lines(&report, width, panel - 1, "…"));
+        return out;
+    }
+    tree_lines(tab, &rows, &tree, pane_h, scroll, focus)
+}
+
+/// An error report in `height` rows. When it does not fit, the last row
+/// says so with `more`.
+fn report_lines(report: &str, width: usize, height: usize, more: &str) -> Vec<Line> {
+    let all: Vec<&str> = report.lines().collect();
+    let mut out = Vec::with_capacity(height);
+    for i in 0..height {
+        let mut l = if all.len() > height && i + 1 == height {
+            let mut l = Line::new();
+            l.push(format!("  {more}"), Style::fg(Color::Grey));
+            l
+        } else {
+            all.get(i).map(|t| ansi_line(t)).unwrap_or_default()
+        };
+        l.fit(width, Style::PLAIN);
+        out.push(l);
+    }
+    out
+}
+
+/// How tree rows are laid out.
+struct TreeStyle {
+    width: usize,
+    gutter: usize,
+    numbers: bool,
+    relative: bool,
+    indent: usize,
+    ascii: bool,
+}
+
+fn tree_lines(
+    tab: &mut crate::tab::Tab,
+    rows: &[Row],
+    style: &TreeStyle,
+    pane_h: usize,
+    scroll: usize,
+    focus: usize,
+) -> Vec<Line> {
+    let TreeStyle {
+        width,
+        gutter,
+        numbers,
+        relative,
+        indent,
+        ascii,
+    } = *style;
+    let mut out = Vec::with_capacity(pane_h);
     for i in scroll..scroll + pane_h {
         let mut line = Line::new();
         if let Some(row) = rows.get(i) {
@@ -565,8 +751,12 @@ fn overlay_lines(app: &App, width: usize, pane_h: usize) -> Vec<Line> {
     for i in 0..pane_h.saturating_sub(1) {
         let mut l = Line::new();
         if let Some(text) = o.lines.get(o.scroll + i) {
-            let (t, _) = clip(text, 0, width);
-            l.push(t, Style::PLAIN);
+            if o.ansi {
+                l = ansi_line(text);
+            } else {
+                let (t, _) = clip(text, 0, width);
+                l.push(t, Style::PLAIN);
+            }
         }
         l.fit(width, Style::PLAIN);
         out.push(l);
@@ -1017,6 +1207,88 @@ mod tests {
         );
         assert!(text.contains("    c.toml  6 B  toml"), "{text}");
         assert!(text.contains("1 entries"), "{text}");
+    }
+
+    #[test]
+    fn ansi_codes_become_styles() {
+        let l = ansi_line("\x1b[91m[tabnas/unexpected]:\x1b[0m bad \x1b[2mdim\x1b[0m");
+        assert_eq!(l.text(), "[tabnas/unexpected]: bad dim");
+        assert_eq!(l.spans[0].style, Style::fg(Color::Red));
+        assert_eq!(l.spans[1].style, Style::PLAIN);
+        assert!(l.spans[2].style.dim);
+        let l = ansi_line("a\x1b[38;5;196mb\x1b[1;34mc\x1b[Kd\x1b]52;c;eA==\x07e");
+        assert_eq!(l.text(), "abcde");
+        assert_eq!(l.spans.last().unwrap().style, Style::fg(Color::Blue).bold());
+        assert!(!l.text().contains('\x1b'));
+    }
+
+    #[test]
+    fn a_file_that_never_parsed_shows_the_report() {
+        let mut a = App::new(Options::default(), 70, 16);
+        a.open_source(
+            "broken.json",
+            "{\n  \"a\": 1,\n  \"b\": [1, 2,,]\n}\n".into(),
+            Format::Json,
+        );
+        let s = render(&mut a);
+        let text = s.text();
+        assert!(
+            text.starts_with("[tabnas/unexpected]: unexpected character(s): ,"),
+            "{text}"
+        );
+        assert!(text.contains("  --> broken.json:3:14"), "{text}");
+        assert!(text.contains("  3 |   \"b\": [1, 2,,]"), "{text}");
+        assert!(text.contains("^ unexpected character(s): ,"), "{text}");
+        assert_eq!(
+            s.lines[0].spans[0].style,
+            Style::fg(Color::Red),
+            "the engine's colours"
+        );
+        // Too short for the whole report: the last row says there is more.
+        a.handle(Input::Resize(70, 8));
+        let text = render(&mut a).text();
+        assert!(text.contains("! shows the full report"), "{text}");
+    }
+
+    #[test]
+    fn a_broken_reload_docks_the_report_under_the_document() {
+        let dir = std::env::temp_dir().join(format!("aless-render-dock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("d.json");
+        let good: String = format!(
+            "[{}]",
+            (0..40)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",\n")
+        );
+        std::fs::write(&p, &good).unwrap();
+        let mut a = App::new(Options::default(), 60, 30);
+        a.open_path(&p, None);
+        a.handle(Input::Key(Key::ch('G')));
+        std::fs::write(&p, good.replace("39]", "39,,]")).unwrap();
+        a.handle(Input::Key(Key::ch('r')));
+        let s = render(&mut a);
+        let text = s.text();
+        let rule = text
+            .lines()
+            .position(|l| l.contains("parse error · ! shows the full report"))
+            .unwrap();
+        assert!(rule > 5, "the document keeps the top of the pane: {text}");
+        assert!(
+            text.lines()
+                .nth(rule + 1)
+                .unwrap()
+                .starts_with("[tabnas/unexpected]"),
+            "{text}"
+        );
+        // The focused row, the last one, stays above the panel.
+        let focused = text
+            .lines()
+            .position(|l| l.trim_end().ends_with("39"))
+            .unwrap();
+        assert!(focused < rule, "focus hidden behind the panel: {text}");
+        assert!(text.contains("d.json:"), "the file is named: {text}");
     }
 
     #[test]

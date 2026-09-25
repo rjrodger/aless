@@ -52,7 +52,11 @@ def drive(args, cwd, steps, size=(24, 100)):
 
     read(1.5)
     for label, keys, needles, timeout in steps:
-        if keys:
+        if callable(keys):
+            # A change to make on disk behind the viewer's back.
+            keys()
+            read(0.4)
+        elif keys:
             try:
                 os.write(fd, keys.encode())
             except OSError as e:
@@ -93,6 +97,34 @@ def explorer_scenario(work):
         ("Enter on a file opens it in a second tab", "j\r", ["2:nested.json", "store"], 3.0),
         ("q closes the file tab and returns to the explorer", "q", ["sample.yaml"], 3.0),
         ("- climbs to the parent directory", "-", [parent_name + "/"], 3.0),
+        ("quit", "q", [], 1.0),
+    ])
+
+
+def errors_scenario(work):
+    """Open a file that does not parse, read the engine's report, fix it."""
+    bad = os.path.join(work, "broken.json")
+    with open(bad, "w") as f:
+        f.write('{"a": 1,\n "b": [1, 2,,]\n}\n')
+
+    def fix():
+        time.sleep(0.3)
+        with open(bad, "w") as f:
+            f.write('{"a": 1,\n "b": [1, 2, 3]\n}\n')
+
+    def rebreak():
+        time.sleep(0.3)
+        with open(bad, "w") as f:
+            f.write('{"a": 1,\n "b": [1, 2 3]\n}\n')
+
+    return drive([bad], work, [
+        ("a file that does not parse shows the engine's report", "",
+         ["[tabnas/unexpected]", "broken.json:2:13", "^ unexpected character(s): ,"], 3.0),
+        ("! opens the full report", "!", ["error report", "do not match any rule alternative"], 3.0),
+        ("any key returns", "x", ["broken.json:2:13"], 3.0),
+        ("fixing the file shows the document", fix, ["Reloaded broken.json"], 6.0),
+        ("breaking it again docks the report under the document", rebreak,
+         ["parse error · ! shows the full report", "unexpected character(s): 3"], 6.0),
         ("quit", "q", [], 1.0),
     ])
 
@@ -200,10 +232,12 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
-    if not failures:
-        ex_failures, transcript = explorer_scenario(work)
-        if ex_failures:
-            failures.extend(ex_failures)
+    for scenario in (explorer_scenario, errors_scenario):
+        if failures:
+            break
+        more, transcript = scenario(work)
+        if more:
+            failures.extend(more)
             seen.extend(transcript.encode())
     shutil.rmtree(work, ignore_errors=True)
     if failures:

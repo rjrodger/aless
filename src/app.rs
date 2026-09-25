@@ -115,6 +115,9 @@ pub struct Overlay {
     pub title: String,
     pub lines: Vec<String>,
     pub scroll: usize,
+    /// The lines carry ANSI colour codes to be turned into styles (an
+    /// engine error report). Off for anything taken from a document.
+    pub ansi: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,8 +257,40 @@ impl App {
         self.height.saturating_sub(2 + self.strip_rows()).max(1)
     }
 
+    /// Rows the error panel takes at the foot of the pane: shown while the
+    /// active tab's file fails to parse but its last good document is
+    /// still on screen (a broken save while watching). A tab that never
+    /// loaded shows its report in the whole pane instead.
+    pub fn error_panel_rows(&self) -> usize {
+        if !matches!(self.mode, Mode::Browse | Mode::Prompt(_)) {
+            return 0;
+        }
+        let Some(tab) = self.tab_ref() else {
+            return 0;
+        };
+        let Some(err) = tab.error.as_ref() else {
+            return 0;
+        };
+        if !tab.has_doc || tab.explorer.is_some() {
+            return 0;
+        }
+        let pane = self.pane_height();
+        if pane < 8 {
+            return 0;
+        }
+        // The report and a separator line, at most half the pane.
+        (err.report.lines().count() + 1).min(pane / 2)
+    }
+
+    /// Rows the tree itself gets.
+    pub fn tree_height(&self) -> usize {
+        self.pane_height()
+            .saturating_sub(self.error_panel_rows())
+            .max(1)
+    }
+
     pub fn view(&self) -> View {
-        View::new(self.pane_height(), self.opts.scrolloff)
+        View::new(self.tree_height(), self.opts.scrolloff)
     }
 
     pub fn tab(&mut self) -> &mut Tab {
@@ -358,7 +393,9 @@ impl App {
                         source,
                     },
                 );
+                let err = err.with_origin(title);
                 tab.error = Some(err.clone());
+                tab.has_doc = false;
                 self.error(format!("{title}: {err}"));
                 self.adopt(tab);
             }
@@ -422,7 +459,7 @@ impl App {
             return;
         }
         let pane_row = row.saturating_sub(strip);
-        if pane_row >= self.pane_height() {
+        if pane_row >= self.tree_height() {
             return;
         }
         let view = self.view();
@@ -501,6 +538,7 @@ impl App {
             (KeyCode::Char('q'), false) => self.close_tab(),
             (KeyCode::Esc, _) => {}
             (KeyCode::F(1), _) => self.show_help(),
+            (KeyCode::Char('!'), false) => self.show_error(),
             (KeyCode::Char(':'), false) => self.start_prompt(PromptKind::Command),
             (KeyCode::Char('/'), false) => {
                 self.start_prompt(PromptKind::Search(Direction::Forward))
@@ -802,6 +840,7 @@ impl App {
                         title: format!("{} — press any key to continue", target.describe()),
                         lines,
                         scroll: 0,
+                        ansi: false,
                     });
                     self.mode = Mode::Overlay;
                 } else {
@@ -977,6 +1016,7 @@ impl App {
             "q" | "close" | "tabclose" => self.close_tab(),
             "qa" | "qall" | "quit" | "quitall" | "exit" => self.quit = true,
             "h" | "help" => self.show_help(),
+            "error" | "errors" | "err" => self.show_error(),
             "set" | "se" => self.set_option(rest),
             "w" | "write" => self.write_file(rest, bang),
             // `:e!` (the bang was split off above) reloads, as in vim.
@@ -1231,7 +1271,7 @@ impl App {
         };
         match err {
             Some(e) if gone => self.error(format!("{title}: file gone ({e})")),
-            Some(e) => self.error(format!("{title}: {e}")),
+            Some(e) => self.error(format!("{title}: {e} — ! shows the report")),
             None => self.info(format!(
                 "Reloaded {title} ({} nodes)",
                 nodes.saturating_sub(1)
@@ -1278,6 +1318,32 @@ impl App {
             title: "aless help — j/k scroll, any other key returns".to_string(),
             lines: help_lines(),
             scroll: 0,
+            ansi: false,
+        });
+        self.mode = Mode::Overlay;
+    }
+
+    /// `!` / `:error`: the active tab's error report, full size.
+    pub fn show_error(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        let tab = self.tab();
+        let Some(err) = tab.error.as_ref() else {
+            let title = tab.title.clone();
+            self.info(format!("{title}: no error"));
+            return;
+        };
+        let lines = err.report.lines().map(str::to_string).collect();
+        let title = format!(
+            "{}: error report — j/k scroll, any other key returns",
+            tab.title
+        );
+        self.overlay = Some(Overlay {
+            title,
+            lines,
+            scroll: 0,
+            ansi: true,
         });
         self.mode = Mode::Overlay;
     }
@@ -1444,6 +1510,13 @@ EXPLORER  (aless DIR, or aless alone for the current directory)
   :cd DIR   change the root     :explore [DIR]   open another directory tab
   :set hidden | nohidden | hidden!   show dot-files (also --hidden)
   yp        copy the entry's filesystem path
+
+ERRORS
+  A file that does not parse shows the parser's report: the message, the
+  source lines around the error with a caret under it, and the grammar's
+  hint. While a watched file is broken its last good document stays on
+  screen with the report docked below it, until the file parses again.
+  ! / :error   the active tab's report, full size
 
 TABS, FILES AND WATCHING
   Tab / Shift-Tab   next / previous tab      :tab N   go to tab N
@@ -1891,6 +1964,47 @@ mod tests {
         app.effects.clear();
         app.run_command("cd sub");
         assert_eq!(app.effects, vec![Effect::Unwatch(new), Effect::Watch(old)]);
+    }
+
+    #[test]
+    fn errors_show_the_engine_report() {
+        let p = write_temp("broken.json", "{\"a\": 1, \"b\": \n");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_path(&p, None);
+        assert!(app.tab().shows_error_only());
+        assert_eq!(app.error_panel_rows(), 0, "the whole pane is the report");
+        keys(&mut app, "!");
+        assert_eq!(app.mode, Mode::Overlay);
+        let o = app.overlay.as_ref().unwrap();
+        assert!(o.ansi);
+        assert!(o.lines[0].contains("[tabnas/unexpected]"));
+        assert!(o.lines[1].contains(&format!("{}:2:1", p.display())));
+        keys(&mut app, "x");
+        // The file is fixed: a document appears, the error goes.
+        std::fs::write(&p, "{\"a\": 1, \"b\": 2}").unwrap();
+        keys(&mut app, "r");
+        assert!(!app.tab().shows_error_only() && app.tab().error.is_none());
+        let full = app.pane_height();
+        // Broken again: the document stays and the report docks below it.
+        std::fs::write(&p, "{\"a\": 1, \"b\": [1,,]}").unwrap();
+        keys(&mut app, "r");
+        assert!(app.tab().error.is_some() && app.tab().has_doc);
+        let panel = app.error_panel_rows();
+        assert!(panel > 2 && panel <= full / 2, "{panel}");
+        assert_eq!(app.view().height, full - panel);
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("! shows the report"));
+        // No error, no report.
+        std::fs::write(&p, "[1]").unwrap();
+        keys(&mut app, "r");
+        assert_eq!(app.error_panel_rows(), 0);
+        app.run_command("error");
+        assert_eq!(app.mode, Mode::Browse);
+        assert!(app.message.as_ref().unwrap().text.ends_with("no error"));
     }
 
     #[test]

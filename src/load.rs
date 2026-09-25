@@ -120,19 +120,134 @@ impl fmt::Display for Format {
 /// 1-based line and column the grammar reported.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadError {
+    /// One line, for the status bar.
     pub message: String,
     pub line: u32,
     pub col: u32,
+    /// The full report, as the tabnas engine renders it: the `[tag/code]`
+    /// header, the `-->` location, the source lines around the error with
+    /// a caret under it, the grammar's hint and link, and the engine's
+    /// diagnostics line. Carries the engine's ANSI colour codes, which the
+    /// renderer turns into styles.
+    pub report: String,
 }
 
+/// The placeholder the engine writes where a file name belongs.
+const NO_FILE: &str = "<no-file>";
+
 impl LoadError {
+    /// An error the viewer raised itself (reading the file, a grammar that
+    /// panicked), reported in the engine's layout under `[aless/<tag>]`.
     pub fn new(message: impl Into<String>) -> LoadError {
+        LoadError::tagged("io", message)
+    }
+
+    pub fn tagged(tag: &str, message: impl Into<String>) -> LoadError {
+        let message = message.into();
+        let report = format!(
+            "\x1b[91m[aless/{tag}]:\x1b[0m {}\n  \x1b[34m-->\x1b[0m {NO_FILE}",
+            escape_controls(&message)
+        );
         LoadError {
-            message: message.into(),
+            message,
             line: 0,
             col: 0,
+            report,
         }
     }
+
+    /// Name the file the report is about, in place of the engine's
+    /// `<no-file>`.
+    pub fn with_origin(mut self, origin: &str) -> LoadError {
+        self.report = self.report.replacen(NO_FILE, origin, 1);
+        self
+    }
+
+    /// From an engine error. Control characters in the offending token
+    /// (an unterminated string runs into a newline, YAML indentation is a
+    /// newline and spaces) would otherwise break the report's lines, so
+    /// they are shown escaped, the way the source view would show them.
+    pub fn from_tabnas(e: &tabnas::TabnasError) -> LoadError {
+        let mut shown = e.clone();
+        shown.detail = escape_controls(&e.detail);
+        if e.src.chars().any(char::is_control) {
+            // The hint template injects the token text once, before any of
+            // its own line breaks, so the first occurrence is the injected
+            // one.
+            shown.hint = e.hint.replacen(&e.src, &escape_controls(&e.src), 1);
+        }
+        let detail = shown.detail.trim();
+        let message = if detail.starts_with(&e.code) || e.code.is_empty() {
+            detail.to_string()
+        } else {
+            format!("{}: {}", e.code, detail)
+        };
+        LoadError {
+            message,
+            line: e.row as u32,
+            col: e.col as u32,
+            report: shown.to_string(),
+        }
+    }
+
+    /// The report without its colour codes.
+    pub fn plain_report(&self) -> String {
+        strip_ansi(&self.report)
+    }
+}
+
+/// Show control characters as escapes: `\n`, `\t`, `\r`, else `\u001b`.
+pub fn escape_controls(s: &str) -> String {
+    if !s.chars().any(char::is_control) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Remove ANSI escape sequences (CSI such as colour codes, and OSC).
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for n in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&n) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(n) = chars.next() {
+                    if n == '\x07' {
+                        break;
+                    }
+                    if n == '\x1b' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 impl fmt::Display for LoadError {
@@ -242,25 +357,17 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
             }
             Ok(doc)
         }
-        Ok(Err(e)) => Err(LoadError {
-            message: {
-                let detail = e.detail.trim();
-                if detail.starts_with(&e.code) || e.code.is_empty() {
-                    detail.to_string()
-                } else {
-                    format!("{}: {}", e.code, detail)
-                }
-            },
-            line: e.row as u32,
-            col: e.col as u32,
-        }),
+        Ok(Err(e)) => Err(LoadError::from_tabnas(&e)),
         Err(panic) => {
             let what = panic
                 .downcast_ref::<String>()
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "unknown panic".to_string());
-            Err(LoadError::new(format!("{format} grammar failed: {what}")))
+            Err(LoadError::tagged(
+                "grammar",
+                format!("{format} grammar failed: {what}"),
+            ))
         }
     }
 }
@@ -276,14 +383,28 @@ pub fn load_str(source: String, format: Format) -> Result<Loaded, LoadError> {
 }
 
 /// Read and parse a file; `format` overrides the extension.
+/// How a report names a file: relative to the current directory when it is
+/// under it (so the line and column stay in view), else as given.
+pub fn origin_of(path: &Path) -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| path.strip_prefix(cwd).ok().map(Path::to_path_buf))
+        .filter(|rel| !rel.as_os_str().is_empty())
+        .unwrap_or_else(|| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
 pub fn load_path(path: &Path, format: Option<Format>) -> Result<Loaded, LoadError> {
-    let bytes = std::fs::read(path).map_err(|e| LoadError::new(e.to_string()))?;
+    let origin = origin_of(path);
+    let bytes =
+        std::fs::read(path).map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
     let source = match String::from_utf8(bytes) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
     };
     let format = format.unwrap_or_else(|| Format::detect(path));
-    load_str(source, format)
+    load_str(source, format).map_err(|e| e.with_origin(&origin))
 }
 
 #[cfg(test)]
@@ -332,6 +453,74 @@ mod tests {
         assert_eq!(e.to_string(), format!("3:{}: {}", e.col, e.message));
         let io = load_path(Path::new("/nonexistent/x.json"), None).unwrap_err();
         assert_eq!(io.line, 0);
+    }
+
+    #[test]
+    fn reports_are_the_engines_with_the_file_named() {
+        let src = "{\n  \"a\": 1,\n  \"b\": [1, 2,,]\n}\n";
+        let e = parse(src, Format::Json)
+            .unwrap_err()
+            .with_origin("data.json");
+        assert_eq!((e.line, e.col), (3, 14));
+        let plain = e.plain_report();
+        let lines: Vec<&str> = plain.lines().collect();
+        assert_eq!(lines[0], "[tabnas/unexpected]: unexpected character(s): ,");
+        assert_eq!(lines[1], "  --> data.json:3:14");
+        assert!(lines.contains(&"  3 |   \"b\": [1, 2,,]"), "{plain}");
+        let caret = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with('^'))
+            .unwrap();
+        assert_eq!(
+            lines[caret].find('^'),
+            lines[caret - 1].find(",,").map(|i| i + 1)
+        );
+        assert!(
+            plain.contains("do not match any rule alternative"),
+            "the hint: {plain}"
+        );
+        assert!(
+            e.report.contains("\x1b[91m"),
+            "the engine's colours are kept"
+        );
+    }
+
+    #[test]
+    fn control_characters_in_the_token_do_not_break_the_report() {
+        let e = parse("{\"a\": \"unterminated\n}\n", Format::Json).unwrap_err();
+        assert_eq!(e.message, "unprintable character: \\n");
+        let plain = e.plain_report();
+        let lines: Vec<&str> = plain.lines().collect();
+        assert_eq!(lines[0], "[tabnas/unprintable]: unprintable character: \\n");
+        assert!(lines[1].starts_with("  --> "), "{plain}");
+        assert!(
+            plain.contains("The character \\n (code point below 32) is not allowed inside a\n  string literal."),
+            "{plain}"
+        );
+        assert_eq!(escape_controls("a\tb\u{1b}"), "a\\tb\\u001b");
+    }
+
+    #[test]
+    fn origins_are_relative_to_the_current_directory() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            origin_of(&cwd.join("a").join("b.json")),
+            Path::new("a").join("b.json").display().to_string()
+        );
+        assert_eq!(origin_of(Path::new("rel.json")), "rel.json");
+        let outside = std::env::temp_dir().join("x.json");
+        if !outside.starts_with(&cwd) {
+            assert_eq!(origin_of(&outside), outside.display().to_string());
+        }
+    }
+
+    #[test]
+    fn io_errors_report_in_the_same_layout() {
+        let e = load_path(Path::new("/nonexistent/x.json"), None).unwrap_err();
+        let plain = e.plain_report();
+        assert!(plain.starts_with("[aless/io]: "), "{plain}");
+        assert!(plain.contains("  --> /nonexistent/x.json"), "{plain}");
+        assert_eq!(strip_ansi("a\x1b[1;31mb\x1b]52;c;x\x07c\x1b[0m"), "abc");
     }
 
     #[test]
