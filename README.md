@@ -57,6 +57,7 @@ aless --kind jsonic notes.txt        # force a format
 aless --no-watch big.json            # do not reload on change
 aless --mode line --line-numbers x.json
 aless                                # explore the current directory; Enter opens a file
+aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (see examples/)
 ```
 
 | Option | Effect |
@@ -142,6 +143,7 @@ Extensions on keys jless leaves free:
 | `W` | toggle watching on the tab |
 | `r` | reload the tab now |
 | `s` | show the raw source, scrolled to the focused node's line (`s` or `Esc` returns) |
+| `!` | show the tab's parse error report in full (`h` `l` pan a long line) |
 | `C-z` | suspend (Unix) |
 
 Mouse: the wheel scrolls, a click focuses a row (`--no-mouse` to leave the
@@ -152,7 +154,7 @@ mouse to the terminal).
 `:open PATH [FORMAT]` (`:e`) · `:q` / `:close` · `:qa` / `:quit` / `:exit` ·
 `:tab N` · `:tabnext` / `:tabprev` · `:watch [on|off]` · `:reload` ·
 `:format FORMAT` · `:mode data|line` · `:depth N` · `:expand` / `:collapse` ·
-`:N` / `:line N` · `:source` · `:w[!] FILE` (writes the document as JSON) ·
+`:N` / `:line N` · `:source` · `:error` · `:w[!] FILE` (writes the document as JSON) ·
 `:set number|nonumber|number!|relativenumber|norelativenumber|relativenumber!|so=N|indent=N|watch|nowatch|ascii` ·
 `:help`.
 
@@ -184,6 +186,49 @@ first names, and never more than 2000 directories in one explorer.
 An explorer tab watches like a file tab: a file added or removed shows up
 on the next tick, with the folds and the focus kept.
 
+## Parse errors
+
+A file that does not parse shows the report the tabnas engine renders for
+it, the same text its own tools print:
+
+```
+[tabnas/unexpected]: unexpected character(s): ,
+  --> data.json:3:14
+  1 | {
+  2 |   "a": 1,
+  3 |   "b": [1, 2,,]
+                   ^ unexpected character(s): ,
+  4 | }
+
+  The character(s) , do not match any rule alternative active at
+  this position.
+```
+
+The header names the grammar and the error code, the `-->` line gives the
+file, line and column, the excerpt marks the offending token with a caret,
+and the grammar's hint follows; the full report adds the grammar's link and
+the engine's diagnostics line. The colours are the engine's.
+
+The report is made safe to draw, since its colour codes are obeyed. Control
+characters in the message, the hint and the file's name, such as the
+newline an unterminated string runs into, are shown escaped (`\n`). In the
+quoted source lines they are shown as one-column pictures (`␛`), so the
+caret still lines up. A quoted line longer than 160 characters, as in a
+minified file, is cut to a window around the error, and the caret stops
+at the end of its line.
+
+- A file that has never parsed shows its report in place of the tree.
+- A watched file that breaks after loading keeps its last good document on
+  screen, with the report docked beneath it; the next save that parses
+  clears it.
+- `!` or `:error` shows the whole report in a scrollable overlay; `h` and
+  `l` pan a line wider than the screen. `s` shows the raw source with the
+  failing line marked.
+- A `:format` that fails leaves the document as it was, and `!` shows that
+  attempt's report until the next reload or `:format`.
+- The status bar carries the short form (`!3:14: unexpected character(s): ,`)
+  and the tab strip an `!`.
+
 ## Watching, reloading and keeping your place
 
 Every file tab watches its file (`--no-watch`, `W` or `:watch off` to opt
@@ -204,9 +249,9 @@ A reload re-anchors the view instead of resetting it:
    reordered entry keeps the cursor where you were reading.
 3. The focused row stays on the same screen row.
 
-A file that fails to parse keeps the previous document and shows the error
-with its line and column (`!3:14: unexpected …` in the status bar, `!` on
-the tab); the source view (`s`) opens at the failing line. A file that
+A file that fails to parse keeps the previous document and shows the
+engine's report docked beneath it (see [Parse errors](#parse-errors)); the
+source view (`s`) opens at the failing line. A file that
 disappears keeps its document and marks the tab `✗`; when it comes back it
 reloads. A file that does not exist yet can be opened all the same: the
 tab waits for it.
