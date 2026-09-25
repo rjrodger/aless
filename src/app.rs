@@ -1767,7 +1767,7 @@ mod tests {
         keys(&mut app, "l"); // expand: deep gets listed for its preview
         assert_eq!(app.tab().row_count(), 5);
         let ex = app.tab().explorer.as_ref().unwrap();
-        assert!(ex.is_listed(&ex.root.join("sub/deep")));
+        assert!(ex.is_listed(&ex.root.join("sub").join("deep")));
         keys(&mut app, "j");
         assert_eq!(path(&mut app), ".sub.deep");
         app.handle(Input::Key(Key::code(KeyCode::Enter))); // toggle a directory
@@ -1807,7 +1807,10 @@ mod tests {
         assert_eq!(path(&mut app), ".deep");
         keys(&mut app, "-"); // up to the tree root: sub is expanded, deep still expanded, focus kept
         let root = app.tab().explorer.as_ref().unwrap().root.clone();
-        assert_eq!(root, std::fs::canonicalize(&dir).unwrap());
+        assert_eq!(
+            root,
+            crate::explorer::simplify(std::fs::canonicalize(&dir).unwrap())
+        );
         assert_eq!(path(&mut app), ".sub.deep");
         assert!(
             app.tab().row_count() >= 6,

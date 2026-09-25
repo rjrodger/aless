@@ -381,7 +381,7 @@ mod tests {
             "children are listed for their previews"
         );
         assert!(
-            !ex.is_listed(&ex.root.join("sub/deep")),
+            !ex.is_listed(&ex.root.join("sub").join("deep")),
             "grandchildren wait"
         );
         let doc = ex.build();
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(ex.build().root().children, 4);
         // Expanding sub lists deep.
         assert!(ex.ensure_children_listed(&ex.root.join("sub")));
-        assert!(ex.is_listed(&ex.root.join("sub/deep")));
+        assert!(ex.is_listed(&ex.root.join("sub").join("deep")));
         assert!(
             !ex.ensure_children_listed(&ex.root.join("sub")),
             "nothing new the second time"
@@ -438,7 +438,10 @@ mod tests {
         let e = ex.entry(&doc.path(x)).unwrap();
         assert_eq!(e.kind, EntryKind::File);
         assert_eq!(e.format, Some(Format::Text));
-        assert_eq!(ex.fs_path(&doc.path(x)), ex.root.join("sub/deep/x.txt"));
+        assert_eq!(
+            ex.fs_path(&doc.path(x)),
+            ex.root.join("sub").join("deep").join("x.txt")
+        );
         assert!(ex.entry(&[Key::Name("nope".into())]).is_none());
     }
 
