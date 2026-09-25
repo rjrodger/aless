@@ -2,10 +2,10 @@
 //! positioned [`Doc`] comes out, parsed by the tabnas grammar for its
 //! format, or split into lines when no grammar claims it.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tabnas::Tabnas;
 
@@ -482,27 +482,32 @@ pub fn lines(src: &str) -> Vec<&str> {
     out
 }
 
-static CATCHING: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// How many guarded parses this thread is inside.
+    static CATCHING: Cell<usize> = const { Cell::new(0) };
+}
 
-/// Is a grammar running under [`parse`]'s panic guard right now? A panic
-/// hook (the terminal's, which restores the screen) should stand down
-/// then: the panic is caught and reported as a [`LoadError`].
+/// Is a grammar running under [`parse`]'s panic guard on this thread right
+/// now? A panic hook (the terminal's, which restores the screen) runs on
+/// the panicking thread and should stand down then: the panic is caught
+/// and reported as a [`LoadError`]. A panic on any other thread, such as
+/// the one reading input, is not caught, so the answer is per thread.
 pub fn parse_in_progress() -> bool {
-    CATCHING.load(Ordering::SeqCst) > 0
+    CATCHING.try_with(|c| c.get() > 0).unwrap_or(false)
 }
 
 struct CatchGuard;
 
 impl CatchGuard {
     fn enter() -> CatchGuard {
-        CATCHING.fetch_add(1, Ordering::SeqCst);
+        CATCHING.with(|c| c.set(c.get() + 1));
         CatchGuard
     }
 }
 
 impl Drop for CatchGuard {
     fn drop(&mut self) {
-        CATCHING.fetch_sub(1, Ordering::SeqCst);
+        let _ = CATCHING.try_with(|c| c.set(c.get() - 1));
     }
 }
 
@@ -596,6 +601,9 @@ mod tests {
         {
             let _g = CatchGuard::enter();
             assert!(parse_in_progress());
+            // Only this thread's panics are the parse's.
+            let elsewhere = std::thread::spawn(parse_in_progress).join().unwrap();
+            assert!(!elsewhere);
         }
         assert!(!parse_in_progress());
     }
