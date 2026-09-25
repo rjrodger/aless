@@ -153,6 +153,20 @@ impl Doc {
         Doc { nodes }
     }
 
+    /// A document from nodes already in pre-order with `parent`, `key`,
+    /// `kind`, `depth`, `children` and `expanded` filled in; subtree sizes
+    /// are computed here.
+    pub fn from_preorder(mut nodes: Vec<Node>) -> Doc {
+        for n in &mut nodes {
+            n.size = 1;
+        }
+        for i in (1..nodes.len()).rev() {
+            let (size, parent) = (nodes[i].size, nodes[i].parent);
+            nodes[parent as usize].size += size;
+        }
+        Doc { nodes }
+    }
+
     /// A document made of plain text lines (the fallback for unknown
     /// formats): an array of strings, each positioned on its own line.
     pub fn from_lines(lines: &[&str]) -> Doc {

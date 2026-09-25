@@ -374,6 +374,14 @@ fn pane_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line> {
                     Style::PLAIN
                 },
             );
+            if let Some(ex) = &tab.explorer {
+                explorer_row(
+                    &mut line, ex, &tab.doc, row.node, focused, is_match, width, tab.xoff,
+                );
+                line.fit(width, Style::PLAIN);
+                out.push(line);
+                continue;
+            }
             let mut key_shown = false;
             if !row.close {
                 if let Some(k) = fmt::key_text(&node.key, line_mode) {
@@ -439,6 +447,96 @@ fn pane_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line> {
         }
         line.fit(width, Style::PLAIN);
         out.push(line);
+    }
+    out
+}
+
+/// One explorer row after its indicator: the name (with a slash for a
+/// directory), then the size and format of a file, or the names inside a
+/// collapsed directory.
+#[allow(clippy::too_many_arguments)]
+fn explorer_row(
+    line: &mut Line,
+    ex: &crate::explorer::Explorer,
+    doc: &crate::doc::Doc,
+    id: crate::doc::NodeId,
+    focused: bool,
+    is_match: bool,
+    width: usize,
+    xoff: usize,
+) {
+    let node = doc.node(id);
+    let is_dir = node.is_container();
+    let name = match &node.key {
+        crate::doc::Key::Name(n) => Some(if is_dir {
+            format!("{n}/")
+        } else {
+            n.to_string()
+        }),
+        _ => None,
+    };
+    let (label, label_style) = match name {
+        Some(n) => (
+            n,
+            if focused {
+                FOCUS
+            } else if is_match {
+                MATCH
+            } else if is_dir {
+                KEY
+            } else {
+                Style::PLAIN
+            },
+        ),
+        // The root row: the directory itself.
+        None => (
+            format!("{}/", ex.root.display()),
+            if focused { FOCUS } else { KEY.bold() },
+        ),
+    };
+    line.push(label, label_style);
+    let avail = width.saturating_sub(line.width() + 2);
+    let value = if is_dir {
+        if node.children == 0 {
+            "(empty)".to_string()
+        } else if node.expanded {
+            String::new()
+        } else {
+            explorer_preview(doc, id, avail.saturating_sub(1))
+        }
+    } else {
+        match &node.kind {
+            Kind::Str(s) => s.to_string(),
+            k => fmt::leaf_text(k),
+        }
+    };
+    if !value.is_empty() {
+        line.push("  ", Style::PLAIN);
+        let (text, _) = clip(&value, if focused { xoff } else { 0 }, avail);
+        line.push(text, PREVIEW);
+    }
+}
+
+/// `(3) src/, Cargo.toml, README.md` — the names inside a collapsed
+/// directory, as many as fit.
+fn explorer_preview(doc: &crate::doc::Doc, id: crate::doc::NodeId, budget: usize) -> String {
+    let node = doc.node(id);
+    let mut out = format!("({}) ", node.children);
+    let mut first = true;
+    for c in doc.children(id) {
+        let child = doc.node(c);
+        let mut item = child.key.name().unwrap_or("").to_string();
+        if child.is_container() {
+            item.push('/');
+        }
+        let sep = if first { "" } else { ", " };
+        if out.width() + sep.len() + item.width() + 2 > budget {
+            out.push_str(if first { "…" } else { ", …" });
+            return out;
+        }
+        out.push_str(sep);
+        out.push_str(&item);
+        first = false;
     }
     out
 }
@@ -551,15 +649,26 @@ fn status_bar(app: &mut App, width: usize) -> Line {
     let mode = app.mode;
     let tab = app.tab();
     let node = tab.focused_node();
-    let path = fmt::path_dot(&tab.doc.path(node));
+    let node_path = tab.doc.path(node);
     let mut left = format!(" {}", tab.title);
-    if mode == Mode::Source {
-        left.push_str("  (source)");
+    let mut right = Vec::new();
+    if let Some(ex) = &tab.explorer {
+        left = format!(" {}", ex.fs_path(&node_path).display());
+        right.push("directory".to_string());
+        let n = tab.doc.node(node);
+        if n.is_container() {
+            right.push(format!("{} entries", n.children));
+        }
     } else {
-        left.push(' ');
-        left.push_str(if path.is_empty() { "." } else { &path });
+        let path = fmt::path_dot(&node_path);
+        if mode == Mode::Source {
+            left.push_str("  (source)");
+        } else {
+            left.push(' ');
+            left.push_str(if path.is_empty() { "." } else { &path });
+        }
+        right.push(tab.format.name().to_string());
     }
-    let mut right = vec![tab.format.name().to_string()];
     if tab.line_mode {
         right.push("line".to_string());
     }
@@ -854,6 +963,36 @@ mod tests {
         let s = render(&mut a);
         assert_eq!(s.cursor.unwrap().0, 1);
         assert!(s.lines[5].text().starts_with(":open"));
+    }
+
+    #[test]
+    fn explorer_screen() {
+        let dir =
+            std::env::temp_dir().join(format!("aless-render-explorer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.json"), "{\"a\": 1}").unwrap();
+        std::fs::write(dir.join("sub/c.toml"), "c = 3\n").unwrap();
+        let mut a = App::new(Options::default(), 60, 8);
+        a.open_explorer(&dir);
+        let text = render(&mut a).text();
+        assert!(
+            text.lines().next().unwrap().starts_with("▼ /"),
+            "root shows its path: {text}"
+        );
+        assert!(text.contains("▷ sub/  (1) c.toml"), "{text}");
+        assert!(text.contains("  a.json  8 B  json"), "{text}");
+        assert!(!text.contains('"'), "no quoting in the explorer: {text}");
+        assert!(text.contains("directory"), "{text}");
+        a.handle(Input::Key(Key::ch('j')));
+        a.handle(Input::Key(Key::ch('l')));
+        let text = render(&mut a).text();
+        assert!(
+            text.contains("▼ sub/\n"),
+            "an expanded directory shows just its name: {text}"
+        );
+        assert!(text.contains("    c.toml  6 B  toml"), "{text}");
+        assert!(text.contains("1 entries"), "{text}");
     }
 
     #[test]

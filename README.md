@@ -56,7 +56,7 @@ curl -s https://api.example/x | aless        # stdin (JSON unless --kind says ot
 aless --kind jsonic notes.txt        # force a format
 aless --no-watch big.json            # do not reload on change
 aless --mode line --line-numbers x.json
-aless                                # a welcome tab; :open files from inside
+aless                                # explore the current directory; Enter opens a file
 ```
 
 | Option | Effect |
@@ -68,6 +68,7 @@ aless                                # a welcome tab; :open files from inside
 | `-n` / `-N`, `-r` / `-R` | absolute / relative line numbers on / off |
 | `--scrolloff N` | rows kept around the focus when scrolling (default 3) |
 | `--indent N` | indentation per level (default 2) |
+| `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
 
@@ -154,6 +155,34 @@ mouse to the terminal).
 `:N` / `:line N` · `:source` · `:w[!] FILE` (writes the document as JSON) ·
 `:set number|nonumber|number!|relativenumber|norelativenumber|relativenumber!|so=N|indent=N|watch|nowatch|ascii` ·
 `:help`.
+
+## File explorer
+
+A directory opens as a tree in the same viewer:
+
+```bash
+aless .            # explore the current directory (plain `aless` does the same)
+aless ~/projects   # any directory; :open DIR and :explore DIR work inside too
+```
+
+Directories are collapsible containers, files are leaves showing their
+size and the format their extension implies. Everything the tree already
+does applies: `j`/`k`, `l`/`h`, `Space`, `c`/`e`, `/name` to search the
+listed names, `n`/`N`, counts. Directories are listed as you expand them,
+one level ahead so a collapsed directory's preview shows its count and
+first names, and never more than 2000 directories in one explorer.
+
+| Keys | Action |
+|---|---|
+| `Enter` | open the file under the cursor in a new tab; on a directory, toggle it |
+| `-` | go up: the parent directory becomes the root (folds and focus are kept) |
+| `:cd DIR` | change the root, relative to the current one |
+| `:explore [DIR]` | open another directory in a new tab |
+| `:set hidden` / `nohidden` / `hidden!` | show dot-files (`--hidden` at start) |
+| `yp` | copy the entry's filesystem path |
+
+An explorer tab watches like a file tab: a file added or removed shows up
+on the next tick, with the folds and the focus kept.
 
 ## Watching, reloading and keeping your place
 
@@ -281,6 +310,7 @@ the library is terminal-free and unit tested:
 | Module | Role |
 |---|---|
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
+| `explorer` | directory trees as documents, listed lazily |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `load` | format detection; the tabnas grammars; errors with positions; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |

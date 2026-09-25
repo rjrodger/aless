@@ -23,6 +23,80 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
 
 
+def drive(args, cwd, steps, size=(24, 100)):
+    """Run aless with `args`, feed it `steps` and return (failures, transcript).
+
+    Each step is (label, keys_to_send, expected_substrings, timeout).
+    """
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["TERM"] = "xterm-256color"
+        os.chdir(cwd)
+        os.execv(BIN, [BIN, "--no-mouse"] + args)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", size[0], size[1], 0, 0))
+    seen = bytearray()
+    failures = []
+
+    def read(timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.05)
+            if r:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                seen.extend(chunk)
+
+    read(1.5)
+    for label, keys, needles, timeout in steps:
+        if keys:
+            try:
+                os.write(fd, keys.encode())
+            except OSError as e:
+                print(f"FAIL {label}: sending {keys!r}: {e} (did aless exit?)")
+                failures.append(label)
+                break
+            read(0.4)
+        end = time.time() + timeout
+        ok = False
+        while time.time() < end:
+            text = seen.decode("utf-8", "replace")
+            if all(n in text for n in needles):
+                ok = True
+                break
+            read(0.1)
+        print(("ok   " if ok else "FAIL ") + label + ("" if ok else f": expected {needles!r}"))
+        if not ok:
+            failures.append(label)
+    read(0.5)
+    try:
+        _, status = os.waitpid(pid, 0)
+        code = os.waitstatus_to_exitcode(status)
+    except ChildProcessError:
+        code = 0
+    if code != 0:
+        print(f"FAIL exit status {code}")
+        failures.append("exit")
+    else:
+        print("ok   clean exit")
+    return failures, seen.decode("utf-8", "replace")
+
+
+def explorer_scenario(work):
+    """Open the scratch directory in the explorer, enter a file, go up."""
+    parent_name = os.path.basename(os.path.dirname(work))
+    return drive([work], work, [
+        ("explorer lists the directory", "", [os.path.basename(work) + "/", "nested.json", "sample.yaml", "directory"], 3.0),
+        ("Enter on a file opens it in a second tab", "j\r", ["2:nested.json", "store"], 3.0),
+        ("q closes the file tab and returns to the explorer", "q", ["sample.yaml"], 3.0),
+        ("- climbs to the parent directory", "-", [parent_name + "/"], 3.0),
+        ("quit", "q", [], 1.0),
+    ])
+
+
 def main():
     work = tempfile.mkdtemp(prefix="aless-smoke-")
     nested = os.path.join(work, "nested.json")
@@ -126,6 +200,11 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
+    if not failures:
+        ex_failures, transcript = explorer_scenario(work)
+        if ex_failures:
+            failures.extend(ex_failures)
+            seen.extend(transcript.encode())
     shutil.rmtree(work, ignore_errors=True)
     if failures:
         print("\n--- last screen ---")

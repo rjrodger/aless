@@ -36,8 +36,10 @@ USAGE:
     <command> | aless [OPTIONS]
 
 Each FILE opens in its own tab (Tab / Shift-Tab switch). Files are
-watched and reloaded on change, keeping your place. Without a FILE,
-standard input is read when it is not a terminal.
+watched and reloaded on change, keeping your place. A directory opens in
+the explorer: the same tree, Enter opens a file. Without a FILE, standard
+input is read when it is not a terminal, else the current directory is
+explored.
 
 OPTIONS:
     -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
@@ -52,6 +54,7 @@ OPTIONS:
     -R, --no-relative-line-numbers
         --scrolloff <N>     Rows kept around the focus when scrolling (default 3)
         --indent <N>        Indentation per level (default 2)
+        --hidden            Show dot-files in the explorer
         --ascii             Draw fold markers with ASCII characters
         --no-color          No colours
         --no-mouse          Do not capture the mouse
@@ -130,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| format!("--indent needs a number, not {v}"))?
                     .min(16);
             }
+            "--hidden" => args.opts.show_hidden = true,
             "--ascii" => args.opts.ascii = true,
             "--no-color" | "--no-colour" => args.opts.color = false,
             "--no-mouse" => args.mouse = false,
@@ -233,7 +237,8 @@ fn main() {
         app.open_source("(stdin)", text, args.kind.unwrap_or(Format::Json));
     }
     if app.tabs.is_empty() {
-        app.open_welcome();
+        // Nothing named and nothing piped: explore the current directory.
+        app.open_explorer(std::path::Path::new("."));
     }
     // The first tab is the one asked for first.
     app.active = 0;

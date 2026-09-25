@@ -1,0 +1,459 @@
+//! The file explorer: a directory tree shown through the same machinery as
+//! a document. Directories are containers, listed lazily as they are
+//! expanded and one level ahead of that (so a collapsed directory's
+//! preview can show its count and first names); files are leaves showing
+//! size and format. `Enter` on a file opens it in a new tab.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use crate::doc::{Doc, Key, Kind, Node, NodeId, NO_NODE};
+use crate::load::Format;
+
+/// Directories listed at most, per explorer, so a deep expansion of a
+/// huge tree stays bounded.
+pub const MAX_LISTED: usize = 2000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Dir,
+    File,
+    /// A symbolic link, with its target; never followed.
+    Symlink(String),
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub kind: EntryKind,
+    pub size: u64,
+    /// The format the extension implies, when a grammar handles it.
+    pub format: Option<Format>,
+}
+
+impl Entry {
+    pub fn is_dir(&self) -> bool {
+        self.kind == EntryKind::Dir
+    }
+
+    /// The leaf text of a non-directory entry.
+    pub fn describe(&self) -> String {
+        match &self.kind {
+            EntryKind::Dir => String::new(),
+            EntryKind::File => match self.format {
+                Some(f) => format!("{}  {}", human_size(self.size), f.name()),
+                None => human_size(self.size),
+            },
+            EntryKind::Symlink(target) => format!("→ {target}"),
+            EntryKind::Other => "(special file)".to_string(),
+        }
+    }
+}
+
+/// `273 B`, `1.2 KB`, `40 MB`, `3.1 GB`.
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value >= 10.0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Listing {
+    pub entries: Vec<Entry>,
+    pub mtime: Option<SystemTime>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Explorer {
+    pub root: PathBuf,
+    pub show_hidden: bool,
+    /// Listed directories, by absolute path.
+    listed: HashMap<PathBuf, Listing>,
+    /// Listing stopped at [`MAX_LISTED`] directories.
+    pub capped: bool,
+}
+
+fn read_listing(dir: &Path) -> Listing {
+    let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+    match std::fs::read_dir(dir) {
+        Ok(read) => {
+            let mut entries: Vec<Entry> = read
+                .flatten()
+                .map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let file_type = e.file_type().ok();
+                    let is = |f: fn(&std::fs::FileType) -> bool| file_type.as_ref().is_some_and(f);
+                    let (kind, size) = if is(std::fs::FileType::is_symlink) {
+                        let target = std::fs::read_link(e.path())
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        (EntryKind::Symlink(target), 0)
+                    } else if is(std::fs::FileType::is_dir) {
+                        (EntryKind::Dir, 0)
+                    } else if is(std::fs::FileType::is_file) {
+                        (EntryKind::File, e.metadata().map(|m| m.len()).unwrap_or(0))
+                    } else {
+                        (EntryKind::Other, 0)
+                    };
+                    let format = (kind == EntryKind::File)
+                        .then(|| {
+                            Path::new(&name)
+                                .extension()
+                                .and_then(|x| x.to_str())
+                                .and_then(Format::from_extension)
+                        })
+                        .flatten();
+                    Entry {
+                        name,
+                        kind,
+                        size,
+                        format,
+                    }
+                })
+                .collect();
+            // Directories first, then names, case-insensitively.
+            entries.sort_by(|a, b| {
+                b.is_dir()
+                    .cmp(&a.is_dir())
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            Listing {
+                entries,
+                mtime,
+                error: None,
+            }
+        }
+        Err(e) => Listing {
+            entries: Vec::new(),
+            mtime,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// The tab title for a directory: its name with a slash, or the path
+/// itself at a filesystem root.
+pub fn title_of(dir: &Path) -> String {
+    match dir.file_name() {
+        Some(n) => format!("{}/", n.to_string_lossy()),
+        None => dir.display().to_string(),
+    }
+}
+
+impl Explorer {
+    /// Open a directory: it and its immediate subdirectories are listed.
+    pub fn open(dir: &Path, show_hidden: bool) -> Explorer {
+        let root = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let mut ex = Explorer {
+            root: root.clone(),
+            show_hidden,
+            listed: HashMap::new(),
+            capped: false,
+        };
+        ex.ensure_children_listed(&root);
+        ex
+    }
+
+    pub fn is_listed(&self, dir: &Path) -> bool {
+        self.listed.contains_key(dir)
+    }
+
+    pub fn listing(&self, dir: &Path) -> Option<&Listing> {
+        self.listed.get(dir)
+    }
+
+    /// Take over the listings of another explorer (a re-root keeps what was
+    /// already read).
+    pub fn adopt_listings(&mut self, other: Explorer) {
+        for (dir, listing) in other.listed {
+            self.listed.entry(dir).or_insert(listing);
+        }
+    }
+
+    /// List `dir` unless it already is. True when newly listed.
+    fn list(&mut self, dir: &Path) -> bool {
+        if self.listed.contains_key(dir) {
+            return false;
+        }
+        if self.listed.len() >= MAX_LISTED {
+            self.capped = true;
+            return false;
+        }
+        self.listed.insert(dir.to_path_buf(), read_listing(dir));
+        true
+    }
+
+    /// List `dir` and its subdirectories, so every child a viewer can see
+    /// after expanding `dir` has a preview. True when anything was read.
+    pub fn ensure_children_listed(&mut self, dir: &Path) -> bool {
+        let mut changed = self.list(dir);
+        let subdirs: Vec<PathBuf> = self
+            .listed
+            .get(dir)
+            .map(|l| {
+                l.entries
+                    .iter()
+                    .filter(|e| e.is_dir() && self.visible(e))
+                    .map(|e| dir.join(&e.name))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for sub in subdirs {
+            changed |= self.list(&sub);
+        }
+        changed
+    }
+
+    /// Re-read every listed directory.
+    pub fn relist_all(&mut self) {
+        let dirs: Vec<PathBuf> = self.listed.keys().cloned().collect();
+        for dir in dirs {
+            self.listed.insert(dir.clone(), read_listing(&dir));
+        }
+    }
+
+    /// Has any listed directory changed on disk since it was read?
+    pub fn changed(&self) -> bool {
+        self.listed.iter().any(|(dir, listing)| {
+            std::fs::metadata(dir).ok().and_then(|m| m.modified().ok()) != listing.mtime
+        })
+    }
+
+    fn visible(&self, entry: &Entry) -> bool {
+        self.show_hidden || !entry.name.starts_with('.')
+    }
+
+    /// The filesystem path of a node path (keys are entry names).
+    pub fn fs_path(&self, path: &[Key]) -> PathBuf {
+        let mut out = self.root.clone();
+        for k in path {
+            if let Key::Name(n) = k {
+                out.push(&**n);
+            }
+        }
+        out
+    }
+
+    /// The entry a node path names, if it is a listed directory's entry.
+    pub fn entry(&self, path: &[Key]) -> Option<&Entry> {
+        let (last, parents) = path.split_last()?;
+        let name = last.name()?;
+        let dir = self.fs_path(parents);
+        self.listed
+            .get(&dir)?
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+    }
+
+    /// The whole listed tree as a document: the root expanded, every other
+    /// directory collapsed (the tab restores the folds it had).
+    pub fn build(&self) -> Doc {
+        let mut nodes: Vec<Node> = Vec::new();
+        self.push_dir(&mut nodes, &self.root.clone(), NO_NODE, Key::Root, 0, true);
+        Doc::from_preorder(nodes)
+    }
+
+    fn push_dir(
+        &self,
+        nodes: &mut Vec<Node>,
+        dir: &Path,
+        parent: NodeId,
+        key: Key,
+        depth: u32,
+        expanded: bool,
+    ) {
+        let id = nodes.len() as NodeId;
+        nodes.push(Node {
+            parent,
+            key,
+            kind: Kind::Object,
+            depth,
+            size: 1,
+            children: 0,
+            expanded,
+            line: 0,
+            col: 0,
+        });
+        let leaf = |parent: NodeId, name: &str, text: String| Node {
+            parent,
+            key: Key::Name(Arc::from(name)),
+            kind: Kind::Str(Arc::from(text.as_str())),
+            depth: depth + 1,
+            size: 1,
+            children: 0,
+            expanded: true,
+            line: 0,
+            col: 0,
+        };
+        let Some(listing) = self.listed.get(dir) else {
+            // Not read yet: one placeholder keeps the directory foldable, so
+            // expanding it lists it.
+            nodes.push(leaf(id, "…", "(not listed yet)".to_string()));
+            nodes[id as usize].children = 1;
+            return;
+        };
+        let mut count = 0;
+        if let Some(err) = &listing.error {
+            nodes.push(leaf(id, "(error)", err.clone()));
+            count += 1;
+        }
+        for e in listing.entries.iter().filter(|e| self.visible(e)) {
+            count += 1;
+            if e.is_dir() {
+                self.push_dir(
+                    nodes,
+                    &dir.join(&e.name),
+                    id,
+                    Key::Name(Arc::from(e.name.as_str())),
+                    depth + 1,
+                    false,
+                );
+            } else {
+                nodes.push(leaf(id, &e.name, e.describe()));
+            }
+        }
+        nodes[id as usize].children = count;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("aless-explorer-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub/deep")).unwrap();
+        std::fs::write(dir.join("a.json"), "{\"a\": 1}").unwrap();
+        std::fs::write(dir.join("b.yaml"), "b: 2\n").unwrap();
+        std::fs::write(dir.join(".hidden"), "x").unwrap();
+        std::fs::write(dir.join("sub/c.toml"), "c = 3\n").unwrap();
+        std::fs::write(dir.join("sub/deep/x.txt"), "x\n").unwrap();
+        std::fs::write(dir.join("notes"), "no extension").unwrap();
+        dir
+    }
+
+    #[test]
+    fn lists_one_level_ahead() {
+        let dir = tree("ahead");
+        let ex = Explorer::open(&dir, false);
+        assert!(ex.is_listed(&ex.root));
+        assert!(
+            ex.is_listed(&ex.root.join("sub")),
+            "children are listed for their previews"
+        );
+        assert!(
+            !ex.is_listed(&ex.root.join("sub/deep")),
+            "grandchildren wait"
+        );
+        let doc = ex.build();
+        let names: Vec<String> = doc
+            .children(0)
+            .map(|c| doc.node(c).key.name().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["sub", "a.json", "b.yaml", "notes"]);
+        let sub = doc.resolve(&[Key::Name("sub".into())]).unwrap();
+        assert!(!doc.node(sub).expanded && doc.node(sub).children == 2);
+        assert!(doc.root().expanded);
+        let deep = doc
+            .resolve(&[Key::Name("sub".into()), Key::Name("deep".into())])
+            .unwrap();
+        assert_eq!(
+            doc.node(deep).children,
+            1,
+            "unlisted: a placeholder keeps it foldable"
+        );
+        let a = doc.resolve(&[Key::Name("a.json".into())]).unwrap();
+        assert_eq!(
+            &*match &doc.node(a).kind {
+                Kind::Str(s) => s.clone(),
+                _ => panic!(),
+            },
+            "8 B  json"
+        );
+    }
+
+    #[test]
+    fn hidden_entries_and_sync() {
+        let dir = tree("hidden");
+        let mut ex = Explorer::open(&dir, true);
+        let doc = ex.build();
+        assert_eq!(doc.root().children, 5);
+        ex.show_hidden = false;
+        assert_eq!(ex.build().root().children, 4);
+        // Expanding sub lists deep.
+        assert!(ex.ensure_children_listed(&ex.root.join("sub")));
+        assert!(ex.is_listed(&ex.root.join("sub/deep")));
+        assert!(
+            !ex.ensure_children_listed(&ex.root.join("sub")),
+            "nothing new the second time"
+        );
+        let doc = ex.build();
+        let x = doc
+            .resolve(&[
+                Key::Name("sub".into()),
+                Key::Name("deep".into()),
+                Key::Name("x.txt".into()),
+            ])
+            .unwrap();
+        assert_eq!(doc.node(x).depth, 3);
+        let e = ex.entry(&doc.path(x)).unwrap();
+        assert_eq!(e.kind, EntryKind::File);
+        assert_eq!(e.format, Some(Format::Text));
+        assert_eq!(ex.fs_path(&doc.path(x)), ex.root.join("sub/deep/x.txt"));
+        assert!(ex.entry(&[Key::Name("nope".into())]).is_none());
+    }
+
+    #[test]
+    fn detects_changes_and_relists() {
+        let dir = tree("changes");
+        let mut ex = Explorer::open(&dir, false);
+        assert!(!ex.changed());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
+        // A coarse filesystem clock may not move the directory mtime; the
+        // relist must show the file either way.
+        ex.relist_all();
+        let doc = ex.build();
+        assert!(doc.resolve(&[Key::Name("new.csv".into())]).is_some());
+        assert!(!ex.changed());
+    }
+
+    #[test]
+    fn unreadable_directory_shows_its_error() {
+        let ex = Explorer::open(Path::new("/definitely/not/here"), false);
+        let doc = ex.build();
+        assert_eq!(doc.root().children, 1);
+        assert_eq!(doc.node(1).key.name(), Some("(error)"));
+    }
+
+    #[test]
+    fn sizes_and_titles() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1023), "1023 B");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(40 << 20), "40 MB");
+        assert_eq!(human_size(3 << 30), "3.0 GB");
+        assert_eq!(title_of(Path::new("/x/y/src")), "src/");
+        assert_eq!(title_of(Path::new("/")), "/");
+    }
+}

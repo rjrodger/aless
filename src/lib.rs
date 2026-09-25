@@ -8,6 +8,7 @@
 pub mod app;
 pub mod clip;
 pub mod doc;
+pub mod explorer;
 pub mod fmt;
 pub mod load;
 pub mod prov;
