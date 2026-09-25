@@ -976,10 +976,13 @@ mod tests {
         let mut a = App::new(Options::default(), 60, 8);
         a.open_explorer(&dir);
         let text = render(&mut a).text();
+        let first = text.lines().next().unwrap().trim_end();
+        let dir_name = dir.file_name().unwrap().to_string_lossy();
         assert!(
-            text.lines().next().unwrap().starts_with("▼ /"),
+            first.starts_with("▼ ") && first.ends_with('/') && first.contains(&*dir_name),
             "root shows its path: {text}"
         );
+        assert!(!first.contains(r"\\?\"), "no verbatim prefix: {first}");
         assert!(text.contains("▷ sub/  (1) c.toml"), "{text}");
         assert!(text.contains("  a.json  8 B  json"), "{text}");
         assert!(!text.contains('"'), "no quoting in the explorer: {text}");

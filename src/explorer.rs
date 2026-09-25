@@ -148,6 +148,23 @@ fn read_listing(dir: &Path) -> Listing {
     }
 }
 
+/// Strip the Windows verbatim prefix `canonicalize` produces (`\\?\C:\x`
+/// becomes `C:\x`, `\\?\UNC\srv\share` becomes `\\srv\share`), so paths
+/// read, copy and join the way a user writes them. Other paths pass
+/// through unchanged.
+pub fn simplify(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
+}
+
 /// The tab title for a directory: its name with a slash, or the path
 /// itself at a filesystem root.
 pub fn title_of(dir: &Path) -> String {
@@ -160,7 +177,9 @@ pub fn title_of(dir: &Path) -> String {
 impl Explorer {
     /// Open a directory: it and its immediate subdirectories are listed.
     pub fn open(dir: &Path, show_hidden: bool) -> Explorer {
-        let root = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let root = std::fs::canonicalize(dir)
+            .map(simplify)
+            .unwrap_or_else(|_| dir.to_path_buf());
         let mut ex = Explorer {
             root: root.clone(),
             show_hidden,
@@ -444,6 +463,15 @@ mod tests {
         let doc = ex.build();
         assert_eq!(doc.root().children, 1);
         assert_eq!(doc.node(1).key.name(), Some("(error)"));
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_stripped() {
+        let f = |s: &str| simplify(PathBuf::from(s)).to_str().unwrap().to_string();
+        assert_eq!(f(r"\\?\C:\Users\x"), r"C:\Users\x");
+        assert_eq!(f(r"\\?\UNC\srv\share\x"), r"\\srv\share\x");
+        assert_eq!(f("/usr/local"), "/usr/local");
+        assert_eq!(f(r"C:\plain"), r"C:\plain");
     }
 
     #[test]
