@@ -57,6 +57,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Example files
+
+`examples/solardemo-1.0.0-openapi-3.0.0.yaml` is copied unchanged from
+<https://github.com/voxgig-sdk/voxgig-solardemo-sdk> (MIT License,
+Copyright (c) 2026 Voxgig).
+
 ## Parsing
 
 Every format is parsed by the tabnas engine and its grammar plugins
