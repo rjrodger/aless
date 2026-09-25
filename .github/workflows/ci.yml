@@ -1,0 +1,67 @@
+name: ci
+
+# aless must work on Linux, macOS and Windows, so every push and pull
+# request builds and tests on all three. The tabnas crates come straight
+# from GitHub (see Cargo.toml), pinned by Cargo.lock; `--locked` keeps the
+# pins honest.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Terminal smoke test (pty)
+        if: runner.os != 'Windows'
+        run: python3 scripts/pty-smoke.py target/debug/aless
+
+      - name: Release build
+        run: cargo build --release --locked
+
+      - name: Binary starts and reads stdin
+        shell: bash
+        run: |
+          ./target/release/aless --version
+          ./target/release/aless --help | head -3
+
+  msrv:
+    name: rust 1.85 (minimum supported)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --all-targets

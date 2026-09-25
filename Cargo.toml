@@ -1,0 +1,115 @@
+[package]
+name = "aless"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Richard Rodger <http://richardrodger.com>"]
+description = "A jless-style terminal viewer for every format the tabnas parsers read, with tabs and watch-and-reload that keeps your place."
+license = "MIT"
+repository = "https://github.com/rjrodger/aless"
+readme = "README.md"
+keywords = ["json", "yaml", "toml", "viewer", "tui"]
+categories = ["command-line-utilities"]
+
+[features]
+default = ["clipboard"]
+# System clipboard for the `y` commands. Without it, yank still copies
+# through the terminal (OSC 52) and prints to the status line.
+clipboard = ["dep:arboard"]
+
+[dependencies]
+crossterm = "0.29"
+notify = "8"
+regex = "1.13"
+unicode-width = "0.2"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
+
+# The tabnas engine and grammars are not yet published for Rust, so they
+# are taken straight from GitHub; Cargo.lock pins the commit of each one.
+# When they reach crates.io these become plain version requirements and
+# the [patch] tables below go away.
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-json = { git = "https://github.com/tabnas/json" }
+tabnas-jsonl = { git = "https://github.com/tabnas/jsonl" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+tabnas-jsonc = { git = "https://github.com/tabnas/jsonc" }
+tabnas-json5 = { git = "https://github.com/tabnas/json5" }
+tabnas-yaml = { git = "https://github.com/tabnas/yaml" }
+tabnas-toml = { git = "https://github.com/tabnas/toml" }
+tabnas-ini = { git = "https://github.com/tabnas/ini" }
+tabnas-csv = { git = "https://github.com/tabnas/csv" }
+tabnas-xml = { git = "https://github.com/tabnas/xml" }
+tabnas-zon = { git = "https://github.com/tabnas/zon" }
+tabnas-markdown = { git = "https://github.com/tabnas/markdown" }
+tabnas-feed = { git = "https://github.com/tabnas/feed" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Each grammar crate names its siblings by relative path
+# (`tabnas = { path = "../../parser/rs" }`), the tabnas sibling-checkout
+# development model. Inside a git checkout cargo reads such a dependency as
+# "the package of that name in this same git source", which does not
+# exist, so these tables supply each sibling from its own repository. One
+# table per grammar repository, listing the siblings its manifest names.
+[patch."https://github.com/tabnas/json"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+
+[patch."https://github.com/tabnas/jsonl"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-json = { git = "https://github.com/tabnas/json" }
+
+[patch."https://github.com/tabnas/jsonic"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-json = { git = "https://github.com/tabnas/json" }
+
+[patch."https://github.com/tabnas/jsonc"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/json5"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/yaml"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/toml"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/ini"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+tabnas-hoover = { git = "https://github.com/tabnas/hoover" }
+
+[patch."https://github.com/tabnas/hoover"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+
+[patch."https://github.com/tabnas/csv"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/xml"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/zon"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+
+[patch."https://github.com/tabnas/markdown"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+
+[patch."https://github.com/tabnas/feed"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
+tabnas-xml = { git = "https://github.com/tabnas/xml" }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "fat"
+strip = true
