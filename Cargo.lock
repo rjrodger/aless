@@ -738,7 +738,7 @@ dependencies = [
 [[package]]
 name = "tabnas"
 version = "0.12.2"
-source = "git+https://github.com/tabnas/parser#5fa6f3ec360fdac0aadd8b55520dbcef91fc27aa"
+source = "git+https://github.com/tabnas/parser#f5cee2eb13b5e229d7f00f1dafdd1000afeed65f"
 dependencies = [
  "indexmap",
  "regex",
@@ -781,8 +781,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.9"
-source = "git+https://github.com/tabnas/ini#aaec87b557d15bba1b2f181283b4f3d971808b4e"
+version = "0.5.10"
+source = "git+https://github.com/tabnas/ini#433f58312e98a523ab74803462a966210a33bf34"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json"
 version = "0.5.10"
-source = "git+https://github.com/tabnas/json#023fcc09574ed71bed139eaefa6424527a17f0a3"
+source = "git+https://github.com/tabnas/json#b8851ef455ea63b015eb9a3c5aeb84f6dfab0614"
 dependencies = [
  "regex",
  "serde_json",
@@ -826,7 +826,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonic"
 version = "0.7.1"
-source = "git+https://github.com/tabnas/jsonic#9b0a9c5fd0f240b53ef9c2b92d62778d2b0899e4"
+source = "git+https://github.com/tabnas/jsonic#6de0ad33546fa5fcdf9e2fc87ae4682f2eee7bb4"
 dependencies = [
  "indexmap",
  "regex",
@@ -894,8 +894,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.8"
-source = "git+https://github.com/tabnas/zon#036e916fde43be93e8ef41b5521d45caa8788b94"
+version = "0.5.9"
+source = "git+https://github.com/tabnas/zon#6656ed9873c97097b0294c1f9b33a5639b72dca8"
 dependencies = [
  "indexmap",
  "serde",

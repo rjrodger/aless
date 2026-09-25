@@ -823,6 +823,21 @@ mod tests {
     }
 
     #[test]
+    fn grammar_codes_carry_their_own_hints() {
+        // Until ini 0.5.10 and zon 0.5.9 these codes had no hint, so the
+        // report fell back to the one for an unknown code, which calls the
+        // error a bug in the parser.
+        for (src, format, code) in [
+            ("[s\nk = v\n", Format::Ini, "unterminated_section"),
+            ("0X2A", Format::Zon, "zon_number"),
+        ] {
+            let plain = parse(src, format).unwrap_err().plain_report();
+            assert!(plain.contains(&format!("/{code}]:")), "{plain}");
+            assert!(!plain.contains("probably a bug"), "{plain}");
+        }
+    }
+
+    #[test]
     fn every_format_parses_its_sample() {
         let samples: [(Format, &str); 14] = [
             (Format::Json, "{\"a\": [1, 2]}"),
