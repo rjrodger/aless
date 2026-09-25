@@ -5,6 +5,7 @@
 //! size and format. `Enter` on a file opens it in a new tab.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -27,7 +28,11 @@ pub enum EntryKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    /// The name as shown and used as the node key (lossy for a name that
+    /// is not valid UTF-8).
     pub name: String,
+    /// The name as the filesystem has it, for every path operation.
+    pub os_name: OsString,
     pub kind: EntryKind,
     pub size: u64,
     /// The format the extension implies, when a grammar handles it.
@@ -96,7 +101,8 @@ fn read_listing(dir: &Path) -> Listing {
             let mut entries: Vec<Entry> = read
                 .flatten()
                 .map(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
+                    let os_name = e.file_name();
+                    let name = os_name.to_string_lossy().into_owned();
                     let file_type = e.file_type().ok();
                     let is = |f: fn(&std::fs::FileType) -> bool| file_type.as_ref().is_some_and(f);
                     let (kind, size) = if is(std::fs::FileType::is_symlink) {
@@ -121,6 +127,7 @@ fn read_listing(dir: &Path) -> Listing {
                         .flatten();
                     Entry {
                         name,
+                        os_name,
                         kind,
                         size,
                         format,
@@ -198,11 +205,14 @@ impl Explorer {
         self.listed.get(dir)
     }
 
-    /// Take over the listings of another explorer (a re-root keeps what was
-    /// already read).
+    /// Take over another explorer's listings that lie under this root (a
+    /// re-root keeps what was already read and can still be shown; the
+    /// rest would only cost cap and spurious refreshes).
     pub fn adopt_listings(&mut self, other: Explorer) {
         for (dir, listing) in other.listed {
-            self.listed.entry(dir).or_insert(listing);
+            if dir.starts_with(&self.root) {
+                self.listed.entry(dir).or_insert(listing);
+            }
         }
     }
 
@@ -259,12 +269,23 @@ impl Explorer {
         self.show_hidden || !entry.name.starts_with('.')
     }
 
-    /// The filesystem path of a node path (keys are entry names).
+    /// The filesystem path of a node path. Keys are the displayed names;
+    /// each is mapped back to the name the filesystem has through the
+    /// listing it came from, so a name that is not valid UTF-8 still
+    /// resolves. A segment no listing knows is used as typed.
     pub fn fs_path(&self, path: &[Key]) -> PathBuf {
         let mut out = self.root.clone();
         for k in path {
             if let Key::Name(n) = k {
-                out.push(&**n);
+                let os_name = self
+                    .listed
+                    .get(&out)
+                    .and_then(|l| l.entries.iter().find(|e| e.name == **n))
+                    .map(|e| e.os_name.clone());
+                match os_name {
+                    Some(name) => out.push(name),
+                    None => out.push(&**n),
+                }
             }
         }
         out
@@ -458,6 +479,40 @@ mod tests {
         let doc = ex.build();
         assert!(doc.resolve(&[Key::Name("new.csv".into())]).is_some());
         assert!(!ex.changed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn names_that_are_not_utf8_still_resolve() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tree("nonutf8");
+        let raw = std::ffi::OsStr::from_bytes(b"caf\xe9.json");
+        std::fs::write(dir.join(raw), "1").unwrap();
+        let ex = Explorer::open(&dir, false);
+        let doc = ex.build();
+        let node = doc
+            .children(0)
+            .find(|&c| doc.node(c).key.name().is_some_and(|n| n.starts_with("caf")))
+            .expect("the entry is listed under a readable label");
+        let key = doc.node(node).key.name().unwrap().to_string();
+        assert!(key.contains('\u{fffd}'), "{key}");
+        let path = ex.fs_path(&doc.path(node));
+        assert_eq!(path.file_name().unwrap().as_bytes(), b"caf\xe9.json");
+        assert!(path.exists(), "the real file is what Enter would open");
+    }
+
+    #[test]
+    fn rerooting_keeps_only_listings_under_the_new_root() {
+        let dir = tree("adopt");
+        let old = Explorer::open(&dir, false);
+        let old_root = old.root.clone();
+        let mut down = Explorer::open(&old_root.join("sub"), false);
+        down.adopt_listings(old.clone());
+        assert!(!down.is_listed(&old_root), "the old root is outside");
+        assert!(down.is_listed(&old_root.join("sub")));
+        let mut up = Explorer::open(old_root.parent().unwrap(), false);
+        up.adopt_listings(old);
+        assert!(up.is_listed(&old_root) && up.is_listed(&old_root.join("sub")));
     }
 
     #[test]

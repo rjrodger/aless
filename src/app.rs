@@ -646,7 +646,6 @@ impl App {
 
     /// `-` in the explorer: make the parent directory the root.
     fn explorer_parent(&mut self) {
-        let view = self.view();
         let tab = self.tab();
         let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
             return;
@@ -654,16 +653,33 @@ impl App {
         match root.parent() {
             Some(parent) => {
                 let parent = parent.to_path_buf();
-                tab.reroot(&parent, view);
-                self.explorer_sync();
+                self.reroot_active(&parent);
             }
             None => self.error("Already at the top of the filesystem"),
         }
     }
 
+    /// Re-root the active explorer, moving its watch to the new root.
+    fn reroot_active(&mut self, dir: &Path) {
+        let view = self.view();
+        let tab = self.tab();
+        let old = tab.path.clone();
+        tab.reroot(dir, view);
+        let new = tab.path.clone();
+        let watched = tab.watch;
+        if watched && old != new {
+            if let Some(p) = old {
+                self.effects.push(Effect::Unwatch(p));
+            }
+            if let Some(p) = new {
+                self.effects.push(Effect::Watch(p));
+            }
+        }
+        self.explorer_sync();
+    }
+
     /// `:cd DIR` in an explorer tab: re-root, relative to the current root.
     fn explorer_cd(&mut self, dir: &str) {
-        let view = self.view();
         let tab = self.tab();
         let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
             self.open_explorer(Path::new(dir));
@@ -674,8 +690,7 @@ impl App {
             self.error(format!("{}: not a directory", target.display()));
             return;
         }
-        tab.reroot(&target, view);
-        self.explorer_sync();
+        self.reroot_active(&target);
     }
 
     /// The distance for `C-d`/`C-u`: a typed count sets it and is
@@ -953,6 +968,12 @@ impl App {
             None => (cmd, false),
         };
         match cmd {
+            // Document-only commands mean nothing for a directory tree.
+            "source" | "src" | "mode" | "format" | "kind" | "ft" | "filetype"
+                if self.tab().explorer.is_some() =>
+            {
+                self.error(format!(":{cmd} applies to a document, not to the explorer"))
+            }
             "q" | "close" | "tabclose" => self.close_tab(),
             "qa" | "qall" | "quit" | "quitall" | "exit" => self.quit = true,
             "h" | "help" => self.show_help(),
@@ -1840,6 +1861,36 @@ mod tests {
         assert_eq!(app.tab().doc.root().children, 1);
         app.run_command("cd nowhere");
         assert!(app.message.as_ref().unwrap().error);
+        // Document-only commands are refused in the explorer.
+        let rows = app.tab().row_count();
+        for cmd in ["mode line", "format text", "source"] {
+            app.run_command(cmd);
+            assert!(app.message.as_ref().unwrap().error, "{cmd}");
+            assert_eq!(app.mode, Mode::Browse, "{cmd}");
+        }
+        assert_eq!(app.tab().row_count(), rows);
+        assert!(!app.tab().line_mode);
+        assert!(app.tab().explorer.is_some());
+    }
+
+    #[test]
+    fn rerooting_moves_the_watch() {
+        let dir = tree("rewatch");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_explorer(&dir.join("sub"));
+        assert!(app.tab().watch);
+        let old = app.tab().path.clone().unwrap();
+        app.effects.clear();
+        keys(&mut app, "-");
+        let new = app.tab().path.clone().unwrap();
+        assert_ne!(old, new);
+        assert_eq!(
+            app.effects,
+            vec![Effect::Unwatch(old.clone()), Effect::Watch(new.clone())]
+        );
+        app.effects.clear();
+        app.run_command("cd sub");
+        assert_eq!(app.effects, vec![Effect::Unwatch(new), Effect::Watch(old)]);
     }
 
     #[test]

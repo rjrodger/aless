@@ -858,11 +858,14 @@ impl Tab {
         changed
     }
 
-    /// Re-read every listed directory and rebuild, keeping the place.
+    /// Re-read every listed directory and rebuild, keeping the place. A
+    /// directory that appeared under an expanded one is listed too, so it
+    /// gets its preview rather than a placeholder.
     pub fn explorer_refresh(&mut self, view: View) {
         if let Some(ex) = self.explorer.as_mut() {
             ex.relist_all();
             self.rebuild_explorer(view);
+            self.explorer_sync(view);
             self.generation += 1;
             self.reload_due = None;
         }
@@ -1271,6 +1274,40 @@ mod tests {
         t.reload(view);
         assert!(!t.gone && t.error.is_none());
         assert_eq!(t.doc.node(1).kind, Kind::Number(2.0));
+    }
+
+    #[test]
+    fn explorer_refresh_lists_new_subdirectories() {
+        let dir = std::env::temp_dir().join(format!("aless-tab-explorer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a").join("seed.txt"), "s").unwrap();
+        let view = View::new(10, 1);
+        let mut t = Tab::explore(1, &dir, false);
+        // Expand the root's child `a`, then add a directory inside it.
+        let a = t.doc.resolve(&[Key::Name("a".into())]).unwrap();
+        t.focus_node(a, view);
+        t.toggle(view);
+        assert!(t.doc.node(a).expanded);
+        t.explorer_sync(view);
+        std::fs::create_dir_all(dir.join("a").join("fresh").join("inner")).unwrap();
+        t.explorer_refresh(view);
+        let ex = t.explorer.as_ref().unwrap();
+        let fresh = ex.root.join("a").join("fresh");
+        assert!(
+            ex.is_listed(&fresh),
+            "a new child of an expanded directory is listed"
+        );
+        let node = t
+            .doc
+            .resolve(&[Key::Name("a".into()), Key::Name("fresh".into())])
+            .unwrap();
+        let kids: Vec<&str> = t
+            .doc
+            .children(node)
+            .map(|c| t.doc.node(c).key.name().unwrap())
+            .collect();
+        assert_eq!(kids, vec!["inner"], "no placeholder: {kids:?}");
     }
 
     #[test]
