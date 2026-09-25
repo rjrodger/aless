@@ -2,7 +2,7 @@
 name = "aless"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 authors = ["Richard Rodger <http://richardrodger.com>"]
 description = "A jless-style terminal viewer for every format the tabnas parsers read, with tabs and watch-and-reload that keeps your place."
 license = "MIT"

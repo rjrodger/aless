@@ -20,7 +20,7 @@ import termios
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
+BIN = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
 
 
 def main():
@@ -54,7 +54,13 @@ def main():
                 seen.extend(chunk)
 
     def send(text):
-        os.write(fd, text.encode())
+        try:
+            os.write(fd, text.encode())
+        except OSError as e:
+            # EIO: the child has gone away.
+            print(f"FAIL sending {text!r}: {e} (did aless exit?)")
+            failures.append("send")
+            return
         read(0.4)
 
     def expect(label, *needles, timeout=3.0):
@@ -69,6 +75,9 @@ def main():
         failures.append(label)
         return False
 
+    if not os.path.exists(BIN):
+        print(f"FAIL no binary at {BIN}")
+        sys.exit(1)
     read(1.5)
     expect("draws both tabs", "1:nested.json", "2:sample.yaml")
     expect("draws the yaml tree (active tab is the first)", "store")

@@ -645,15 +645,17 @@ mod tests {
     #[test]
     fn deep_nesting_does_not_recurse() {
         // Build straight from a hand-made value: the parser has its own
-        // depth policy, the arena must not. (Dropping a tabnas `Value`
-        // recurses, so the depth stays within what the test thread's stack
-        // can unwind; the arena walk itself is iterative at any depth.)
+        // depth policy, the arena must not.
         const DEPTH: usize = 4000;
         let mut v = Value::Array(Arc::new(vec![]));
         for _ in 0..DEPTH {
             v = Value::Array(Arc::new(vec![v]));
         }
         let d = Doc::from_value(&v);
+        // Dropping the value would recurse DEPTH frames deep, which the
+        // Windows test-thread stack does not have; the parsers cap nesting
+        // long before this, so only this hand-made value is at risk.
+        std::mem::forget(v);
         assert_eq!(d.len(), DEPTH + 1);
         assert_eq!(d.node(DEPTH as NodeId).depth, DEPTH as u32);
         assert_eq!(d.rows(true).len(), DEPTH + 1 + DEPTH);

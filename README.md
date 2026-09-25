@@ -34,7 +34,7 @@ listed [below](#deviations-from-jless).
 
 ## Install
 
-Rust 1.85 or newer and git:
+Rust 1.86 or newer and git:
 
 ```bash
 cargo install --git https://github.com/rjrodger/aless aless
