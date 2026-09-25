@@ -125,6 +125,28 @@ impl Line {
         self.spans.iter().map(|s| s.text.as_str()).collect()
     }
 
+    /// Drop the first `cols` columns.
+    pub fn skip(&mut self, cols: usize) {
+        let mut left = cols;
+        let mut keep = Vec::new();
+        for span in self.spans.drain(..) {
+            let w = span.text.width();
+            if left == 0 {
+                keep.push(span);
+            } else if w <= left {
+                left -= w;
+            } else {
+                let text = skip_width(&span.text, left).to_string();
+                left = 0;
+                keep.push(Span {
+                    text,
+                    style: span.style,
+                });
+            }
+        }
+        self.spans = keep;
+    }
+
     /// Cut or pad to exactly `width` columns, padding with `style`.
     pub fn fit(&mut self, width: usize, style: Style) {
         let mut used = 0;
@@ -754,14 +776,34 @@ fn overlay_lines(app: &App, width: usize, pane_h: usize) -> Vec<Line> {
             if o.ansi {
                 l = ansi_line(text);
             } else {
-                let (t, _) = clip(text, 0, width);
-                l.push(t, Style::PLAIN);
+                l.push(text.as_str(), Style::PLAIN);
             }
+            l = pan(l, o.xoff, width);
         }
         l.fit(width, Style::PLAIN);
         out.push(l);
     }
     out
+}
+
+/// An overlay row: `line` panned right by `xoff` columns and cut to
+/// `width`, with `…` at either edge that hides text.
+fn pan(mut line: Line, xoff: usize, width: usize) -> Line {
+    if xoff > 0 {
+        if line.width() <= xoff {
+            return Line::new();
+        }
+        line.skip(xoff + 1);
+        let mut cut = Line::new();
+        cut.push("…", PREVIEW);
+        cut.spans.append(&mut line.spans);
+        line = cut;
+    }
+    if line.width() > width {
+        line.fit(width.saturating_sub(1), Style::PLAIN);
+        line.push("…", PREVIEW);
+    }
+    line
 }
 
 fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line> {
@@ -1248,6 +1290,50 @@ mod tests {
         a.handle(Input::Resize(70, 8));
         let text = render(&mut a).text();
         assert!(text.contains("! shows the full report"), "{text}");
+    }
+
+    #[test]
+    fn the_report_overlay_pans_long_lines() {
+        let dir = std::env::temp_dir().join(format!("aless-render-pan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("wide.json");
+        // One line wider than the screen, the error near its end.
+        std::fs::write(&p, format!("{{\"a\": [{}2,,3]}}", "1, ".repeat(30))).unwrap();
+        let mut a = App::new(Options::default(), 40, 20);
+        a.open_path(&p, None);
+        a.handle(Input::Key(Key::ch('!')));
+        let text = render(&mut a).text();
+        assert!(!text.contains('^'), "the caret is off to the right: {text}");
+        assert!(
+            text.lines().any(|l| l.ends_with('…')),
+            "a cut is marked: {text}"
+        );
+        let mut presses = 0;
+        while !render(&mut a).text().contains('^') {
+            assert!(presses < 10, "{}", render(&mut a).text());
+            a.handle(Input::Key(Key::ch('l')));
+            presses += 1;
+        }
+        let text = render(&mut a).text();
+        assert!(presses > 0 && a.mode == Mode::Overlay);
+        assert!(text.lines().skip(1).any(|l| l.starts_with('…')), "{text}");
+        // As far as the widest line's end, and back.
+        for _ in 0..20 {
+            a.handle(Input::Key(Key::code(crate::app::KeyCode::Right)));
+        }
+        let o = a.overlay.as_ref().unwrap();
+        let widest = o
+            .lines
+            .iter()
+            .map(|l| crate::load::strip_ansi(l).width())
+            .max()
+            .unwrap();
+        assert_eq!(o.xoff, widest - 40);
+        for _ in 0..20 {
+            a.handle(Input::Key(Key::ch('h')));
+        }
+        assert_eq!(a.overlay.as_ref().unwrap().xoff, 0);
+        assert_eq!(a.mode, Mode::Overlay);
     }
 
     #[test]

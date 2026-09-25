@@ -10,6 +10,7 @@ use crate::fmt;
 use crate::load::{self, Format};
 use crate::search::{self, Direction};
 use crate::tab::{Reposition, Tab, View};
+use unicode_width::UnicodeWidthStr;
 
 // ----- input ---------------------------------------------------------------
 
@@ -115,9 +116,38 @@ pub struct Overlay {
     pub title: String,
     pub lines: Vec<String>,
     pub scroll: usize,
+    /// Columns panned right (`l` / `h`), for lines wider than the screen.
+    pub xoff: usize,
     /// The lines carry ANSI colour codes to be turned into styles (an
     /// engine error report). Off for anything taken from a document.
     pub ansi: bool,
+}
+
+impl Overlay {
+    fn new(title: String, lines: Vec<String>, ansi: bool) -> Overlay {
+        Overlay {
+            title,
+            lines,
+            scroll: 0,
+            xoff: 0,
+            ansi,
+        }
+    }
+
+    /// The widest line, in columns.
+    fn width(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|l| {
+                if self.ansi {
+                    load::strip_ansi(l).width()
+                } else {
+                    l.width()
+                }
+            })
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -261,10 +291,11 @@ impl App {
     /// active tab's file fails to parse but its last good document is
     /// still on screen (a broken save while watching). A tab that never
     /// loaded shows its report in the whole pane instead.
+    ///
+    /// This holds while an overlay or the source view covers the pane,
+    /// though the panel is not drawn then: the tree keeps the height it
+    /// will be shown at again, so the tab's scroll does not move.
     pub fn error_panel_rows(&self) -> usize {
-        if !matches!(self.mode, Mode::Browse | Mode::Prompt(_)) {
-            return 0;
-        }
         let Some(tab) = self.tab_ref() else {
             return 0;
         };
@@ -836,12 +867,14 @@ impl App {
             Ok(text) => {
                 if print {
                     let lines = text.lines().map(str::to_string).collect();
-                    self.overlay = Some(Overlay {
-                        title: format!("{} — press any key to continue", target.describe()),
+                    self.overlay = Some(Overlay::new(
+                        format!(
+                            "{} — j/k scroll, h/l pan, any other key returns",
+                            target.describe()
+                        ),
                         lines,
-                        scroll: 0,
-                        ansi: false,
-                    });
+                        false,
+                    ));
                     self.mode = Mode::Overlay;
                 } else {
                     self.effects.push(Effect::Copy {
@@ -1044,7 +1077,7 @@ impl App {
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
                 Some(f) => match self.tab().reformat(f, view) {
                     Ok(()) => self.info(format!("Parsed as {f}")),
-                    Err(e) => self.error(format!("{f}: {e}")),
+                    Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
                 },
                 None => self.error(format!(
                     "Unknown format: {rest} (one of {})",
@@ -1314,48 +1347,51 @@ impl App {
     // ----- overlays --------------------------------------------------------------------------
 
     pub fn show_help(&mut self) {
-        self.overlay = Some(Overlay {
-            title: "aless help — j/k scroll, any other key returns".to_string(),
-            lines: help_lines(),
-            scroll: 0,
-            ansi: false,
-        });
+        self.overlay = Some(Overlay::new(
+            "aless help — j/k scroll, h/l pan, any other key returns".to_string(),
+            help_lines(),
+            false,
+        ));
         self.mode = Mode::Overlay;
     }
 
-    /// `!` / `:error`: the active tab's error report, full size.
+    /// `!` / `:error`: the active tab's error report, full size: that of
+    /// a `:format` that just failed, else the file's own.
     pub fn show_error(&mut self) {
         if self.tabs.is_empty() {
             return;
         }
         let tab = self.tab();
-        let Some(err) = tab.error.as_ref() else {
-            let title = tab.title.clone();
-            self.info(format!("{title}: no error"));
-            return;
+        let (what, err) = match (&tab.format_error, &tab.error) {
+            (Some((f, e)), _) => (format!("{} as {f}", tab.title), e),
+            (None, Some(e)) => (tab.title.clone(), e),
+            (None, None) => {
+                let title = tab.title.clone();
+                self.info(format!("{title}: no error"));
+                return;
+            }
         };
         let lines = err.report.lines().map(str::to_string).collect();
-        let title = format!(
-            "{}: error report — j/k scroll, any other key returns",
-            tab.title
-        );
-        self.overlay = Some(Overlay {
-            title,
-            lines,
-            scroll: 0,
-            ansi: true,
-        });
+        let title = format!("{what}: error report — j/k scroll, h/l pan, any other key returns");
+        self.overlay = Some(Overlay::new(title, lines, true));
         self.mode = Mode::Overlay;
     }
 
     fn overlay_key(&mut self, key: Key) {
         let page = self.pane_height().saturating_sub(1).max(1);
+        let width = self.width.max(1);
         let Some(o) = self.overlay.as_mut() else {
             self.mode = Mode::Browse;
             return;
         };
         let max = o.lines.len().saturating_sub(1);
+        // Pan half a screen at a time, as far as the widest line's end.
+        let pan = (width / 2).max(1);
         match (key.code, key.ctrl) {
+            (KeyCode::Char('l'), false) | (KeyCode::Right, _) => {
+                o.xoff = (o.xoff + pan).min(o.width().saturating_sub(width))
+            }
+            (KeyCode::Char('h'), false) | (KeyCode::Left, _) => o.xoff = o.xoff.saturating_sub(pan),
             (KeyCode::Char('j'), false) | (KeyCode::Down, _) => o.scroll = (o.scroll + 1).min(max),
             (KeyCode::Char('k'), false) | (KeyCode::Up, _) => o.scroll = o.scroll.saturating_sub(1),
             (KeyCode::Char('d'), true) | (KeyCode::Char('f'), true) | (KeyCode::PageDown, _) => {
@@ -1516,7 +1552,8 @@ ERRORS
   source lines around the error with a caret under it, and the grammar's
   hint. While a watched file is broken its last good document stays on
   screen with the report docked below it, until the file parses again.
-  ! / :error   the active tab's report, full size
+  ! / :error   the active tab's report, full size (after a failed
+               :format, that attempt's report); h/l pan a long line
 
 TABS, FILES AND WATCHING
   Tab / Shift-Tab   next / previous tab      :tab N   go to tab N
@@ -2005,6 +2042,73 @@ mod tests {
         app.run_command("error");
         assert_eq!(app.mode, Mode::Browse);
         assert!(app.message.as_ref().unwrap().text.ends_with("no error"));
+    }
+
+    #[test]
+    fn a_failed_format_keeps_its_report_for_bang() {
+        let p = write_temp("fmt.json", "{\"a\": [1, 2]}");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_path(&p, None);
+        app.run_command("format toml");
+        let m = app.message.clone().unwrap();
+        assert!(m.error && m.text.ends_with("! shows the report"), "{m:?}");
+        // The document still parses as JSON: nothing is docked or marked.
+        assert!(app.tab().error.is_none());
+        assert_eq!(app.error_panel_rows(), 0);
+        keys(&mut app, "!");
+        assert_eq!(app.mode, Mode::Overlay);
+        let o = app.overlay.as_ref().unwrap();
+        assert!(
+            o.title.starts_with("fmt.json as toml: error report"),
+            "{}",
+            o.title
+        );
+        assert!(o.lines[1].contains("fmt.json:1:"), "{:?}", o.lines);
+        keys(&mut app, "x");
+        // A reload drops it...
+        keys(&mut app, "r");
+        app.run_command("error");
+        assert!(app.message.as_ref().unwrap().text.ends_with("no error"));
+        // ...and so does a :format that works.
+        app.run_command("format toml");
+        assert!(app.tab().format_error.is_some());
+        app.run_command("format yaml");
+        assert!(app.tab().format_error.is_none());
+    }
+
+    #[test]
+    fn viewing_the_report_keeps_the_readers_place() {
+        let good = format!(
+            "[{}]",
+            (0..100)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",\n")
+        );
+        let p = write_temp("place.json", &good);
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_path(&p, None);
+        std::fs::write(&p, good.replace("99]", "99,,]")).unwrap();
+        keys(&mut app, "r");
+        assert!(app.error_panel_rows() > 0);
+        // At the foot of the document, the focus near the window's top:
+        // a taller window would scroll back, a shorter one forward again.
+        keys(&mut app, "G");
+        for _ in 0..app.opts.scrolloff + 4 {
+            keys(&mut app, "k");
+        }
+        crate::render::render(&mut app);
+        let place = (app.tab().focus, app.tab().scroll);
+        let rows = app.tab().rows().len();
+        assert!(place.1 > rows - app.pane_height(), "{place:?}");
+        for (open, close) in [("!", "x"), ("s", "x")] {
+            keys(&mut app, open);
+            assert_ne!(app.mode, Mode::Browse);
+            crate::render::render(&mut app);
+            keys(&mut app, close);
+            crate::render::render(&mut app);
+            assert_eq!((app.tab().focus, app.tab().scroll), place, "after {open}");
+        }
     }
 
     #[test]

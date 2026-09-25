@@ -143,7 +143,7 @@ Extensions on keys jless leaves free:
 | `W` | toggle watching on the tab |
 | `r` | reload the tab now |
 | `s` | show the raw source, scrolled to the focused node's line (`s` or `Esc` returns) |
-| `!` | show the tab's parse error report in full |
+| `!` | show the tab's parse error report in full (`h` `l` pan a long line) |
 | `C-z` | suspend (Unix) |
 
 Mouse: the wheel scrolls, a click focuses a row (`--no-mouse` to leave the
@@ -207,16 +207,25 @@ it, the same text its own tools print:
 The header names the grammar and the error code, the `-->` line gives the
 file, line and column, the excerpt marks the offending token with a caret,
 and the grammar's hint follows; the full report adds the grammar's link and
-the engine's diagnostics line. The colours are the engine's. Control
-characters in the offending token, such as the newline an unterminated
-string runs into, are shown escaped (`\n`) so they cannot break the layout.
+the engine's diagnostics line. The colours are the engine's.
+
+The report is made safe to draw, since its colour codes are obeyed. Control
+characters in the message, the hint and the file's name, such as the
+newline an unterminated string runs into, are shown escaped (`\n`). In the
+quoted source lines they are shown as one-column pictures (`␛`), so the
+caret still lines up. A quoted line longer than 160 characters, as in a
+minified file, is cut to a window around the error, and the caret stops
+at the end of its line.
 
 - A file that has never parsed shows its report in place of the tree.
 - A watched file that breaks after loading keeps its last good document on
   screen, with the report docked beneath it; the next save that parses
   clears it.
-- `!` or `:error` shows the whole report in a scrollable overlay, and `s`
-  shows the raw source with the failing line marked.
+- `!` or `:error` shows the whole report in a scrollable overlay; `h` and
+  `l` pan a line wider than the screen. `s` shows the raw source with the
+  failing line marked.
+- A `:format` that fails leaves the document as it was, and `!` shows that
+  attempt's report until the next reload or `:format`.
 - The status bar carries the short form (`!3:14: unexpected character(s): ,`)
   and the tab strip an `!`.
 

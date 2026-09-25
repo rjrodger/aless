@@ -93,6 +93,11 @@ pub struct Tab {
     /// A document has been loaded (false for a file that has never parsed:
     /// its pane shows the error report instead of a tree).
     pub has_doc: bool,
+    /// The report of the last `:format` that failed, and the format it
+    /// tried, which `!` shows until the next reload or `:format`. Unlike
+    /// `error` it marks nothing stale: the document on screen still
+    /// parses as it did.
+    pub format_error: Option<(Format, LoadError)>,
 }
 
 impl Tab {
@@ -123,6 +128,7 @@ impl Tab {
             source_scroll: 0,
             explorer: None,
             has_doc: true,
+            format_error: None,
         }
     }
 
@@ -718,6 +724,7 @@ impl Tab {
         let Some(path) = self.path.clone() else {
             return;
         };
+        self.format_error = None;
         let format = self.explicit_format;
         match load::load_path(&path, format) {
             Ok(loaded) => {
@@ -817,15 +824,24 @@ impl Tab {
         self.follow(view);
     }
 
-    /// Parse the current source as another format (`:format yaml`).
+    /// Parse the current source as another format (`:format yaml`). On
+    /// failure the document stays, and the report is kept for `!`.
     pub fn reformat(&mut self, format: Format, view: View) -> Result<(), LoadError> {
         let origin = self.origin();
-        let loaded =
-            load::load_str(self.source.clone(), format).map_err(|e| e.with_origin(&origin))?;
-        self.explicit_format = Some(format);
-        self.apply(loaded, view);
-        self.error = None;
-        Ok(())
+        match load::load_str(self.source.clone(), format) {
+            Ok(loaded) => {
+                self.explicit_format = Some(format);
+                self.apply(loaded, view);
+                self.error = None;
+                self.format_error = None;
+                Ok(())
+            }
+            Err(e) => {
+                let e = e.with_origin(&origin);
+                self.format_error = Some((format, e.clone()));
+                Err(e)
+            }
+        }
     }
 
     /// Has the file changed since the last stamp? (`None` when there is no

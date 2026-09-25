@@ -2,6 +2,7 @@
 //! positioned [`Doc`] comes out, parsed by the tabnas grammar for its
 //! format, or split into lines when no grammar claims it.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -157,36 +158,57 @@ impl LoadError {
     }
 
     /// Name the file the report is about, in place of the engine's
-    /// `<no-file>`.
+    /// `<no-file>`. A path may hold control characters (a newline is legal
+    /// in a Unix file name), so they are shown escaped: the report's colour
+    /// codes are obeyed when it is drawn, and a name must not add lines or
+    /// styles of its own.
     pub fn with_origin(mut self, origin: &str) -> LoadError {
-        self.report = self.report.replacen(NO_FILE, origin, 1);
+        self.report = replace_after_header(&self.report, NO_FILE, &escape_controls(origin));
         self
     }
 
-    /// From an engine error. Control characters in the offending token
-    /// (an unterminated string runs into a newline, YAML indentation is a
-    /// newline and spaces) would otherwise break the report's lines, so
-    /// they are shown escaped, the way the source view would show them.
-    pub fn from_tabnas(e: &tabnas::TabnasError) -> LoadError {
+    /// From an engine error. Everything in the report that came from the
+    /// file is made safe to draw, since the report's own colour codes are
+    /// obeyed:
+    ///
+    /// - control characters in the message and hint are shown escaped
+    ///   (`\n`); the offending token of an unterminated string runs into a
+    ///   newline, and would otherwise break the report's lines;
+    /// - in the quoted source lines they are shown as their one-column
+    ///   Unicode pictures (`␛`), so the caret, which the engine places by
+    ///   character count, still lines up;
+    /// - a quoted line too long for a screen (a minified file) is cut to a
+    ///   window around the error column, and the caret stops at the end of
+    ///   its line, so the caret and the message after it stay in view.
+    ///
+    /// `hint_template` is the grammar's template for the error's hint (see
+    /// [`hint_template`]); it tells the hint's own line breaks from those
+    /// the token brought in.
+    pub fn from_tabnas(e: &tabnas::TabnasError, hint_template: Option<&str>) -> LoadError {
         let mut shown = e.clone();
         shown.detail = escape_controls(&e.detail);
-        if e.src.chars().any(char::is_control) {
-            // The hint template injects the token text once, before any of
-            // its own line breaks, so the first occurrence is the injected
-            // one.
-            shown.hint = e.hint.replacen(&e.src, &escape_controls(&e.src), 1);
-        }
+        shown.hint = escape_hint(&e.hint, hint_template, &e.src);
+        shape_excerpt(&mut shown, e);
         let detail = shown.detail.trim();
         let message = if detail.starts_with(&e.code) || e.code.is_empty() {
             detail.to_string()
         } else {
             format!("{}: {}", e.code, detail)
         };
+        let mut report = shown.to_string();
+        if shown.col != e.col {
+            // The `-->` line names the column in the file, not the window.
+            report = replace_after_header(
+                &report,
+                &format!("{NO_FILE}:{}:{}", e.row, shown.col),
+                &format!("{NO_FILE}:{}:{}", e.row, e.col),
+            );
+        }
         LoadError {
             message,
             line: e.row as u32,
             col: e.col as u32,
-            report: shown.to_string(),
+            report,
         }
     }
 
@@ -198,12 +220,78 @@ impl LoadError {
 
 /// Show control characters as escapes: `\n`, `\t`, `\r`, else `\u001b`.
 pub fn escape_controls(s: &str) -> String {
+    escape(s, false)
+}
+
+/// [`escape_controls`], but line breaks stay.
+fn escape_controls_but_newlines(s: &str) -> String {
+    escape(s, true)
+}
+
+/// The template a grammar's hint for `code` was rendered from, looked up
+/// the way the engine does: the code's own, else the `unknown` one.
+pub fn hint_template<'a>(hints: &'a HashMap<String, String>, code: &str) -> Option<&'a str> {
+    hints
+        .get(code)
+        .filter(|t| !t.is_empty())
+        .or_else(|| hints.get("unknown").filter(|t| !t.is_empty()))
+        .map(String::as_str)
+}
+
+/// A hint with the control characters its placeholders brought in shown
+/// escaped, and the template's own line breaks kept.
+///
+/// The template says which text is its own: the hint is matched against
+/// it, each `{name}` standing for any text, and only what the placeholders
+/// matched is escaped. `{src}` alone cannot be searched for, since the
+/// token may be a single newline and the template has newlines of its own.
+/// Without a template, or when the hint does not match it (a grammar that
+/// set its own), the first occurrence of the token is taken for it.
+fn escape_hint(hint: &str, template: Option<&str>, src: &str) -> String {
+    if let Some(escaped) = template.and_then(|t| escape_placeholders(hint, t)) {
+        return escaped;
+    }
+    let hint = if src.chars().any(char::is_control) {
+        hint.replacen(src, &escape_controls(src), 1)
+    } else {
+        hint.to_string()
+    };
+    escape_controls_but_newlines(&hint)
+}
+
+fn escape_placeholders(hint: &str, template: &str) -> Option<String> {
+    // The engine fills `{key}` for any key up to the next `}`, and trims
+    // the result.
+    let mut pattern = String::from("(?s)^");
+    let mut rest = template.trim();
+    while let Some(open) = rest.find('{') {
+        pattern.push_str(&regex::escape(&rest[..open]));
+        let close = rest[open..].find('}')? + open;
+        pattern.push_str("(.*?)");
+        rest = &rest[close + 1..];
+    }
+    pattern.push_str(&regex::escape(rest));
+    pattern.push('$');
+    let caps = regex::Regex::new(&pattern).ok()?.captures(hint)?;
+    let mut out = String::with_capacity(hint.len());
+    let mut last = 0;
+    for m in caps.iter().skip(1).flatten() {
+        out.push_str(&hint[last..m.start()]);
+        out.push_str(&escape_controls(m.as_str()));
+        last = m.end();
+    }
+    out.push_str(&hint[last..]);
+    Some(out)
+}
+
+fn escape(s: &str, keep_newlines: bool) -> String {
     if !s.chars().any(char::is_control) {
         return s.to_string();
     }
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {
+            '\n' if keep_newlines => out.push('\n'),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -212,6 +300,93 @@ pub fn escape_controls(s: &str) -> String {
         }
     }
     out
+}
+
+/// Replace the first `from` below a report's first line. That line is the
+/// message, which quotes the file and so could hold the same text.
+fn replace_after_header(report: &str, from: &str, to: &str) -> String {
+    match report.find('\n') {
+        Some(i) => format!("{}{}", &report[..=i], report[i + 1..].replacen(from, to, 1)),
+        None => report.replacen(from, to, 1),
+    }
+}
+
+/// A quoted source line longer than this many characters is cut to a
+/// window around the error column.
+const LONG_LINE: usize = 160;
+/// The window's width in characters...
+const WINDOW: usize = 120;
+/// ...and how many of them come before the error column.
+const WINDOW_LEAD: usize = 40;
+
+/// Prepare the source the engine quotes (up to two lines either side of
+/// the error) for drawing; see [`LoadError::from_tabnas`]. Only those lines
+/// are kept, the ones above them left empty so the line numbers hold. When
+/// any of them is longer than [`LONG_LINE`], all of them are cut to the same
+/// window, marked `…` where cut, and the column moves with the window. The
+/// caret runs from the error column to the end of its line at most: the
+/// token of an unterminated string is the rest of the file.
+fn shape_excerpt(shown: &mut tabnas::TabnasError, e: &tabnas::TabnasError) {
+    if e.full_source.is_empty() {
+        return;
+    }
+    // The lines the engine picks: it splits on '\n' and clamps the row.
+    let lines: Vec<&str> = e.full_source.split('\n').collect();
+    let at = e.row.max(1).saturating_sub(1).min(lines.len() - 1);
+    let lo = at.saturating_sub(2);
+    let hi = (at + 2).min(lines.len() - 1);
+    let quoted: Vec<Vec<char>> = lines[lo..=hi]
+        .iter()
+        .map(|l| l.strip_suffix('\r').unwrap_or(l).chars().collect())
+        .collect();
+
+    let c0 = e.col.max(1) - 1;
+    let long = quoted.iter().any(|l| l.len() > LONG_LINE);
+    let (start, end) = if long {
+        let start = c0.saturating_sub(WINDOW_LEAD);
+        (start, start + WINDOW)
+    } else {
+        (0, usize::MAX)
+    };
+    let mut src = "\n".repeat(lo);
+    for (i, line) in quoted.iter().enumerate() {
+        if i > 0 {
+            src.push('\n');
+        }
+        if start > 0 && !line.is_empty() {
+            src.push('…');
+        }
+        src.extend(
+            line.iter()
+                .skip(start)
+                .take(end - start)
+                .map(|&c| visible(c)),
+        );
+        if line.len() > end {
+            src.push('…');
+        }
+    }
+    shown.full_source = src;
+    shown.col = c0 - start + 1 + usize::from(start > 0);
+
+    // The engine draws one caret per character of the token.
+    let rest_of_line = quoted[at - lo].len().saturating_sub(c0);
+    let carets = e.src.chars().count().min(rest_of_line).min(end - c0).max(1);
+    shown.src = e.src.chars().take(carets).collect();
+}
+
+/// A character of a quoted source line as it is drawn: a control
+/// character becomes its picture from the U+2400 block (or U+FFFD, for the
+/// C1 controls, which have none), one column wide like the character it
+/// stands for. A tab stays; the renderer draws it as a space.
+fn visible(c: char) -> char {
+    match c {
+        '\t' => '\t',
+        '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
+        '\u{7f}' => '\u{2421}',
+        c if c.is_control() => '\u{fffd}',
+        c => c,
+    }
 }
 
 /// Remove ANSI escape sequences (CSI such as colour codes, and OSC).
@@ -357,7 +532,10 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
             }
             Ok(doc)
         }
-        Ok(Err(e)) => Err(LoadError::from_tabnas(&e)),
+        Ok(Err(e)) => {
+            let hints = parser.config().hint;
+            Err(LoadError::from_tabnas(&e, hint_template(&hints, &e.code)))
+        }
         Err(panic) => {
             let what = panic
                 .downcast_ref::<String>()
@@ -521,6 +699,119 @@ mod tests {
         assert!(plain.starts_with("[aless/io]: "), "{plain}");
         assert!(plain.contains("  --> /nonexistent/x.json"), "{plain}");
         assert_eq!(strip_ansi("a\x1b[1;31mb\x1b]52;c;x\x07c\x1b[0m"), "abc");
+    }
+
+    #[test]
+    fn names_and_file_text_cannot_restyle_the_report() {
+        // A file name holding a newline and an escape sequence, and a
+        // message that happens to quote the placeholder.
+        let e = LoadError::new("cannot read <no-file>").with_origin("evil\n\x1b[31mname");
+        let lines: Vec<&str> = e.report.lines().collect();
+        assert_eq!(lines.len(), 2, "{:?}", e.report);
+        assert!(lines[0].ends_with("cannot read <no-file>"), "{lines:?}");
+        assert!(lines[1].ends_with("evil\\n\\u001b[31mname"), "{lines:?}");
+
+        // An escape sequence in the quoted source is shown as a picture,
+        // one column wide, so the caret still points at it.
+        let e = parse("{\"a\": \"x\u{1b}[31my\"}", Format::Json).unwrap_err();
+        assert!(!e.report.contains("\u{1b}[31my"), "{:?}", e.report);
+        let plain = e.plain_report();
+        let lines: Vec<&str> = plain.lines().collect();
+        let quoted = lines.iter().position(|l| l.contains("x␛[31my")).unwrap();
+        let at = |l: &str, c: char| l.chars().position(|x| x == c);
+        assert_eq!(
+            at(lines[quoted + 1], '^'),
+            at(lines[quoted], '␛'),
+            "{plain}"
+        );
+        // On a neighbouring line too.
+        let e = parse("// \u{1b}[8mhidden\n{\"b\": [1,,2]}", Format::Jsonc).unwrap_err();
+        assert!(e.plain_report().contains("  1 | // ␛[8mhidden"), "{e}");
+    }
+
+    #[test]
+    fn long_lines_are_cut_to_a_window_around_the_error() {
+        // A minified file, the error thousands of columns in.
+        let body: Vec<String> = (0..1500).map(|i| i.to_string()).collect();
+        let src = format!("[{},,9]", body.join(","));
+        let col = src.find(",,").unwrap() + 2;
+        let e = parse(&src, Format::Json)
+            .unwrap_err()
+            .with_origin("min.json");
+        assert_eq!(e.col as usize, col);
+        let plain = e.plain_report();
+        let lines: Vec<&str> = plain.lines().collect();
+        assert_eq!(
+            lines[1],
+            format!("  --> min.json:1:{col}"),
+            "the file's column"
+        );
+        let quoted = lines
+            .iter()
+            .position(|l| l.starts_with("  1 | …"))
+            .unwrap_or_else(|| panic!("{plain}"));
+        let caret = lines[quoted + 1].chars().position(|c| c == '^').unwrap();
+        assert!(caret < 60, "the caret is on screen: {plain}");
+        assert_eq!(lines[quoted].chars().nth(caret), Some(','), "{plain}");
+
+        // A long line beside the error is cut to the same window.
+        let src = format!("[\"{}\",\n,1]", "x".repeat(300));
+        let e = parse(&src, Format::Json).unwrap_err();
+        assert_eq!((e.line, e.col), (2, 1));
+        let plain = e.plain_report();
+        let lines: Vec<&str> = plain.lines().collect();
+        let long = format!("  1 | [\"{}…", "x".repeat(WINDOW - 2));
+        assert!(lines.contains(&long.as_str()), "{plain}");
+        let quoted = lines.iter().position(|l| l.starts_with("  2 | ")).unwrap();
+        assert_eq!(
+            lines[quoted + 1].find('^'),
+            lines[quoted].find(','),
+            "{plain}"
+        );
+    }
+
+    #[test]
+    fn carets_stop_at_the_end_of_their_line() {
+        // An unterminated string's token is the rest of the file.
+        let e = parse("a: `abc\nb: 1\nc: 2\n", Format::Jsonic).unwrap_err();
+        let plain = e.plain_report();
+        let caret = plain
+            .lines()
+            .find(|l| l.trim_start().starts_with('^'))
+            .unwrap();
+        assert!(
+            caret
+                .trim_start()
+                .starts_with("^^^^ unterminated string: `abc\\nb"),
+            "{plain}"
+        );
+    }
+
+    #[test]
+    fn hints_keep_their_own_line_breaks() {
+        // jsonic's hint breaks its line before the token, a newline here.
+        let e = parse("{a: 'abc\n, b: 1}\n", Format::Json5).unwrap_err();
+        let plain = e.plain_report();
+        assert!(
+            plain.contains("(character codes\n  below 32). The character \\n is unprintable."),
+            "{plain}"
+        );
+        // What every placeholder brought in is escaped, not only the token.
+        assert_eq!(
+            escape_hint(
+                "A \n B\nC q\u{1b}[1mr D",
+                Some("A {src} B\nC {name} D"),
+                "\n"
+            ),
+            "A \\n B\nC q\\u001b[1mr D"
+        );
+        // A hint that does not match its template: the token's first
+        // occurrence, and any other control character.
+        assert_eq!(
+            escape_hint("x \n y\u{7}\nz", Some("other"), "\n"),
+            "x \\n y\\u0007\nz"
+        );
+        assert_eq!(escape_hint("x \n y", None, "\n"), "x \\n y");
     }
 
     #[test]
