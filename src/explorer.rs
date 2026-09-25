@@ -487,7 +487,12 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let dir = tree("nonutf8");
         let raw = std::ffi::OsStr::from_bytes(b"caf\xe9.json");
-        std::fs::write(dir.join(raw), "1").unwrap();
+        if let Err(e) = std::fs::write(dir.join(raw), "1") {
+            // APFS on macOS, among others, refuses names that are not
+            // valid UTF-8; there is nothing to test on such a filesystem.
+            eprintln!("skipping: this filesystem refuses non-UTF-8 names ({e})");
+            return;
+        }
         let ex = Explorer::open(&dir, false);
         let doc = ex.build();
         let node = doc
