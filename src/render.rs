@@ -488,11 +488,18 @@ fn explorer_row(
                 Style::PLAIN
             },
         ),
-        // The root row: the directory itself.
-        None => (
-            format!("{}/", ex.root.display()),
-            if focused { FOCUS } else { KEY.bold() },
-        ),
+        // The root row: the directory itself. A long path keeps its tail,
+        // the part that says where this is.
+        None => {
+            let full = format!("{}/", ex.root.display());
+            let avail = width.saturating_sub(line.width());
+            let label = if full.width() > avail && avail > 1 {
+                format!("…{}", skip_width(&full, full.width() + 1 - avail))
+            } else {
+                full
+            };
+            (label, if focused { FOCUS } else { KEY.bold() })
+        }
     };
     line.push(label, label_style);
     let avail = width.saturating_sub(line.width() + 2);
@@ -973,7 +980,9 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("a.json"), "{\"a\": 1}").unwrap();
         std::fs::write(dir.join("sub/c.toml"), "c = 3\n").unwrap();
-        let mut a = App::new(Options::default(), 60, 8);
+        // Wide enough for any temp path (macOS puts them under
+        // /private/var/folders/…, Windows under a long AppData path).
+        let mut a = App::new(Options::default(), 240, 8);
         a.open_explorer(&dir);
         let text = render(&mut a).text();
         let first = text.lines().next().unwrap().trim_end();
@@ -983,6 +992,18 @@ mod tests {
             "root shows its path: {text}"
         );
         assert!(!first.contains(r"\\?\"), "no verbatim prefix: {first}");
+        // Narrow: a root path that does not fit keeps its tail.
+        a.handle(Input::Resize(20, 8));
+        let narrow = render(&mut a);
+        let full = narrow.lines[0].text();
+        assert_eq!(full.width(), 20, "{full:?}");
+        let first = full.trim_end();
+        assert!(
+            first.starts_with("▼ …") && first.ends_with('/'),
+            "{first:?}"
+        );
+        a.handle(Input::Resize(240, 8));
+        let text = render(&mut a).text();
         assert!(text.contains("▷ sub/  (1) c.toml"), "{text}");
         assert!(text.contains("  a.json  8 B  json"), "{text}");
         assert!(!text.contains('"'), "no quoting in the explorer: {text}");
