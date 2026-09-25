@@ -212,6 +212,20 @@ into a clipboard write; the status line says which happened. `p`
 commands print instead, so the text can be read or copied by the
 terminal.
 
+## Performance
+
+Parsing is the tabnas engine's, and it is a general rule engine rather
+than a hand-written JSON parser: on this machine a 5 MB JSON document
+(240 thousand nodes) loads in about two seconds and a 47 MB one (2.4
+million nodes) in about 35 seconds, with a peak of roughly 50 bytes of
+memory per source byte while the parse runs; the steady state afterwards
+is much smaller. The parse blocks the interface, so a large file shows a
+`loading…` notice before the screen is taken over, and a reload of a
+large watched file pauses the viewer for as long as its parse takes.
+Navigation, folding and search are independent of the engine and stay
+fast: rebuilding the rows of a 2.4-million-node document takes about a
+second, and a search over it under a second.
+
 ## Platforms
 
 Linux, macOS and Windows are all first-class: CI builds and tests on the

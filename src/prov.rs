@@ -35,6 +35,9 @@ pub struct Tok {
     /// `Some(true)` when the token text is an opening `[`, `Some(false)`
     /// for an opening `{` (a ZON `.{` included), else `None`.
     pub src_open: Option<bool>,
+    /// A single punctuation character standing for itself (`,` `:` `]`),
+    /// as opposed to a quoted one-character string value.
+    pub bare_punct: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,17 +60,22 @@ impl Tok {
             Value::Null => TokVal::Null,
             _ => TokVal::Other,
         };
+        let bare = src.trim();
+        let mut chars = bare.chars();
+        let single_punct =
+            matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_punctuation());
         Tok {
             line: t.site.ri as u32,
             col: t.site.ci as u32,
-            val,
             digit: src.chars().any(|c| c.is_ascii_digit()),
             has_src: !src.is_empty(),
-            src_open: match src.trim() {
+            src_open: match bare {
                 "[" | ".[" => Some(true),
                 "{" | ".{" => Some(false),
                 _ => None,
             },
+            bare_punct: single_punct && matches!(&t.val, Value::String(v) if v == bare),
+            val,
         }
     }
 }
@@ -75,13 +83,36 @@ impl Tok {
 /// A token sink shared with a parser's token subscriber.
 pub type Capture = Arc<Mutex<Vec<Tok>>>;
 
+/// Could this token ever place a node? Punctuation standing for itself
+/// (`:` `,` `]`), bare whitespace and newlines, and the end-of-source
+/// token never match a key or a value, and roughly half of a JSON
+/// document's tokens are exactly those, so they are not kept.
+pub fn worth_keeping(tok: &Tok) -> bool {
+    if !tok.has_src {
+        return false;
+    }
+    if tok.src_open.is_some() {
+        return true;
+    }
+    match &tok.val {
+        TokVal::Other => false,
+        TokVal::Str(s) => !s.trim().is_empty() && !tok.bare_punct,
+        TokVal::Num(_) => tok.digit,
+        TokVal::Bool(_) | TokVal::Null => true,
+    }
+}
+
 /// Subscribe to the parser's token stream, returning the sink it fills.
 pub fn capture(parser: &mut Tabnas) -> Capture {
     let sink: Capture = Arc::new(Mutex::new(Vec::new()));
     let s2 = sink.clone();
     parser.subscribe_tokens(move |t: &Token| {
+        let tok = Tok::from_token(t);
+        if !worth_keeping(&tok) {
+            return;
+        }
         if let Ok(mut v) = s2.lock() {
-            v.push(Tok::from_token(t));
+            v.push(tok);
         }
     });
     sink
@@ -91,9 +122,10 @@ pub fn capture(parser: &mut Tabnas) -> Capture {
 /// accidental match of a synthesised value can do.
 const WINDOW: usize = 64;
 
-/// How far an opening bracket may sit past the cursor: a `:` or a `,`
-/// may stand between, nothing else.
-const OPEN_WINDOW: usize = 3;
+/// How far an opening bracket may sit past the cursor. Punctuation is not
+/// kept (see [`worth_keeping`]), so the bracket is the very next token; one
+/// more covers a grammar that emits a keyword token before it.
+const OPEN_WINDOW: usize = 2;
 
 /// Shortest string for which a containment match (the item found inside a
 /// longer token, as a Markdown text run sits inside its line) is accepted.
@@ -157,10 +189,10 @@ pub fn align(doc: &mut Doc, toks: &[Tok]) {
         if kind.is_container() {
             // A container with no key of its own (the root, an array
             // element) sits where its opening bracket was lexed. The
-            // bracket must be right at hand (past at most a `:` or `,`): a
-            // container a grammar synthesised, like the JSON Lines root
-            // array, has no bracket, and a wider look would seize the next
-            // nested container's and drag every later match off by one.
+            // bracket must be right at hand: a container a grammar
+            // synthesised, like the JSON Lines root array, has no bracket,
+            // and a wider look would seize the next nested container's and
+            // drag every later match off by one.
             if !placed {
                 if let Some(j) = find(cursor, OPEN_WINDOW, &|t| matches_open(t, &kind)) {
                     doc.nodes[i].line = toks[j].line;
@@ -288,6 +320,29 @@ mod tests {
         let lines: Vec<u32> = doc.nodes.iter().map(|n| n.line).collect();
         // root (from its first child), then each record's nodes on its own line
         assert_eq!(lines, vec![1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn punctuation_is_not_kept() {
+        let mut p = tabnas_json::make();
+        let sink = capture(&mut p);
+        p.parse(r#"{"a": [1, true, null], "b": "x", "c": "-"}"#)
+            .unwrap();
+        let toks = sink.lock().unwrap();
+        let vals: Vec<String> = toks
+            .iter()
+            .map(|t| match &t.val {
+                TokVal::Str(s) => s.clone(),
+                TokVal::Num(n) => n.to_string(),
+                TokVal::Bool(b) => b.to_string(),
+                TokVal::Null => "null".to_string(),
+                TokVal::Other => "?".to_string(),
+            })
+            .collect();
+        assert_eq!(
+            vals,
+            vec!["{", "a", "[", "1", "true", "null", "b", "x", "c", "-"]
+        );
     }
 
     #[test]

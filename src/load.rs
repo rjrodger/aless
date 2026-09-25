@@ -205,6 +205,10 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
     match outcome {
         Ok(Ok(value)) => {
             let mut doc = Doc::from_value(&value);
+            // The engine's tree is not needed past this point; letting it
+            // go before the alignment lowers the peak on a large document.
+            drop(value);
+            drop(parser);
             if let Ok(toks) = sink.lock() {
                 prov::align(&mut doc, &toks);
             }

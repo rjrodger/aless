@@ -206,6 +206,13 @@ fn main() {
         stdin_text = Some(String::from_utf8_lossy(&buf).into_owned());
     }
     for file in &args.files {
+        // The parse blocks; on a large file say so before the screen is
+        // taken over.
+        if let Ok(m) = std::fs::metadata(file) {
+            if m.len() > 4 << 20 {
+                eprintln!("aless: loading {} ({} MB)…", file.display(), m.len() >> 20);
+            }
+        }
         if file.as_os_str() == "-" {
             let mut buf = Vec::new();
             let _ = io::stdin().read_to_end(&mut buf);
