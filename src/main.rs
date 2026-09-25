@@ -105,11 +105,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
-            "-m" | "--mode" => match value(&s)?.as_str() {
-                "line" => args.opts.line_mode = true,
-                "data" => args.opts.line_mode = false,
-                v => return Err(format!("unknown mode: {v} (data or line)")),
-            },
+            "-m" | "--mode" => args.opts.line_mode = parse_mode(&value(&s)?)?,
             "--depth" => {
                 let v = value(&s)?;
                 args.opts.depth = Some(
@@ -149,7 +145,7 @@ fn parse_args() -> Result<Args, String> {
                             continue;
                         }
                         "--mode" => {
-                            args.opts.line_mode = v == "line";
+                            args.opts.line_mode = parse_mode(v)?;
                             continue;
                         }
                         "--depth" => {
@@ -183,6 +179,14 @@ fn parse_args() -> Result<Args, String> {
         args.opts.color = false;
     }
     Ok(args)
+}
+
+fn parse_mode(v: &str) -> Result<bool, String> {
+    match v {
+        "line" => Ok(true),
+        "data" => Ok(false),
+        v => Err(format!("unknown mode: {v} (data or line)")),
+    }
 }
 
 fn main() {
@@ -265,6 +269,11 @@ fn run(mut app: App, mouse: bool) -> io::Result<()> {
     // A panic anywhere must not leave the terminal in raw mode.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // A grammar panic is caught by the loader and shown as a load
+        // error; the terminal must stay as it is.
+        if aless::load::parse_in_progress() {
+            return;
+        }
         let _ = restore_terminal(mouse);
         default_hook(info);
     }));
@@ -285,7 +294,10 @@ fn run(mut app: App, mouse: bool) -> io::Result<()> {
     let mut out = io::BufWriter::new(io::stdout());
     let mut last_screen: Option<Screen> = None;
     loop {
-        apply_effects(&mut app, &mut watcher, &mut out, mouse)?;
+        if apply_effects(&mut app, &mut watcher, &mut out, mouse)? {
+            // The screen was left and re-entered: nothing on it survives.
+            last_screen = None;
+        }
         if app.quit {
             break;
         }
@@ -312,13 +324,16 @@ fn run(mut app: App, mouse: bool) -> io::Result<()> {
     restore_terminal(mouse)
 }
 
+/// Carry out the application's requests. Returns whether the terminal
+/// contents must be repainted from scratch.
 fn apply_effects(
     app: &mut App,
     watcher: &mut Option<FileWatcher>,
     out: &mut impl Write,
     mouse: bool,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let effects: Vec<Effect> = std::mem::take(&mut app.effects);
+    let mut repaint = false;
     for effect in effects {
         match effect {
             Effect::Watch(path) => {
@@ -335,10 +350,13 @@ fn apply_effects(
                 let how = aless::clip::copy(out, &text);
                 app.copied(&what, how);
             }
-            Effect::Suspend => suspend(mouse)?,
+            Effect::Suspend => {
+                suspend(mouse)?;
+                repaint = true;
+            }
         }
     }
-    Ok(())
+    Ok(repaint)
 }
 
 #[cfg(unix)]

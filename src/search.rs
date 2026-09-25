@@ -61,13 +61,16 @@ pub fn compile(input: &str) -> Result<Pattern, String> {
 /// A pattern that matches the object key `key` exactly, in the line-mode
 /// text search runs over (`"key": …`). Used by `*` and `#`.
 pub fn key_pattern(key: &str) -> Pattern {
-    let body = format!("\"{}\":", regex::escape(key));
+    // The text searched shows the key as `fmt::quote` renders it, escapes
+    // included, so the pattern is built from that same form.
+    let quoted = crate::fmt::quote(key);
+    let body = format!("{}:", regex::escape(&quoted));
     let regex = RegexBuilder::new(&body)
         .case_insensitive(false)
         .build()
         .expect("escaped key is a valid regex");
     Pattern {
-        input: format!("{}/s", crate::fmt::quote(key)),
+        input: format!("{quoted}/s"),
         regex,
     }
 }
@@ -156,5 +159,10 @@ mod tests {
         assert!(!p.regex.is_match("\"axb\": 1"));
         assert!(!p.regex.is_match("\"A.b\": 1"));
         assert!(!p.regex.is_match("\"x\": \"a.b\""));
+        // Keys with characters `quote` escapes match their rendered form.
+        for key in ["a\"b", "back\\slash", "tab\tkey", "ünï"] {
+            let text = format!("{}: 1", crate::fmt::quote(key));
+            assert!(key_pattern(key).regex.is_match(&text), "{key:?} vs {text}");
+        }
     }
 }

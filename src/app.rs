@@ -454,7 +454,8 @@ impl App {
             self.quit = true;
             return;
         }
-        let n = self.take_count();
+        let count = self.count.take();
+        let n = count.unwrap_or(1);
         let view = self.view();
         let half = (view.height / 2).max(1);
         match (key.code, key.ctrl) {
@@ -500,7 +501,7 @@ impl App {
             }
             (KeyCode::Char('$'), false) => self.tab().last_sibling(view),
             (KeyCode::Char('g'), false) => {
-                if self.count_was_given(n) {
+                if count.is_some() {
                     self.tab().goto_row(n, view);
                 } else {
                     self.tab().top(view);
@@ -508,7 +509,7 @@ impl App {
             }
             (KeyCode::Home, _) => self.tab().top(view),
             (KeyCode::Char('G'), false) => {
-                if self.count_was_given(n) {
+                if count.is_some() {
                     self.tab().goto_row(n, view);
                 } else {
                     self.tab().bottom(view);
@@ -518,11 +519,11 @@ impl App {
             (KeyCode::Char('f'), true) | (KeyCode::PageDown, _) => self.tab().page(n, true, view),
             (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => self.tab().page(n, false, view),
             (KeyCode::Char('d'), true) => {
-                let d = self.jump_distance(n, half);
+                let d = self.jump_distance(count, half);
                 self.tab().jump(d, true, view);
             }
             (KeyCode::Char('u'), true) => {
-                let d = self.jump_distance(n, half);
+                let d = self.jump_distance(count, half);
                 self.tab().jump(d, false, view);
             }
             (KeyCode::Char('e'), true) => self.tab().scroll_by(n as isize, view),
@@ -554,19 +555,15 @@ impl App {
         }
     }
 
-    /// `n` came from a typed count rather than the default of 1. (The count
-    /// was already taken; `1` typed explicitly is treated as no count, as
-    /// jless does for `g`.)
-    fn count_was_given(&self, n: usize) -> bool {
-        n != 1
-    }
-
-    fn jump_distance(&mut self, n: usize, half: usize) -> usize {
-        if self.count_was_given(n) {
-            self.last_jump = Some(n);
-            n
-        } else {
-            self.last_jump.unwrap_or(half)
+    /// The distance for `C-d`/`C-u`: a typed count sets it and is
+    /// remembered, as in vim; otherwise the last one, else half a page.
+    fn jump_distance(&mut self, count: Option<usize>, half: usize) -> usize {
+        match count {
+            Some(n) => {
+                self.last_jump = Some(n);
+                n
+            }
+            None => self.last_jump.unwrap_or(half),
         }
     }
 
@@ -824,6 +821,8 @@ impl App {
             "h" | "help" => self.show_help(),
             "set" | "se" => self.set_option(rest),
             "w" | "write" => self.write_file(rest, bang),
+            // `:e!` (the bang was split off above) reloads, as in vim.
+            "e" | "edit" if bang && rest.is_empty() => self.reload_active(),
             "open" | "o" | "e" | "edit" | "tabnew" | "tabe" | "tabedit" => self.cmd_open(rest),
             "tab" | "tabn" | "tabnext" | "next" | "n" if !rest.is_empty() => {
                 match rest.parse::<usize>() {
@@ -843,7 +842,7 @@ impl App {
                 "off" | "false" | "0" => self.toggle_watch(Some(false)),
                 _ => self.error("usage: :watch [on|off]"),
             },
-            "r" | "reload" | "e!" => self.reload_active(),
+            "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
                 Some(f) => match self.tab().reformat(f, view) {
                     Ok(()) => self.info(format!("Parsed as {f}")),
@@ -1023,6 +1022,7 @@ impl App {
             self.effects.push(Effect::Watch(path));
             self.info("Watching");
         } else {
+            tab.reload_due = None;
             self.effects.push(Effect::Unwatch(path));
             self.info("Not watching");
         }
@@ -1083,7 +1083,7 @@ impl App {
 
     /// Is a reload pending, so the terminal loop should tick soon?
     pub fn reload_pending(&self) -> bool {
-        self.tabs.iter().any(|t| t.reload_due.is_some())
+        self.tabs.iter().any(|t| t.watch && t.reload_due.is_some())
     }
 
     // ----- overlays --------------------------------------------------------------------------
@@ -1322,6 +1322,9 @@ mod tests {
         assert_eq!(path(&mut app), ".b[1]");
         keys(&mut app, "G");
         assert_eq!(path(&mut app), ".h");
+        keys(&mut app, "1G");
+        assert_eq!(path(&mut app), "", "an explicit count of one is a count");
+        keys(&mut app, "G");
         keys(&mut app, "gg");
         assert_eq!(path(&mut app), "");
         keys(&mut app, "12345678901234");
@@ -1513,6 +1516,18 @@ mod tests {
         assert_eq!(app.tab().doc.len(), 4);
         keys(&mut app, "r");
         assert_eq!(app.tab().doc.len(), 2);
+        // `:e!` reloads too.
+        std::fs::write(&p, r#"{"a": 1, "z": 26}"#).unwrap();
+        app.run_command("e!");
+        assert_eq!(app.tab().doc.len(), 3);
+        assert!(app.message.as_ref().unwrap().text.starts_with("Reloaded"));
+        // Turning watching off during the debounce drops the pending reload.
+        keys(&mut app, "W");
+        assert!(app.tab().watch);
+        app.handle(Input::FileChanged(p.clone()));
+        assert!(app.reload_pending());
+        keys(&mut app, "W");
+        assert!(!app.reload_pending(), "no wake-ups for an unwatched tab");
     }
 
     #[test]

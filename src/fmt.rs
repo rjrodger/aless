@@ -292,7 +292,19 @@ pub fn path_bracket(path: &[Key]) -> String {
     out
 }
 
-/// `.foo[3].bar` in jq's syntax; non-identifier keys become `."weird key"`.
+/// Can jq's `.field` shorthand take this key bare? jq is stricter than
+/// JavaScript: ASCII letters, digits and underscores only.
+pub fn is_jq_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `.foo[3].bar` in jq's syntax; keys jq cannot take bare become
+/// `."weird key"`.
 pub fn path_jq(path: &[Key]) -> String {
     let mut out = String::new();
     for k in path {
@@ -301,7 +313,7 @@ pub fn path_jq(path: &[Key]) -> String {
             Key::Index(i) => out.push_str(&format!("[{i}]")),
             Key::Name(n) => {
                 out.push('.');
-                if is_identifier(n) {
+                if is_jq_identifier(n) {
                     out.push_str(n);
                 } else {
                     out.push_str(&quote(n));
@@ -395,6 +407,13 @@ mod tests {
         assert_eq!(path_bracket(&p), r#"["foo"][3]["bar baz"]"#);
         assert_eq!(path_jq(&p), r#".foo[3]."bar baz""#);
         assert_eq!(path_jq(&[]), ".");
+        // jq takes fewer keys bare than JavaScript does.
+        let jq = |k: &str| path_jq(&[Key::Name(k.into())]);
+        assert_eq!(jq("a_b1"), ".a_b1");
+        assert_eq!(jq("$foo"), r#"."$foo""#);
+        assert_eq!(jq("é"), r#"."é""#);
+        assert_eq!(jq("1a"), r#"."1a""#);
+        assert_eq!(path_dot(&[Key::Name("$foo".into())]), ".$foo");
         assert_eq!(path_dot(&[]), "");
     }
 

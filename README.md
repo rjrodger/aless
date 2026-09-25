@@ -37,11 +37,13 @@ listed [below](#deviations-from-jless).
 Rust 1.86 or newer and git:
 
 ```bash
-cargo install --git https://github.com/rjrodger/aless aless
+cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
 The tabnas crates are not on crates.io yet, so `Cargo.toml` takes them
-straight from GitHub, pinned by `Cargo.lock` (see [Dependencies](#dependencies)).
+straight from GitHub, pinned by `Cargo.lock` (see [Dependencies](#dependencies));
+`--locked` makes `cargo install` honour those pins instead of resolving
+each repository's current head.
 Build from a checkout with `cargo build --release`; the binary is
 `target/release/aless`.
 

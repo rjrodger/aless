@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tabnas::Tabnas;
 
@@ -191,6 +192,30 @@ pub fn lines(src: &str) -> Vec<&str> {
     out
 }
 
+static CATCHING: AtomicUsize = AtomicUsize::new(0);
+
+/// Is a grammar running under [`parse`]'s panic guard right now? A panic
+/// hook (the terminal's, which restores the screen) should stand down
+/// then: the panic is caught and reported as a [`LoadError`].
+pub fn parse_in_progress() -> bool {
+    CATCHING.load(Ordering::SeqCst) > 0
+}
+
+struct CatchGuard;
+
+impl CatchGuard {
+    fn enter() -> CatchGuard {
+        CATCHING.fetch_add(1, Ordering::SeqCst);
+        CatchGuard
+    }
+}
+
+impl Drop for CatchGuard {
+    fn drop(&mut self) {
+        CATCHING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Parse `src` as `format`.
 pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
@@ -199,9 +224,12 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
     };
     let sink = prov::capture(&mut parser);
     // A grammar is a plugin; a defect in one must not take the viewer down.
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        parser.parse(src).map_err(Box::new)
-    }));
+    let outcome = {
+        let _guard = CatchGuard::enter();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            parser.parse(src).map_err(Box::new)
+        }))
+    };
     match outcome {
         Ok(Ok(value)) => {
             let mut doc = Doc::from_value(&value);
@@ -262,6 +290,16 @@ pub fn load_path(path: &Path, format: Option<Format>) -> Result<Loaded, LoadErro
 mod tests {
     use super::*;
     use crate::doc::{Key, Kind};
+
+    #[test]
+    fn catch_guard_marks_the_parse() {
+        assert!(!parse_in_progress());
+        {
+            let _g = CatchGuard::enter();
+            assert!(parse_in_progress());
+        }
+        assert!(!parse_in_progress());
+    }
 
     #[test]
     fn detection() {

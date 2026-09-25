@@ -104,8 +104,12 @@ impl Line {
         Line::default()
     }
 
+    /// Append text. Control characters (C0, DEL, C1) never reach the
+    /// terminal: a file name or a string value carrying an escape sequence
+    /// must not be able to drive it. A tab becomes a space and every other
+    /// control character the replacement character.
     pub fn push(&mut self, text: impl Into<String>, style: Style) -> &mut Line {
-        let text = text.into();
+        let text = sanitize(text.into());
         if !text.is_empty() {
             self.spans.push(Span { text, style });
         }
@@ -167,6 +171,21 @@ impl Screen {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// Replace control characters so that rendered text cannot carry terminal
+/// escape sequences.
+pub fn sanitize(text: String) -> String {
+    if !text.chars().any(char::is_control) {
+        return text;
+    }
+    text.chars()
+        .map(|c| match c {
+            '\t' => ' ',
+            c if c.is_control() => '\u{fffd}',
+            c => c,
+        })
+        .collect()
 }
 
 /// The leading part of `s` that fits in `width` columns, and its width.
@@ -591,10 +610,21 @@ fn prompt_line(app: &mut App, width: usize) -> (Line, Option<usize>) {
                 PromptKind::Command => ':',
                 PromptKind::Search(d) => d.prompt(),
             };
+            // Show the part of the buffer around the cursor: a long path or
+            // pattern scrolls rather than hiding what is being typed.
+            let chars: Vec<char> = app.prompt.buf.chars().collect();
+            let at = app.prompt.cursor.min(chars.len());
+            let avail = width.saturating_sub(1).max(1);
+            let width_of = |from: usize| -> usize {
+                chars[from..at].iter().map(|c| c.width().unwrap_or(0)).sum()
+            };
+            let mut start = 0;
+            while start < at && width_of(start) >= avail {
+                start += 1;
+            }
             line.push(prefix.to_string(), Style::PLAIN);
-            line.push(&app.prompt.buf, Style::PLAIN);
-            let before: String = app.prompt.buf.chars().take(app.prompt.cursor).collect();
-            cursor = Some((1 + before.width()).min(width.saturating_sub(1)));
+            line.push(chars[start..].iter().collect::<String>(), Style::PLAIN);
+            cursor = Some((1 + width_of(start)).min(width.saturating_sub(1)));
         }
         _ => {
             if let Some(m) = &app.message {
@@ -771,6 +801,59 @@ mod tests {
             text.contains(" bad.json"),
             "the title survives a long error: {text}"
         );
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_screen() {
+        let mut a = App::new(Options::default(), 40, 8);
+        a.open_source(
+            "evil\x1b]52;c;spoof\x07.json",
+            "{\"k\": \"a\\u001bb\"}".into(),
+            Format::Json,
+        );
+        let s = render(&mut a);
+        let all: String = s.lines.iter().map(|l| l.text()).collect();
+        assert!(!all.chars().any(char::is_control), "{all:?}");
+        assert!(
+            all.contains("evil\u{fffd}]52;c;spoof\u{fffd}.json"),
+            "{all}"
+        );
+        assert_eq!(sanitize("a\tb\u{7f}c\u{85}".into()), "a b\u{fffd}c\u{fffd}");
+    }
+
+    #[test]
+    fn long_prompts_scroll_to_the_cursor() {
+        let mut a = app("1", 20, 6);
+        a.handle(Input::Key(Key::ch(':')));
+        for c in "open /a/very/long/path/to/some/file.json".chars() {
+            a.handle(Input::Key(Key::ch(c)));
+        }
+        let s = render(&mut a);
+        let (col, _) = s.cursor.unwrap();
+        assert!(col < 20, "cursor stays on screen: {col}");
+        let text = s.lines[5].text();
+        assert!(
+            text.trim_end().ends_with("file.json"),
+            "the tail is shown: {text:?}"
+        );
+        for _ in 0..12 {
+            a.handle(Input::Key(Key::code(crate::app::KeyCode::Left)));
+        }
+        let s = render(&mut a);
+        let text = s.lines[5].text();
+        assert!(
+            text.ends_with("to/som"),
+            "the window follows the cursor left: {text:?}"
+        );
+        assert_eq!(
+            s.cursor.unwrap().0,
+            19,
+            "the cursor sits on its character in the last column"
+        );
+        a.handle(Input::Key(Key::code(crate::app::KeyCode::Home)));
+        let s = render(&mut a);
+        assert_eq!(s.cursor.unwrap().0, 1);
+        assert!(s.lines[5].text().starts_with(":open"));
     }
 
     #[test]
