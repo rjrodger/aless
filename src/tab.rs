@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use crate::doc::{row_of, Doc, Key, NodeId, Row};
+use crate::explorer::Explorer;
 use crate::fmt;
 use crate::load::{self, Format, LoadError, Loaded};
 use crate::search::{Direction, Pattern};
@@ -87,6 +88,8 @@ pub struct Tab {
     pub search: Option<Search>,
     /// Source-view scroll offset (first shown line, 0-based).
     pub source_scroll: usize,
+    /// Set when this tab shows a directory tree rather than a document.
+    pub explorer: Option<Explorer>,
 }
 
 impl Tab {
@@ -115,7 +118,26 @@ impl Tab {
             reload_due: None,
             search: None,
             source_scroll: 0,
+            explorer: None,
         }
+    }
+
+    /// A tab exploring a directory.
+    pub fn explore(id: u64, dir: &Path, show_hidden: bool) -> Tab {
+        let ex = Explorer::open(dir, show_hidden);
+        let loaded = Loaded {
+            doc: ex.build(),
+            format: Format::Text,
+            source: String::new(),
+        };
+        let mut tab = Tab::new(
+            id,
+            crate::explorer::title_of(&ex.root),
+            Some(ex.root.clone()),
+            loaded,
+        );
+        tab.explorer = Some(ex);
+        tab
     }
 
     /// A tab for a file that failed to load: an empty document, the error,
@@ -684,6 +706,10 @@ impl Tab {
     /// by path, else by its nearest surviving ancestor and, within that, the
     /// node nearest the old source line; the focus keeps its screen line.
     pub fn reload(&mut self, view: View) {
+        if self.explorer.is_some() {
+            self.explorer_refresh(view);
+            return;
+        }
         let Some(path) = self.path.clone() else {
             return;
         };
@@ -797,10 +823,141 @@ impl Tab {
     /// Has the file changed since the last stamp? (`None` when there is no
     /// file or it cannot be read.)
     pub fn stamp_changed(&self) -> bool {
+        if let Some(ex) = &self.explorer {
+            return ex.changed();
+        }
         match &self.path {
             Some(p) => Stamp::of(p) != self.stamp,
             None => false,
         }
+    }
+
+    // ----- explorer --------------------------------------------------------------
+
+    /// List whatever the expanded directories need and rebuild if anything
+    /// was read. True when the tree changed.
+    pub fn explorer_sync(&mut self, view: View) -> bool {
+        let Some(ex) = self.explorer.as_mut() else {
+            return false;
+        };
+        let dirs: Vec<PathBuf> = self
+            .doc
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_container() && n.expanded)
+            .map(|(i, _)| ex.fs_path(&self.doc.path(i as NodeId)))
+            .collect();
+        let mut changed = false;
+        for dir in dirs {
+            changed |= ex.ensure_children_listed(&dir);
+        }
+        if changed {
+            self.rebuild_explorer(view);
+        }
+        changed
+    }
+
+    /// Re-read every listed directory and rebuild, keeping the place. A
+    /// directory that appeared under an expanded one is listed too, so it
+    /// gets its preview rather than a placeholder.
+    pub fn explorer_refresh(&mut self, view: View) {
+        if let Some(ex) = self.explorer.as_mut() {
+            ex.relist_all();
+            self.rebuild_explorer(view);
+            self.explorer_sync(view);
+            self.generation += 1;
+            self.reload_due = None;
+        }
+    }
+
+    fn rebuild_explorer(&mut self, view: View) {
+        let Some(ex) = self.explorer.as_ref() else {
+            return;
+        };
+        let doc = ex.build();
+        self.apply(
+            Loaded {
+                doc,
+                format: Format::Text,
+                source: String::new(),
+            },
+            view,
+        );
+    }
+
+    /// Show or hide dot-files.
+    pub fn set_show_hidden(&mut self, show: bool, view: View) {
+        if let Some(ex) = self.explorer.as_mut() {
+            if ex.show_hidden != show {
+                ex.show_hidden = show;
+                self.rebuild_explorer(view);
+                self.explorer_sync(view);
+            }
+        }
+    }
+
+    /// Make `dir` the explorer's root. Listings already read are kept, the
+    /// folds under the old root survive when it sits inside the new one,
+    /// and the focus stays on the same entry.
+    pub fn reroot(&mut self, dir: &Path, view: View) {
+        let Some(old) = self.explorer.take() else {
+            return;
+        };
+        let old_root = old.root.clone();
+        let show_hidden = old.show_hidden;
+        let mut ex = Explorer::open(dir, show_hidden);
+        ex.adopt_listings(old);
+        // The old root's place under the new one, as node-path keys.
+        let prefix: Vec<Key> = old_root
+            .strip_prefix(&ex.root)
+            .map(|rel| {
+                rel.iter()
+                    .map(|s| Key::Name(s.to_string_lossy().as_ref().into()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let focused = self.focused_row().map(|r| self.doc.path(r.node));
+        let expanded: Vec<Vec<Key>> = self
+            .doc
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_foldable() && n.expanded)
+            .map(|(i, _)| self.doc.path(i as NodeId))
+            .collect();
+        let mut doc = ex.build();
+        let mut target: NodeId = 0;
+        if !prefix.is_empty() && old_root.starts_with(&ex.root) {
+            for p in expanded {
+                let mut q = prefix.clone();
+                q.extend(p);
+                if let Some(id) = doc.resolve(&q) {
+                    doc.set_expanded(id, true);
+                }
+            }
+            for i in 1..=prefix.len() {
+                if let Some(id) = doc.resolve(&prefix[..i]) {
+                    doc.set_expanded(id, true);
+                    target = id;
+                }
+            }
+            if let Some(f) = focused {
+                let mut q = prefix.clone();
+                q.extend(f);
+                if let Some(id) = doc.resolve(&q) {
+                    target = id;
+                }
+            }
+        }
+        self.doc = doc;
+        self.rows_dirty = true;
+        self.path = Some(ex.root.clone());
+        self.title = crate::explorer::title_of(&ex.root);
+        self.stamp = Stamp::of(&ex.root);
+        self.explorer = Some(ex);
+        self.focus_node(target, view);
+        self.explorer_sync(view);
     }
 
     pub fn watchable(&self) -> bool {
@@ -1117,6 +1274,40 @@ mod tests {
         t.reload(view);
         assert!(!t.gone && t.error.is_none());
         assert_eq!(t.doc.node(1).kind, Kind::Number(2.0));
+    }
+
+    #[test]
+    fn explorer_refresh_lists_new_subdirectories() {
+        let dir = std::env::temp_dir().join(format!("aless-tab-explorer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a").join("seed.txt"), "s").unwrap();
+        let view = View::new(10, 1);
+        let mut t = Tab::explore(1, &dir, false);
+        // Expand the root's child `a`, then add a directory inside it.
+        let a = t.doc.resolve(&[Key::Name("a".into())]).unwrap();
+        t.focus_node(a, view);
+        t.toggle(view);
+        assert!(t.doc.node(a).expanded);
+        t.explorer_sync(view);
+        std::fs::create_dir_all(dir.join("a").join("fresh").join("inner")).unwrap();
+        t.explorer_refresh(view);
+        let ex = t.explorer.as_ref().unwrap();
+        let fresh = ex.root.join("a").join("fresh");
+        assert!(
+            ex.is_listed(&fresh),
+            "a new child of an expanded directory is listed"
+        );
+        let node = t
+            .doc
+            .resolve(&[Key::Name("a".into()), Key::Name("fresh".into())])
+            .unwrap();
+        let kids: Vec<&str> = t
+            .doc
+            .children(node)
+            .map(|c| t.doc.node(c).key.name().unwrap())
+            .collect();
+        assert_eq!(kids, vec!["inner"], "no placeholder: {kids:?}");
     }
 
     #[test]

@@ -175,6 +175,8 @@ pub struct Options {
     /// Fold new documents to this depth (`None`: everything expanded).
     pub depth: Option<u32>,
     pub color: bool,
+    /// The explorer shows dot-files.
+    pub show_hidden: bool,
 }
 
 impl Default for Options {
@@ -189,6 +191,7 @@ impl Default for Options {
             indent: 2,
             depth: None,
             color: true,
+            show_hidden: false,
         }
     }
 }
@@ -296,9 +299,11 @@ impl App {
 
     fn adopt(&mut self, mut tab: Tab) {
         let view = self.view();
-        tab.line_mode = self.opts.line_mode;
-        if let Some(d) = self.opts.depth {
-            tab.expand_to_depth(d, view);
+        if tab.explorer.is_none() {
+            tab.line_mode = self.opts.line_mode;
+            if let Some(d) = self.opts.depth {
+                tab.expand_to_depth(d, view);
+            }
         }
         if self.opts.watch && tab.watchable() {
             tab.watch = true;
@@ -311,8 +316,13 @@ impl App {
     }
 
     /// Open a file in a new tab (a failed load still gets a tab, showing
-    /// the error and watching for a fix).
+    /// the error and watching for a fix). A directory opens in the
+    /// explorer.
     pub fn open_path(&mut self, path: &Path, format: Option<Format>) {
+        if path.is_dir() {
+            self.open_explorer(path);
+            return;
+        }
         let id = self.next_id;
         self.next_id += 1;
         let tab = Tab::open(id, path, format);
@@ -320,6 +330,15 @@ impl App {
             self.error(format!("{}: {}", tab.title, e));
         }
         self.adopt(tab);
+    }
+
+    /// Open a directory tree in a new explorer tab.
+    pub fn open_explorer(&mut self, dir: &Path) {
+        let id = self.next_id;
+        self.next_id += 1;
+        let tab = Tab::explore(id, dir, self.opts.show_hidden);
+        self.adopt(tab);
+        self.explorer_sync();
     }
 
     /// Open in-memory text (stdin) in a new tab.
@@ -458,6 +477,24 @@ impl App {
         let n = count.unwrap_or(1);
         let view = self.view();
         let half = (view.height / 2).max(1);
+        if self.tab().explorer.is_some() {
+            match (key.code, key.ctrl) {
+                (KeyCode::Enter, false) => {
+                    self.explorer_enter();
+                    return;
+                }
+                (KeyCode::Char('-'), false) => {
+                    self.explorer_parent();
+                    return;
+                }
+                // Line mode, bracket matching and the source view mean
+                // nothing for a directory tree.
+                (KeyCode::Char('m'), false)
+                | (KeyCode::Char('%'), false)
+                | (KeyCode::Char('s'), false) => return,
+                _ => {}
+            }
+        }
         match (key.code, key.ctrl) {
             (KeyCode::Char('c'), true) => self.quit = true,
             (KeyCode::Char('z'), true) => self.effects.push(Effect::Suspend),
@@ -553,6 +590,107 @@ impl App {
             (KeyCode::Char('s'), false) => self.show_source(),
             _ => {}
         }
+        self.explorer_sync();
+    }
+
+    // ----- explorer ------------------------------------------------------------------
+
+    /// After a fold change in an explorer tab, list what the expanded
+    /// directories need.
+    fn explorer_sync(&mut self) {
+        if self.tabs.is_empty() || self.tab().explorer.is_none() {
+            return;
+        }
+        let view = self.view();
+        let tab = self.tab();
+        tab.explorer_sync(view);
+        let capped = tab.explorer.as_ref().is_some_and(|ex| ex.capped);
+        if capped {
+            self.error(format!(
+                "Listing stopped at {} directories; collapse some to go on",
+                crate::explorer::MAX_LISTED
+            ));
+        }
+    }
+
+    /// `Enter` in the explorer: open a file in a new tab, toggle a
+    /// directory.
+    fn explorer_enter(&mut self) {
+        let view = self.view();
+        let tab = self.tab();
+        let node = tab.focused_node();
+        let path = tab.doc.path(node);
+        let Some(ex) = tab.explorer.as_ref() else {
+            return;
+        };
+        if path.is_empty() {
+            return;
+        }
+        let fs_path = ex.fs_path(&path);
+        match ex.entry(&path).map(|e| e.kind.clone()) {
+            Some(crate::explorer::EntryKind::Dir) => {
+                tab.toggle(view);
+                self.explorer_sync();
+            }
+            Some(crate::explorer::EntryKind::File) => self.open_path(&fs_path, None),
+            Some(crate::explorer::EntryKind::Symlink(_)) => match std::fs::metadata(&fs_path) {
+                Ok(m) if m.is_file() || m.is_dir() => self.open_path(&fs_path, None),
+                _ => self.error(format!("{}: dangling link", fs_path.display())),
+            },
+            Some(crate::explorer::EntryKind::Other) => {
+                self.error(format!("{}: not a regular file", fs_path.display()))
+            }
+            None => {}
+        }
+    }
+
+    /// `-` in the explorer: make the parent directory the root.
+    fn explorer_parent(&mut self) {
+        let tab = self.tab();
+        let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
+            return;
+        };
+        match root.parent() {
+            Some(parent) => {
+                let parent = parent.to_path_buf();
+                self.reroot_active(&parent);
+            }
+            None => self.error("Already at the top of the filesystem"),
+        }
+    }
+
+    /// Re-root the active explorer, moving its watch to the new root.
+    fn reroot_active(&mut self, dir: &Path) {
+        let view = self.view();
+        let tab = self.tab();
+        let old = tab.path.clone();
+        tab.reroot(dir, view);
+        let new = tab.path.clone();
+        let watched = tab.watch;
+        if watched && old != new {
+            if let Some(p) = old {
+                self.effects.push(Effect::Unwatch(p));
+            }
+            if let Some(p) = new {
+                self.effects.push(Effect::Watch(p));
+            }
+        }
+        self.explorer_sync();
+    }
+
+    /// `:cd DIR` in an explorer tab: re-root, relative to the current root.
+    fn explorer_cd(&mut self, dir: &str) {
+        let tab = self.tab();
+        let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
+            self.open_explorer(Path::new(dir));
+            return;
+        };
+        let target = root.join(dir);
+        if !target.is_dir() {
+            self.error(format!("{}: not a directory", target.display()));
+            return;
+        }
+        self.reroot_active(&target);
     }
 
     /// The distance for `C-d`/`C-u`: a typed count sets it and is
@@ -618,6 +756,20 @@ impl App {
         let node: NodeId = tab.focused_node();
         let doc = &tab.doc;
         let n = doc.node(node);
+        if let Some(ex) = &tab.explorer {
+            // In the explorer every path target is the filesystem path.
+            return Ok(match target {
+                YankTarget::Key => match n.key.name() {
+                    Some(k) => k.to_string(),
+                    None => ex.root.display().to_string(),
+                },
+                YankTarget::Str => match &n.kind {
+                    Kind::Str(s) => s.to_string(),
+                    _ => return Err("Focused entry is a directory".to_string()),
+                },
+                _ => ex.fs_path(&doc.path(node)).display().to_string(),
+            });
+        }
         Ok(match target {
             YankTarget::Pretty => fmt::to_json_pretty(doc, node, 2),
             YankTarget::Line => fmt::to_json_line(doc, node),
@@ -816,6 +968,12 @@ impl App {
             None => (cmd, false),
         };
         match cmd {
+            // Document-only commands mean nothing for a directory tree.
+            "source" | "src" | "mode" | "format" | "kind" | "ft" | "filetype"
+                if self.tab().explorer.is_some() =>
+            {
+                self.error(format!(":{cmd} applies to a document, not to the explorer"))
+            }
             "q" | "close" | "tabclose" => self.close_tab(),
             "qa" | "qall" | "quit" | "quitall" | "exit" => self.quit = true,
             "h" | "help" => self.show_help(),
@@ -872,6 +1030,21 @@ impl App {
                 Err(_) => self.error("usage: :line <n>"),
             },
             "source" | "src" => self.show_source(),
+            "explore" | "explorer" | "browse" | "files" => {
+                let dir = if rest.is_empty() { "." } else { rest };
+                if !Path::new(dir).is_dir() {
+                    self.error(format!("{dir}: not a directory"));
+                } else {
+                    self.open_explorer(Path::new(dir));
+                }
+            }
+            "cd" => {
+                if rest.is_empty() {
+                    self.error("usage: :cd <dir>");
+                } else {
+                    self.explorer_cd(rest);
+                }
+            }
             "mode" => match rest {
                 "line" => {
                     if !self.tab().line_mode {
@@ -911,6 +1084,18 @@ impl App {
                 ("nowatch", None) => self.toggle_watch(Some(false)),
                 ("ascii", None) => self.opts.ascii = true,
                 ("noascii", None) => self.opts.ascii = false,
+                ("hidden" | "nohidden" | "hidden!", None) => {
+                    let show = match name {
+                        "hidden" => true,
+                        "nohidden" => false,
+                        _ => !self.opts.show_hidden,
+                    };
+                    self.opts.show_hidden = show;
+                    let view = self.view();
+                    for t in &mut self.tabs {
+                        t.set_show_hidden(show, view);
+                    }
+                }
                 ("scrolloff" | "so", Some(v)) => match v.parse() {
                     Ok(n) => self.opts.scrolloff = n,
                     Err(_) => self.error(format!("Not a number: {v}")),
@@ -1251,9 +1436,18 @@ COPY AND PRINT  (y copies, p prints to the screen)
   yk pk   key                      yp pP   path .a[0].b      yb pb   ["a"][0]["b"]
   yq pq   jq path
 
+EXPLORER  (aless DIR, or aless alone for the current directory)
+  the directory tree uses the same keys: l / Space expand a directory (its
+  contents are listed as you go), h collapses, / searches the listed names
+  Enter     open the file under the cursor in a new tab (toggle a directory)
+  -         go up: the parent directory becomes the root
+  :cd DIR   change the root     :explore [DIR]   open another directory tab
+  :set hidden | nohidden | hidden!   show dot-files (also --hidden)
+  yp        copy the entry's filesystem path
+
 TABS, FILES AND WATCHING
   Tab / Shift-Tab   next / previous tab      :tab N   go to tab N
-  :open PATH [FORMAT]   open a file in a new tab (:e is an alias)
+  :open PATH [FORMAT]   open a file (or a directory) in a new tab (:e is an alias)
   q / :q    close the tab (the last one closed quits)   :qa / :quit   quit
   W / :watch on|off   toggle reloading the tab when its file changes
   r / :reload         reload now
@@ -1560,6 +1754,143 @@ mod tests {
         assert!(app.message.as_ref().unwrap().error);
         keys(&mut app, "q");
         assert!(app.quit);
+    }
+
+    fn tree(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aless-app-explorer-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub/deep")).unwrap();
+        std::fs::write(dir.join("a.json"), "{\"a\": 1}").unwrap();
+        std::fs::write(dir.join(".hidden.json"), "{}").unwrap();
+        std::fs::write(dir.join("sub/c.toml"), "c = 3\n").unwrap();
+        std::fs::write(dir.join("sub/deep/x.txt"), "x\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn explorer_browses_lists_and_opens() {
+        let dir = tree("browse");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_path(&dir, None);
+        assert!(app.tab().explorer.is_some());
+        assert_eq!(
+            app.tab().title,
+            format!("{}/", dir.file_name().unwrap().to_string_lossy())
+        );
+        // root, sub (collapsed), a.json
+        assert_eq!(app.tab().row_count(), 3);
+        keys(&mut app, "j");
+        assert_eq!(path(&mut app), ".sub");
+        keys(&mut app, "l"); // expand: deep gets listed for its preview
+        assert_eq!(app.tab().row_count(), 5);
+        let ex = app.tab().explorer.as_ref().unwrap();
+        assert!(ex.is_listed(&ex.root.join("sub").join("deep")));
+        keys(&mut app, "j");
+        assert_eq!(path(&mut app), ".sub.deep");
+        app.handle(Input::Key(Key::code(KeyCode::Enter))); // toggle a directory
+        assert_eq!(path(&mut app), ".sub.deep");
+        assert_eq!(app.tab().row_count(), 6);
+        // Search finds a listed name; Enter on the file opens it in a new tab.
+        keys(&mut app, "/x.txt");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(path(&mut app), ".sub.deep[\"x.txt\"]");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.active, 1);
+        assert_eq!(app.tab().format, Format::Text);
+        assert!(app.tab().explorer.is_none());
+        // yp in the explorer copies the filesystem path.
+        app.handle(Input::Key(Key::code(KeyCode::BackTab)));
+        keys(&mut app, "yp");
+        match app.effects.pop() {
+            Some(Effect::Copy { text, .. }) => {
+                assert!(text.ends_with("x.txt") && text.contains("deep"))
+            }
+            e => panic!("{e:?}"),
+        }
+        // :set hidden shows the dot-file; nohidden hides it again.
+        app.run_command("set hidden");
+        assert_eq!(app.tab().doc.root().children, 3);
+        app.run_command("set nohidden");
+        assert_eq!(app.tab().doc.root().children, 2);
+    }
+
+    #[test]
+    fn explorer_parent_and_refresh() {
+        let dir = tree("parent");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_explorer(&dir.join("sub"));
+        keys(&mut app, "jl"); // expand deep
+        assert_eq!(path(&mut app), ".deep");
+        keys(&mut app, "-"); // up to the tree root: sub is expanded, deep still expanded, focus kept
+        let root = app.tab().explorer.as_ref().unwrap().root.clone();
+        assert_eq!(
+            root,
+            crate::explorer::simplify(std::fs::canonicalize(&dir).unwrap())
+        );
+        assert_eq!(path(&mut app), ".sub.deep");
+        assert!(
+            app.tab().row_count() >= 6,
+            "sub and deep stay open: {}",
+            app.tab().row_count()
+        );
+        // A new file appears on the next tick.
+        std::fs::write(dir.join("sub/new.yaml"), "n: 1\n").unwrap();
+        app.handle(Input::FileChanged(dir.join("sub")));
+        app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
+        assert!(app
+            .tab()
+            .doc
+            .resolve(&[
+                crate::doc::Key::Name("sub".into()),
+                crate::doc::Key::Name("new.yaml".into())
+            ])
+            .is_some());
+        assert_eq!(
+            path(&mut app),
+            ".sub.deep",
+            "the focus survives the refresh"
+        );
+        // :cd re-roots; -, at the filesystem root, complains.
+        app.run_command("cd sub/deep");
+        assert!(app.tab().explorer.as_ref().unwrap().root.ends_with("deep"));
+        assert_eq!(app.tab().doc.root().children, 1);
+        app.run_command("cd nowhere");
+        assert!(app.message.as_ref().unwrap().error);
+        // Document-only commands are refused in the explorer.
+        let rows = app.tab().row_count();
+        for cmd in ["mode line", "format text", "source"] {
+            app.run_command(cmd);
+            assert!(app.message.as_ref().unwrap().error, "{cmd}");
+            assert_eq!(app.mode, Mode::Browse, "{cmd}");
+        }
+        assert_eq!(app.tab().row_count(), rows);
+        assert!(!app.tab().line_mode);
+        assert!(app.tab().explorer.is_some());
+    }
+
+    #[test]
+    fn rerooting_moves_the_watch() {
+        let dir = tree("rewatch");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_explorer(&dir.join("sub"));
+        assert!(app.tab().watch);
+        let old = app.tab().path.clone().unwrap();
+        app.effects.clear();
+        keys(&mut app, "-");
+        let new = app.tab().path.clone().unwrap();
+        assert_ne!(old, new);
+        assert_eq!(
+            app.effects,
+            vec![Effect::Unwatch(old.clone()), Effect::Watch(new.clone())]
+        );
+        app.effects.clear();
+        app.run_command("cd sub");
+        assert_eq!(app.effects, vec![Effect::Unwatch(new), Effect::Watch(old)]);
     }
 
     #[test]

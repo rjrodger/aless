@@ -33,7 +33,8 @@ records what it borrows from jless and from the AQL aless.
   (crossterm) and the only one with platform-specific code. Everything
   in the library is terminal-free and unit tested: `doc` (the arena
   model and rows), `fmt` (text forms, previews, JSON output, paths),
-  `load` (format detection, the grammars, errors), `prov` (source
+  `load` (format detection, the grammars, errors), `explorer` (directory
+  trees as documents, listed lazily), `prov` (source
   positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,
   tabs, watch scheduling), `render` (the screen as styled lines),
