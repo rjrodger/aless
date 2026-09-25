@@ -81,7 +81,9 @@ fn json_positions_match_the_file() {
         doc.node(version).line,
         line_of("nested.json", "\"version\"")
     );
-    let counts = doc.resolve(&[Key::Name("counts".into())]).unwrap();
+    let counts = doc
+        .resolve(&[Key::Name("store".into()), Key::Name("counts".into())])
+        .unwrap();
     assert_eq!(doc.node(counts).line, line_of("nested.json", "counts"));
 }
 

@@ -91,6 +91,10 @@ pub fn capture(parser: &mut Tabnas) -> Capture {
 /// accidental match of a synthesised value can do.
 const WINDOW: usize = 64;
 
+/// How far an opening bracket may sit past the cursor: a `:` or a `,`
+/// may stand between, nothing else.
+const OPEN_WINDOW: usize = 3;
+
 /// Shortest string for which a containment match (the item found inside a
 /// longer token, as a Markdown text run sits inside its line) is accepted.
 const CONTAIN_MIN: usize = 3;
@@ -132,8 +136,8 @@ fn matches_kind(tok: &Tok, kind: &Kind) -> bool {
 /// Assign source positions to the nodes of `doc` from its token stream.
 pub fn align(doc: &mut Doc, toks: &[Tok]) {
     let mut cursor = 0usize;
-    let find = |cursor: usize, pred: &dyn Fn(&Tok) -> bool| -> Option<usize> {
-        let end = (cursor + WINDOW).min(toks.len());
+    let find = |cursor: usize, window: usize, pred: &dyn Fn(&Tok) -> bool| -> Option<usize> {
+        let end = (cursor + window).min(toks.len());
         (cursor..end).find(|&j| pred(&toks[j]))
     };
     for i in 0..doc.nodes.len() {
@@ -143,7 +147,7 @@ pub fn align(doc: &mut Doc, toks: &[Tok]) {
         };
         let mut placed = false;
         if let Key::Name(name) = &key {
-            if let Some(j) = find(cursor, &|t| matches_str(t, name)) {
+            if let Some(j) = find(cursor, WINDOW, &|t| matches_str(t, name)) {
                 doc.nodes[i].line = toks[j].line;
                 doc.nodes[i].col = toks[j].col;
                 cursor = j + 1;
@@ -152,16 +156,20 @@ pub fn align(doc: &mut Doc, toks: &[Tok]) {
         }
         if kind.is_container() {
             // A container with no key of its own (the root, an array
-            // element) sits where its opening bracket was lexed.
+            // element) sits where its opening bracket was lexed. The
+            // bracket must be right at hand (past at most a `:` or `,`): a
+            // container a grammar synthesised, like the JSON Lines root
+            // array, has no bracket, and a wider look would seize the next
+            // nested container's and drag every later match off by one.
             if !placed {
-                if let Some(j) = find(cursor, &|t| matches_open(t, &kind)) {
+                if let Some(j) = find(cursor, OPEN_WINDOW, &|t| matches_open(t, &kind)) {
                     doc.nodes[i].line = toks[j].line;
                     doc.nodes[i].col = toks[j].col;
                     cursor = j + 1;
                 }
             }
         } else {
-            if let Some(j) = find(cursor, &|t| matches_kind(t, &kind)) {
+            if let Some(j) = find(cursor, WINDOW, &|t| matches_kind(t, &kind)) {
                 if !placed {
                     doc.nodes[i].line = toks[j].line;
                     doc.nodes[i].col = toks[j].col;
@@ -169,7 +177,7 @@ pub fn align(doc: &mut Doc, toks: &[Tok]) {
                 cursor = j + 1;
             } else if let Kind::Str(s) = &kind {
                 if s.len() >= CONTAIN_MIN {
-                    if let Some(j) = find(cursor, &|t| contains_str(t, s)) {
+                    if let Some(j) = find(cursor, WINDOW, &|t| contains_str(t, s)) {
                         if !placed {
                             doc.nodes[i].line = toks[j].line;
                             doc.nodes[i].col = toks[j].col;
@@ -266,6 +274,20 @@ mod tests {
         assert_eq!(doc.nodes[1].col, 2);
         assert_eq!(doc.nodes[2].line, 0);
         assert_eq!(doc.nodes[3].col, 10);
+    }
+
+    #[test]
+    fn synthesised_root_does_not_steal_a_nested_bracket() {
+        let mut p = tabnas_jsonl::make();
+        let sink = capture(&mut p);
+        let v = p
+            .parse("{\"id\": 1, \"tags\": [\"a\"]}\n{\"id\": 2, \"tags\": []}\n{\"id\": 3, \"tags\": [\"c\"]}\n")
+            .unwrap();
+        let mut doc = Doc::from_value(&v);
+        align(&mut doc, &sink.lock().unwrap());
+        let lines: Vec<u32> = doc.nodes.iter().map(|n| n.line).collect();
+        // root (from its first child), then each record's nodes on its own line
+        assert_eq!(lines, vec![1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3]);
     }
 
     #[test]
