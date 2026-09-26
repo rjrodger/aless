@@ -826,7 +826,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonic"
 version = "0.7.2"
-source = "git+https://github.com/tabnas/jsonic#58034dfd6fe704c4ee899735bf4f4288d795cddc"
+source = "git+https://github.com/tabnas/jsonic#09e66ecba13472ca00c658d264377b044602ecb4"
 dependencies = [
  "indexmap",
  "regex",
@@ -870,8 +870,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.9"
-source = "git+https://github.com/tabnas/xml#167aedaef8bdad0c1314b8d5e0e2137c928d5c21"
+version = "0.7.10"
+source = "git+https://github.com/tabnas/xml#5cf2b86bd6b54b7de0fe5bfbb93a026839dcb703"
 dependencies = [
  "indexmap",
  "regex",
