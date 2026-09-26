@@ -114,6 +114,7 @@ Exit statuses, and the `error.kind` that goes with each:
 | 3 | `io` | the file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
 | 5 | `too_large` | the input is larger than `--max-size` (default 64M) |
+| 6 | `timeout` | the parse ran longer than `--timeout` (default none) |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -142,4 +143,9 @@ pipe `--json` into jq.
   `--depth` shrink the output, not the parse.
 - A document nested deeper than about 1,000 levels fails with code
   `too_deep` rather than crashing.
+- Some parses are slow: TOML with thousands of tables takes tens of
+  seconds. If your command runner has a timeout, pass `--timeout` a few
+  seconds shorter (`--timeout 50` under a 60 s limit). A slow parse then
+  ends with a `timeout` error, exit 6, showing how far it got, instead
+  of being killed without a word.
 - `aless --help` has the full option list. It opens with this interface.

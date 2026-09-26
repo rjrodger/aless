@@ -308,6 +308,33 @@ fn inputs_over_max_size_are_refused_with_status_5() {
 }
 
 #[test]
+fn a_parse_past_timeout_is_stopped_with_status_6() {
+    let toml: String = (0..400)
+        .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
+        .collect();
+    let out = aless(
+        &["-k", "toml", "--timeout", "0.001", "--paths"],
+        Some(&toml),
+    );
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("timeout"));
+    assert_eq!(e["seconds"], json!(0.001));
+    // One long string is a few steps of the parser, but no exception.
+    let long = format!("\"{}\"", "x".repeat(1 << 20));
+    let out = aless(&["--timeout", "0.001", "--paths"], Some(&long));
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["kind"], json!("timeout"));
+    // Without one, and with a bad one.
+    let quick = aless(
+        &["-k", "toml", "--timeout", "0", "--compact"],
+        Some("a = 1\n"),
+    );
+    assert_eq!(String::from_utf8_lossy(&quick.stdout), "{\"a\":1}\n");
+    assert_eq!(code(&aless(&["--timeout", "soon", "x.json"], None)), 2);
+}
+
+#[test]
 fn nesting_too_deep_to_parse_fails_cleanly() {
     // Without aless's cap, XML this deep overflows the parser's stack and
     // the process aborts, with no error to report.

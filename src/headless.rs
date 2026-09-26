@@ -12,12 +12,13 @@
 
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
 use crate::doc::{Doc, Key, Kind, NodeId};
 use crate::fmt;
-use crate::load::{self, Format, LoadError, Loaded};
+use crate::load::{self, Format, Limits, LoadError, Loaded};
 use crate::search;
 
 /// Exit statuses.
@@ -37,6 +38,8 @@ pub mod status {
     pub const NOT_FOUND: i32 = 4;
     /// An input is larger than `--max-size` allows.
     pub const TOO_LARGE: i32 = 5;
+    /// A parse ran longer than `--timeout` allows.
+    pub const TIMEOUT: i32 = 6;
 }
 
 /// How many entries `--paths` and `--find` print unless `--limit` says.
@@ -125,6 +128,8 @@ pub struct Request {
     pub indent: usize,
     /// Refuse an input larger than this many bytes; `None` for no limit.
     pub max_size: Option<u64>,
+    /// Stop a parse that runs longer than this; `None` for no limit.
+    pub timeout: Option<Duration>,
 }
 
 impl Request {
@@ -138,7 +143,15 @@ impl Request {
             limit: DEFAULT_LIMIT,
             compact: false,
             indent: 2,
-            max_size: Some(load::DEFAULT_MAX_SIZE),
+            max_size: Limits::DEFAULT.max_size,
+            timeout: Limits::DEFAULT.timeout,
+        }
+    }
+
+    fn limits(&self) -> Limits {
+        Limits {
+            max_size: self.max_size,
+            timeout: self.timeout,
         }
     }
 }
@@ -319,7 +332,7 @@ fn load(
                 }));
             };
             let bytes = load::read_within(read, req.max_size).map_err(|e| {
-                Failure::load("-", format, &e.with_origin("(stdin)")).sized(None, req.max_size)
+                Failure::load("-", format, &e.with_origin("(stdin)")).limited(None, req)
             })?;
             if implicit && bytes.is_empty() {
                 return Err(Failure::usage(
@@ -330,8 +343,9 @@ fn load(
                 Ok(s) => s,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
             };
-            let loaded = load::load_str(text, format)
-                .map_err(|e| Failure::load("-", format, &e.with_origin("(stdin)")))?;
+            let loaded = load::load_str_within(text, format, req.limits()).map_err(|e| {
+                Failure::load("-", format, &e.with_origin("(stdin)")).limited(None, req)
+            })?;
             Ok(("-".to_string(), loaded))
         }
         Source::File(path) => {
@@ -342,9 +356,8 @@ fn load(
                 )));
             }
             let format = req.kind.unwrap_or_else(|| Format::detect(path));
-            let loaded = load::load_path_within(path, req.kind, req.max_size).map_err(|e| {
-                Failure::load(&name, format, &e).sized(file_size(path), req.max_size)
-            })?;
+            let loaded = load::load_path_within(path, req.kind, req.limits())
+                .map_err(|e| Failure::load(&name, format, &e).limited(file_size(path), req))?;
             Ok((name, loaded))
         }
     }
@@ -779,6 +792,8 @@ impl Failure {
             ("io", status::IO)
         } else if e.is_too_large() {
             ("too_large", status::TOO_LARGE)
+        } else if e.is_timeout() {
+            ("timeout", status::TIMEOUT)
         } else {
             ("parse", status::PARSE)
         };
@@ -807,15 +822,20 @@ impl Failure {
         Failure { status, error }
     }
 
-    /// A `too_large` error also says how large the input is (`size`,
-    /// `null` for a stream, which is read no further than the limit) and
-    /// what the limit is (`limit`), both in bytes.
-    fn sized(mut self, size: Option<u64>, limit: Option<u64>) -> Failure {
+    /// Say which limit an input broke. A `too_large` error gives how large
+    /// the input is (`size`, `null` for a stream, which is read no further
+    /// than the limit) and the limit (`limit`), both in bytes; a `timeout`
+    /// error gives the time limit in `seconds`.
+    fn limited(mut self, size: Option<u64>, req: &Request) -> Failure {
         if self.status == status::TOO_LARGE {
+            let limit = req.max_size.map_or(Value::Null, Value::from);
             self.error
                 .insert("size".into(), size.map_or(Value::Null, Value::from));
-            self.error
-                .insert("limit".into(), limit.map_or(Value::Null, Value::from));
+            self.error.insert("limit".into(), limit);
+        }
+        if self.status == status::TIMEOUT {
+            let secs = req.timeout.map_or(Value::Null, |t| t.as_secs_f64().into());
+            self.error.insert("seconds".into(), secs);
         }
         self
     }
@@ -1431,6 +1451,28 @@ mod tests {
         r.max_size = Some(DOC.len() as u64);
         assert_eq!(run(&r, None).status, status::OK);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_parse_past_its_timeout_fails_with_status_6() {
+        let toml: String = (0..400)
+            .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
+            .collect();
+        let mut r = req(Op::Paths);
+        r.kind = Some(Format::Toml);
+        r.timeout = Some(Duration::from_millis(1));
+        let out = with_stdin(&r, &toml);
+        assert_eq!(out.status, status::TIMEOUT, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"));
+        assert_eq!(e["code"], json!("timeout"));
+        assert_eq!(e["format"], json!("toml"));
+        assert_eq!(e["seconds"], json!(0.001));
+        assert!(e["line"].as_u64().unwrap() > 0, "{e}");
+        // No limit: the same request succeeds.
+        r.timeout = None;
+        assert_eq!(with_stdin(&r, "[[item]]\nid = 1\n").status, status::OK);
     }
 
     #[test]

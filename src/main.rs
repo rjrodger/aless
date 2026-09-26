@@ -71,7 +71,7 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     Exit status: 0 success, 1 the input did not parse (--check: an input
     failed), 2 bad usage or no terminal for the viewer, 3 an input could
     not be read (or the output not written), 4 --path or --at names
-    nothing, 5 an input is over --max-size.
+    nothing, 5 an input is over --max-size, 6 a parse ran past --timeout.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -108,6 +108,9 @@ BOTH:
         --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
                             or G; 0 for no limit): a parse takes about 80 bytes
                             of memory per byte of input
+        --timeout <SECONDS> Stop a parse that runs longer than this (2.5, 90s,
+                            2m; default none): some grammars are slow on some
+                            documents, TOML with many tables above all
     -h, --help              This help
     -V, --version           Version
 ";
@@ -126,6 +129,8 @@ struct Args {
     headless: bool,
     /// The largest input to read, in bytes; `None` for no limit.
     max_size: Option<u64>,
+    /// The longest a parse may run; `None` for no limit.
+    timeout: Option<std::time::Duration>,
 }
 
 /// Options that ask for output rather than the viewer.
@@ -152,7 +157,8 @@ fn parse_args() -> Result<Args, String> {
         limit: None,
         compact: false,
         headless: false,
-        max_size: Some(aless::load::DEFAULT_MAX_SIZE),
+        max_size: aless::load::Limits::DEFAULT.max_size,
+        timeout: aless::load::Limits::DEFAULT.timeout,
     };
     let mut it = std::env::args_os().skip(1);
     let mut only_files = false;
@@ -222,6 +228,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--limit" => args.limit = Some(number(value()?)?),
             "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
+            "--timeout" => args.timeout = aless::load::parse_timeout(&value()?)?,
             "--compact" => args.compact = true,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
@@ -300,7 +307,10 @@ fn main() {
             std::process::exit(headless::status::USAGE);
         }
     };
-    aless::load::set_max_size(args.max_size);
+    aless::load::set_limits(aless::load::Limits {
+        max_size: args.max_size,
+        timeout: args.timeout,
+    });
     if headless_wanted(args.headless) {
         std::process::exit(print_headless(args));
     }
@@ -453,6 +463,7 @@ fn print_headless(args: Args) -> i32 {
     req.compact = args.compact;
     req.indent = args.opts.indent;
     req.max_size = args.max_size;
+    req.timeout = args.timeout;
     let mut input = io::stdin();
     let stdin: headless::Stdin = if input.is_terminal() {
         None
