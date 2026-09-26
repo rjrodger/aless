@@ -143,9 +143,9 @@ pipe `--json` into jq.
   `--depth` shrink the output, not the parse.
 - A document nested deeper than about 1,000 levels fails with code
   `too_deep` rather than crashing.
-- Some parses are slow: TOML with thousands of tables takes tens of
-  seconds. If your command runner has a timeout, pass `--timeout` a few
-  seconds shorter (`--timeout 50` under a 60 s limit). A slow parse then
-  ends with a `timeout` error, exit 6, showing how far it got, instead
-  of being killed without a word.
+- A parse runs at about a megabyte a second, so a big file can outlast
+  your command runner. If the runner has a timeout, pass `--timeout` a
+  few seconds shorter (`--timeout 50` under a 60 s limit). A slow parse
+  then ends with a `timeout` error, exit 6, showing how far it got,
+  instead of being killed without a word.
 - `aless --help` has the full option list. It opens with this interface.

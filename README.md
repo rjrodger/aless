@@ -218,10 +218,10 @@ there is no streaming, and the first byte of output comes when the parse
 ends. That costs memory, about 80 bytes per byte of input, and time (see
 [Performance](#performance)), which is why inputs over `--max-size` are
 refused, before a file is read or as soon as standard input passes the
-limit, and why `--timeout` exists: a slow grammar can take minutes over
-a document of modest size, so a caller with a deadline of its own should
-pass a shorter one, and get an error it can read rather than a kill.
-Pipes are safe both ways: standard input can be a pipe or a file,
+limit, and why `--timeout` exists: at around a megabyte a second, a
+large input can take minutes, so a caller with a deadline of its own
+should pass a shorter one, and get an error it can read rather than a
+kill. Pipes are safe both ways: standard input can be a pipe or a file,
 and a reader that stops early (`aless --json big.json | head`) ends
 aless quietly with status 0, though the parse has already been paid for.
 To take part of a large document, `--path` and `--depth` keep the output
@@ -473,10 +473,11 @@ down:
   steps of the parser, but cannot cut a step short: one very long string
   is read to its end first, and a parse that finishes after the limit
   fails all the same. There is no default, since how long a parse should
-  take depends on the machine; set one where time matters. It matters
-  most for TOML: a document of many tables parses in time that grows with
-  the square of its length (4,000 `[[tables]]`, 300 KB, take some 20
-  seconds).
+  take depends on the machine; set one where time matters. Every format
+  parses in time that grows in step with the input, at half a megabyte to
+  a megabyte and a half a second on one machine (40,000 TOML
+  `[[tables]]`, 1.6 MB, took under three seconds), so the limit matters
+  most for large inputs.
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file

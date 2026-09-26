@@ -1188,9 +1188,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// TOML of `n` array tables: slow to parse, with a time that grows
-    /// faster than its length (see the README's Performance section).
-    fn slow_toml(n: usize) -> String {
+    /// TOML of `n` array tables: a parse of many steps, to stop part-way.
+    fn many_tables(n: usize) -> String {
         (0..n)
             .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
             .collect()
@@ -1226,7 +1225,7 @@ mod tests {
 
     #[test]
     fn a_parse_past_its_timeout_stops_where_it_got_to() {
-        let src = slow_toml(400);
+        let src = many_tables(2_000);
         let e = parse_within(&src, Format::Toml, Some(Duration::from_millis(1))).unwrap_err();
         assert!(e.is_timeout(), "{}", e.message);
         assert_eq!(e.message, "timeout: the parse ran longer than 0.001 s");
@@ -1234,7 +1233,7 @@ mod tests {
         assert!(e.hint.contains("--timeout 0 for no limit"), "{}", e.hint);
         assert!(e.plain_report().starts_with("[aless/timeout]"));
         // A generous limit lets a small document through.
-        let quick = parse_within(&slow_toml(2), Format::Toml, Some(Duration::from_secs(60)));
+        let quick = parse_within(&many_tables(2), Format::Toml, Some(Duration::from_secs(60)));
         assert_eq!(quick.unwrap().len(), 1 + 1 + 2 * 3);
     }
 
@@ -1287,7 +1286,7 @@ mod tests {
             limit: Duration::from_millis(1),
             alarm: None,
         };
-        let e = parse_here(&slow_toml(50), Format::Toml, Some(passed)).unwrap_err();
+        let e = parse_here(&many_tables(50), Format::Toml, Some(passed)).unwrap_err();
         assert!(e.is_timeout(), "{}", e.message);
         assert!(e.line > 0, "stopped where it had got to");
         assert!(e.hint.contains("got this far"), "{}", e.hint);

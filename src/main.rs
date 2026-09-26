@@ -109,8 +109,7 @@ BOTH:
                             or G; 0 for no limit): a parse takes about 80 bytes
                             of memory per byte of input
         --timeout <SECONDS> Stop a parse that runs longer than this (2.5, 90s,
-                            2m; default none): some grammars are slow on some
-                            documents, TOML with many tables above all
+                            2m; default none): a large input can take minutes
     -h, --help              This help
     -V, --version           Version
 ";
