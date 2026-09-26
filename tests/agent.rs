@@ -336,17 +336,25 @@ fn a_parse_past_timeout_is_stopped_with_status_6() {
 
 #[test]
 fn nesting_too_deep_to_parse_fails_cleanly() {
-    // Without aless's cap, XML this deep overflows the parser's stack and
-    // the process aborts, with no error to report.
+    // Nesting this deep can overflow a parser's stack, and the process
+    // aborts with no error to report. YAML has no limit of its own and
+    // stops at aless's cap; XML stops sooner, at its own limit, and reads
+    // the same way.
     let dir = std::env::temp_dir().join(format!("aless-deep-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let deep = dir.join("deep.xml");
-    std::fs::write(&deep, "<a>".repeat(50_000) + &"</a>".repeat(50_000)).unwrap();
-    let out = aless(&[deep.to_str().unwrap()], None);
-    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
-    let e = &json(&out.stderr)["error"];
-    assert_eq!(e["kind"], json!("parse"));
-    assert_eq!(e["code"], json!("too_deep"));
+    for (name, text) in [
+        ("deep.yaml", "- ".repeat(50_000) + "x\n"),
+        ("deep.xml", "<a>".repeat(50_000) + &"</a>".repeat(50_000)),
+    ] {
+        let deep = dir.join(name);
+        std::fs::write(&deep, text).unwrap();
+        let out = aless(&[deep.to_str().unwrap()], None);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(code(&out), 1, "{name}: {stderr}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("parse"), "{name}");
+        assert_eq!(e["code"], json!("too_deep"), "{name}");
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

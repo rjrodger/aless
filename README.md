@@ -209,8 +209,9 @@ has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
 saying how long it took. A `usage` error has only `kind` and `message`.
-A document nested deeper than aless parses (about 1,000 levels) fails as
-a `parse` error with the code `too_deep`.
+A document nested deeper than aless parses fails as a `parse` error with
+the code `too_deep`: past about 1,000 levels, or sooner where the grammar
+has a limit of its own (127 levels for JSON, 256 for XML).
 
 **Large inputs.** An input is read whole, and parsed whole, before
 anything is printed: the tabnas grammars parse complete documents, so
@@ -465,9 +466,10 @@ down:
 - **Depth.** Nesting deeper than about 1,000 levels stops the parse with
   a `too_deep` error. Some grammars would otherwise recurse until the
   stack ran out and end the process, and slow down with the square of
-  the depth well before that; the JSON grammar stops at 127 levels of
-  its own accord. The parse runs on a thread with a 64 MB stack, whatever
-  the platform gives the main thread.
+  the depth well before that. Several stop sooner of their own accord,
+  with the same error: JSON at 127 levels, XML at 256 open elements.
+  The parse runs on a thread with a 64 MB stack, whatever the platform
+  gives the main thread.
 - **Time.** A parse that runs past `--timeout` stops with a `timeout`
   error showing how far it got. aless looks at the time between every two
   steps of the parser, but cannot cut a step short: one very long string

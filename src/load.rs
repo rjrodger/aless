@@ -279,9 +279,10 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 
 /// How deep a parse's rule stack may grow before aless stops it: about
 /// three rules a level, so some 1,000 levels of nesting, far past any real
-/// document (the JSON grammar stops at 127, JSONC's at 512). Deeper, some
-/// grammars recurse until the stack runs out, which ends the process, and
-/// slow down with the square of the depth long before that.
+/// document (the JSON grammar stops at 127, XML's at 256, JSONC's at 512,
+/// each as `too_deep` too). Deeper, some grammars recurse until the stack
+/// runs out, which ends the process, and slow down with the square of the
+/// depth long before that.
 pub const MAX_RULE_DEPTH: usize = 3_000;
 
 /// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
@@ -855,7 +856,8 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
 /// The parse runs on a thread of its own with a large stack
 /// ([`PARSE_STACK`]), and stops at [`MAX_RULE_DEPTH`]: nesting that deep
 /// fails as `too_deep` rather than overflowing the stack, which would end
-/// the process where no error can be caught. Past `timeout` it fails as
+/// the process where no error can be caught, as does nesting past a
+/// grammar's own, lower limit. Past `timeout` it fails as
 /// `timeout`: stopped at the place it had reached, or, when its last step
 /// ran past the time, as soon as it finishes.
 pub fn parse_within(
@@ -972,6 +974,21 @@ fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<D
             e.hint = format!(
                 "The parse had got this far when --timeout {limit} stopped it.\nPass a \
                  larger --timeout to let it finish, or --timeout 0 for no limit."
+            );
+            Err(LoadError::from_tabnas(&e, None))
+        }
+        // A grammar's own depth limit, lower than aless's: JSON's is a
+        // parse budget and XML's is in its lexer, and each stops the parse
+        // with the engine's `cancel`, which no grammar here raises for
+        // anything else. Its hint would blame a budget of the caller's.
+        Ok(Err(e)) if e.code == "cancel" => {
+            let mut e = *e;
+            e.tag = "aless".to_string();
+            e.code = "too_deep".to_string();
+            e.detail = format!("too_deep: nested deeper than the {format} grammar reads");
+            e.hint = format!(
+                "The {format} grammar has a nesting limit of its own, and the parse stopped \
+                 where the document passed it.\nReal documents nest a few dozen levels at most."
             );
             Err(LoadError::from_tabnas(&e, None))
         }
@@ -1294,22 +1311,41 @@ mod tests {
 
     #[test]
     fn nesting_deeper_than_the_cap_stops_cleanly() {
-        // XML this deep (50,000 levels) overflows the stack without the
-        // cap, ending the process; with it, the parse fails at the cap.
-        let n = 50_000;
-        let xml = "<a>".repeat(n) + &"</a>".repeat(n);
-        let e = parse(&xml, Format::Xml).unwrap_err();
+        // YAML has no limit of its own. This deep (50,000 levels), a
+        // grammar with none can overflow the stack without the cap, ending
+        // the process; with it, the parse fails at the cap.
+        let yaml = "- ".repeat(50_000) + "x\n";
+        let e = parse(&yaml, Format::Yaml).unwrap_err();
         assert_eq!(e.code, "too_deep");
         assert!(e.message.contains("about 1000 levels"), "{}", e.message);
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
         // Nesting well inside the cap parses.
-        let ok = "<a>".repeat(500) + &"</a>".repeat(500);
-        assert!(parse(&ok, Format::Xml).is_ok());
-        // A grammar's own, lower limit still applies: JSON stops at 127.
-        let json = "[".repeat(200) + &"]".repeat(200);
-        let e = parse(&json, Format::Json).unwrap_err();
-        assert_eq!(e.code, "cancel");
-        assert!(parse(&("[".repeat(100) + &"]".repeat(100)), Format::Json).is_ok());
+        assert!(parse(&("- ".repeat(500) + "x\n"), Format::Yaml).is_ok());
+    }
+
+    #[test]
+    fn a_grammars_own_lower_limit_is_too_deep_too() {
+        // JSON stops at 127 levels, with a budget, and XML at 256 open
+        // elements, in its lexer, both with the engine's `cancel`, whose
+        // hint blames a budget of the caller's. aless reports them as it
+        // does its own cap, at the place the grammar stopped.
+        let json = |n: usize| "[".repeat(n) + &"]".repeat(n);
+        let xml = |n: usize| "<a>".repeat(n) + &"</a>".repeat(n);
+        for (format, deep, within) in [
+            (Format::Json, json(200), json(100)),
+            (Format::Xml, xml(257), xml(256)),
+        ] {
+            let e = parse(&deep, format).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{format}");
+            let own = format!("nested deeper than the {format} grammar reads");
+            assert!(e.message.contains(&own), "{}", e.message);
+            assert!(e.hint.contains("a nesting limit of its own"), "{}", e.hint);
+            assert!(e.plain_report().starts_with("[aless/too_deep]"));
+            assert!(parse(&within, format).is_ok(), "{format}");
+        }
+        // XML's report is of the tag that would open the 257th element.
+        let e = parse(&xml(257), Format::Xml).unwrap_err();
+        assert_eq!((e.line, e.col), (1, 256 * 3 + 1));
     }
 
     #[test]
