@@ -738,7 +738,7 @@ dependencies = [
 [[package]]
 name = "tabnas"
 version = "0.12.4"
-source = "git+https://github.com/tabnas/parser#b4ee16bf40ee24dee8b0084c776801fcd96f9b35"
+source = "git+https://github.com/tabnas/parser#198c7c33d9bf1801d6ab346dd6d55c73bad08b5d"
 dependencies = [
  "indexmap",
  "regex",
@@ -749,7 +749,7 @@ dependencies = [
 [[package]]
 name = "tabnas-csv"
 version = "0.5.10"
-source = "git+https://github.com/tabnas/csv#536a73a29af403679f2dbfdedadbee9f0589bbd1"
+source = "git+https://github.com/tabnas/csv#986d53ef4e61119550600becba173cd1a7b8855e"
 dependencies = [
  "indexmap",
  "serde",
@@ -761,7 +761,7 @@ dependencies = [
 [[package]]
 name = "tabnas-feed"
 version = "0.6.10"
-source = "git+https://github.com/tabnas/feed#2903ab881de9f232b7ff5f6f94a495ce559d3cd6"
+source = "git+https://github.com/tabnas/feed#c592a82207697540d00b95dc1af1009f5a6917e5"
 dependencies = [
  "indexmap",
  "regex",
@@ -774,7 +774,7 @@ dependencies = [
 [[package]]
 name = "tabnas-hoover"
 version = "0.3.10"
-source = "git+https://github.com/tabnas/hoover#ed3417ae247e34f705b9eab1d90349aa9ee35b88"
+source = "git+https://github.com/tabnas/hoover#d7171f81b4b96435da64dec70c58cccfd1f66c45"
 dependencies = [
  "tabnas",
 ]
@@ -782,7 +782,7 @@ dependencies = [
 [[package]]
 name = "tabnas-ini"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/ini#52ba725347ed01e03eea7c2a7ba93d976b112425"
+source = "git+https://github.com/tabnas/ini#1a0eb5dc537ed515a5c65535fc81b2de2046ed61"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/json#edb661eb3a8306fcca8ab09c7c7e79eda614f1d1"
+source = "git+https://github.com/tabnas/json#142444ecd7dfcd8e92be1f006ac7a65b973fb716"
 dependencies = [
  "regex",
  "serde_json",
@@ -804,7 +804,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json5"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/json5#468f484e86f0a0df68b3e0d2bad52c4fb780aa9a"
+source = "git+https://github.com/tabnas/json5#2a195182584c2cba22f0f2cd9ea2789bfaa3889c"
 dependencies = [
  "indexmap",
  "regex",
@@ -816,7 +816,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonc"
 version = "0.5.8"
-source = "git+https://github.com/tabnas/jsonc#b2f43178aedd7b1546737a2a45c18c00abe08c77"
+source = "git+https://github.com/tabnas/jsonc#fd9ea570b37cb840e3c02ab417afcf0d782f44b4"
 dependencies = [
  "serde_json",
  "tabnas",
@@ -826,7 +826,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonic"
 version = "0.7.2"
-source = "git+https://github.com/tabnas/jsonic#09e66ecba13472ca00c658d264377b044602ecb4"
+source = "git+https://github.com/tabnas/jsonic#4be139fe9c21a3f10d42cbcbad6180fc0abb9d70"
 dependencies = [
  "indexmap",
  "regex",
@@ -838,7 +838,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonl"
 version = "0.1.10"
-source = "git+https://github.com/tabnas/jsonl#d3e8ff88329867cd803e7edcc4ec651a88b809e3"
+source = "git+https://github.com/tabnas/jsonl#9720729212a81f79d1fb15d8ca90ee92be1dd3cf"
 dependencies = [
  "serde_json",
  "tabnas",
@@ -848,7 +848,7 @@ dependencies = [
 [[package]]
 name = "tabnas-markdown"
 version = "0.7.6"
-source = "git+https://github.com/tabnas/markdown#3d36f54734d5ba6c68416a5f6f657bb5b4906d54"
+source = "git+https://github.com/tabnas/markdown#ccaee72e82622a325e62f18b6c4f4823aa648799"
 dependencies = [
  "indexmap",
  "regex",
@@ -859,7 +859,7 @@ dependencies = [
 [[package]]
 name = "tabnas-toml"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/toml#74410106e96e8fcd85df59a3e86215b049cf6a8e"
+source = "git+https://github.com/tabnas/toml#e5121add23b164e3c572ce2e0f8179c6d76d2efc"
 dependencies = [
  "indexmap",
  "regex",
@@ -871,7 +871,7 @@ dependencies = [
 [[package]]
 name = "tabnas-xml"
 version = "0.7.10"
-source = "git+https://github.com/tabnas/xml#5cf2b86bd6b54b7de0fe5bfbb93a026839dcb703"
+source = "git+https://github.com/tabnas/xml#49caa7d4387adc9a1187183bb7a08eaf6d65b357"
 dependencies = [
  "indexmap",
  "regex",
@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "tabnas-yaml"
 version = "0.5.10"
-source = "git+https://github.com/tabnas/yaml#6cc5d936308de95c100e23e8b8b5a6191b0df5db"
+source = "git+https://github.com/tabnas/yaml#a5c6bbbd6242ffbb26208d4e72d15b381a4e2ae6"
 dependencies = [
  "indexmap",
  "regex",
@@ -895,7 +895,7 @@ dependencies = [
 [[package]]
 name = "tabnas-zon"
 version = "0.5.10"
-source = "git+https://github.com/tabnas/zon#f39f20e7295d8f00e6d83db1d67324a84ed05644"
+source = "git+https://github.com/tabnas/zon#f4853f48c98449b189fda627ae893980a4193245"
 dependencies = [
  "indexmap",
  "serde",

@@ -142,8 +142,9 @@ pipe `--json` into jq.
   Raise the limit only if the machine has the memory; `--path` and
   `--depth` shrink the output, not the parse.
 - A document nested deeper than aless reads fails with code `too_deep`
-  rather than crashing: past about 1,000 levels, or 127 for JSON and 256
-  for XML.
+  rather than crashing: past about 1,000 levels, or sooner where the
+  grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
+  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC.
 - A parse runs at about a megabyte a second, so a big file can outlast
   your command runner. If the runner has a timeout, pass `--timeout` a
   few seconds shorter (`--timeout 50` under a 60 s limit). A slow parse
