@@ -254,6 +254,32 @@ fn failures_are_json_on_stderr_with_a_status() {
     }
 }
 
+/// An output that cannot be written (here a full disk) is an `io` error
+/// in the documented shape, not plain text.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unwritable_output_is_reported_as_json() {
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full");
+    let out = Command::new(BIN)
+        .arg("tests/fixtures/nested.json")
+        .stdin(Stdio::null())
+        .stdout(full)
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 3);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("io"));
+    assert_eq!(e["file"], Value::Null);
+    assert!(e["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("cannot write standard output"));
+}
+
 #[test]
 fn help_leads_with_the_agent_interface() {
     let out = aless(&["--help"], None);

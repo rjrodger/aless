@@ -23,15 +23,23 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
 
 
-def drive(args, cwd, steps, size=(24, 100)):
+def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
     """Run aless with `args`, feed it `steps` and return (failures, transcript).
 
-    Each step is (label, keys_to_send, expected_substrings, timeout).
+    Each step is (label, keys_to_send, expected_substrings, timeout). With
+    `stdin_text`, standard input is a pipe holding it, as in `cmd | aless`,
+    and the keys still come through the terminal.
     """
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
         os.chdir(cwd)
+        if stdin_text is not None:
+            r, w = os.pipe()
+            os.write(w, stdin_text.encode())
+            os.close(w)
+            os.dup2(r, 0)
+            os.close(r)
         os.execv(BIN, [BIN, "--no-mouse"] + args)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", size[0], size[1], 0, 0))
     seen = bytearray()
@@ -129,6 +137,16 @@ def errors_scenario(work):
     ])
 
 
+def piped_input_scenario(work):
+    """`command | aless` in a terminal: the document comes from the pipe and
+    the keys from the terminal, so the viewer starts."""
+    return drive([], work, [
+        ("piped input opens in the viewer", "", ["(stdin)", "piped"], 3.0),
+        ("keys reach it through the terminal", "j", [".piped"], 3.0),
+        ("quit", "q", [], 1.0),
+    ], stdin_text='{"piped": [1, 2, 3]}')
+
+
 def no_terminal_scenario(work):
     """A pty for standard output but no terminal to read keys from, as some
     agent harnesses run commands: the viewer must refuse at once, draw
@@ -138,17 +156,32 @@ def no_terminal_scenario(work):
     import subprocess
     failures = []
     target = os.path.join(work, "nested.json")
-    for term, want_code in (("xterm-256color", 2), ("dumb", 0)):
+    fifo = os.path.join(work, "never-written.fifo")
+    os.mkfifo(fifo)
+    cases = (
+        ("TERM=xterm-256color", "xterm-256color", [target], subprocess.DEVNULL, 2),
+        # Input that never ends must not be read first: the refusal comes
+        # before any input is opened.
+        ("TERM=xterm-256color, stdin a pipe that stays open", "xterm-256color", [],
+         subprocess.PIPE, 2),
+        ("TERM=xterm-256color, a FIFO nobody writes", "xterm-256color", [fifo],
+         subprocess.DEVNULL, 2),
+        ("TERM=dumb", "dumb", [target], subprocess.DEVNULL, 0),
+    )
+    for name, term, args, stdin, want_code in cases:
         master, slave = pty.openpty()
         env = dict(os.environ, TERM=term)
         # A new session has no controlling terminal: /dev/tty cannot open.
-        child = subprocess.Popen([BIN, target], stdin=subprocess.DEVNULL, stdout=slave,
+        child = subprocess.Popen([BIN] + args, stdin=stdin, stdout=slave,
                                  stderr=subprocess.PIPE, start_new_session=True, env=env)
         try:
             code = child.wait(timeout=10)
         except subprocess.TimeoutExpired:
             child.kill()
+            child.wait()
             code = "hung"
+        if child.stdin:
+            child.stdin.close()
         # Keep our end of the slave open until the output is read: on macOS
         # the last close of a pty's slave discards what is still unread.
         drawn = bytearray()
@@ -163,7 +196,7 @@ def no_terminal_scenario(work):
         os.close(slave)
         os.close(master)
         err = child.stderr.read().decode("utf-8", "replace")
-        label = f"no controlling terminal, TERM={term}"
+        label = f"no controlling terminal, {name}"
         if code != want_code:
             print(f"FAIL {label}: exit {code}, wanted {want_code}; stderr: {err}")
             failures.append(label)
@@ -287,7 +320,8 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
-    for scenario in (explorer_scenario, errors_scenario, no_terminal_scenario):
+    for scenario in (explorer_scenario, errors_scenario, piped_input_scenario,
+                     no_terminal_scenario):
         if failures:
             break
         more, transcript = scenario(work)

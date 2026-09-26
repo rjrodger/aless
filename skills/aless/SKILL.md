@@ -111,7 +111,7 @@ Exit statuses, and the `error.kind` that goes with each:
 | 0 | none | success |
 | 1 | `parse` | the input did not parse; with `--check`, a file failed |
 | 2 | `usage` | bad option or path syntax, no input, a directory, or no terminal for the viewer |
-| 3 | `io` | the file could not be read |
+| 3 | `io` | the file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the

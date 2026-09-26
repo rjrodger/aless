@@ -40,9 +40,10 @@ USAGE:
     <command> | aless [OPTIONS]
 
 WITHOUT A SCREEN (scripts, agents, pipes):
-    Any option in this section, or a standard output that is not a
-    terminal, prints JSON instead of starting the viewer, which never
-    waits for keys: `aless FILE | jq .` is the document as JSON.
+    Any option in this section but --depth (the viewer has one too), or
+    a standard output that is not a terminal, prints JSON instead of
+    starting the viewer, and nothing waits for keys: `aless FILE | jq .`
+    is the document as JSON.
 
         --json              The document as JSON (the default), or the value
                             at the start that --path or --at gives
@@ -67,8 +68,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     on standard error: {\"error\": {\"kind\", \"message\", …}}, with the file,
     line, col, code and hint when the input did not parse. Exit status: 0
     success, 1 the input did not parse (--check: an input failed), 2 bad
-    usage or no terminal for the viewer, 3 an input could not be read, 4
-    --path or --at names nothing.
+    usage or no terminal for the viewer, 3 an input could not be read (or
+    the output not written), 4 --path or --at names nothing.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -293,6 +294,11 @@ fn main() {
     if headless_wanted(args.headless) {
         std::process::exit(print_headless(args));
     }
+    // Before any input is read: input that never ends (a pipe left open, a
+    // FIFO) would otherwise keep a viewer that cannot start waiting.
+    if let Err(e) = key_terminal() {
+        refuse_viewer(&e);
+    }
     let (width, height) = terminal::size().unwrap_or((80, 24));
     let mut app = App::new(args.opts, width, height);
 
@@ -334,20 +340,11 @@ fn main() {
     }
     // The first tab is the one asked for first.
     app.active = 0;
+    attach_stdin_to_terminal();
 
     match run(app, args.mouse) {
         Ok(()) => {}
-        Err(Failed::Setup(e)) => {
-            // Nothing was drawn and nothing needs restoring: say what to do
-            // instead, and do not wait for keys that cannot come.
-            eprintln!(
-                "aless: cannot start the viewer: {e}\n\
-                 There is no terminal to draw on or read keys from. To read a file without a\n\
-                 screen, use --json, --paths, --find, --where or --check (see aless --help);\n\
-                 aless FILE > out.json writes the document as JSON."
-            );
-            std::process::exit(headless::status::USAGE);
-        }
+        Err(Failed::Setup(e)) => refuse_viewer(&e),
         Err(Failed::Running(e)) => {
             let _ = restore_terminal(args.mouse);
             eprintln!("aless: {e}");
@@ -355,6 +352,79 @@ fn main() {
         }
     }
 }
+
+/// Say that the viewer cannot start and what works instead, then exit with
+/// status 2. Nothing has been drawn, so there is nothing to restore.
+fn refuse_viewer(e: &io::Error) -> ! {
+    eprintln!(
+        "aless: cannot start the viewer: {e}\n\
+         The viewer needs a terminal to draw on and read keys from. To read a\n\
+         file without a screen, use --json, --paths, --find, --where or --check\n\
+         (see aless --help); aless FILE > out.json writes the document as JSON."
+    );
+    std::process::exit(headless::status::USAGE);
+}
+
+/// Check that the viewer will have a terminal to read keys from: the one
+/// crossterm takes, standard input when it is a terminal, else `/dev/tty`,
+/// which opens only for a process with a controlling terminal.
+#[cfg(unix)]
+fn key_terminal() -> io::Result<()> {
+    if io::stdin().is_terminal() {
+        return Ok(());
+    }
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map(drop)
+}
+
+/// A console process whose output is a console has one to read keys from;
+/// crossterm opens it when the viewer starts.
+#[cfg(not(unix))]
+fn key_terminal() -> io::Result<()> {
+    Ok(())
+}
+
+/// When the document came through a pipe, point standard input at the
+/// terminal before the viewer starts, opened by the device's own name
+/// (standard output's). crossterm would otherwise read keys from
+/// `/dev/tty`, which macOS cannot watch (kqueue rejects it: crossterm
+/// issue 500), and the viewer would draw and then never hear a key.
+#[cfg(unix)]
+fn attach_stdin_to_terminal() {
+    use std::ffi::CStr;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+
+    if io::stdin().is_terminal() {
+        return;
+    }
+    let mut name = [0 as libc::c_char; 256];
+    // SAFETY: the buffer is valid for its whole length, which is passed.
+    if unsafe { libc::ttyname_r(libc::STDOUT_FILENO, name.as_mut_ptr(), name.len()) } != 0 {
+        return;
+    }
+    // SAFETY: ttyname_r succeeded, so the buffer holds a NUL-terminated name.
+    let name = unsafe { CStr::from_ptr(name.as_ptr()) };
+    let Ok(path) = name.to_str() else { return };
+    let Ok(tty) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOCTTY)
+        .open(path)
+    else {
+        return;
+    };
+    // SAFETY: both descriptors are open; dup2 makes 0 a copy of the terminal.
+    unsafe {
+        libc::dup2(tty.as_raw_fd(), libc::STDIN_FILENO);
+    }
+}
+
+#[cfg(not(unix))]
+fn attach_stdin_to_terminal() {}
 
 /// Run without a screen and print the result; returns the exit status.
 fn print_headless(args: Args) -> i32 {
@@ -384,7 +454,7 @@ fn print_headless(args: Args) -> i32 {
         .and_then(|()| stdout.flush());
     if let Err(e) = written {
         if e.kind() != io::ErrorKind::BrokenPipe {
-            eprintln!("aless: writing standard output: {e}");
+            let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
             return headless::status::IO;
         }
     }
@@ -405,6 +475,8 @@ fn setup_terminal(mouse: bool) -> io::Result<()> {
     terminal::enable_raw_mode()?;
     let mut out = io::stdout();
     if let Err(e) = execute!(out, EnterAlternateScreen, Hide) {
+        // Some of that may have reached the terminal before the failure.
+        let _ = execute!(out, Show, LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
         return Err(e);
     }

@@ -81,10 +81,11 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 ## Scripts and agents
 
 aless also runs without a screen. Give it any option from the table
-below, or let its standard output be something other than a terminal (a
-pipe, a file, an agent's tool call), and it prints JSON instead of
-starting the viewer. It never waits for keys: when the viewer cannot
-start, aless says so and exits with status 2.
+below except `--depth` and `-k`, which the viewer shares, or let its
+standard output be something other than a terminal (a pipe, a file, an
+agent's tool call), and it prints JSON instead of starting the viewer. It
+never waits for keys: when the viewer cannot start, aless says so at
+once, before reading any input, and exits with status 2.
 
 ```bash
 aless config.yaml | jq .spec                       # any format in, JSON out
@@ -185,13 +186,14 @@ $ aless bad.json
 | 0 | success: standard output holds the answer | |
 | 1 | the input did not parse; with `--check`, some input failed and the report says which | `parse` |
 | 2 | bad usage: an unknown option, a bad path, no input, a directory, or the viewer without a terminal | `usage` |
-| 3 | an input could not be read | `io` |
+| 3 | an input could not be read, or the output could not be written | `io` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
 `report`, the whole report the viewer shows, uncoloured; a field that
-does not apply is `null`. A `not_found` error has the `path` or `at` it
+does not apply is `null` (`file` too, when it was standard output that
+could not be written). A `not_found` error has the `path` or `at` it
 was given, the entry of the `nearest` node the path did reach, and that
 node's first `keys` when it is an object. A `usage` error has only
 `kind` and `message`.

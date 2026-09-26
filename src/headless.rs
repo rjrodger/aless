@@ -835,6 +835,25 @@ impl Failure {
     }
 }
 
+/// The error for a result that could not be written to standard output
+/// (a full disk, say): an `io` error, exit status 3, whose `file` is null
+/// because no input is at fault.
+pub fn write_failure(e: &io::Error, compact: bool) -> String {
+    let error = json!({ "error": {
+        "kind": "io",
+        "file": null,
+        "format": null,
+        "code": "io",
+        "message": format!("cannot write standard output: {e}"),
+        "line": null,
+        "col": null,
+        "hint": null,
+        "source_line": null,
+        "report": null,
+    }});
+    render(&error, compact)
+}
+
 // ----- printing ------------------------------------------------------------
 
 /// How many levels of a result are laid out one item per line.
@@ -1343,6 +1362,33 @@ mod tests {
         // Standard input is JSON unless told otherwise.
         let out = with_stdin(&req(Op::Json), "a: [1, 2]\n");
         assert_eq!(out.status, status::PARSE);
+    }
+
+    #[test]
+    fn an_unwritable_output_is_an_io_error_with_no_file() {
+        let e = io::Error::new(io::ErrorKind::StorageFull, "no space left");
+        let v = json_of(&write_failure(&e, false));
+        assert_eq!(v["error"]["kind"], json!("io"));
+        assert_eq!(v["error"]["code"], json!("io"));
+        assert_eq!(v["error"]["file"], Value::Null);
+        assert_eq!(
+            v["error"]["message"],
+            json!("cannot write standard output: no space left")
+        );
+        // The same fields as any io error, in the same order.
+        let missing = run(
+            &{
+                let mut r = req(Op::Json);
+                r.files = vec!["no/such.json".into()];
+                r
+            },
+            None,
+        );
+        let keys = |v: &Value| -> Vec<String> {
+            v["error"].as_object().unwrap().keys().cloned().collect()
+        };
+        assert_eq!(keys(&v), keys(&json_of(&missing.stderr)));
+        assert!(!write_failure(&e, true).trim_end().contains('\n'));
     }
 
     #[test]
