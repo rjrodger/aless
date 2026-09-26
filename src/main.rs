@@ -2,7 +2,7 @@
 //! the event loop, painting, and the side effects the application asks
 //! for (watching files, copying, suspending).
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -64,12 +64,14 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --compact           JSON on one line
 
     Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
-    keyed value is at its key. Numbers are 64-bit floats. Errors are JSON
-    on standard error: {\"error\": {\"kind\", \"message\", …}}, with the file,
-    line, col, code and hint when the input did not parse. Exit status: 0
-    success, 1 the input did not parse (--check: an input failed), 2 bad
-    usage or no terminal for the viewer, 3 an input could not be read (or
-    the output not written), 4 --path or --at names nothing.
+    keyed value is at its key. Numbers are 64-bit floats. Input is read
+    whole before it is parsed, so output starts when the parse ends.
+    Errors are JSON on standard error: {\"error\": {\"kind\", \"message\", …}},
+    with the file, line, col, code and hint when the input did not parse.
+    Exit status: 0 success, 1 the input did not parse (--check: an input
+    failed), 2 bad usage or no terminal for the viewer, 3 an input could
+    not be read (or the output not written), 4 --path or --at names
+    nothing, 5 an input is over --max-size.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -103,6 +105,9 @@ BOTH:
     -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
                             json jsonl jsonic jsonc json5 yaml toml ini csv tsv
                             xml zon markdown feed text
+        --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
+                            or G; 0 for no limit): a parse takes about 80 bytes
+                            of memory per byte of input
     -h, --help              This help
     -V, --version           Version
 ";
@@ -119,6 +124,8 @@ struct Args {
     compact: bool,
     /// An option that only means something without a screen was given.
     headless: bool,
+    /// The largest input to read, in bytes; `None` for no limit.
+    max_size: Option<u64>,
 }
 
 /// Options that ask for output rather than the viewer.
@@ -145,6 +152,7 @@ fn parse_args() -> Result<Args, String> {
         limit: None,
         compact: false,
         headless: false,
+        max_size: Some(aless::load::DEFAULT_MAX_SIZE),
     };
     let mut it = std::env::args_os().skip(1);
     let mut only_files = false;
@@ -213,6 +221,7 @@ fn parse_args() -> Result<Args, String> {
                 args.start = Start::parse_at(&v)?;
             }
             "--limit" => args.limit = Some(number(value()?)?),
+            "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
             "--compact" => args.compact = true,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
@@ -291,6 +300,7 @@ fn main() {
             std::process::exit(headless::status::USAGE);
         }
     };
+    aless::load::set_max_size(args.max_size);
     if headless_wanted(args.headless) {
         std::process::exit(print_headless(args));
     }
@@ -302,37 +312,28 @@ fn main() {
     let (width, height) = terminal::size().unwrap_or((80, 24));
     let mut app = App::new(args.opts, width, height);
 
-    let mut stdin_text = None;
+    let stdin_format = args.kind.unwrap_or(Format::Json);
+    let mut stdin_read = None;
     if args.files.is_empty() && !io::stdin().is_terminal() {
-        let mut buf = Vec::new();
-        if let Err(e) = io::stdin().read_to_end(&mut buf) {
-            eprintln!("aless: reading standard input: {e}");
-            std::process::exit(1);
-        }
-        stdin_text = Some(String::from_utf8_lossy(&buf).into_owned());
+        stdin_read = Some(aless::load::read_within(io::stdin(), args.max_size));
     }
     for file in &args.files {
         // The parse blocks; on a large file say so before the screen is
-        // taken over.
+        // taken over (one over the limit is refused at once instead).
         if let Ok(m) = std::fs::metadata(file) {
-            if m.len() > 4 << 20 {
+            if m.len() > 4 << 20 && args.max_size.is_none_or(|max| m.len() <= max) {
                 eprintln!("aless: loading {} ({} MB)…", file.display(), m.len() >> 20);
             }
         }
         if file.as_os_str() == "-" {
-            let mut buf = Vec::new();
-            let _ = io::stdin().read_to_end(&mut buf);
-            app.open_source(
-                "(stdin)",
-                String::from_utf8_lossy(&buf).into_owned(),
-                args.kind.unwrap_or(Format::Json),
-            );
+            let read = aless::load::read_within(io::stdin(), args.max_size);
+            open_stdin(&mut app, read, stdin_format);
         } else {
             app.open_path(file, args.kind);
         }
     }
-    if let Some(text) = stdin_text {
-        app.open_source("(stdin)", text, args.kind.unwrap_or(Format::Json));
+    if let Some(read) = stdin_read {
+        open_stdin(&mut app, read, stdin_format);
     }
     if app.tabs.is_empty() {
         // Nothing named and nothing piped: explore the current directory.
@@ -350,6 +351,21 @@ fn main() {
             eprintln!("aless: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Open what standard input held in a tab, or the reason it could not be
+/// read (too large, say) as a failed one.
+fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, format: Format) {
+    match read {
+        Ok(bytes) => {
+            let text = match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+            };
+            app.open_source("(stdin)", text, format);
+        }
+        Err(err) => app.open_failed_source("(stdin)", String::new(), format, err),
     }
 }
 
@@ -436,15 +452,12 @@ fn print_headless(args: Args) -> i32 {
     req.limit = args.limit.unwrap_or(headless::DEFAULT_LIMIT);
     req.compact = args.compact;
     req.indent = args.opts.indent;
-    let mut read = || -> io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        io::stdin().read_to_end(&mut buf)?;
-        Ok(buf)
-    };
-    let stdin: headless::Stdin = if io::stdin().is_terminal() {
+    req.max_size = args.max_size;
+    let mut input = io::stdin();
+    let stdin: headless::Stdin = if input.is_terminal() {
         None
     } else {
-        Some(&mut read)
+        Some(&mut input)
     };
     let out = headless::run(&req, stdin);
     // A reader that stops early (`| head`) is not an error.

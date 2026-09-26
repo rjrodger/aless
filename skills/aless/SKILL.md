@@ -113,6 +113,7 @@ Exit statuses, and the `error.kind` that goes with each:
 | 2 | `usage` | bad option or path syntax, no input, a directory, or no terminal for the viewer |
 | 3 | `io` | the file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
+| 5 | `too_large` | the input is larger than `--max-size` (default 64M) |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -133,4 +134,12 @@ pipe `--json` into jq.
   `"NaN"`, `"Infinity"` and `"-Infinity"`, with kind `number`.
 - Unknown extensions are read as plain text: an array of lines. Use `-k`
   to name the format.
+- Big files are costly. aless reads and parses the whole input before it
+  prints anything, using about 80 bytes of memory per byte of input: 13 MB
+  takes about 1 GB and some seconds. Inputs over `--max-size` (default
+  64M) fail with exit 5, and the `hint` says what size would read them.
+  Raise the limit only if the machine has the memory; `--path` and
+  `--depth` shrink the output, not the parse.
+- A document nested deeper than about 1,000 levels fails with code
+  `too_deep` rather than crashing.
 - `aless --help` has the full option list. It opens with this interface.

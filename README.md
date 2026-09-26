@@ -75,6 +75,7 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
+| `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
 
 `NO_COLOR` in the environment also disables colour.
 
@@ -110,6 +111,7 @@ aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 | `--limit N` | at most N entries (default 200, 0 for all) |
 | `--compact` | JSON on one line |
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
+| `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
 straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, and `[-1]`
@@ -188,6 +190,7 @@ $ aless bad.json
 | 2 | bad usage: an unknown option, a bad path, no input, a directory, or the viewer without a terminal | `usage` |
 | 3 | an input could not be read, or the output could not be written | `io` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
+| 5 | an input is larger than `--max-size` | `too_large` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
@@ -195,8 +198,24 @@ code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
 does not apply is `null` (`file` too, when it was standard output that
 could not be written). A `not_found` error has the `path` or `at` it
 was given, the entry of the `nearest` node the path did reach, and that
-node's first `keys` when it is an object. A `usage` error has only
-`kind` and `message`.
+node's first `keys` when it is an object. A `too_large` error has the
+fields of an `io` one plus the input's `size` (`null` for standard input,
+which is read no further than the limit) and the `limit`, in bytes, and
+its `hint` names the `--max-size` that would read it. A `usage` error has
+only `kind` and `message`. A document nested deeper than aless parses
+(about 1,000 levels) fails as a `parse` error with the code `too_deep`.
+
+**Large inputs.** An input is read whole, and parsed whole, before
+anything is printed: the tabnas grammars parse complete documents, so
+there is no streaming, and the first byte of output comes when the parse
+ends. That costs memory, about 80 bytes per byte of input, and time (see
+[Performance](#performance)), which is why inputs over `--max-size` are
+refused, before a file is read or as soon as standard input passes the
+limit. Pipes are safe both ways: standard input can be a pipe or a file,
+and a reader that stops early (`aless --json big.json | head`) ends
+aless quietly with status 0, though the parse has already been paid for.
+To take part of a large document, `--path` and `--depth` keep the output
+small; the input is still parsed in full.
 
 These shapes are a contract: fields may be added, but none is renamed,
 removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
@@ -420,11 +439,24 @@ terminal.
 ## Performance
 
 Parsing is the tabnas engine's, and it is a general rule engine rather
-than a hand-written JSON parser: on this machine a 5 MB JSON document
+than a hand-written JSON parser: on one machine a 5 MB JSON document
 (240 thousand nodes) loads in about two seconds and a 47 MB one (2.4
-million nodes) in about 35 seconds, with a peak of roughly 50 bytes of
-memory per source byte while the parse runs; the steady state afterwards
-is much smaller. The parse blocks the interface, so a large file shows a
+million nodes) in about 35 seconds; on a slower one, 13 MB took 10
+seconds and 66 MB 68 seconds. Memory peaks at about 80 bytes per source
+byte while the parse runs (13 MB peaked at 1.0 GB, 66 MB at 5.1 GB); the
+steady state afterwards is much smaller.
+
+Two limits keep a large or hostile input from taking the machine down.
+An input over `--max-size` (64 MB unless set; `0` removes the limit) is
+refused with a report that names the size that would read it. Nesting
+deeper than about 1,000 levels stops the parse with a `too_deep` error:
+some grammars would otherwise recurse until the stack ran out and end the
+process, and slow down with the square of the depth well before that
+(the JSON grammar stops at 127 levels of its own accord). The parse runs
+on a thread with a 64 MB stack, whatever the platform gives the main
+thread. Nothing bounds time: a TOML document of many tables parses in
+time that grows with the square of their number (4,000 `[[tables]]`
+take some 20 seconds). The parse blocks the interface, so a large file shows a
 `loading…` notice before the screen is taken over, and a reload of a
 large watched file pauses the viewer for as long as its parse takes.
 Navigation, folding and search are independent of the engine and stay

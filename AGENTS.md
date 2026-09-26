@@ -36,7 +36,8 @@ working here; `CLAUDE.md` imports it.
   (crossterm) and the only one with platform-specific code. Everything
   in the library is terminal-free and unit tested: `doc` (the arena
   model and rows), `fmt` (text forms, previews, JSON output, paths),
-  `load` (format detection, the grammars, errors), `headless` (the agent
+  `load` (format detection, the grammars, errors, the size limit and
+  the nesting cap, the parse's own thread), `headless` (the agent
   interface: paths, listings, search, positions, checks, JSON errors),
   `explorer` (directory trees as documents, listed lazily), `prov`
   (source positions by token alignment), `search`, `tab` (view state,

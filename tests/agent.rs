@@ -281,6 +281,49 @@ fn an_unwritable_output_is_reported_as_json() {
 }
 
 #[test]
+fn inputs_over_max_size_are_refused_with_status_5() {
+    let len = std::fs::metadata("tests/fixtures/nested.json")
+        .unwrap()
+        .len();
+    let out = aless(&["--max-size", "100", "tests/fixtures/nested.json"], None);
+    assert_eq!(code(&out), 5);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("too_large"));
+    assert_eq!(e["size"], json!(len));
+    assert_eq!(e["limit"], json!(100));
+    // Standard input is read no further than the limit.
+    let out = aless(&["--max-size=10"], Some("{\"a\": [1, 2, 3, 4, 5]}"));
+    assert_eq!(code(&out), 5);
+    assert_eq!(json(&out.stderr)["error"]["size"], Value::Null);
+    // 0 lifts the limit; the default reads ordinary files.
+    for args in [
+        &["--max-size", "0", "tests/fixtures/nested.json"][..],
+        &["tests/fixtures/nested.json"],
+    ] {
+        assert_eq!(code(&aless(args, None)), 0, "{args:?}");
+    }
+    let out = aless(&["--max-size", "lots", "tests/fixtures/nested.json"], None);
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn nesting_too_deep_to_parse_fails_cleanly() {
+    // Without aless's cap, XML this deep overflows the parser's stack and
+    // the process aborts, with no error to report.
+    let dir = std::env::temp_dir().join(format!("aless-deep-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let deep = dir.join("deep.xml");
+    std::fs::write(&deep, "<a>".repeat(50_000) + &"</a>".repeat(50_000)).unwrap();
+    let out = aless(&[deep.to_str().unwrap()], None);
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("parse"));
+    assert_eq!(e["code"], json!("too_deep"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn help_leads_with_the_agent_interface() {
     let out = aless(&["--help"], None);
     assert_eq!(code(&out), 0);

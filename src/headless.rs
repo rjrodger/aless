@@ -10,8 +10,8 @@
 //! Nothing here touches the terminal. `main.rs` decides when to come here,
 //! and prints what [`run`] returns.
 
-use std::io;
-use std::path::PathBuf;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
@@ -35,6 +35,8 @@ pub mod status {
     pub const IO: i32 = 3;
     /// `--path` or `--at` names nothing in the document.
     pub const NOT_FOUND: i32 = 4;
+    /// An input is larger than `--max-size` allows.
+    pub const TOO_LARGE: i32 = 5;
 }
 
 /// How many entries `--paths` and `--find` print unless `--limit` says.
@@ -121,6 +123,8 @@ pub struct Request {
     pub compact: bool,
     /// Indentation per level of `--json` output.
     pub indent: usize,
+    /// Refuse an input larger than this many bytes; `None` for no limit.
+    pub max_size: Option<u64>,
 }
 
 impl Request {
@@ -134,6 +138,7 @@ impl Request {
             limit: DEFAULT_LIMIT,
             compact: false,
             indent: 2,
+            max_size: Some(load::DEFAULT_MAX_SIZE),
         }
     }
 }
@@ -146,9 +151,10 @@ pub struct Output {
     pub status: i32,
 }
 
-/// Reads all of standard input; the caller passes none when standard
-/// input is a terminal, which nobody is going to type a document into.
-pub type Stdin<'a> = Option<&'a mut dyn FnMut() -> io::Result<Vec<u8>>>;
+/// Standard input; the caller passes none when it is a terminal, which
+/// nobody is going to type a document into. It is read to its end, but
+/// never held past the size limit.
+pub type Stdin<'a> = Option<&'a mut dyn Read>;
 
 /// Carry out a request.
 pub fn run(req: &Request, mut stdin: Stdin<'_>) -> Output {
@@ -184,7 +190,7 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
             sources.len()
         )));
     }
-    let (name, loaded) = load(&sources[0], req.kind, stdin, req.files.is_empty())?;
+    let (name, loaded) = load(&sources[0], req, stdin)?;
     let doc = &loaded.doc;
     let start = select(doc, &req.start, &name, loaded.format)?;
     let head = |m: &mut Map<String, Value>| {
@@ -246,7 +252,7 @@ fn check(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure>
                 req.kind.unwrap_or_else(|| Format::detect(p)),
             ),
         };
-        let verdict = match load(&source, req.kind, stdin, req.files.is_empty()) {
+        let verdict = match load(&source, req, stdin) {
             Ok(_) => Value::Null,
             // Nothing to check at all is a mistake in the command.
             Err(f) if f.status == status::USAGE && req.files.is_empty() => return Err(f),
@@ -298,13 +304,13 @@ fn sources(req: &Request) -> Vec<Source> {
 /// path as given, or `-` for standard input.
 fn load(
     source: &Source,
-    kind: Option<Format>,
+    req: &Request,
     stdin: &mut Stdin<'_>,
-    implicit: bool,
 ) -> Result<(String, Loaded), Failure> {
+    let implicit = req.files.is_empty();
     match source {
         Source::Stdin => {
-            let format = kind.unwrap_or(Format::Json);
+            let format = req.kind.unwrap_or(Format::Json);
             let Some(read) = stdin.as_mut() else {
                 return Err(Failure::usage(if implicit {
                     "no input: name a FILE, or pipe a document into aless"
@@ -312,12 +318,8 @@ fn load(
                     "standard input is a terminal: pipe a document into aless, or name a FILE"
                 }));
             };
-            let bytes = read().map_err(|e| {
-                Failure::load(
-                    "-",
-                    format,
-                    &LoadError::new(e.to_string()).with_origin("(stdin)"),
-                )
+            let bytes = load::read_within(read, req.max_size).map_err(|e| {
+                Failure::load("-", format, &e.with_origin("(stdin)")).sized(None, req.max_size)
             })?;
             if implicit && bytes.is_empty() {
                 return Err(Failure::usage(
@@ -339,12 +341,21 @@ fn load(
                     "{name} is a directory: aless reads files (list a directory with ls or find)"
                 )));
             }
-            let format = kind.unwrap_or_else(|| Format::detect(path));
-            let loaded =
-                load::load_path(path, kind).map_err(|e| Failure::load(&name, format, &e))?;
+            let format = req.kind.unwrap_or_else(|| Format::detect(path));
+            let loaded = load::load_path_within(path, req.kind, req.max_size).map_err(|e| {
+                Failure::load(&name, format, &e).sized(file_size(path), req.max_size)
+            })?;
             Ok((name, loaded))
         }
     }
+}
+
+/// A regular file's size; `None` for anything else (a FIFO, a device).
+fn file_size(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
 }
 
 // ----- paths ---------------------------------------------------------------
@@ -766,6 +777,8 @@ impl Failure {
     fn load(file: &str, format: Format, e: &LoadError) -> Failure {
         let (kind, status) = if e.is_io() {
             ("io", status::IO)
+        } else if e.is_too_large() {
+            ("too_large", status::TOO_LARGE)
         } else {
             ("parse", status::PARSE)
         };
@@ -792,6 +805,19 @@ impl Failure {
         );
         error.insert("report".into(), e.plain_report().into());
         Failure { status, error }
+    }
+
+    /// A `too_large` error also says how large the input is (`size`,
+    /// `null` for a stream, which is read no further than the limit) and
+    /// what the limit is (`limit`), both in bytes.
+    fn sized(mut self, size: Option<u64>, limit: Option<u64>) -> Failure {
+        if self.status == status::TOO_LARGE {
+            self.error
+                .insert("size".into(), size.map_or(Value::Null, Value::from));
+            self.error
+                .insert("limit".into(), limit.map_or(Value::Null, Value::from));
+        }
+        self
     }
 
     /// `--path` or `--at` named nothing: `{"kind": "not_found", "file",
@@ -921,9 +947,8 @@ mod tests {
 
     /// Run `req` with `src` on standard input.
     fn with_stdin(req: &Request, src: &str) -> Output {
-        let bytes = src.as_bytes().to_vec();
-        let mut read = move || Ok(bytes.clone());
-        run(req, Some(&mut read))
+        let mut input = src.as_bytes();
+        run(req, Some(&mut input))
     }
 
     fn json_of(text: &str) -> Value {
@@ -1202,8 +1227,13 @@ mod tests {
         // A pattern that is not a regex is a usage error, found before
         // any input is read.
         r.op = Op::Find("(".into());
-        let mut read = || -> io::Result<Vec<u8>> { panic!("read input for a bad pattern") };
-        let bad = run(&r, Some(&mut read));
+        struct Untouchable;
+        impl Read for Untouchable {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("read input for a bad pattern")
+            }
+        }
+        let bad = run(&r, Some(&mut Untouchable));
         assert_eq!(bad.status, status::USAGE);
         assert!(json_of(&bad.stderr)["error"]["message"]
             .as_str()
@@ -1362,6 +1392,45 @@ mod tests {
         // Standard input is JSON unless told otherwise.
         let out = with_stdin(&req(Op::Json), "a: [1, 2]\n");
         assert_eq!(out.status, status::PARSE);
+    }
+
+    #[test]
+    fn inputs_over_the_size_limit_are_refused() {
+        let mut r = req(Op::Json);
+        r.max_size = Some(10);
+        // Standard input: read no further than the limit, so no size.
+        let out = with_stdin(&r, DOC);
+        assert_eq!(out.status, status::TOO_LARGE);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("too_large"));
+        assert_eq!(e["code"], json!("too_large"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["size"], Value::Null);
+        assert_eq!(e["limit"], json!(10));
+        assert!(e["hint"].as_str().unwrap().contains("--max-size"), "{e}");
+        // A file: refused before it is read, with its size.
+        let dir = std::env::temp_dir().join(format!("aless-limit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("doc.json");
+        std::fs::write(&file, DOC).unwrap();
+        r.files = vec![file.clone()];
+        let out = run(&r, None);
+        assert_eq!(out.status, status::TOO_LARGE);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["size"], json!(DOC.len()));
+        assert_eq!(e["format"], json!("json"));
+        // --check reports it with the rest.
+        r.op = Op::Check;
+        let v = json_of(&run(&r, None).stdout);
+        assert_eq!(v["files"][0]["error"]["kind"], json!("too_large"));
+        // No limit, or a large enough one, reads it.
+        r.op = Op::Json;
+        r.max_size = None;
+        assert_eq!(run(&r, None).status, status::OK);
+        r.max_size = Some(DOC.len() as u64);
+        assert_eq!(run(&r, None).status, status::OK);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

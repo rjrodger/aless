@@ -5,7 +5,10 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tabnas::Tabnas;
 
@@ -143,6 +146,87 @@ pub struct LoadError {
     pub report: String,
 }
 
+/// The largest input aless reads unless `--max-size` says otherwise. A
+/// parse takes about [`MEMORY_PER_BYTE`] bytes of memory per byte of
+/// input, so this is some 5 GB, and a minute or so of parsing.
+pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
+
+/// Roughly how many bytes of memory a parse takes per byte of input,
+/// measured on JSON: 13 MB peaked at 1.0 GB, 66 MB at 5.1 GB.
+pub const MEMORY_PER_BYTE: u64 = 80;
+
+/// The limit [`load_path`] applies; 0 for none.
+static MAX_SIZE: AtomicU64 = AtomicU64::new(DEFAULT_MAX_SIZE);
+
+/// Set the size limit [`load_path`] applies: `None` for no limit.
+pub fn set_max_size(max: Option<u64>) {
+    MAX_SIZE.store(max.unwrap_or(0), Ordering::Relaxed);
+}
+
+/// The size limit [`load_path`] applies: `None` for no limit.
+pub fn max_size() -> Option<u64> {
+    match MAX_SIZE.load(Ordering::Relaxed) {
+        0 => None,
+        n => Some(n),
+    }
+}
+
+/// A size as `--max-size` takes it: bytes, or with a `K`, `M` or `G`
+/// suffix counted in 1024s (`KB`, `MiB` and the like are the same), and 0
+/// for no limit.
+pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
+    let t = text.trim();
+    let digits = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+    let bad = || format!("--max-size needs a size such as 64M, 1G or 0, not {text:?}");
+    let n: u64 = t[..digits].parse().map_err(|_| bad())?;
+    let shift = match t[digits..].trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 0,
+        "k" | "kb" | "kib" => 10,
+        "m" | "mb" | "mib" => 20,
+        "g" | "gb" | "gib" => 30,
+        _ => return Err(bad()),
+    };
+    let bytes = n.checked_mul(1 << shift).ok_or_else(bad)?;
+    Ok((bytes > 0).then_some(bytes))
+}
+
+/// A size the way `--max-size` is written: `64M`, `1G`, `512K`, or bytes.
+pub fn size_flag(bytes: u64) -> String {
+    for (shift, unit) in [(30, "G"), (20, "M"), (10, "K")] {
+        if bytes >= 1 << shift && bytes % (1 << shift) == 0 {
+            return format!("{}{unit}", bytes >> shift);
+        }
+    }
+    bytes.to_string()
+}
+
+/// Read all of `input`, but hold no more than `max` bytes of it: an input
+/// longer than that is refused as too large, and the rest is not read.
+pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, LoadError> {
+    let mut buf = Vec::new();
+    let read = match max {
+        Some(max) => input.take(max.saturating_add(1)).read_to_end(&mut buf),
+        None => input.read_to_end(&mut buf),
+    };
+    read.map_err(|e| LoadError::new(e.to_string()))?;
+    match max {
+        Some(max) if buf.len() as u64 > max => Err(LoadError::too_large(None, max)),
+        _ => Ok(buf),
+    }
+}
+
+/// How deep a parse's rule stack may grow before aless stops it: about
+/// three rules a level, so some 1,000 levels of nesting, far past any real
+/// document (the JSON grammar stops at 127, JSONC's at 512). Deeper, some
+/// grammars recurse until the stack runs out, which ends the process, and
+/// slow down with the square of the depth long before that.
+pub const MAX_RULE_DEPTH: usize = 3_000;
+
+/// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
+/// margin, whatever the calling thread has (a Windows main thread has
+/// 1 MB).
+const PARSE_STACK: usize = 64 << 20;
+
 /// The placeholder the engine writes where a file name belongs.
 const NO_FILE: &str = "<no-file>";
 
@@ -180,6 +264,63 @@ impl LoadError {
     /// found not to parse.
     pub fn is_io(&self) -> bool {
         self.code == "io"
+    }
+
+    /// Whether the input was refused for its size (see [`read_within`]).
+    pub fn is_too_large(&self) -> bool {
+        self.code == "too_large"
+    }
+
+    /// An input over the size limit: `size` is its size when known (a
+    /// file), `None` for a stream that ran past the limit.
+    pub fn too_large(size: Option<u64>, limit: u64) -> LoadError {
+        use crate::explorer::human_size;
+        let message = match size {
+            Some(n) => format!(
+                "input is {}, over the {} limit",
+                human_size(n),
+                human_size(limit)
+            ),
+            None => format!("input is over the {} limit", human_size(limit)),
+        };
+        let per_byte =
+            format!("Parsing takes about {MEMORY_PER_BYTE} bytes of memory per byte of input");
+        let hint = match size {
+            Some(n) => {
+                // Suggest the first doubling of the limit that holds it.
+                let mut room = limit.saturating_mul(2);
+                while room < n {
+                    room = room.saturating_mul(2);
+                }
+                format!(
+                    "{per_byte}, so this one would need about {}. Pass --max-size {} \
+                     (or more) to read it, or --max-size 0 for no limit.",
+                    human_size(n.saturating_mul(MEMORY_PER_BYTE)),
+                    size_flag(room)
+                )
+            }
+            None => format!(
+                "{per_byte}. Pass a larger --max-size, such as {}, to read it, or \
+                 --max-size 0 for no limit.",
+                size_flag(limit.saturating_mul(4))
+            ),
+        };
+        LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// Add advice to an error aless raised itself, shown under the report
+    /// as the engine shows a grammar's.
+    fn with_hint(mut self, hint: &str) -> LoadError {
+        let hint = escape_controls_but_newlines(hint);
+        self.report.push_str("\n\n");
+        for line in wrap(&hint, 72) {
+            self.report.push_str("  ");
+            self.report.push_str(&line);
+            self.report.push('\n');
+        }
+        self.report.pop();
+        self.hint = hint.into();
+        self
     }
 
     /// Name the file the report is about, in place of the engine's
@@ -260,6 +401,26 @@ impl LoadError {
     pub fn plain_report(&self) -> String {
         strip_ansi(&self.report)
     }
+}
+
+/// Break text into lines of at most `width` characters, at spaces, keeping
+/// its own line breaks.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split(' ') {
+            if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        out.push(line);
+    }
+    out
 }
 
 /// Show control characters as escapes: `\n`, `\t`, `\r`, else `\u001b`.
@@ -577,11 +738,37 @@ impl Drop for CatchGuard {
 }
 
 /// Parse `src` as `format`.
+///
+/// The parse runs on a thread of its own with a large stack
+/// ([`PARSE_STACK`]), and stops at [`MAX_RULE_DEPTH`]: nesting that deep
+/// fails as `too_deep` rather than overflowing the stack, which would end
+/// the process where no error can be caught.
 pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    if format == Format::Text {
+        return Ok(Doc::from_lines(&lines(src)));
+    }
+    std::thread::scope(|scope| {
+        let spawned = std::thread::Builder::new()
+            .name("aless-parse".into())
+            .stack_size(PARSE_STACK)
+            .spawn_scoped(scope, || parse_here(src, format));
+        match spawned {
+            // A panic outside the grammar is aless's own: let it through.
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            // No thread to be had: parse on this one, within the same cap.
+            Err(_) => parse_here(src, format),
+        }
+    })
+}
+
+fn parse_here(src: &str, format: Format) -> Result<Doc, LoadError> {
     let Some(mut parser) = make_parser(format) else {
         return Ok(Doc::from_lines(&lines(src)));
     };
+    let too_deep = cap_depth(&mut parser);
     let sink = prov::capture(&mut parser);
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
@@ -602,6 +789,19 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
             }
             Ok(doc)
         }
+        Ok(Err(e)) if too_deep.load(Ordering::Relaxed) => {
+            let mut e = *e;
+            e.tag = "aless".to_string();
+            e.code = "too_deep".to_string();
+            e.detail = format!(
+                "too_deep: nested deeper than aless reads (about {} levels)",
+                MAX_RULE_DEPTH / 3
+            );
+            e.hint = "Nesting this deep would overflow the parser's stack, so the parse \
+                      stopped here.\nReal documents nest a few dozen levels at most."
+                .to_string();
+            Err(LoadError::from_tabnas(&e, None))
+        }
         Ok(Err(e)) => {
             let hints = parser.config().hint;
             Err(LoadError::from_tabnas(&e, hint_template(&hints, &e.code)))
@@ -618,6 +818,28 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
             ))
         }
     }
+}
+
+/// Stop the parse when its rule stack passes [`MAX_RULE_DEPTH`], on top of
+/// whatever budget the grammar keeps itself (JSON's stops at 127 levels),
+/// which still runs at its own interval. Returns the flag that says it was
+/// this cap, not the grammar's, that stopped a parse.
+fn cap_depth(parser: &mut Tabnas) -> Arc<AtomicBool> {
+    let hit = Arc::new(AtomicBool::new(false));
+    let flag = hit.clone();
+    let own = parser.config().parse.budget;
+    let (every, check) = (own.check_every_n, own.on_check);
+    parser.parse_budget(1, move |ctx| {
+        if ctx.rule_stack.len() > MAX_RULE_DEPTH {
+            flag.store(true, Ordering::Relaxed);
+            return false;
+        }
+        match &check {
+            Some(check) if every > 0 && ctx.iteration % every == 0 => check(ctx),
+            _ => true,
+        }
+    });
+    hit
 }
 
 /// Parse an in-memory source (stdin) as `format`.
@@ -644,9 +866,25 @@ pub fn origin_of(path: &Path) -> String {
 }
 
 pub fn load_path(path: &Path, format: Option<Format>) -> Result<Loaded, LoadError> {
+    load_path_within(path, format, max_size())
+}
+
+/// [`load_path`] with its own size limit (`None`: none). A file known to be
+/// over it is refused before any of it is read.
+pub fn load_path_within(
+    path: &Path,
+    format: Option<Format>,
+    max: Option<u64>,
+) -> Result<Loaded, LoadError> {
     let origin = origin_of(path);
-    let bytes =
-        std::fs::read(path).map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
+    let file = std::fs::File::open(path)
+        .map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
+    if let (Some(max), Ok(meta)) = (max, file.metadata()) {
+        if meta.is_file() && meta.len() > max {
+            return Err(LoadError::too_large(Some(meta.len()), max).with_origin(&origin));
+        }
+    }
+    let bytes = read_within(file, max).map_err(|e| e.with_origin(&origin))?;
     let source = match String::from_utf8(bytes) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
@@ -694,6 +932,82 @@ mod tests {
         assert_eq!(d.len(), 3);
         assert_eq!(d.node(2).kind, Kind::Str("two".into()));
         assert_eq!(d.node(2).line, 2);
+    }
+
+    #[test]
+    fn sizes_parse_as_max_size_takes_them() {
+        assert_eq!(parse_size("64M"), Ok(Some(64 << 20)));
+        assert_eq!(parse_size("64mib"), Ok(Some(64 << 20)));
+        assert_eq!(parse_size("1G"), Ok(Some(1 << 30)));
+        assert_eq!(parse_size("512k"), Ok(Some(512 << 10)));
+        assert_eq!(parse_size(" 1000 "), Ok(Some(1000)));
+        assert_eq!(parse_size("0"), Ok(None));
+        assert_eq!(parse_size("0M"), Ok(None));
+        for bad in ["", "M", "1T", "-1", "1.5M", "lots", "99999999999999999999G"] {
+            assert!(parse_size(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(size_flag(64 << 20), "64M");
+        assert_eq!(size_flag(1 << 30), "1G");
+        assert_eq!(size_flag(1536), "1536");
+        assert_eq!(size_flag(3 << 10), "3K");
+    }
+
+    #[test]
+    fn reading_stops_at_the_limit() {
+        assert_eq!(read_within(&b"abcd"[..], Some(4)).unwrap(), b"abcd");
+        assert_eq!(read_within(&b"abcd"[..], None).unwrap(), b"abcd");
+        let e = read_within(&b"abcde"[..], Some(4)).unwrap_err();
+        assert!(e.is_too_large());
+        assert_eq!(e.message, "input is over the 4 B limit");
+        assert!(e.hint.contains("such as 16,"), "{}", e.hint);
+        // An endless input is not read past the limit.
+        let e = read_within(std::io::repeat(b'x'), Some(1 << 20)).unwrap_err();
+        assert!(e.is_too_large());
+    }
+
+    #[test]
+    fn a_file_over_the_limit_is_refused_unread() {
+        let dir = std::env::temp_dir().join(format!("aless-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.json");
+        std::fs::write(&big, format!("[{}1]", "1, ".repeat(2000))).unwrap();
+        let e = load_path_within(&big, None, Some(1024)).unwrap_err();
+        assert!(e.is_too_large());
+        assert_eq!(e.message, "input is 5.9 KB, over the 1.0 KB limit");
+        assert!(
+            e.hint.contains("Pass --max-size 8K (or more)"),
+            "{}",
+            e.hint
+        );
+        let report = e.plain_report();
+        assert!(
+            report.starts_with("[aless/too_large]: input is 5.9 KB"),
+            "{report}"
+        );
+        assert!(report.contains("big.json"), "{report}");
+        assert!(load_path_within(&big, None, Some(1 << 20)).is_ok());
+        assert!(load_path_within(&big, None, None).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn nesting_deeper_than_the_cap_stops_cleanly() {
+        // XML this deep (50,000 levels) overflows the stack without the
+        // cap, ending the process; with it, the parse fails at the cap.
+        let n = 50_000;
+        let xml = "<a>".repeat(n) + &"</a>".repeat(n);
+        let e = parse(&xml, Format::Xml).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("about 1000 levels"), "{}", e.message);
+        assert!(e.plain_report().starts_with("[aless/too_deep]"));
+        // Nesting well inside the cap parses.
+        let ok = "<a>".repeat(500) + &"</a>".repeat(500);
+        assert!(parse(&ok, Format::Xml).is_ok());
+        // A grammar's own, lower limit still applies: JSON stops at 127.
+        let json = "[".repeat(200) + &"]".repeat(200);
+        let e = parse(&json, Format::Json).unwrap_err();
+        assert_eq!(e.code, "cancel");
+        assert!(parse(&("[".repeat(100) + &"]".repeat(100)), Format::Json).is_ok());
     }
 
     #[test]

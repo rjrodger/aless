@@ -409,28 +409,42 @@ impl App {
 
     /// Open in-memory text (stdin) in a new tab.
     pub fn open_source(&mut self, title: &str, source: String, format: Format) {
+        match load::load_str(source.clone(), format) {
+            Ok(loaded) => {
+                let id = self.next_id;
+                self.next_id += 1;
+                self.adopt(Tab::new(id, title.to_string(), None, loaded));
+            }
+            Err(err) => self.open_failed_source(title, source, format, err),
+        }
+    }
+
+    /// Open a tab for in-memory text that could not be loaded (it did not
+    /// parse, or was too large to read), showing why.
+    pub fn open_failed_source(
+        &mut self,
+        title: &str,
+        source: String,
+        format: Format,
+        err: load::LoadError,
+    ) {
         let id = self.next_id;
         self.next_id += 1;
-        match load::load_str(source.clone(), format) {
-            Ok(loaded) => self.adopt(Tab::new(id, title.to_string(), None, loaded)),
-            Err(err) => {
-                let mut tab = Tab::new(
-                    id,
-                    title.to_string(),
-                    None,
-                    load::Loaded {
-                        doc: crate::doc::Doc::from_lines(&[]),
-                        format,
-                        source,
-                    },
-                );
-                let err = err.with_origin(title);
-                tab.error = Some(err.clone());
-                tab.has_doc = false;
-                self.error(format!("{title}: {err}"));
-                self.adopt(tab);
-            }
-        }
+        let mut tab = Tab::new(
+            id,
+            title.to_string(),
+            None,
+            load::Loaded {
+                doc: crate::doc::Doc::from_lines(&[]),
+                format,
+                source,
+            },
+        );
+        let err = err.with_origin(title);
+        tab.error = Some(err.clone());
+        tab.has_doc = false;
+        self.error(format!("{title}: {err}"));
+        self.adopt(tab);
     }
 
     /// The tab shown when nothing was given to open.

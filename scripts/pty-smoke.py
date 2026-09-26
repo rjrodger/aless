@@ -137,6 +137,18 @@ def errors_scenario(work):
     ])
 
 
+def too_large_scenario(work):
+    """A file over --max-size opens as a tab that says so, and why."""
+    big = os.path.join(work, "big.json")
+    with open(big, "w") as f:
+        f.write("[" + ", ".join(str(i) for i in range(1000)) + "]")
+    return drive(["--max-size", "1K", big], work, [
+        ("a file over --max-size shows why it was not read",
+         "", ["[aless/too_large]", "over the 1.0 KB limit", "--max-size"], 3.0),
+        ("quit", "q", [], 1.0),
+    ])
+
+
 def piped_input_scenario(work):
     """`command | aless` in a terminal: the document comes from the pipe and
     the keys from the terminal, so the viewer starts."""
@@ -320,8 +332,8 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
-    for scenario in (explorer_scenario, errors_scenario, piped_input_scenario,
-                     no_terminal_scenario):
+    for scenario in (explorer_scenario, errors_scenario, too_large_scenario,
+                     piped_input_scenario, no_terminal_scenario):
         if failures:
             break
         more, transcript = scenario(work)
