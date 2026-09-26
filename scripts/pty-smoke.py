@@ -144,12 +144,13 @@ def no_terminal_scenario(work):
         # A new session has no controlling terminal: /dev/tty cannot open.
         child = subprocess.Popen([BIN, target], stdin=subprocess.DEVNULL, stdout=slave,
                                  stderr=subprocess.PIPE, start_new_session=True, env=env)
-        os.close(slave)
         try:
             code = child.wait(timeout=10)
         except subprocess.TimeoutExpired:
             child.kill()
             code = "hung"
+        # Keep our end of the slave open until the output is read: on macOS
+        # the last close of a pty's slave discards what is still unread.
         drawn = bytearray()
         while select.select([master], [], [], 0.2)[0]:
             try:
@@ -159,6 +160,7 @@ def no_terminal_scenario(work):
             if not chunk:
                 break
             drawn.extend(chunk)
+        os.close(slave)
         os.close(master)
         err = child.stderr.read().decode("utf-8", "replace")
         label = f"no controlling terminal, TERM={term}"
