@@ -206,9 +206,11 @@ fields of an `io` one plus the input's `size` (`null` for standard input,
 which is read no further than the limit) and the `limit`, in bytes, and
 its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
-parse got, plus the time limit in `seconds`. A `usage` error has only
-`kind` and `message`. A document nested deeper than aless parses
-(about 1,000 levels) fails as a `parse` error with the code `too_deep`.
+parse got, plus the time limit in `seconds`; a parse that finished, but
+late, fails the same way, with `line` and `col` `null` and a `hint`
+saying how long it took. A `usage` error has only `kind` and `message`.
+A document nested deeper than aless parses (about 1,000 levels) fails as
+a `parse` error with the code `too_deep`.
 
 **Large inputs.** An input is read whole, and parsed whole, before
 anything is printed: the tabnas grammars parse complete documents, so
@@ -467,11 +469,14 @@ down:
   its own accord. The parse runs on a thread with a 64 MB stack, whatever
   the platform gives the main thread.
 - **Time.** A parse that runs past `--timeout` stops with a `timeout`
-  error showing how far it got. There is no default, since how long a
-  parse should take depends on the machine; set one where time matters.
-  It matters most for TOML: a document of many tables parses in time
-  that grows with the square of its length (4,000 `[[tables]]`, 300 KB,
-  take some 20 seconds).
+  error showing how far it got. aless looks at the time between every two
+  steps of the parser, but cannot cut a step short: one very long string
+  is read to its end first, and a parse that finishes after the limit
+  fails all the same. There is no default, since how long a parse should
+  take depends on the machine; set one where time matters. It matters
+  most for TOML: a document of many tables parses in time that grows with
+  the square of its length (4,000 `[[tables]]`, 300 KB, take some 20
+  seconds).
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file

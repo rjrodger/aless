@@ -320,6 +320,11 @@ fn a_parse_past_timeout_is_stopped_with_status_6() {
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("timeout"));
     assert_eq!(e["seconds"], json!(0.001));
+    // One long string is a few steps of the parser, but no exception.
+    let long = format!("\"{}\"", "x".repeat(1 << 20));
+    let out = aless(&["--timeout", "0.001", "--paths"], Some(&long));
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["kind"], json!("timeout"));
     // Without one, and with a bad one.
     let quick = aless(
         &["-k", "toml", "--timeout", "0", "--compact"],

@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -288,13 +289,32 @@ pub const MAX_RULE_DEPTH: usize = 3_000;
 /// 1 MB).
 const PARSE_STACK: usize = 64 << 20;
 
-/// How many steps of the engine's loop pass between looks at the clock.
-const CLOCK_EVERY: usize = 64;
-
 /// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or
 /// time past the timeout.
 const STOP_DEPTH: u8 = 1;
 const STOP_TIME: u8 = 2;
+
+/// When a parse must be done by.
+#[derive(Clone)]
+struct Deadline {
+    at: Instant,
+    /// The time the parse was given, for its report.
+    limit: Duration,
+    /// Raised by the thread waiting on the parse once `at` passes, so that
+    /// the parse has only a flag to look at between its steps, not the
+    /// clock. `None` when no thread waits, and the parse reads the clock.
+    alarm: Option<Arc<AtomicBool>>,
+}
+
+impl Deadline {
+    /// Whether the time is up, as the parse finds it between two steps.
+    fn passed(&self) -> bool {
+        match &self.alarm {
+            Some(alarm) => alarm.load(Ordering::Relaxed),
+            None => Instant::now() >= self.at,
+        }
+    }
+}
 
 /// The placeholder the engine writes where a file name belongs.
 const NO_FILE: &str = "<no-file>";
@@ -380,6 +400,20 @@ impl LoadError {
             ),
         };
         LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// A parse that finished, but after its time limit. It stopped nowhere
+    /// in particular, so the report says how long it took instead.
+    fn finished_late(limit: Duration, took: Duration) -> LoadError {
+        // To the millisecond, and never 0.
+        let took = Duration::from_millis(timeout_ms(Some(took)));
+        let message = format!("timeout: the parse ran longer than {} s", seconds(limit));
+        let hint = format!(
+            "The parse finished, but it took {} s.\nPass a larger --timeout to have its \
+             result, or --timeout 0 for no limit.",
+            seconds(took)
+        );
+        LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
     /// Add advice to an error aless raised itself, shown under the report
@@ -822,7 +856,8 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
 /// ([`PARSE_STACK`]), and stops at [`MAX_RULE_DEPTH`]: nesting that deep
 /// fails as `too_deep` rather than overflowing the stack, which would end
 /// the process where no error can be caught. Past `timeout` it fails as
-/// `timeout`, at the place the parse had reached.
+/// `timeout`: stopped at the place it had reached, or, when its last step
+/// ran past the time, as soon as it finishes.
 pub fn parse_within(
     src: &str,
     format: Format,
@@ -832,27 +867,56 @@ pub fn parse_within(
     if format == Format::Text {
         return Ok(Doc::from_lines(&lines(src)));
     }
+    // A time too far off to reach is no limit.
+    let deadline = timeout.and_then(|limit| {
+        let at = Instant::now().checked_add(limit)?;
+        Some(Deadline {
+            at,
+            limit,
+            alarm: None,
+        })
+    });
+    let alarm = Arc::new(AtomicBool::new(false));
+    let watched = deadline.clone().map(|d| Deadline {
+        alarm: Some(alarm.clone()),
+        ..d
+    });
+    let (done, finished) = mpsc::channel::<()>();
     std::thread::scope(|scope| {
         let spawned = std::thread::Builder::new()
             .name("aless-parse".into())
             .stack_size(PARSE_STACK)
-            .spawn_scoped(scope, || parse_here(src, format, timeout));
+            .spawn_scoped(scope, move || {
+                // Hung up when the parse ends, however it ends.
+                let _done = done;
+                parse_here(src, format, watched)
+            });
         match spawned {
-            // A panic outside the grammar is aless's own: let it through.
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            // No thread to be had: parse on this one, within the same cap.
-            Err(_) => parse_here(src, format, timeout),
+            Ok(handle) => {
+                // This thread has only to wait, so it keeps the time.
+                if let Some(d) = &deadline {
+                    let left = d.at.saturating_duration_since(Instant::now());
+                    if finished.recv_timeout(left) == Err(RecvTimeoutError::Timeout) {
+                        alarm.store(true, Ordering::Relaxed);
+                    }
+                }
+                // A panic outside the grammar is aless's own: let it through.
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            }
+            // No thread to be had: parse on this one, within the same caps,
+            // reading the clock itself.
+            Err(_) => parse_here(src, format, deadline),
         }
     })
 }
 
-fn parse_here(src: &str, format: Format, timeout: Option<Duration>) -> Result<Doc, LoadError> {
+fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<Doc, LoadError> {
     let Some(mut parser) = make_parser(format) else {
         return Ok(Doc::from_lines(&lines(src)));
     };
-    let stopped = guard(&mut parser, timeout);
+    let stopped = guard(&mut parser, deadline.clone());
     let sink = prov::capture(&mut parser);
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
@@ -861,6 +925,19 @@ fn parse_here(src: &str, format: Format, timeout: Option<Duration>) -> Result<Do
             parser.parse(src).map_err(Box::new)
         }))
     };
+    let stop = stopped.load(Ordering::Relaxed);
+    let now = Instant::now();
+    // The time is looked at between steps, and a step is not cut short: one
+    // that reads a long string can run past the deadline and be the parse's
+    // last. A parse that comes to its end late, with a value or an error,
+    // is still too late.
+    let late = deadline
+        .as_ref()
+        .filter(|d| stop == 0 && outcome.is_ok() && now >= d.at);
+    if let Some(d) = late {
+        let took = d.limit + now.saturating_duration_since(d.at);
+        return Err(LoadError::finished_late(d.limit, took));
+    }
     match outcome {
         Ok(Ok(value)) => {
             let mut doc = Doc::from_value(&value);
@@ -873,7 +950,7 @@ fn parse_here(src: &str, format: Format, timeout: Option<Duration>) -> Result<Do
             }
             Ok(doc)
         }
-        Ok(Err(e)) if stopped.load(Ordering::Relaxed) == STOP_DEPTH => {
+        Ok(Err(e)) if stop == STOP_DEPTH => {
             let mut e = *e;
             e.tag = "aless".to_string();
             e.code = "too_deep".to_string();
@@ -886,9 +963,9 @@ fn parse_here(src: &str, format: Format, timeout: Option<Duration>) -> Result<Do
                 .to_string();
             Err(LoadError::from_tabnas(&e, None))
         }
-        Ok(Err(e)) if stopped.load(Ordering::Relaxed) == STOP_TIME => {
+        Ok(Err(e)) if stop == STOP_TIME => {
             let mut e = *e;
-            let limit = seconds(timeout.unwrap_or_default());
+            let limit = seconds(deadline.map_or(Duration::ZERO, |d| d.limit));
             e.tag = "aless".to_string();
             e.code = "timeout".to_string();
             e.detail = format!("timeout: the parse ran longer than {limit} s");
@@ -916,16 +993,15 @@ fn parse_here(src: &str, format: Format, timeout: Option<Duration>) -> Result<Do
     }
 }
 
-/// Stop the parse when its rule stack passes [`MAX_RULE_DEPTH`], or when it
-/// runs past `timeout`, on top of whatever budget the grammar keeps itself
+/// Stop the parse when its rule stack passes [`MAX_RULE_DEPTH`], or when
+/// its deadline passes, on top of whatever budget the grammar keeps itself
 /// (JSON's stops at 127 levels), which still runs at its own interval.
-/// Returns why aless stopped the parse, if it did: [`STOP_DEPTH`],
-/// [`STOP_TIME`], else 0.
-fn guard(parser: &mut Tabnas, timeout: Option<Duration>) -> Arc<AtomicU8> {
+/// Both are looked at between every two steps of the engine. Returns why
+/// aless stopped the parse, if it did: [`STOP_DEPTH`], [`STOP_TIME`], else
+/// 0.
+fn guard(parser: &mut Tabnas, deadline: Option<Deadline>) -> Arc<AtomicU8> {
     let stopped = Arc::new(AtomicU8::new(0));
     let flag = stopped.clone();
-    // A time too far off to reach is no limit.
-    let deadline = timeout.and_then(|t| Instant::now().checked_add(t));
     let own = parser.config().parse.budget;
     let (every, check) = (own.check_every_n, own.on_check);
     parser.parse_budget(1, move |ctx| {
@@ -933,11 +1009,9 @@ fn guard(parser: &mut Tabnas, timeout: Option<Duration>) -> Arc<AtomicU8> {
             flag.store(STOP_DEPTH, Ordering::Relaxed);
             return false;
         }
-        if let Some(deadline) = deadline {
-            if ctx.iteration % CLOCK_EVERY == 0 && Instant::now() >= deadline {
-                flag.store(STOP_TIME, Ordering::Relaxed);
-                return false;
-            }
+        if deadline.as_ref().is_some_and(Deadline::passed) {
+            flag.store(STOP_TIME, Ordering::Relaxed);
+            return false;
         }
         match &check {
             Some(check) if every > 0 && ctx.iteration % every == 0 => check(ctx),
@@ -1162,6 +1236,61 @@ mod tests {
         // A generous limit lets a small document through.
         let quick = parse_within(&slow_toml(2), Format::Toml, Some(Duration::from_secs(60)));
         assert_eq!(quick.unwrap().len(), 1 + 1 + 2 * 3);
+    }
+
+    #[test]
+    fn a_parse_of_few_steps_is_held_to_its_timeout_too() {
+        // One long string is a handful of the engine's steps, with nearly
+        // all the time spent in one of them.
+        let src = format!("\"{}\"", "x".repeat(1 << 20));
+        match parse_within(&src, Format::Json, Some(Duration::from_millis(1))) {
+            Err(e) => assert!(e.is_timeout(), "{}", e.message),
+            Ok(_) => panic!("a parse over its time was let through"),
+        }
+        assert!(parse_within(&src, Format::Json, Some(Duration::from_secs(600))).is_ok());
+    }
+
+    #[test]
+    fn a_parse_that_ends_after_its_deadline_is_too_late() {
+        // With no alarm raised, as when the last step runs past the
+        // deadline, the parse is judged as it ends, value or error.
+        let silent = || Deadline {
+            at: Instant::now(),
+            limit: Duration::from_millis(1),
+            alarm: Some(Arc::new(AtomicBool::new(false))),
+        };
+        for src in ["[1, 2, 3]", "[1, 2,"] {
+            let e = parse_here(src, Format::Json, Some(silent())).unwrap_err();
+            assert!(e.is_timeout(), "{src}: {}", e.message);
+            assert_eq!(e.message, "timeout: the parse ran longer than 0.001 s");
+            assert_eq!((e.line, e.col), (0, 0), "it stopped nowhere");
+            assert!(e.source_line.is_none());
+            assert!(
+                e.hint.starts_with("The parse finished, but it took "),
+                "{}",
+                e.hint
+            );
+            assert!(e.plain_report().starts_with("[aless/timeout]"));
+        }
+        // In time, it stands.
+        let later = Deadline {
+            at: Instant::now() + Duration::from_secs(600),
+            ..silent()
+        };
+        assert!(parse_here("[1, 2, 3]", Format::Json, Some(later)).is_ok());
+    }
+
+    #[test]
+    fn with_no_thread_to_keep_the_time_the_parse_reads_the_clock() {
+        let passed = Deadline {
+            at: Instant::now(),
+            limit: Duration::from_millis(1),
+            alarm: None,
+        };
+        let e = parse_here(&slow_toml(50), Format::Toml, Some(passed)).unwrap_err();
+        assert!(e.is_timeout(), "{}", e.message);
+        assert!(e.line > 0, "stopped where it had got to");
+        assert!(e.hint.contains("got this far"), "{}", e.hint);
     }
 
     #[test]
