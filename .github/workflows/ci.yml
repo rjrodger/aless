@@ -51,11 +51,16 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
-      - name: Binary starts and reads stdin
+      - name: Binary starts, and answers without a screen
         shell: bash
         run: |
           ./target/release/aless --version
           ./target/release/aless --help | head -3
+          out=$(echo '{"a": [1, 2]}' | ./target/release/aless --json --compact)
+          test "$out" = '{"a":[1,2]}'
+          ./target/release/aless --where --at 7:9 tests/fixtures/nested.json | grep -q '"path": ".store.books\[1\].title"'
+          status=0; ./target/release/aless tests/fixtures/bad.json 2>/dev/null || status=$?
+          test "$status" = 1
 
   msrv:
     name: rust 1.86 (minimum supported)

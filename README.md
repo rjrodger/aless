@@ -5,7 +5,10 @@ A [jless](https://jless.io)-style terminal viewer for **every format the
 jsonic, JSONC, JSON5, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and
 RSS/Atom feeds — with **tabs** for several files at once and a **watch
 mode** that reloads a file when it changes while **keeping your place**.
-Pure Rust; runs on Linux, macOS and Windows.
+Without a screen it prints JSON instead, for scripts and agents: outlines,
+values by path, search hits and parse errors, each with its source
+position ([Scripts and agents](#scripts-and-agents)). Pure Rust; runs on
+Linux, macOS and Windows.
 
 ```
 ▼ {
@@ -74,6 +77,130 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
 
 `NO_COLOR` in the environment also disables colour.
+
+## Scripts and agents
+
+aless also runs without a screen. Give it any option from the table
+below, or let its standard output be something other than a terminal (a
+pipe, a file, an agent's tool call), and it prints JSON instead of
+starting the viewer. It never waits for keys: when the viewer cannot
+start, aless says so and exits with status 2.
+
+```bash
+aless config.yaml | jq .spec                       # any format in, JSON out
+aless --paths --depth 1 big.json                   # an outline: what is in it
+aless --json --path '.spec.containers[0]' deploy.yaml
+aless --find '"image":' deploy.yaml                # nodes whose text matches
+aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 is in
+aless --where --path .spec.replicas deploy.yaml    # the line a path is on
+aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
+```
+
+| Option | Effect |
+|---|---|
+| `--json` | the document as JSON (the default), or the value at the start |
+| `--paths` | an entry for the start and each node below it |
+| `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
+| `--where` | the start's entry |
+| `--check` | parse every input and report on each |
+| `--path PATH` | start at PATH instead of the root |
+| `--at LINE[:COL]` | start at the node at that source position |
+| `--depth N` | `--paths` and `--find` go at most N levels below the start |
+| `--limit N` | at most N entries (default 200, 0 for all) |
+| `--compact` | JSON on one line |
+| `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
+
+**Paths** are jq's syntax, which every output prints, so a path can go
+straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, and `[-1]`
+for a last item. `a.b[0]` without the dot, JSONPath's `$.a['b'][0]` and
+JSON Pointer's `/a/b/0` work too. Wildcards, slices and recursive descent
+are jq's work: pipe `--json` into jq for those. Quote a path for the
+shell, whose globbing would take `[0]`.
+
+**An entry** is one node:
+
+```json
+{"path":".store.books[1].title","kind":"string","line":7,"col":8,"value":"TAPL"}
+```
+
+- `kind` is jq's name for the type: object, array, string, number,
+  boolean or null.
+- `line` and `col` count from 1 and give where the node starts in the
+  source: at its key when it has one, else at its value. They are exact
+  for the JSON family, TOML, INI, CSV and ZON, best-effort for YAML, XML
+  and Markdown, and `null` when unknown.
+- A container has `length`, its item count; a scalar has `value`. A
+  string over 200 characters is cut to 200, with `"truncated": true` and
+  its full `length`. Numbers are 64-bit floats, so an integer beyond
+  2^53 loses precision; NaN and the infinities, which JSON cannot hold,
+  are `"NaN"`, `"Infinity"` and `"-Infinity"` in an entry and `null` in
+  `--json` output.
+
+A listing puts one entry per line and says what it left out:
+
+```
+$ aless --paths --depth 1 nested.json
+{
+  "file": "nested.json",
+  "format": "json",
+  "path": ".",
+  "entries": [
+    {"path":".","kind":"object","line":1,"col":1,"length":2},
+    {"path":".store","kind":"object","line":2,"col":3,"length":4},
+    {"path":".version","kind":"number","line":11,"col":3,"value":3}
+  ],
+  "total": 3,
+  "limit": 200,
+  "truncated": false
+}
+```
+
+`file` is the path as given, or `-` for standard input, and `path` is
+where the listing starts. `--find` prints the same with `pattern` and
+`matches`; `--where` prints one entry with `file` and `format`; `--check`
+prints `{"ok", "files": [{"file", "format", "ok", "error"}]}`.
+
+**Errors** are JSON on standard error, and standard output stays empty:
+
+```
+$ aless bad.json
+{
+  "error": {
+    "kind": "parse",
+    "file": "bad.json",
+    "format": "json",
+    "code": "unexpected",
+    "message": "unexpected end of input",
+    "line": 2,
+    "col": 1,
+    "hint": "The document ends before it is complete: look for an unclosed\nbracket, brace or string, or a missing value at the end.",
+    "source_line": "",
+    "report": "[tabnas/unexpected]: unexpected end of input\n  --> bad.json:2:1\n  1 | {\"a\": 1, \"b\": \n  2 | \n      ^ unexpected end of input\n…"
+  }
+}
+```
+
+| Exit | Meaning | Error `kind` |
+|---|---|---|
+| 0 | success: standard output holds the answer | |
+| 1 | the input did not parse; with `--check`, some input failed and the report says which | `parse` |
+| 2 | bad usage: an unknown option, a bad path, no input, a directory, or the viewer without a terminal | `usage` |
+| 3 | an input could not be read | `io` |
+| 4 | `--path` or `--at` names nothing | `not_found` |
+
+A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
+code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
+`report`, the whole report the viewer shows, uncoloured; a field that
+does not apply is `null`. A `not_found` error has the `path` or `at` it
+was given, the entry of the `nearest` node the path did reach, and that
+node's first `keys` when it is an object. A `usage` error has only
+`kind` and `message`.
+
+These shapes are a contract: fields may be added, but none is renamed,
+removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
+is an Agent Skill that teaches an agent all of this (copy the
+`skills/aless` directory into `~/.claude/skills/`, or wherever your agent
+loads skills from), and `aless --help` opens with it.
 
 ## Formats
 
@@ -321,7 +448,9 @@ suspend is Unix-only.
 - Search runs over each node's own line-mode text (`"key": value`), so a
   pattern cannot span rows.
 - `J`/`K` stop at the last sibling instead of tracking a desired depth.
-- No `--yaml`/`--json` flags: formats come from extensions or `--kind`.
+- jless's `--json` and `--yaml` name the input format; here that comes
+  from the extension or `--kind`, and `--json` asks for JSON output (see
+  [Scripts and agents](#scripts-and-agents)).
 
 ## Dependencies
 
@@ -337,7 +466,7 @@ published, the `git` entries become version requirements and the patch
 tables go; nothing else changes.
 
 The other dependencies: crossterm (terminal), notify (file watching),
-regex (search), unicode-width (layout), serde_json (number formatting),
+regex (search), unicode-width (layout), serde_json (JSON output),
 arboard (clipboard, optional).
 
 ## Development
@@ -345,7 +474,7 @@ arboard (clipboard, optional).
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked                   # unit tests, fixture loading, headless app runs
+cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 ```
 
@@ -357,6 +486,7 @@ the library is terminal-free and unit tested:
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
 | `explorer` | directory trees as documents, listed lazily |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
+| `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
 | `load` | format detection; the tabnas grammars; errors with positions; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |

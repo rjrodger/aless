@@ -156,19 +156,40 @@ pub fn search_text(doc: &Doc, id: NodeId) -> String {
 
 /// Serialise the subtree at `id` as pretty-printed JSON.
 pub fn to_json_pretty(doc: &Doc, id: NodeId, indent: usize) -> String {
-    serialize(doc, id, Some(indent))
+    serialize(doc, id, Layout::Pretty(indent))
 }
 
 /// Serialise the subtree at `id` as one line of JSON, `, ` and `: ` spaced.
 pub fn to_json_line(doc: &Doc, id: NodeId) -> String {
-    serialize(doc, id, None)
+    serialize(doc, id, Layout::Line)
 }
 
-fn serialize(doc: &Doc, root: NodeId, indent: Option<usize>) -> String {
+/// Serialise the subtree at `id` as one line of JSON with no spaces.
+pub fn to_json_compact(doc: &Doc, id: NodeId) -> String {
+    serialize(doc, id, Layout::Compact)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Layout {
+    /// One item per line, indented this many spaces a level.
+    Pretty(usize),
+    /// One line, `, ` and `: ` spaced.
+    Line,
+    /// One line, no spaces.
+    Compact,
+}
+
+fn serialize(doc: &Doc, root: NodeId, layout: Layout) -> String {
     enum Step {
         Open(NodeId),
         Close(NodeId),
     }
+    let indent = match layout {
+        Layout::Pretty(w) => Some(w),
+        _ => None,
+    };
+    let colon = if layout == Layout::Compact { ":" } else { ": " };
+    let comma = if layout == Layout::Line { ", " } else { "," };
     let base_depth = doc.node(root).depth;
     let mut out = String::new();
     let mut stack = vec![Step::Open(root)];
@@ -192,10 +213,10 @@ fn serialize(doc: &Doc, root: NodeId, indent: Option<usize>) -> String {
                 if id != root {
                     if let Key::Name(n) = &node.key {
                         out.push_str(&quote(n));
-                        out.push_str(": ");
+                        out.push_str(colon);
                     }
                 }
-                let comma = id != root && doc.next_sibling(id).is_some();
+                let more = id != root && doc.next_sibling(id).is_some();
                 match &node.kind {
                     Kind::Object | Kind::Array if node.children > 0 => {
                         out.push_str(open_bracket(&node.kind));
@@ -209,11 +230,8 @@ fn serialize(doc: &Doc, root: NodeId, indent: Option<usize>) -> String {
                     Kind::Object | Kind::Array => {
                         out.push_str(open_bracket(&node.kind));
                         out.push_str(close_bracket(&node.kind));
-                        if comma {
-                            out.push(',');
-                            if indent.is_none() {
-                                out.push(' ');
-                            }
+                        if more {
+                            out.push_str(comma);
                         }
                         nl(&mut out);
                     }
@@ -222,11 +240,8 @@ fn serialize(doc: &Doc, root: NodeId, indent: Option<usize>) -> String {
                             Kind::Number(n) if !n.is_finite() => out.push_str("null"),
                             k => out.push_str(&leaf_text(k)),
                         }
-                        if comma {
-                            out.push(',');
-                            if indent.is_none() {
-                                out.push(' ');
-                            }
+                        if more {
+                            out.push_str(comma);
                         }
                         nl(&mut out);
                     }
@@ -237,10 +252,7 @@ fn serialize(doc: &Doc, root: NodeId, indent: Option<usize>) -> String {
                 pad(&mut out, node.depth);
                 out.push_str(close_bracket(&node.kind));
                 if id != root && doc.next_sibling(id).is_some() {
-                    out.push(',');
-                    if indent.is_none() {
-                        out.push(' ');
-                    }
+                    out.push_str(comma);
                 }
                 nl(&mut out);
             }
@@ -388,6 +400,10 @@ mod tests {
         assert_eq!(
             to_json_line(&d, 0),
             r#"{"a": 1, "b": [true, {"c": "x"}], "d": {}, "e": []}"#
+        );
+        assert_eq!(
+            to_json_compact(&d, 0),
+            r#"{"a":1,"b":[true,{"c":"x"}],"d":{},"e":[]}"#
         );
         // A subtree root takes no trailing comma even with a next sibling.
         assert_eq!(to_json_line(&d, 2), r#"[true, {"c": "x"}]"#);

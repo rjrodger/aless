@@ -123,8 +123,18 @@ impl fmt::Display for Format {
 pub struct LoadError {
     /// One line, for the status bar.
     pub message: String,
+    /// What went wrong, in a word: the grammar's error code
+    /// (`unexpected`, `unterminated_string`, …), or `io` or `grammar` for
+    /// an error aless raised itself.
+    pub code: String,
     pub line: u32,
     pub col: u32,
+    /// The grammar's advice, as the report shows it; empty when it gave
+    /// none. (This and `source_line` are boxed to keep the error small.)
+    pub hint: Box<str>,
+    /// The source line the error is on, cut to a window around the column
+    /// when it is long; `None` when the error has no position.
+    pub source_line: Option<Box<str>>,
     /// The full report, as the tabnas engine renders it: the `[tag/code]`
     /// header, the `-->` location, the source lines around the error with
     /// a caret under it, the grammar's hint and link, and the engine's
@@ -135,6 +145,12 @@ pub struct LoadError {
 
 /// The placeholder the engine writes where a file name belongs.
 const NO_FILE: &str = "<no-file>";
+
+/// The engine's name for the token at the end of the source.
+const END_TOKEN: &str = "#ZZ";
+
+const END_HINT: &str = "The document ends before it is complete: look for an unclosed\n\
+                        bracket, brace or string, or a missing value at the end.";
 
 impl LoadError {
     /// An error the viewer raised itself (reading the file, a grammar that
@@ -151,10 +167,19 @@ impl LoadError {
         );
         LoadError {
             message,
+            code: tag.to_string(),
             line: 0,
             col: 0,
+            hint: Box::default(),
+            source_line: None,
             report,
         }
+    }
+
+    /// Whether the input could not be read at all, as opposed to read and
+    /// found not to parse.
+    pub fn is_io(&self) -> bool {
+        self.code == "io"
     }
 
     /// Name the file the report is about, in place of the engine's
@@ -188,6 +213,12 @@ impl LoadError {
         let mut shown = e.clone();
         shown.detail = escape_controls(&e.detail);
         shown.hint = escape_hint(&e.hint, hint_template, &e.src);
+        if e.code == "unexpected" && e.token.name == END_TOKEN && e.src.is_empty() {
+            // The engine words this as an unexpected character, and quotes
+            // none: the document stopped before it was complete.
+            shown.detail = "unexpected end of input".to_string();
+            shown.hint = END_HINT.to_string();
+        }
         shape_excerpt(&mut shown, e);
         let detail = shown.detail.trim();
         let message = if detail.starts_with(&e.code) || e.code.is_empty() {
@@ -204,10 +235,23 @@ impl LoadError {
                 &format!("{NO_FILE}:{}:{}", e.row, e.col),
             );
         }
+        let source_line = e.row.checked_sub(1).and_then(|i| {
+            e.full_source
+                .split('\n')
+                .nth(i)
+                .map(|l| window(l.strip_suffix('\r').unwrap_or(l), e.col).into())
+        });
         LoadError {
             message,
+            code: if e.code.is_empty() {
+                "unknown".to_string()
+            } else {
+                e.code.clone()
+            },
             line: e.row as u32,
             col: e.col as u32,
+            hint: shown.hint.trim().into(),
+            source_line,
             report,
         }
     }
@@ -318,6 +362,27 @@ const LONG_LINE: usize = 160;
 const WINDOW: usize = 120;
 /// ...and how many of them come before the error column.
 const WINDOW_LEAD: usize = 40;
+
+/// A source line as an error quotes it: whole, or when longer than
+/// [`LONG_LINE`] a [`WINDOW`] of it around the 1-based `col`, marked `…`
+/// where cut.
+fn window(line: &str, col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= LONG_LINE {
+        return line.to_string();
+    }
+    let start = col.max(1).saturating_sub(1).saturating_sub(WINDOW_LEAD);
+    let end = (start + WINDOW).min(chars.len());
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
+    }
+    out.extend(&chars[start..end]);
+    if end < chars.len() {
+        out.push('…');
+    }
+    out
+}
 
 /// Prepare the source the engine quotes (up to two lines either side of
 /// the error) for drawing; see [`LoadError::from_tabnas`]. Only those lines
@@ -629,6 +694,26 @@ mod tests {
         assert_eq!(d.len(), 3);
         assert_eq!(d.node(2).kind, Kind::Str("two".into()));
         assert_eq!(d.node(2).line, 2);
+    }
+
+    #[test]
+    fn running_out_of_input_says_so() {
+        for (src, format) in [
+            ("{\"a\": 1, \"b\": ", Format::Json),
+            ("[1, 2", Format::Json),
+        ] {
+            let e = parse(src, format).unwrap_err();
+            assert_eq!(e.code, "unexpected");
+            assert_eq!(e.message, "unexpected end of input", "{src}");
+            assert!(e.hint.contains("ends before it is complete"), "{}", e.hint);
+            let report = e.plain_report();
+            assert!(report.contains("unexpected end of input"), "{report}");
+            assert!(!report.contains("character(s)"), "{report}");
+        }
+        // An unexpected character is still one.
+        let e = parse("[1, @]", Format::Json).unwrap_err();
+        assert_eq!(e.message, "unexpected character(s): @");
+        assert_eq!(e.source_line.as_deref(), Some("[1, @]"));
     }
 
     #[test]

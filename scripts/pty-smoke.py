@@ -129,6 +129,59 @@ def errors_scenario(work):
     ])
 
 
+def no_terminal_scenario(work):
+    """A pty for standard output but no terminal to read keys from, as some
+    agent harnesses run commands: the viewer must refuse at once, draw
+    nothing, and name the options that work; with TERM=dumb, aless prints
+    the document as JSON instead."""
+    import json
+    import subprocess
+    failures = []
+    target = os.path.join(work, "nested.json")
+    for term, want_code in (("xterm-256color", 2), ("dumb", 0)):
+        master, slave = pty.openpty()
+        env = dict(os.environ, TERM=term)
+        # A new session has no controlling terminal: /dev/tty cannot open.
+        child = subprocess.Popen([BIN, target], stdin=subprocess.DEVNULL, stdout=slave,
+                                 stderr=subprocess.PIPE, start_new_session=True, env=env)
+        os.close(slave)
+        try:
+            code = child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            code = "hung"
+        drawn = bytearray()
+        while select.select([master], [], [], 0.2)[0]:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            drawn.extend(chunk)
+        os.close(master)
+        err = child.stderr.read().decode("utf-8", "replace")
+        label = f"no controlling terminal, TERM={term}"
+        if code != want_code:
+            print(f"FAIL {label}: exit {code}, wanted {want_code}; stderr: {err}")
+            failures.append(label)
+        elif want_code == 2 and (drawn or "--json" not in err):
+            print(f"FAIL {label}: drew {bytes(drawn[:80])!r}, said {err!r}")
+            failures.append(label)
+        elif want_code == 0:
+            try:
+                doc = json.loads(drawn.decode().replace("\r\n", "\n"))
+                assert doc["version"] == 3
+            except Exception as e:
+                print(f"FAIL {label}: not the document as JSON ({e}): {bytes(drawn[:80])!r}")
+                failures.append(label)
+            else:
+                print(f"ok   {label}: prints JSON")
+        else:
+            print(f"ok   {label}: refuses at once, draws nothing, points at --json")
+    return failures, ""
+
+
 def main():
     work = tempfile.mkdtemp(prefix="aless-smoke-")
     nested = os.path.join(work, "nested.json")
@@ -232,7 +285,7 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
-    for scenario in (explorer_scenario, errors_scenario):
+    for scenario in (explorer_scenario, errors_scenario, no_terminal_scenario):
         if failures:
             break
         more, transcript = scenario(work)

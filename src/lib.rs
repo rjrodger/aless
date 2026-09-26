@@ -10,6 +10,7 @@ pub mod clip;
 pub mod doc;
 pub mod explorer;
 pub mod fmt;
+pub mod headless;
 pub mod load;
 pub mod prov;
 pub mod render;
