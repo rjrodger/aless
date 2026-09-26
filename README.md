@@ -76,6 +76,7 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
+| `--timeout SECONDS` | stop a parse that runs longer than this (`2.5`, `90s`, `2m`; default none) |
 
 `NO_COLOR` in the environment also disables colour.
 
@@ -112,6 +113,7 @@ aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 | `--compact` | JSON on one line |
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
+| `--timeout SECONDS` | stop a parse that runs longer than this (default none) |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
 straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, and `[-1]`
@@ -191,6 +193,7 @@ $ aless bad.json
 | 3 | an input could not be read, or the output could not be written | `io` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
 | 5 | an input is larger than `--max-size` | `too_large` |
+| 6 | a parse ran longer than `--timeout` | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
@@ -201,8 +204,10 @@ was given, the entry of the `nearest` node the path did reach, and that
 node's first `keys` when it is an object. A `too_large` error has the
 fields of an `io` one plus the input's `size` (`null` for standard input,
 which is read no further than the limit) and the `limit`, in bytes, and
-its `hint` names the `--max-size` that would read it. A `usage` error has
-only `kind` and `message`. A document nested deeper than aless parses
+its `hint` names the `--max-size` that would read it. A `timeout` error
+has the fields of a `parse` one, its `line` and `col` showing how far the
+parse got, plus the time limit in `seconds`. A `usage` error has only
+`kind` and `message`. A document nested deeper than aless parses
 (about 1,000 levels) fails as a `parse` error with the code `too_deep`.
 
 **Large inputs.** An input is read whole, and parsed whole, before
@@ -211,7 +216,10 @@ there is no streaming, and the first byte of output comes when the parse
 ends. That costs memory, about 80 bytes per byte of input, and time (see
 [Performance](#performance)), which is why inputs over `--max-size` are
 refused, before a file is read or as soon as standard input passes the
-limit. Pipes are safe both ways: standard input can be a pipe or a file,
+limit, and why `--timeout` exists: a slow grammar can take minutes over
+a document of modest size, so a caller with a deadline of its own should
+pass a shorter one, and get an error it can read rather than a kill.
+Pipes are safe both ways: standard input can be a pipe or a file,
 and a reader that stops early (`aless --json big.json | head`) ends
 aless quietly with status 0, though the parse has already been paid for.
 To take part of a large document, `--path` and `--depth` keep the output
@@ -446,22 +454,31 @@ seconds and 66 MB 68 seconds. Memory peaks at about 80 bytes per source
 byte while the parse runs (13 MB peaked at 1.0 GB, 66 MB at 5.1 GB); the
 steady state afterwards is much smaller.
 
-Two limits keep a large or hostile input from taking the machine down.
-An input over `--max-size` (64 MB unless set; `0` removes the limit) is
-refused with a report that names the size that would read it. Nesting
-deeper than about 1,000 levels stops the parse with a `too_deep` error:
-some grammars would otherwise recurse until the stack ran out and end the
-process, and slow down with the square of the depth well before that
-(the JSON grammar stops at 127 levels of its own accord). The parse runs
-on a thread with a 64 MB stack, whatever the platform gives the main
-thread. Nothing bounds time: a TOML document of many tables parses in
-time that grows with the square of their number (4,000 `[[tables]]`
-take some 20 seconds). The parse blocks the interface, so a large file shows a
-`loading…` notice before the screen is taken over, and a reload of a
-large watched file pauses the viewer for as long as its parse takes.
-Navigation, folding and search are independent of the engine and stay
-fast: rebuilding the rows of a 2.4-million-node document takes about a
-second, and a search over it under a second.
+Three limits keep a large, slow or hostile input from taking the machine
+down:
+
+- **Size.** An input over `--max-size` (64 MB unless set; `0` removes the
+  limit) is refused with a report that names the size that would read
+  it.
+- **Depth.** Nesting deeper than about 1,000 levels stops the parse with
+  a `too_deep` error. Some grammars would otherwise recurse until the
+  stack ran out and end the process, and slow down with the square of
+  the depth well before that; the JSON grammar stops at 127 levels of
+  its own accord. The parse runs on a thread with a 64 MB stack, whatever
+  the platform gives the main thread.
+- **Time.** A parse that runs past `--timeout` stops with a `timeout`
+  error showing how far it got. There is no default, since how long a
+  parse should take depends on the machine; set one where time matters.
+  It matters most for TOML: a document of many tables parses in time
+  that grows with the square of its length (4,000 `[[tables]]`, 300 KB,
+  take some 20 seconds).
+
+The parse blocks the interface, so a large file shows a `loading…` notice
+before the screen is taken over, and a reload of a large watched file
+pauses the viewer for as long as its parse takes. Navigation, folding and
+search are independent of the engine and stay fast: rebuilding the rows
+of a 2.4-million-node document takes about a second, and a search over it
+under a second.
 
 ## Platforms
 
