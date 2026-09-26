@@ -211,7 +211,8 @@ late, fails the same way, with `line` and `col` `null` and a `hint`
 saying how long it took. A `usage` error has only `kind` and `message`.
 A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
-has a limit of its own (127 levels for JSON, 256 for XML).
+has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
+TOML, INI and ZON, 256 for XML, 512 for JSONC).
 
 **Large inputs.** An input is read whole, and parsed whole, before
 anything is printed: the tabnas grammars parse complete documents, so
@@ -466,8 +467,9 @@ down:
 - **Depth.** Nesting deeper than about 1,000 levels stops the parse with
   a `too_deep` error. Some grammars would otherwise recurse until the
   stack ran out and end the process, and slow down with the square of
-  the depth well before that. Several stop sooner of their own accord,
-  with the same error: JSON at 127 levels, XML at 256 open elements.
+  the depth well before that. Most stop sooner of their own accord,
+  with the same error: JSON, JSONL, JSONic, JSON5, YAML, TOML, INI and
+  ZON at 127 levels, XML at 256 open elements, JSONC at 512 levels.
   The parse runs on a thread with a 64 MB stack, whatever the platform
   gives the main thread.
 - **Time.** A parse that runs past `--timeout` stops with a `timeout`

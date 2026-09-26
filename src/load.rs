@@ -279,10 +279,11 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 
 /// How deep a parse's rule stack may grow before aless stops it: about
 /// three rules a level, so some 1,000 levels of nesting, far past any real
-/// document (the JSON grammar stops at 127, XML's at 256, JSONC's at 512,
-/// each as `too_deep` too). Deeper, some grammars recurse until the stack
-/// runs out, which ends the process, and slow down with the square of the
-/// depth long before that.
+/// document. Most grammars stop sooner, each as `too_deep` too: JSON,
+/// JSONL, JSONic, JSON5, YAML, TOML, INI and ZON at 127 levels, XML at
+/// 256 and JSONC at 512. This cap is for a grammar with no limit of its
+/// own: deeper, some recurse until the stack runs out, which ends the
+/// process, and slow down with the square of the depth long before that.
 pub const MAX_RULE_DEPTH: usize = 3_000;
 
 /// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
@@ -915,9 +916,20 @@ pub fn parse_within(
 }
 
 fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<Doc, LoadError> {
-    let Some(mut parser) = make_parser(format) else {
+    let Some(parser) = make_parser(format) else {
         return Ok(Doc::from_lines(&lines(src)));
     };
+    parse_with(parser, src, format, deadline)
+}
+
+/// Parse `src` as `format` with `parser`, within aless's caps: the work of
+/// [`parse_here`] once it has a parser.
+fn parse_with(
+    mut parser: Tabnas,
+    src: &str,
+    format: Format,
+    deadline: Option<Deadline>,
+) -> Result<Doc, LoadError> {
     let stopped = guard(&mut parser, deadline.clone());
     let sink = prov::capture(&mut parser);
     // A grammar is a plugin; a defect in one must not take the viewer down.
@@ -977,10 +989,11 @@ fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<D
             );
             Err(LoadError::from_tabnas(&e, None))
         }
-        // A grammar's own depth limit, lower than aless's: JSON's is a
-        // parse budget and XML's is in its lexer, and each stops the parse
-        // with the engine's `cancel`, which no grammar here raises for
-        // anything else. Its hint would blame a budget of the caller's.
+        // A grammar's own depth limit, lower than aless's: JSON's (and
+        // YAML's, INI's and the rest of jsonic's family) is a parse guard
+        // and XML's is in its lexer, and each stops the parse with the
+        // engine's `cancel`, which no grammar here raises for anything
+        // else. Its hint would blame a budget of the caller's.
         Ok(Err(e)) if e.code == "cancel" => {
             let mut e = *e;
             e.tag = "aless".to_string();
@@ -1011,11 +1024,12 @@ fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<D
 }
 
 /// Stop the parse when its rule stack passes [`MAX_RULE_DEPTH`], or when
-/// its deadline passes, on top of whatever budget the grammar keeps itself
-/// (JSON's stops at 127 levels), which still runs at its own interval.
-/// Both are looked at between every two steps of the engine. Returns why
-/// aless stopped the parse, if it did: [`STOP_DEPTH`], [`STOP_TIME`], else
-/// 0.
+/// its deadline passes. Both are looked at between every two steps of the
+/// engine, in the parse budget. A grammar's own depth limit is a parse
+/// guard, which the engine runs beside the budget rather than in it, so
+/// setting this one leaves it in place; a budget the grammar keeps itself
+/// still runs, at its own interval. Returns why aless stopped the parse,
+/// if it did: [`STOP_DEPTH`], [`STOP_TIME`], else 0.
 fn guard(parser: &mut Tabnas, deadline: Option<Deadline>) -> Arc<AtomicU8> {
     let stopped = Arc::new(AtomicU8::new(0));
     let flag = stopped.clone();
@@ -1309,30 +1323,60 @@ mod tests {
         assert!(e.hint.contains("got this far"), "{}", e.hint);
     }
 
+    /// Parse as [`parse`] does, on a stack of [`PARSE_STACK`], with YAML's
+    /// own depth limit taken off: YAML standing for a grammar with no limit
+    /// of its own, which is what the cap is for.
+    fn parse_yaml_without_its_own_limit(src: &str) -> Result<Doc, LoadError> {
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(PARSE_STACK)
+                .spawn_scoped(scope, || {
+                    let mut parser = make_parser(Format::Yaml).expect("YAML has a grammar");
+                    assert!(parser.parse_guards.contains_key("depth"));
+                    parser.remove_parse_guard("depth");
+                    parse_with(parser, src, Format::Yaml, None)
+                })
+                .expect("a parse thread")
+                .join()
+                .expect("the parse returns")
+        })
+    }
+
     #[test]
     fn nesting_deeper_than_the_cap_stops_cleanly() {
-        // YAML has no limit of its own. This deep (50,000 levels), a
-        // grammar with none can overflow the stack without the cap, ending
-        // the process; with it, the parse fails at the cap.
+        // This deep (50,000 levels), a grammar with no limit of its own can
+        // overflow the stack without the cap, ending the process; with it,
+        // the parse fails at the cap.
         let yaml = "- ".repeat(50_000) + "x\n";
-        let e = parse(&yaml, Format::Yaml).unwrap_err();
+        let e = parse_yaml_without_its_own_limit(&yaml).unwrap_err();
         assert_eq!(e.code, "too_deep");
         assert!(e.message.contains("about 1000 levels"), "{}", e.message);
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
         // Nesting well inside the cap parses.
-        assert!(parse(&("- ".repeat(500) + "x\n"), Format::Yaml).is_ok());
+        assert!(parse_yaml_without_its_own_limit(&("- ".repeat(500) + "x\n")).is_ok());
+        // With its limit, YAML stops such a document itself, sooner.
+        let e = parse(&yaml, Format::Yaml).unwrap_err();
+        assert!(
+            e.message.contains("the yaml grammar reads"),
+            "{}",
+            e.message
+        );
     }
 
     #[test]
     fn a_grammars_own_lower_limit_is_too_deep_too() {
-        // JSON stops at 127 levels, with a budget, and XML at 256 open
-        // elements, in its lexer, both with the engine's `cancel`, whose
-        // hint blames a budget of the caller's. aless reports them as it
-        // does its own cap, at the place the grammar stopped.
+        // JSON stops at 127 levels and YAML's compact sequences at 127, each
+        // with a parse guard, which aless's budget does not replace, and XML
+        // at 256 open elements, in its lexer, all with the engine's
+        // `cancel`, whose hint blames a budget of the caller's. aless
+        // reports them as it does its own cap, at the place the grammar
+        // stopped.
         let json = |n: usize| "[".repeat(n) + &"]".repeat(n);
+        let yaml = |n: usize| "- ".repeat(n) + "x\n";
         let xml = |n: usize| "<a>".repeat(n) + &"</a>".repeat(n);
         for (format, deep, within) in [
             (Format::Json, json(200), json(100)),
+            (Format::Yaml, yaml(128), yaml(127)),
             (Format::Xml, xml(257), xml(256)),
         ] {
             let e = parse(&deep, format).unwrap_err();
