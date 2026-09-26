@@ -1455,7 +1455,7 @@ mod tests {
 
     #[test]
     fn a_parse_past_its_timeout_fails_with_status_6() {
-        let toml: String = (0..400)
+        let toml: String = (0..2_000)
             .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
             .collect();
         let mut r = req(Op::Paths);
