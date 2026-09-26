@@ -760,8 +760,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-feed"
-version = "0.6.9"
-source = "git+https://github.com/tabnas/feed#ada6e7546143901dcb17deb03612b00ef9ba67ce"
+version = "0.6.10"
+source = "git+https://github.com/tabnas/feed#2903ab881de9f232b7ff5f6f94a495ce559d3cd6"
 dependencies = [
  "indexmap",
  "regex",
