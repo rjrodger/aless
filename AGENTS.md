@@ -32,6 +32,14 @@ working here; `CLAUDE.md` imports it.
   crates.io: replace `git` with a version requirement and delete the
   patch tables; nothing else changes. Do not vendor or copy tabnas code
   into this repository.
+- **The dev profile turns the engine's debug assertions off**
+  (`[profile.dev.package.tabnas]` in `Cargo.toml`). With them on, the
+  engine compares its whole rule stack with a shadow copy on every step,
+  so a parse whose rule stack grows with the input — a custom grammar's
+  repetitions keep one rule open per item — runs in O(n²): 800 lines of
+  `hosts` took 31 s in a debug build, 0.4 s without the check, and the
+  release build is linear either way. `cargo test` and `target/debug/aless`
+  inherit the setting; keep it.
 - **Layout.** `src/main.rs` is the only file that touches the terminal
   (crossterm) and the only one with platform-specific code. Everything
   in the library is terminal-free and unit tested: `doc` (the arena
