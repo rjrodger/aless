@@ -262,9 +262,13 @@ this default export is lossy there, as the profile is), a nested container
 written as compact JSON text in its cell, and a number as the source
 spelled it where the source provides its lexeme (the JSON family, YAML,
 ZON and JSON Lines). An empty array exports as nothing. `--render json`
-takes `--compact` and `--indent` as `--json` does; `--at` is not accepted,
-nor a path that counts from the end (`[-1]`), since the input is read once
-front to back.
+takes `--compact` and `--indent` as `--json` does. Two things a stream
+cannot do, since the input is read once, front to back: `--at` is not
+accepted, and `[-1]` on an array (counting from the end) is a usage error,
+though on an object it is the key `-1`, as everywhere. A document that
+repeats a key on the exported path after the first was taken (`{"rows":
+[…], "rows": […]}`) fails with `DUPLICATE_MEMBER` rather than export a
+different value from the one `--json`, which keeps the last, would give.
 
 ```
 $ aless --render csv --path .response.payload.deep.records response.json
@@ -283,7 +287,9 @@ back; the renderer writes whole records, and holds its output until the
 end when it can), else `"none"`. The status follows the code, as the table
 above says. aless's own limits report as they do for a parse, plus that
 `output` field: nesting past its cap is a `parse` error with the code
-`too_deep`, and a run past `--timeout` a `timeout` error. A `--path` that
+`too_deep`, a run past `--timeout` a `timeout` error (the deadline covers
+the whole run, the writing of a parsed value included), and a grammar
+that panicked a `parse` error with the code `grammar`. A `--path` that
 names nothing is `not_found`, its `nearest` entry without a source
 position.
 

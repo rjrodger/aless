@@ -322,6 +322,7 @@ impl Deadline {
 /// [`STOP_TIME`], else 0), and the source position the parse had reached,
 /// so a report can show how far it got when the engine's own error does
 /// not survive (the transducer's `ABORTED` carries no position).
+#[derive(Debug)]
 pub(crate) struct Stop {
     why: AtomicU8,
     line: AtomicU64,
@@ -873,10 +874,10 @@ pub fn parse_in_progress() -> bool {
     CATCHING.try_with(|c| c.get() > 0).unwrap_or(false)
 }
 
-struct CatchGuard;
+pub(crate) struct CatchGuard;
 
 impl CatchGuard {
-    fn enter() -> CatchGuard {
+    pub(crate) fn enter() -> CatchGuard {
         CATCHING.with(|c| c.set(c.get() + 1));
         CatchGuard
     }
@@ -886,6 +887,29 @@ impl Drop for CatchGuard {
     fn drop(&mut self) {
         let _ = CATCHING.try_with(|c| c.set(c.get() - 1));
     }
+}
+
+/// Run a grammar's code under the panic guard: a grammar is a plugin, and
+/// a defect in one must not take the process down. A panic comes back as
+/// its message, for a `grammar` error.
+pub(crate) fn catch_grammar<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    let _guard = CatchGuard::enter();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|panic| panic_message(&*panic))
+}
+
+/// What a panic said, or `unknown panic`.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+/// The error for a grammar that panicked, as the loader reports one.
+pub(crate) fn grammar_failed(format: Format, what: &str) -> LoadError {
+    LoadError::tagged("grammar", format!("{format} grammar failed: {what}"))
 }
 
 /// Parse `src` as `format`, within the time limit of [`Limits::current`].
@@ -1073,17 +1097,7 @@ fn parse_with(
             let hints = parser.config().hint;
             Err(LoadError::from_tabnas(&e, hint_template(&hints, &e.code)))
         }
-        Err(panic) => {
-            let what = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_else(|| "unknown panic".to_string());
-            Err(LoadError::tagged(
-                "grammar",
-                format!("{format} grammar failed: {what}"),
-            ))
-        }
+        Err(panic) => Err(grammar_failed(format, &panic_message(&*panic))),
     }
 }
 
@@ -1212,6 +1226,25 @@ mod tests {
             assert!(!elsewhere);
         }
         assert!(!parse_in_progress());
+    }
+
+    #[test]
+    fn a_grammar_panic_is_caught_as_its_message() {
+        assert_eq!(catch_grammar(|| 1 + 1), Ok(2));
+        assert_eq!(catch_grammar(|| panic!("boom")).unwrap_err(), "boom");
+        let n = 3;
+        assert_eq!(
+            catch_grammar(|| -> () { panic!("bad {n}") }).unwrap_err(),
+            "bad 3"
+        );
+        assert!(
+            !parse_in_progress(),
+            "the guard is left when the panic is caught"
+        );
+        let e = grammar_failed(Format::Json, "boom");
+        assert_eq!(e.code, "grammar");
+        assert_eq!(e.message, "json grammar failed: boom");
+        assert!(!e.is_io() && !e.is_timeout() && !e.is_too_large());
     }
 
     #[test]

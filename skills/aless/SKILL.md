@@ -147,8 +147,12 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. `INPUT_INVALID` with a message that
 names `--path` means the value is not an array of records: point `--path`
-at one. A `--render` run stopped by `--timeout` or by nesting reports
-`timeout` or `parse`/`too_deep` as any parse does, plus `output`.
+at one. `DUPLICATE_MEMBER` means a key on the exported path is repeated
+in the document: `--json` keeps the last value, a stream cannot, so it
+refuses rather than export a different one. `[-1]` on an array is a usage
+error under `--render` (a stream cannot count from the end); on an object
+it is the key `-1`. A `--render` run stopped by `--timeout` or by nesting
+reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`.
 
 ## Paths
 

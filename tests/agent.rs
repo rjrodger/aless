@@ -579,6 +579,33 @@ fn render_failures_have_the_transduce_shape_and_status() {
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("not_found"));
     assert_eq!(e["keys"], json!(["name", "open", "books", "counts"]));
+    // An index on an object is its key, as --path reads it everywhere; on
+    // an array a negative one counts from the end, which a stream cannot.
+    let out = aless(
+        &["--render", "json", "--compact", "--path", "[-1]"],
+        Some(r#"{"-1": [5]}"#),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[5]\n");
+    let out = aless(&["--render", "json", "--path", "[-1]"], Some("[[1], [2]]"));
+    assert_eq!(code(&out), 2);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("usage"));
+    assert!(e["message"].as_str().unwrap().contains("[-1]"), "{e}");
+    // A key on the path repeated after the first was taken: the grammars
+    // and --json keep the last, which a stream cannot honour.
+    let out = aless(
+        &["--render", "csv", "--path", ".rows"],
+        Some(r#"{"rows":[{"v":1}],"rows":[{"v":2}]}"#),
+    );
+    assert_eq!(code(&out), 1);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("DUPLICATE_MEMBER"));
+    assert_eq!(e["path"], json!("."));
+    assert_eq!(e["output"], json!("none"));
+    assert!(e["message"].as_str().unwrap().contains("\"rows\""), "{e}");
     // Mistakes in the command: status 2.
     for args in [
         &["--render", "csv", "--json", "tests/fixtures/nested.json"][..],

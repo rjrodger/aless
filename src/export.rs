@@ -25,8 +25,11 @@
 //! Everything here is terminal-free: the output is any writer, and the
 //! result is a value `headless` turns into JSON. aless's own caps hold as
 //! they do for a parse: the depth cap and `--timeout` through [`load::guard`]
-//! on the grammar's parser, and the deadline's alarm through the
-//! transducer's abort flag, so a line-by-line read stops on time too.
+//! on the grammar's parser while it parses, and the deadline's alarm
+//! through the transducer's abort flag for the rest of the run (a
+//! line-by-line read, and the walk of a value after its parse), so the
+//! whole operation is under the deadline; a grammar that panics is caught
+//! at the same boundary the loader has.
 
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,11 +37,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
+use tabnas::Tabnas;
 use tabnas_render::{CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut};
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
-    capability, AbortFlag, Code, Duplicates, Fail, Flow, JsonEvent, Limits, Metrics, ParserSource,
-    Prune, Schema, Selector, Sink, SourceMode, TableBinding, TableEvent, TableFromJson, TableSink,
+    capability, AbortFlag, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
+    ParserSource, Prune, Schema, Selector, Sink, Source, SourceMode, TableBinding, TableEvent,
+    TableFromJson, TableSink, ValueSource,
 };
 
 use crate::fmt;
@@ -144,9 +149,10 @@ pub struct Nearest {
 pub enum ExportError {
     /// The command asked for what cannot be done.
     Usage(String),
-    /// aless's own limits, or a grammar's: `too_deep` or `timeout`, in the
-    /// shape of a load error so it reports as one; `partial` says whether
-    /// output had been written when the parse stopped.
+    /// aless's own limits, or a grammar's (`too_deep`, `timeout`), or a
+    /// grammar that panicked (`grammar`), in the shape of a load error so
+    /// it reports as one; `partial` says whether output had been written
+    /// when the run stopped.
     Load {
         error: Box<LoadError>,
         partial: bool,
@@ -170,17 +176,6 @@ fn limits() -> Limits {
 
 /// Run an export: `input` in, rendered text out through `out`.
 pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result<(), ExportError> {
-    if let Some(Seg::Index(i)) = job
-        .path
-        .iter()
-        .find(|s| matches!(s, Seg::Index(i) if *i < 0))
-    {
-        return Err(ExportError::Usage(format!(
-            "--render reads the input once, front to back, so a path cannot count from the \
-             end: [{i}] in {}; use --json --path, which reads the whole document",
-            path_text(&job.path)
-        )));
-    }
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
     let out = WriteOut::new(Pipe {
@@ -234,20 +229,70 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
     outcome.map_err(|failed| classify(job, *failed, &written, &broken))
 }
 
-/// What a run ends with: the source's outcome and, when aless's guard was
-/// on the parser, its record of why the parse stopped.
+/// How a run ended.
+#[derive(Debug)]
+enum Outcome {
+    /// The source ran to the document's end (the scope never stops it, so
+    /// a stop is a whole run too).
+    Done,
+    /// A stage failed.
+    Failed(Fail),
+    /// The grammar panicked; this is what it said.
+    Panicked(String),
+}
+
+impl Outcome {
+    fn of(result: Result<Flow, Fail>) -> Outcome {
+        match result {
+            Ok(_) => Outcome::Done,
+            Err(fail) => Outcome::Failed(fail),
+        }
+    }
+}
+
+/// What a run ends with: how, the scope's verdict on the path when it has
+/// one, and, when aless's guard was on the parser, its record of why the
+/// parse stopped.
 struct Ran {
-    outcome: Result<Flow, Fail>,
+    outcome: Outcome,
     stop: Option<Arc<Stop>>,
-    missing: Option<Nearest>,
+    verdict: Option<Verdict>,
 }
 
 /// A failure with what the run knew: the guard's record and how far the
 /// parse got.
+#[derive(Debug)]
 struct Failed {
-    fail: Fail,
+    why: Outcome,
     stop: Option<Arc<Stop>>,
-    missing: Option<Nearest>,
+    verdict: Option<Verdict>,
+}
+
+/// What the deadline's alarm does when it fires, on the waiting thread.
+///
+/// While a grammar parses a whole text, the guard on its parser sees the
+/// deadline first, between two steps, and records where the parse was
+/// before it raises the abort flag; the alarm leaves the flag alone then,
+/// since the transducer's own guard runs ahead of the budget and would
+/// stop the parse without the position. Everywhere else nothing but the
+/// abort flag stops the run: a line-by-line read, which parses a record at
+/// a time under no guard of aless's, and the walk of a parsed value, which
+/// the source polls the flag on at every event. The alarm raises the flag
+/// in those cases, so the deadline covers the whole operation.
+struct Alarm {
+    lines: bool,
+    /// The parse of a whole text has returned, and its value is being
+    /// walked.
+    parsed: Arc<AtomicBool>,
+    abort: AbortFlag,
+}
+
+impl Alarm {
+    fn fire(&self) {
+        if self.lines || self.parsed.load(Ordering::Relaxed) {
+            self.abort.abort();
+        }
+    }
 }
 
 /// Drive `input` into `scope` on the parse thread, under `--timeout`.
@@ -258,61 +303,127 @@ fn run<S: Sink + Send + 'static>(
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
     let abort = AbortFlag::new();
-    let alarm = abort.clone();
+    let alarm = Alarm {
+        lines: matches!(input, Input::Lines(_)),
+        parsed: Arc::new(AtomicBool::new(false)),
+        abort: abort.clone(),
+    };
+    let parsed = alarm.parsed.clone();
     let mode = mode_for(job);
-    // A grammar's parser carries aless's guard, which reads the deadline
-    // between steps and records where the parse was before it raises the
-    // abort flag; the alarm raises it directly only for a line-by-line
-    // read, which has no such guard. (The transducer's own guard runs
-    // ahead of the budget, so an alarm raising the flag itself would stop
-    // the parse first, and lose the position.)
-    let lines = matches!(input, Input::Lines(_));
     let ran = load::on_parse_thread(
         job.timeout,
-        move || {
-            if lines {
-                alarm.abort();
-            }
-        },
+        move || alarm.fire(),
         move |deadline: Option<Deadline>| match input {
             Input::Lines(reader) => {
                 let source = LinesSource::new(reader, line_format(format))
                     .limits(limits())
                     .abort(abort);
-                let (outcome, scope) = source.run_owned(scope);
-                Ran {
-                    outcome,
-                    stop: None,
-                    missing: scope.missing(),
+                match load::catch_grammar(|| source.run_owned(scope)) {
+                    Ok((outcome, scope)) => Ran {
+                        outcome: Outcome::of(outcome),
+                        stop: None,
+                        verdict: scope.verdict(),
+                    },
+                    Err(what) => Ran {
+                        outcome: Outcome::Panicked(what),
+                        stop: None,
+                        verdict: None,
+                    },
                 }
             }
             Input::Text(text) => {
                 let mut parser =
                     load::make_parser(format).expect("plain text is refused before a run");
                 let notify = abort.clone();
-                let stop = load::guard(&mut parser, deadline, move || notify.abort());
+                let stop = load::guard(&mut parser, deadline.clone(), move || notify.abort());
                 let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-                let source = ParserSource::new(parser, text)
-                    .mode(mode)
-                    .limits(limits())
-                    .abort(abort);
-                let (outcome, scope) = source.run_owned(scope);
-                Ran {
-                    outcome,
-                    stop: Some(stop),
-                    missing: scope.missing(),
+                match mode {
+                    SourceMode::Materialize => {
+                        materialize(parser, text, deadline, &abort, &parsed, scope, stop)
+                    }
+                    mode => {
+                        let source = ParserSource::new(parser, text)
+                            .mode(mode)
+                            .limits(limits())
+                            .abort(abort);
+                        match load::catch_grammar(|| source.run_owned(scope)) {
+                            Ok((outcome, scope)) => Ran {
+                                outcome: Outcome::of(outcome),
+                                stop: Some(stop),
+                                verdict: scope.verdict(),
+                            },
+                            Err(what) => Ran {
+                                outcome: Outcome::Panicked(what),
+                                stop: Some(stop),
+                                verdict: None,
+                            },
+                        }
+                    }
                 }
             }
         },
     );
     match ran.outcome {
-        // The scope never stops the source, so a stop is a whole run.
-        Ok(_) => Ok(()),
-        Err(fail) => Err(Box::new(Failed {
-            fail,
+        Outcome::Done => Ok(()),
+        why => Err(Box::new(Failed {
+            why,
             stop: ran.stop,
-            missing: ran.missing,
+            verdict: ran.verdict,
         })),
+    }
+}
+
+/// Parse, then walk the value: the transducer's `Materialize` mode, done
+/// here rather than by `ParserSource` so that the moment the parse returns
+/// is known. From then on the deadline is the alarm's to enforce, through
+/// the abort flag the walk polls; and a deadline that passed during the
+/// parse's last step, which no guard saw, is caught here too.
+fn materialize<S: Sink>(
+    parser: Tabnas,
+    text: &str,
+    deadline: Option<Deadline>,
+    abort: &AbortFlag,
+    parsed: &AtomicBool,
+    scope: Scope<S>,
+    stop: Arc<Stop>,
+) -> Ran {
+    let value = load::catch_grammar(|| parser.parse(text).map_err(Box::new));
+    parsed.store(true, Ordering::Relaxed);
+    if deadline.as_ref().is_some_and(Deadline::passed) {
+        abort.abort();
+    }
+    let value = match value {
+        Err(what) => {
+            return Ran {
+                outcome: Outcome::Panicked(what),
+                stop: Some(stop),
+                verdict: None,
+            }
+        }
+        Ok(Err(e)) => {
+            // As the transducer's source maps an engine error: the abort
+            // flag's cancel is aless's, anything else the input's.
+            let fail = if e.code == "cancel" && abort.is_aborted() {
+                Fail::aborted()
+            } else {
+                Fail::from_tabnas(&e)
+            };
+            return Ran {
+                outcome: Outcome::Failed(fail),
+                stop: Some(stop),
+                verdict: None,
+            };
+        }
+        Ok(Ok(value)) => value,
+    };
+    drop(parser);
+    let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
+    let outcome = ValueSource(&value).run(&mut guarded);
+    let scope = guarded.into_inner();
+    Ran {
+        outcome: Outcome::of(outcome),
+        stop: Some(stop),
+        verdict: scope.verdict(),
     }
 }
 
@@ -379,18 +490,42 @@ pub fn path_text(path: &[Seg]) -> String {
 
 /// Sort a failure into what it means for aless.
 fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool) -> ExportError {
-    let Failed {
-        fail,
-        stop,
-        missing,
-    } = failed;
-    if let Some(nearest) = missing {
-        return ExportError::NotFound {
-            message: not_found_message(job, &nearest),
-            nearest: Box::new(nearest),
-        };
+    let Failed { why, stop, verdict } = failed;
+    let partial = written.load(Ordering::Relaxed) > 0;
+    let load = |error: LoadError| ExportError::Load {
+        error: Box::new(error),
+        partial,
+    };
+    let fail = match why {
+        Outcome::Done => unreachable!("a run that ended well is no failure"),
+        Outcome::Panicked(what) => {
+            return load(load::grammar_failed(job.format, &what).with_origin(&job.origin))
+        }
+        Outcome::Failed(fail) => fail,
+    };
+    // The scope's word on the path comes first: it stopped the run itself,
+    // and its failure names the input's paths, which need no re-rooting.
+    match verdict {
+        Some(Verdict::Missing(nearest)) => {
+            return ExportError::NotFound {
+                message: not_found_message(job, &nearest),
+                nearest: Box::new(nearest),
+            }
+        }
+        Some(Verdict::FromEnd { index, at }) => {
+            return ExportError::Usage(format!(
+                "--render reads the input once, front to back, so it cannot count from the end \
+                 of an array: [{index}] in {} names an item of the array at {at}; use --json \
+                 --path, which reads the whole document",
+                path_text(&job.path)
+            ))
+        }
+        Some(Verdict::Duplicate(fail)) => {
+            return ExportError::Transduce(Box::new(if partial { fail.committed() } else { fail }))
+        }
+        None => {}
     }
-    let partial = written.load(Ordering::Relaxed) > 0 || fail.committed_output;
+    let partial = partial || fail.committed_output;
     let position = |fail: &Fail| -> (u32, u32) {
         let at = |n: Option<u64>| n.and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
         (at(fail.row), at(fail.column))
@@ -412,8 +547,8 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
     }
     match fail.code {
         // Only the deadline's alarm raises the abort flag ahead of the
-        // guard: on a line-by-line read, or between two of a grammar's
-        // parses.
+        // guard: on a line-by-line read, or once a parse has returned and
+        // its value is being walked, where there is no position to give.
         Code::Aborted => {
             let (line, col) = position(&fail);
             load(timed_out(job, line, col))
@@ -589,7 +724,10 @@ impl Write for Pipe {
 /// it is never found, and the input is read to its end, so it is validated
 /// whole as `--json` validates it. The path is read as `--path` reads it
 /// everywhere: a decimal name indexes an array, an index on an object is
-/// its key.
+/// its key. Two things a stream cannot do are refused where they come
+/// up, in a [`Verdict`]: count from the end of an array (`[-1]`), and
+/// honour the last of a repeated key on the path as the grammars and
+/// `--json` do, since the first may already have been written.
 struct Scope<S> {
     inner: S,
     target: Vec<Seg>,
@@ -597,8 +735,21 @@ struct Scope<S> {
     state: State,
     /// The deepest node on the target's path seen so far.
     nearest: Option<Nearest>,
-    /// The document ended without the target.
-    missing: bool,
+    /// Why the scope stopped the run, when it did.
+    verdict: Option<Verdict>,
+}
+
+/// The scope's own reasons to stop a run. Each is returned to the source
+/// as a failure too, which ends the run; the caller reads the verdict off
+/// the scope and reports it in its own shape.
+#[derive(Clone, Debug, PartialEq)]
+enum Verdict {
+    /// The document ended without the target; this is the nearest node.
+    Missing(Nearest),
+    /// The path counts from the end of the array at `at`.
+    FromEnd { index: i64, at: String },
+    /// A key on the path was repeated after a value under it was taken.
+    Duplicate(Fail),
 }
 
 struct Frame {
@@ -608,6 +759,9 @@ struct Frame {
     /// Whether this container's own path is a prefix of the target's, so
     /// that a child of it may be on the path.
     on_path: bool,
+    /// A child on the path has begun: for an object, the key the path
+    /// names has been seen once.
+    matched: bool,
 }
 
 enum Container {
@@ -633,13 +787,19 @@ impl<S: Sink> Scope<S> {
             frames: Vec::new(),
             state: State::Before,
             nearest: None,
-            missing: false,
+            verdict: None,
         }
     }
 
-    /// The nearest node, when the document ended without the target.
-    fn missing(&self) -> Option<Nearest> {
-        self.missing.then(|| self.nearest.clone()).flatten()
+    /// Why the scope stopped the run, if it did.
+    fn verdict(&self) -> Option<Verdict> {
+        self.verdict.clone()
+    }
+
+    /// Stop the run with a verdict of the scope's own.
+    fn stop(&mut self, verdict: Verdict, fail: Fail) -> Result<Flow, Fail> {
+        self.verdict = Some(verdict);
+        Err(fail)
     }
 
     /// Whether a value beginning now is on the target's path, and whether
@@ -722,13 +882,15 @@ impl<S: Sink> Sink for Scope<S> {
             JsonEvent::End => match self.state {
                 State::After => self.forward(ev),
                 State::Before => {
-                    self.missing = true;
-                    // The caller reads the nearest node off the scope; the
-                    // code here only ends the run.
-                    Err(Fail::input(format!(
-                        "the document has no {}",
-                        path_text(&self.target)
-                    )))
+                    let fail =
+                        Fail::input(format!("the document has no {}", path_text(&self.target)));
+                    match self.nearest.take() {
+                        Some(near) => self.stop(Verdict::Missing(near), fail),
+                        // The root itself is the target when the path is
+                        // empty, so a document has always begun a node on
+                        // the path before it ends.
+                        None => Err(fail),
+                    }
                 }
                 State::Inside { .. } => Err(Fail::protocol(
                     "the document ended inside the value being exported",
@@ -737,12 +899,43 @@ impl<S: Sink> Sink for Scope<S> {
             _ => {
                 let (on_path, is_target) = self.locate();
                 let depth = self.frames.len();
+                // On the path, the value's own path is the target's first
+                // `depth` steps; off it, nothing below needs a path.
+                let path = if on_path {
+                    path_text(&self.target[..depth])
+                } else {
+                    String::new()
+                };
+                if on_path {
+                    if let Some(parent) = self.frames.last_mut() {
+                        if parent.matched {
+                            // The path's key again: the grammars and --json
+                            // keep the last value, and what this stream has
+                            // taken from the first cannot be taken back.
+                            let key = match &parent.kind {
+                                Container::Object { key: Some(k) } => k.to_string(),
+                                _ => String::new(),
+                            };
+                            let at = path_text(&self.target[..depth - 1]);
+                            let fail = Fail::new(
+                                Code::DuplicateMember,
+                                format!(
+                                    "the member {} of {at} is repeated, and --render has taken \
+                                     the first: a stream cannot keep the last, as --json does",
+                                    fmt::quote(&key)
+                                ),
+                            )
+                            .at_path(at);
+                            return self.stop(Verdict::Duplicate(fail.clone()), fail);
+                        }
+                        parent.matched = true;
+                    }
+                }
                 self.count_child();
                 if self.state == State::Before && is_target {
                     self.state = State::Inside { depth };
                 }
                 let inside = matches!(self.state, State::Inside { .. });
-                let path = || path_text(&self.target[..depth]);
                 if ev.is_start() {
                     let kind = if ev == JsonEvent::ObjectStart {
                         Container::Object { key: None }
@@ -752,22 +945,39 @@ impl<S: Sink> Sink for Scope<S> {
                     if on_path && !is_target {
                         let object = matches!(kind, Container::Object { .. });
                         self.nearest = Some(Nearest {
-                            path: path(),
+                            path: path.clone(),
                             kind: kind_of_event(&ev),
                             length: Some(0),
                             value: None,
                             keys: object.then(Vec::new),
                             depth,
                         });
+                        // Counting from the end needs the whole array, which
+                        // a stream never has.
+                        if let (false, Seg::Index(i)) = (object, &self.target[depth]) {
+                            if *i < 0 {
+                                let fail = Fail::input(format!(
+                                    "[{i}] counts from the end of the array at {path}"
+                                ));
+                                return self.stop(
+                                    Verdict::FromEnd {
+                                        index: *i,
+                                        at: path,
+                                    },
+                                    fail,
+                                );
+                            }
+                        }
                     }
                     self.frames.push(Frame {
                         kind,
                         count: 0,
                         on_path,
+                        matched: false,
                     });
                 } else if on_path && !is_target {
                     self.nearest = Some(Nearest {
-                        path: path(),
+                        path,
                         kind: kind_of_event(&ev),
                         length: None,
                         value: Some(scalar_value(&ev)),
@@ -1053,6 +1263,18 @@ mod tests {
         rec
     }
 
+    /// The events as the parse emits them, a repeated key included: the
+    /// grammar's value, which [`events`] walks, keeps only the last.
+    fn streamed(json: &str) -> Vec<OwnedJsonEvent> {
+        let (r, rec) = ParserSource::new(tabnas_json::make(), json)
+            .mode(SourceMode::Incremental {
+                prune: Prune::Never,
+            })
+            .run_owned(Vec::new());
+        r.unwrap();
+        rec
+    }
+
     #[test]
     fn the_plan_follows_the_format_and_the_start() {
         assert_eq!(plan(Format::Jsonl, true), Some(Plan::Lines));
@@ -1103,7 +1325,11 @@ mod tests {
         let scoped = |path: &str| {
             let mut scope = Scope::new(crate::headless::parse_path(path).unwrap(), Vec::new());
             let r = replay(&doc, &mut scope);
-            let missing = scope.missing();
+            let missing = match scope.verdict() {
+                Some(Verdict::Missing(near)) => Some(near),
+                Some(other) => panic!("{other:?}"),
+                None => None,
+            };
             (r, scope.inner, missing)
         };
         let (r, got, missing) = scoped(".a[1].b");
@@ -1135,6 +1361,130 @@ mod tests {
         assert_eq!(near.depth, 0);
         assert_eq!(near.keys, Some(vec!["a".to_string(), "c".to_string()]));
         assert_eq!(near.length, Some(2), "counted to the end, past the miss");
+    }
+
+    #[test]
+    fn the_scope_refuses_what_a_stream_cannot_do() {
+        let scoped = |path: &str, json: &str| {
+            let mut scope = Scope::new(crate::headless::parse_path(path).unwrap(), Vec::new());
+            let r = replay(&streamed(json), &mut scope);
+            let verdict = scope.verdict();
+            (r, scope.inner, verdict)
+        };
+        // An index on an object is its key, as --path reads it everywhere;
+        // on an array a negative one counts from the end, which needs the
+        // whole array.
+        let (r, got, verdict) = scoped("[-1]", r#"{"-1": 5, "x": 6}"#);
+        assert_eq!(r.unwrap(), Flow::Continue);
+        assert_eq!(got, streamed("5"));
+        assert_eq!(verdict, None);
+        let (r, got, verdict) = scoped(".a[-1].b", r#"{"a": [{"b": 1}, {"b": 2}]}"#);
+        assert_eq!(r.unwrap_err().code, Code::InputInvalid);
+        assert!(got.is_empty());
+        assert_eq!(
+            verdict,
+            Some(Verdict::FromEnd {
+                index: -1,
+                at: ".a".into()
+            })
+        );
+        // A key on the path repeated after a value under it was taken.
+        let (r, got, verdict) = scoped(".rows", r#"{"rows": [1], "rows": [2]}"#);
+        let fail = r.unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember);
+        assert_eq!(fail.path.as_deref(), Some("."));
+        assert!(fail.message.contains("\"rows\""), "{}", fail.message);
+        let mut first = streamed("[1]");
+        assert_eq!(first.pop(), Some(OwnedJsonEvent::End));
+        assert_eq!(got, first, "the first was streamed, and no end");
+        assert!(matches!(verdict, Some(Verdict::Duplicate(f)) if f == fail));
+        let (r, _, _) = scoped(
+            ".a.rows",
+            r#"{"a": {"rows": [1]}, "b": 1, "a": {"rows": [2]}}"#,
+        );
+        let fail = r.unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember);
+        assert!(fail.message.contains("\"a\" of ."), "{}", fail.message);
+        // Repeated keys off the path, and inside the target, are the
+        // stream's to pass on. (Built by hand: the incremental source
+        // misplaces the values after a repeated key off the path, which is
+        // its defect, not the scope's; see the agents guide.)
+        use OwnedJsonEvent as E;
+        let n = |v: f64| E::Number {
+            value: v,
+            lexeme: None,
+        };
+        let k = |s: &str| E::Key(s.into());
+        let doc = vec![
+            E::ObjectStart,
+            k("x"),
+            n(1.0),
+            k("x"),
+            n(2.0),
+            k("rows"),
+            E::ArrayStart,
+            E::ObjectStart,
+            k("k"),
+            n(1.0),
+            k("k"),
+            n(2.0),
+            E::ObjectEnd,
+            E::ArrayEnd,
+            E::ObjectEnd,
+            E::End,
+        ];
+        let mut scope = Scope::new(crate::headless::parse_path(".rows").unwrap(), Vec::new());
+        assert_eq!(replay(&doc, &mut scope).unwrap(), Flow::Continue);
+        assert_eq!(
+            scope.inner,
+            doc[6..14]
+                .iter()
+                .cloned()
+                .chain([E::End])
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_alarm_raises_the_flag_only_where_no_guard_will() {
+        let alarm = Alarm {
+            lines: false,
+            parsed: Arc::new(AtomicBool::new(false)),
+            abort: AbortFlag::new(),
+        };
+        alarm.fire();
+        assert!(!alarm.abort.is_aborted(), "the parser's guard has it");
+        alarm.parsed.store(true, Ordering::Relaxed);
+        alarm.fire();
+        assert!(alarm.abort.is_aborted(), "the walk after the parse");
+        let alarm = Alarm {
+            lines: true,
+            parsed: Arc::new(AtomicBool::new(false)),
+            abort: AbortFlag::new(),
+        };
+        alarm.fire();
+        assert!(alarm.abort.is_aborted(), "a line-by-line read");
+    }
+
+    #[test]
+    fn a_grammar_panic_reports_as_the_loader_reports_one() {
+        let j = job(Format::Json, Renderer::Json, ".");
+        let failed = Failed {
+            why: Outcome::Panicked("boom".into()),
+            stop: None,
+            verdict: None,
+        };
+        match classify(&j, failed, &AtomicU64::new(0), &AtomicBool::new(false)) {
+            ExportError::Load { error, partial } => {
+                assert_eq!(error.code, "grammar");
+                assert_eq!(error.message, "json grammar failed: boom");
+                assert!(error.plain_report().contains("(stdin)"), "{}", error.report);
+                assert!(!partial);
+            }
+            other => panic!("{other:?}"),
+        }
+        // A panic on the parse thread is caught, whichever source runs.
+        assert_eq!(load::catch_grammar(|| panic!("x")).unwrap_err(), "x");
     }
 
     #[test]
@@ -1250,12 +1600,29 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        // A path counting from the end.
-        let j = job(Format::Json, Renderer::Csv, ".a[-1]");
+        // A path counting from the end of an array: known only when the
+        // container turns out to be one.
+        let j = job(Format::Json, Renderer::Csv, "[-1]");
         assert!(matches!(
-            run_text(&j, "[]").0.unwrap_err(),
-            ExportError::Usage(m) if m.contains("[-1]")
+            run_text(&j, "[[1], [2]]").0.unwrap_err(),
+            ExportError::Usage(m) if m.contains("[-1]") && m.contains("the array at .")
         ));
+        let j = job(Format::Json, Renderer::Json, "[-1]");
+        let (r, out) = run_text(&j, r#"{"-1": [1]}"#);
+        r.unwrap();
+        assert_eq!(out, "[1]\n", "on an object, the key");
+        // A repeated key on the path, after the first was taken.
+        let j = job(Format::Json, Renderer::Csv, ".rows");
+        let (r, out) = run_text(&j, r#"{"rows": [{"v": 1}], "rows": [{"v": 2}]}"#);
+        match r.unwrap_err() {
+            ExportError::Transduce(f) => {
+                assert_eq!(f.code, Code::DuplicateMember);
+                assert_eq!(f.path.as_deref(), Some("."));
+                assert!(!f.committed_output, "held back by the renderer");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(out, "");
         // A row failure's path is made absolute. The header and a row
         // had been rendered, but the renderer flushes at the end only, so
         // nothing left it: the output is none, and stays a whole table or
@@ -1324,6 +1691,40 @@ mod tests {
             ExportError::Transduce(f) => assert_eq!(f.code, Code::OutputFailed),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn the_deadline_covers_the_walk_after_a_parse() {
+        // A sink slow enough that a small, quickly parsed TOML takes far
+        // longer to walk than the deadline allows; the parse itself may
+        // still run past a busy machine's deadline, and is then stopped
+        // by the guard, which is a timeout too. Either way the run ends
+        // as a timeout rather than a success.
+        struct Slow;
+        impl Sink for Slow {
+            fn event(&mut self, _ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                std::thread::sleep(Duration::from_millis(10));
+                Ok(Flow::Continue)
+            }
+        }
+        let toml: String = (0..60).map(|i| format!("k{i} = {i}\n")).collect();
+        let mut j = job(Format::Toml, Renderer::Json, ".");
+        j.timeout = Some(Duration::from_millis(100));
+        let failed = run(&j, Input::Text(&toml), Scope::new(Vec::new(), Slow)).unwrap_err();
+        match (&failed.why, failed.stop.as_ref().map(|s| s.why())) {
+            (Outcome::Failed(fail), Some(0)) => {
+                assert_eq!(fail.code, Code::Aborted, "the alarm stopped the walk");
+            }
+            (Outcome::Failed(_), Some(STOP_TIME)) => {}
+            other => panic!("{:?}", other.1),
+        }
+        match classify(&j, *failed, &AtomicU64::new(0), &AtomicBool::new(false)) {
+            ExportError::Load { error, .. } => assert_eq!(error.code, "timeout"),
+            other => panic!("{other:?}"),
+        }
+        // With time enough the same walk finishes.
+        j.timeout = Some(Duration::from_secs(120));
+        run(&j, Input::Text("a = 1\n"), Scope::new(Vec::new(), Slow)).unwrap();
     }
 
     #[test]
