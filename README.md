@@ -404,12 +404,16 @@ annotated. Without annotations it is the compiler's parse tree, a
 viewer, `--json`, `--paths`, `--find`, `--where`, `--check` and
 `--render` work on it as on any format; `--render` parses the input
 whole before it streams, since no grammar from the command line is one
-the transducer has verified.
+the transducer has verified. An empty file is `null`; one holding only
+comments and blank lines is whatever the grammar builds from nothing,
+`[]` for the grammars below.
 
 The whole of `hosts.abnf`, from the grammar library under
 [`tests/fixtures/grammars/`](tests/fixtures/grammars/):
 
 ```abnf
+; /etc/hosts: an address and the host names it answers to, one per line.
+; Comments start with # and blank lines are skipped, in every grammar here.
 hosts   = *( entry %x0A / %x0A ) [ entry ]   ; @array
 entry   = address names                      ; @object address names
 address = word
@@ -417,13 +421,27 @@ names   = 1*word                             ; @array
 word    = ( TX )
 ```
 
+Run on the library's own sample (`tests/fixtures/grammars/hosts`, which
+is detected by its whole name; standard input needs `-k`):
+
 ```
-$ printf '127.0.0.1 localhost myhost\n::1 localhost\n' > hosts
-$ aless --grammar hosts=hosts.abnf --json --compact hosts
-[{"address":"127.0.0.1","names":["localhost","myhost"]},{"address":"::1","names":["localhost"]}]
-$ aless --grammar hosts=hosts.abnf --where --at 2:5 hosts
-{"file":"hosts","format":"hosts","path":"[1].names[0]","kind":"string","line":2,"col":5,"value":"localhost"}
+$ head -5 tests/fixtures/grammars/hosts
+# /etc/hosts: static table lookup for hostnames.
+# See hosts(5) for details.
+
+127.0.0.1       localhost
+127.0.1.1       workstation.example.com workstation
+$ head -5 tests/fixtures/grammars/hosts | aless --grammar hosts=tests/fixtures/grammars/hosts.abnf -k hosts --json --compact
+[{"address":"127.0.0.1","names":["localhost"]},{"address":"127.0.1.1","names":["workstation.example.com","workstation"]}]
+$ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --where --at 5:17 --compact tests/fixtures/grammars/hosts
+{"file":"tests/fixtures/grammars/hosts","format":"hosts","path":"[1].names[0]","kind":"string","line":5,"col":17,"value":"workstation.example.com"}
+$ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --render csv tests/fixtures/grammars/hosts | head -3
+"address","names"
+"127.0.0.1","[""localhost""]"
+"127.0.1.1","[""workstation.example.com"",""workstation""]"
 ```
+
+(`tests/agent.rs` runs those commands and holds their output to this.)
 
 The library holds a grammar for each of `/etc/hosts`, `/etc/crontab` and
 a user's crontab, `/etc/passwd`, `/etc/group`, `/etc/fstab`,

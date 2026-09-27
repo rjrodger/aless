@@ -47,6 +47,8 @@ any other format.
 The whole of `hosts.abnf`:
 
 ```abnf
+; /etc/hosts: an address and the host names it answers to, one per line.
+; Comments start with # and blank lines are skipped, in every grammar here.
 hosts   = *( entry %x0A / %x0A ) [ entry ]   ; @array
 entry   = address names                      ; @object address names
 address = word
@@ -54,7 +56,7 @@ names   = 1*word                             ; @array
 word    = ( TX )
 ```
 
-Each line of that is a rule you will reuse.
+Each rule of that is one you will reuse.
 
 - **Lines.** The engine's lexer skips spaces, tabs and comments between
   tokens, and would skip newlines too, but a grammar that spells the
