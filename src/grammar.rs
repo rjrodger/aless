@@ -22,7 +22,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{mpsc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use tabnas::Tabnas;
@@ -322,9 +322,26 @@ fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, L
                 .recv()
                 .map_err(|_| LoadError::tagged("grammar", "the compiler gave no answer"))?,
         },
-        // No thread to be had: compile on this one, with no deadline.
-        Err(_) => load::catch_grammar(|| compile(source)),
+        // No thread to be had: compile on this one, timed.
+        Err(_) => return compile_here(source, timeout),
     };
+    settle(outcome)
+}
+
+/// [`compile`] on this thread, for when no other can be had. It cannot be
+/// stopped, so it is timed: one that ends past `timeout`, with a grammar
+/// or an error, is a `timeout`, as it is when a thread waits on it.
+fn compile_here(source: &str, timeout: Option<Duration>) -> Result<Compiled, LoadError> {
+    let start = Instant::now();
+    let outcome = load::catch_grammar(|| compile(source));
+    if let Some(limit) = timeout.filter(|t| start.elapsed() >= *t) {
+        return Err(LoadError::compile_timed_out(limit));
+    }
+    settle(outcome)
+}
+
+/// A compile's outcome as [`compile_within`] reports it.
+fn settle(outcome: Result<Result<Compiled, String>, String>) -> Result<Compiled, LoadError> {
     match outcome {
         Ok(Ok(compiled)) => Ok(compiled),
         Ok(Err(message)) => Err(LoadError::tagged("grammar", message)),
@@ -944,6 +961,35 @@ word    = ( TX )
             timeout: Some(Duration::from_secs(600)),
         };
         assert!(register(inline("impl-slow-b", "doc = 1*20\"a\"\n"), limits).is_ok());
+    }
+
+    /// With no thread to be had, the compile runs on the caller's and
+    /// cannot be stopped, but its time is still measured: a grammar
+    /// compiled past the limit is a `timeout`, not registered.
+    #[test]
+    fn a_compile_on_this_thread_past_the_time_limit_is_a_timeout() {
+        let slow = "doc = 1*300\"a\"\n";
+        let e = compile_here(slow, Some(Duration::from_millis(1)))
+            .err()
+            .unwrap();
+        assert!(e.is_timeout(), "{}", e.message);
+        assert_eq!(
+            e.message,
+            "timeout: the grammar took longer than 0.001 s to compile"
+        );
+        // A late refusal is late too: the time is the answer, not the error.
+        let late_error = "doc = 1*300\"a\"\nbad = 99999999999999999999999\"a\"\n";
+        let e = compile_here(late_error, Some(Duration::from_nanos(1)))
+            .err()
+            .unwrap();
+        assert!(e.is_timeout(), "{}", e.message);
+        // Within the limit, or with none, it compiles as on a thread.
+        assert!(compile_here("doc = 1*20\"a\"\n", Some(Duration::from_secs(600))).is_ok());
+        assert!(compile_here("doc = 1*20\"a\"\n", None).is_ok());
+        let e = compile_here("doc = \"a\n", Some(Duration::from_secs(600)))
+            .err()
+            .unwrap();
+        assert_eq!(e.code, "grammar");
     }
 
     /// A compiler message is one line of plain text: the engine's colour
