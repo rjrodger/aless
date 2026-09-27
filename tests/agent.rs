@@ -1372,14 +1372,17 @@ fn grammar_failures_have_their_shapes_and_statuses() {
             .contains("a repetition count of"),
         "{e}"
     );
-    // Counts within the limit each still add up, and the total is bounded
-    // too: three `1*1024` would keep the compiler busy for seconds, and
-    // sixteen for minutes. The timeout turns a regression into a status 6
-    // within ten seconds, not a held suite.
+    // Counts within the limit each still add up, where the compiler writes
+    // them: `r`'s 599 rules again into each rule whose alternative starts
+    // with it, 1,797 in all, past the 1,024 aless compiles. A chain of
+    // seven such rules around `1*1024` kept the compiler busy for over a
+    // minute and the parse after it for more than twelve. The timeout
+    // turns a regression into a status 6 within ten seconds, not a held
+    // suite.
     let out = aless(
         &[
             "--grammar-expr",
-            "many=doc = 1*1024\"a\" 1*1024\"a\" 1*1024\"a\"\n",
+            "many=doc = s \"x\"\ns = r \"x\"\nr = 1*300\"q\"\n",
             "--timeout",
             "10",
             "--json",
@@ -1395,7 +1398,7 @@ fn grammar_failures_have_their_shapes_and_statuses() {
         e["message"]
             .as_str()
             .unwrap()
-            .contains("the repetition counts add up to 3072"),
+            .contains("the repetitions would have the compiler write 1797 rules"),
         "{e}"
     );
     // The compiler's message is one plain line: no colour codes, no line

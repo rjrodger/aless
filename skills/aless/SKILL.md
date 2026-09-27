@@ -114,8 +114,10 @@ case-insensitively; `NAME,NAME2=FILE` gives one grammar two names; both
 options repeat. A grammar that does not compile exits 2 before any
 input is read, with `{"error": {"kind": "usage", "message": "--grammar
 hosts: …", "grammar": "hosts", "file": "hosts.abnf"}}` (`file` absent
-for `--grammar-expr`; a repetition count over 1,024, or counts adding up
-to more than 2,048 in one grammar, is refused the same way); a grammar
+for `--grammar-expr`; a repetition count over 1,024, or repetitions that
+would have the compiler write more than 1,024 rules, is refused the same
+way: `1*255word` writes 509, and a rule's repetitions are written again
+into every alternative that starts with that rule); a grammar
 file that cannot be read exits 3 (`io`), one over `--max-size` exits 5
 (`too_large`, with `size` and `limit`), and a compile past `--timeout`
 exits 6 (`timeout`, with `seconds`), each with that kind's fields

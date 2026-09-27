@@ -229,27 +229,41 @@ impl Compiled {
 /// millions takes gigabytes and minutes before any input is read
 /// (`10000000"a"` reached 5 GB; `99999999999999999999999"a"` saturates to
 /// 2^64 copies). Measured: `1*1000"a"` compiles in 1 s, `1*5000"a"` in
-/// 35 s. Real grammars stay in the hundreds (`1*255`).
+/// 35 s. Real grammars stay in the hundreds (`1*255`). Counts within it
+/// can still add up to more than aless compiles: [`MAX_REPEAT_TOTAL`].
 pub const MAX_REPEAT: usize = 1024;
 
-/// The most copies all of a grammar's repetitions may write out between
-/// them. Counts within [`MAX_REPEAT`] still add up, and the compiler's
-/// time grows about as the square of the total: two `1*1024` took 2.8 s,
-/// four 11 s, sixteen 153 s and 870 MB. Nesting adds, it does not
-/// multiply (`1024(1024"a")` writes 1024 + 1024 copies), and a rule is
-/// written out once however often it is named, so its counts are added
-/// once. Real grammars total in the hundreds.
-pub const MAX_REPEAT_TOTAL: usize = 2 * MAX_REPEAT;
+/// The most rules a grammar's repetitions may have the compiler write,
+/// counted as [`repeat_rules`] counts them: the rules the compiler writes
+/// for the copies a repetition may make, wherever it writes them. The
+/// compile's time, and the time the engine takes to assemble the grammar
+/// at the start of every parse, grow much faster than the rules do:
+/// measured in a release build, 1,000 rules compile in under half a
+/// second and add about 1 s to each parse, 2,000 add 9 s, 3,000 add 20 s.
+/// Real grammars write tens (RFC 3986's URI grammar, 113); `1*255`
+/// writes 509.
+///
+/// This bounds what repetitions cost and nothing else: a grammar's other
+/// shapes cost time too (a rule is copied into every alternative that
+/// starts with it, so rules of several alternatives that start with each
+/// other multiply), and only `--timeout` bounds a compile.
+pub const MAX_REPEAT_TOTAL: usize = 1024;
+
+/// The deepest element nesting the compiler walks: tabnas-bnf's
+/// `MAX_ELEMENT_DEPTH`, which tabnas-abnf does not re-export. The compiler
+/// refuses a deeper grammar before it rewrites one, so [`repeat_rules`]
+/// does not rewrite one either.
+const COMPILER_ELEMENT_DEPTH: usize = 128;
 
 /// Compile ABNF text: the compiler's parse, a check of the repetition
-/// counts against [`MAX_REPEAT`] each and [`MAX_REPEAT_TOTAL`] in all,
-/// then its conversion, with the start rule its default (the grammar's
-/// first production) and `word_keywords` on, so a quoted keyword
-/// (`"nameserver"`) matches whole words and not the front of a longer one;
-/// then the engine options of [`plain_text_options`]; and the result
-/// installed once on a fresh engine to be sure it takes. The error is the
-/// compiler's own message, or the engine's, on one line and without its
-/// colour codes.
+/// counts against [`MAX_REPEAT`] each and of the rules they write against
+/// [`MAX_REPEAT_TOTAL`], then its conversion, with the start rule its
+/// default (the grammar's first production) and `word_keywords` on, so a
+/// quoted keyword (`"nameserver"`) matches whole words and not the front
+/// of a longer one; then the engine options of [`plain_text_options`]; and
+/// the result installed once on a fresh engine to be sure it takes. The
+/// error is the compiler's own message, or the engine's, on one line and
+/// without its colour codes.
 pub fn compile(source: &str) -> Result<Compiled, String> {
     let options = AbnfConvertOptions {
         word_keywords: true,
@@ -273,19 +287,22 @@ fn one_line(message: &str) -> String {
     load::escape_controls(&load::strip_ansi(message))
 }
 
-/// Refuse a repetition count over [`MAX_REPEAT`], or counts that add up
-/// to more than [`MAX_REPEAT_TOTAL`], before the compiler writes the
-/// copies out. A count over the limit is named first, wherever it is. The
-/// elements are walked with a stack of their own; the compiler bounds
-/// their nesting itself, later.
+/// Refuse a repetition count over [`MAX_REPEAT`], or repetitions that
+/// would have the compiler write more than [`MAX_REPEAT_TOTAL`] rules,
+/// before it writes any. A count over the limit is named first, wherever
+/// it is. The elements are walked with a stack of their own, and their
+/// nesting measured for [`repeat_rules`]; the compiler bounds it itself,
+/// later.
 fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
-    let mut stack: Vec<&Element> = grammar
+    let mut stack: Vec<(&Element, usize)> = grammar
         .productions
         .iter()
         .flat_map(|p| p.alts.iter().flatten())
+        .map(|el| (el, 1))
         .collect();
-    let mut total = 0usize;
-    while let Some(el) = stack.pop() {
+    let mut deepest = 0;
+    while let Some((el, depth)) = stack.pop() {
+        deepest = deepest.max(depth);
         match &el.kind {
             Kind::Rep { min, max, inner } => {
                 let count = max.unwrap_or(0).max(*min);
@@ -300,7 +317,115 @@ fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
                          `*word` or `1*word` for a run of any length"
                     ));
                 }
-                total = total.saturating_add(count);
+                stack.push((inner, depth + 1));
+            }
+            Kind::Opt { inner } | Kind::Star { inner, .. } | Kind::Plus { inner } => {
+                stack.push((inner, depth + 1))
+            }
+            Kind::Group { alts } => stack.extend(alts.iter().flatten().map(|el| (el, depth + 1))),
+            _ => {}
+        }
+    }
+    let rules = repeat_rules(grammar, deepest);
+    if rules > MAX_REPEAT_TOTAL {
+        return Err(format!(
+            "abnf: the repetitions would have the compiler write {rules} rules, more than aless \
+             compiles (at most {MAX_REPEAT_TOTAL}): it writes a rule or two for every copy a \
+             repetition may make past its minimum, and writes a rule's repetitions again into \
+             every alternative that starts with that rule, so write `*word` or `1*word` for a \
+             run of any length"
+        ));
+    }
+    Ok(())
+}
+
+/// About how many rules the compiler writes for a grammar's repetitions,
+/// counted where it writes them. Its first rewrite, which removes left
+/// recursion, copies every rule an alternative starts with into that
+/// alternative, once for each of the rule's alternatives, with the rest
+/// of the alternative after each copy; that rewrite is the compiler's own
+/// (`eliminate_left_recursion`), run here on the grammar, and the rules
+/// are counted on what it gives. A later rewrite writes the rest of an
+/// alternative twice after an optional prefix that it cannot tell from
+/// what follows (`[ userinfo "@" ] host`); [`alternative_repeat_rules`]
+/// counts that. A grammar nested deeper than the compiler walks is
+/// counted as written: the compiler refuses it.
+fn repeat_rules(grammar: &tabnas_abnf::Grammar, deepest: usize) -> usize {
+    let rules: std::collections::HashSet<&str> = grammar
+        .productions
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let rewritten = (deepest <= COMPILER_ELEMENT_DEPTH)
+        .then(|| tabnas_abnf::eliminate_left_recursion(grammar).ok())
+        .flatten();
+    let productions = rewritten
+        .as_ref()
+        .map_or(&grammar.productions, |g| &g.productions);
+    productions
+        .iter()
+        .flat_map(|p| &p.alts)
+        .fold(0usize, |sum, alt| {
+            sum.saturating_add(alternative_repeat_rules(alt, &rules))
+        })
+}
+
+/// The rules an alternative's repetitions write: each element's, and the
+/// rest of the alternative twice after an optional group that ends in a
+/// terminal (`[ X "@" ] Y`), which the compiler may write as two branches
+/// (`X "@" Y` and `Y`) when it cannot tell X from Y by their first tokens.
+fn alternative_repeat_rules(alt: &[Element], rules: &std::collections::HashSet<&str>) -> usize {
+    let probe_prefix = |el: &Element| match &el.kind {
+        Kind::Opt { inner } => matches!(&inner.kind, Kind::Group { alts }
+            if alts.len() == 1
+                && alts[0].len() >= 2
+                && alts[0].last().is_some_and(Element::is_terminal)),
+        _ => false,
+    };
+    let mut total = 0usize;
+    let mut twice = false;
+    for (i, el) in alt.iter().enumerate() {
+        let n = element_repeat_rules(el, rules);
+        total = total.saturating_add(if twice { n.saturating_mul(2) } else { n });
+        twice = twice || (i + 1 < alt.len() && probe_prefix(el));
+    }
+    total
+}
+
+/// The rules an element's repetitions write, as the compiler's desugaring
+/// writes them: for `m*nX`, one rule for the repetition, two for each copy
+/// past `m` (an optional and its group, nested), and, when X is a rule or
+/// a group rather than a terminal, one more for every copy (the step that
+/// follows it); `m*X` writes one rule for its tail. X itself is written
+/// once, however many copies refer to it, so nesting adds.
+fn element_repeat_rules(el: &Element, rules: &std::collections::HashSet<&str>) -> usize {
+    let terminal = |el: &Element| match &el.kind {
+        Kind::Term { .. } | Kind::Regex { .. } | Kind::Token { .. } | Kind::Prose { .. } => true,
+        // A name that is no rule of the grammar is an engine token (`TX`).
+        Kind::Ref { name, .. } => !rules.contains(name.as_str()),
+        _ => false,
+    };
+    let mut total = 0usize;
+    let mut stack = vec![el];
+    while let Some(el) = stack.pop() {
+        match &el.kind {
+            Kind::Rep { min, max, inner } => {
+                let (chain, beyond) = match max {
+                    Some(max) => {
+                        let beyond = max.saturating_sub(*min);
+                        (beyond.saturating_mul(2), beyond)
+                    }
+                    None => (1, 1),
+                };
+                let steps = if terminal(inner) {
+                    0
+                } else {
+                    min.saturating_add(beyond)
+                };
+                total = total
+                    .saturating_add(1)
+                    .saturating_add(chain)
+                    .saturating_add(steps);
                 stack.push(inner);
             }
             Kind::Opt { inner } | Kind::Star { inner, .. } | Kind::Plus { inner } => {
@@ -310,14 +435,7 @@ fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
             _ => {}
         }
     }
-    if total > MAX_REPEAT_TOTAL {
-        return Err(format!(
-            "abnf: the repetition counts add up to {total}, more than aless compiles (at most \
-             {MAX_REPEAT_TOTAL} copies in a grammar): the compiler writes out every copy of \
-             every repetition, so write `*word` or `1*word` for a run of any length"
-        ));
-    }
-    Ok(())
+    total
 }
 
 /// [`compile`] on a thread of its own, within `timeout`. A compile cannot
@@ -949,12 +1067,15 @@ word    = ( TX )
         );
     }
 
-    /// Counts within [`MAX_REPEAT`] each still add up: the compiler writes
-    /// out every copy of every repetition, and its time grows about as
-    /// the square of the total, so the total is bounded too. Nesting adds,
-    /// it does not multiply.
+    /// Repetitions within [`MAX_REPEAT`] each still add up, and they are
+    /// counted where the compiler writes them: a rule's again in every
+    /// alternative that starts with that rule, a repeated rule or group
+    /// with a step for every copy, the rest of an alternative twice after
+    /// a prefix the compiler may branch on. Over [`MAX_REPEAT_TOTAL`]
+    /// rules is the command's mistake; copies of a terminal up to the
+    /// minimum write none.
     #[test]
-    fn repetition_counts_are_bounded_in_total() {
+    fn repetition_rules_are_bounded_in_total() {
         // Sixteen `1*1024` took 153 s and 870 MB before the total was
         // checked. Registered under a time limit, so that a regression
         // fails in seconds, as a `timeout`, rather than holding the suite.
@@ -972,32 +1093,101 @@ word    = ( TX )
             "{}",
             e.error.message
         );
+        // 16 x (1 + 2 x 1023).
         assert!(
             e.error
                 .message
-                .contains("the repetition counts add up to 16384"),
+                .contains("the repetitions would have the compiler write 32752 rules"),
             "{}",
             e.error.message
         );
         assert!(
-            e.error.message.contains("at most 2048") && e.error.message.contains("`*word`"),
+            e.error.message.contains("at most 1024") && e.error.message.contains("`*word`"),
             "{}",
             e.error.message
         );
         assert_eq!(lookup("impl-rep-total"), None);
-        // Across rules as within one: a rule is written out once, however
-        // often it is named, so its counts are added once.
-        let e = compile("doc = 1024r 1024r\nr = 1*1024\"a\"\n").unwrap_err();
-        assert!(e.contains("add up to 3072"), "{e}");
+        // A rule an alternative starts with is written again into it, so
+        // a chain of such rules writes `1*300` once per rule: 3 x 599.
+        // Counted once, as a rule named once, it was 599, and a chain of
+        // seven wrapping `1*1024` held the compiler for minutes.
+        let e = compile("doc = s \"x\"\ns = r \"x\"\nr = 1*300\"q\"\n").unwrap_err();
+        assert!(e.contains("write 1797 rules"), "{e}");
+        // Named alone, or after the start of an alternative, it is not.
+        for text in [
+            "doc = r\nr = 1*300\"q\"\n",
+            "doc = \"x\" r r\nr = 1*300\"q\"\n",
+        ] {
+            compile(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        }
+        // The rest of an alternative starting with a rule is written once
+        // per alternative of that rule.
+        let e = compile("doc = r 1*300\"x\"\nr = \"a\" / \"b\"\n").unwrap_err();
+        assert!(e.contains("write 1198 rules"), "{e}");
+        // A repeated group is written once, with a step for every copy:
+        // 599 inside, 1 + 2 x 299 + 300 outside.
+        let e = compile("doc = 1*300(1*300\"a\" \"x\")\n").unwrap_err();
+        assert!(e.contains("write 1498 rules"), "{e}");
+        // What follows an optional prefix the compiler may branch on is
+        // written twice.
+        let e = compile("doc = [\"a\" \"@\"] 1*300\"a\"\n").unwrap_err();
+        assert!(e.contains("write 1198 rules"), "{e}");
         // One count over the limit is named as such, wherever it is.
         let e = compile("doc = 1024\"a\" 1024\"a\" 5000\"a\"\n").unwrap_err();
         assert!(e.contains("a repetition count of 5000"), "{e}");
         let e = compile("doc = 5000\"a\" 1024\"a\" 1024\"a\"\n").unwrap_err();
         assert!(e.contains("a repetition count of 5000"), "{e}");
-        // 1024 + 1024 copies, nested or side by side, compile.
-        for text in ["doc = 1024(1024\"a\")\n", "doc = 1024\"a\" 1024\"b\"\n"] {
-            compile(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        // Copies of a terminal up to the minimum are one sequence, and
+        // write no rules however many there are.
+        compile("doc = 1024\"a\" 1024\"b\" 1024\"c\"\n").unwrap();
+    }
+
+    /// What [`repeat_rules`] counts is what the compiler writes, for each
+    /// way it has of writing a repetition: it counts no more, and the
+    /// compiler writes no more than a few rules of the grammar's own
+    /// besides. (Measured, so a compiler that writes a repetition some
+    /// other way shows up here.)
+    #[test]
+    fn repetition_rules_are_counted_as_the_compiler_writes_them() {
+        for text in [
+            "doc = 1*40\"a\"\n",
+            "doc = 1*40TX\n",
+            "doc = 3*40\"a\" *\"b\" 4*\"c\"\n",
+            "doc = r \"x\"\nr = 1*40\"q\"\n",
+            "doc = s \"x\"\ns = r \"x\"\nr = 1*40\"q\"\n",
+            "doc = r 1*40\"x\"\nr = \"a\" / \"b\" / \"c\"\n",
+            "doc = 1*20(1*20\"a\" \"x\")\n",
+            "doc = 40r\nr = \"a\" \"b\"\n",
+            "doc = 40(40\"a\")\n",
+            "doc = [\"a\" \"@\"] 1*40\"a\"\n",
+            "doc = 0*20\"x\" doc 1*20\"y\" / \"z\"\n",
+            "a = b \"x\" / \"c\"\nb = a 1*20\"y\" / \"d\"\n",
+        ] {
+            let grammar = tabnas_abnf::parse_abnf(text).unwrap();
+            let counted = repeat_rules(&grammar, 1);
+            let written = compile(text)
+                .unwrap_or_else(|e| panic!("{text:?}: {e}"))
+                .spec
+                .rule
+                .len();
+            assert!(
+                counted <= written && written <= counted + 16,
+                "{text:?}: counted {counted}, the compiler wrote {written}"
+            );
         }
+        // A grammar nested deeper than the compiler walks is counted as
+        // written, and the compiler refuses it.
+        let chain =
+            tabnas_abnf::parse_abnf("doc = s \"x\"\ns = r \"x\"\nr = 1*300\"q\"\n").unwrap();
+        assert_eq!(repeat_rules(&chain, 1), 1797);
+        assert_eq!(repeat_rules(&chain, COMPILER_ELEMENT_DEPTH + 1), 599);
+        let deep = format!(
+            "doc = {}1*3\"a\"{}\n",
+            "(".repeat(COMPILER_ELEMENT_DEPTH),
+            ")".repeat(COMPILER_ELEMENT_DEPTH)
+        );
+        let e = compile(&deep).unwrap_err();
+        assert!(e.contains("more than 128 deep"), "{e}");
     }
 
     /// The compile runs within the time limit a parse would, on a thread
