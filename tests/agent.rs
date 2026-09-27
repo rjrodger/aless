@@ -1434,6 +1434,20 @@ fn grammar_failures_have_their_shapes_and_statuses() {
         .unwrap()
         .to_string();
     assert!(message.ends_with(" text hosts)"), "{message}");
+    // A name matches in any case, Unicode included.
+    let out = aless(
+        &[
+            "--grammar-expr",
+            "Ärger=doc = *word   ; @array\nword = ( TX )\n",
+            "-k",
+            "ärger",
+            "--json",
+            "--compact",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     // The help names the options.
     let help = aless(&["--help"], None);
     let text = String::from_utf8_lossy(&help.stdout);

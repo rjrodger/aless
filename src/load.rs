@@ -95,7 +95,7 @@ impl Format {
     /// A custom grammar's name comes first: the command line asked for it,
     /// even over a built-in's.
     pub fn from_name(s: &str) -> Option<Format> {
-        let s = s.trim().to_ascii_lowercase();
+        let s = s.trim().to_lowercase();
         grammar::lookup(&s)
             .map(Format::Custom)
             .or_else(|| Format::ALL.iter().copied().find(|f| f.name() == s))

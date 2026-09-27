@@ -100,7 +100,10 @@ impl Definition {
                     "{option} {value:?}: {name:?} cannot be a file's extension or name"
                 ));
             }
-            if !seen.iter().any(|s: &String| s.eq_ignore_ascii_case(name)) {
+            if !seen
+                .iter()
+                .any(|s: &String| s.to_lowercase() == name.to_lowercase())
+            {
                 seen.push(name.to_string());
             }
         }
@@ -309,8 +312,9 @@ fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, L
 pub struct Grammar {
     /// The format's name: the first name given.
     pub name: &'static str,
-    /// Every name given, lower-cased: what a file's extension or whole
-    /// name is compared with.
+    /// Every name given, lower-cased (Unicode, as the documented "in any
+    /// case" says): what a file's extension or whole name is compared
+    /// with.
     pub matches: Vec<String>,
     /// The ABNF text.
     pub source: String,
@@ -327,7 +331,7 @@ impl Grammar {
     /// Whether `name` (an extension, or a whole file name) is one of this
     /// grammar's, case-insensitively.
     pub fn matches(&self, name: &str) -> bool {
-        self.matches.contains(&name.to_ascii_lowercase())
+        self.matches.contains(&name.to_lowercase())
     }
 }
 
@@ -428,7 +432,7 @@ pub fn register(def: Definition, limits: Limits) -> Result<CustomId, Box<Grammar
     })?;
     let grammar: &'static Grammar = Box::leak(Box::new(Grammar {
         name: Box::leak(name.into_boxed_str()),
-        matches: def.names.iter().map(|n| n.to_ascii_lowercase()).collect(),
+        matches: def.names.iter().map(|n| n.to_lowercase()).collect(),
         source,
         origin: def.source,
         compiled,
@@ -514,6 +518,8 @@ val      = ( TX / NR )
 
         let d = Definition::parse("--grammar", "hosts, hostsfile ,Hosts=etc/hosts.abnf").unwrap();
         assert_eq!(d.names, ["hosts", "hostsfile"], "repeats are dropped");
+        let d = Definition::parse("--grammar", "Ärger,ÄRGER=x.abnf").unwrap();
+        assert_eq!(d.names, ["Ärger"], "in any case, not only ASCII");
 
         // Everything after the first `=` is the text, `=` included.
         let d = Definition::parse("--grammar-expr", "kv=doc = *TX\n").unwrap();
@@ -665,6 +671,19 @@ word    = ( TX )
         assert_eq!(lookup(" impl-hosts-a "), Some(first));
         assert_eq!(lookup("impl-nope-a"), None);
         assert_eq!(lookup(""), None);
+        // In any case means Unicode case, as the README says.
+        let umlaut = register(inline("Impl-Ärger-a", KV), Limits::NONE).unwrap();
+        assert_eq!(lookup("impl-ärger-a"), Some(umlaut));
+        assert_eq!(lookup("IMPL-ÄRGER-A"), Some(umlaut));
+        assert_eq!(
+            Format::from_name("impl-ärger-a"),
+            Some(Format::Custom(umlaut))
+        );
+        assert_eq!(
+            Format::detect(std::path::Path::new("x.IMPL-ÄRGER-A")),
+            Format::Custom(umlaut)
+        );
+        assert_eq!(Format::Custom(umlaut).name(), "Impl-Ärger-a");
         let second = register(inline("impl-hostsfile-a", KV), Limits::NONE).unwrap();
         assert_ne!(first, second);
         assert_eq!(lookup("impl-hostsfile-a"), Some(second));
