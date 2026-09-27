@@ -493,15 +493,21 @@ fn print_headless(args: Args) -> i32 {
     // A streamed result (`--render`) is written as it is produced, through
     // the renderer's own buffer; the other results come back whole.
     let out = headless::run_to(&req, stdin, Box::new(io::stdout()));
-    // A reader that stops early (`| head`) is not an error.
-    let mut stdout = io::stdout().lock();
-    let written = stdout
-        .write_all(out.stdout.as_bytes())
-        .and_then(|()| stdout.flush());
-    if let Err(e) = written {
-        if e.kind() != io::ErrorKind::BrokenPipe {
-            let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
-            return headless::status::IO;
+    // A stream that failed on its way out has said so in detail, and left
+    // nothing to print: standard output is then not touched again, so that
+    // a flush failing once more cannot replace that report with a plainer
+    // one. (A failed --check still has its report to print.) A reader that
+    // stops early (`| head`) is not an error.
+    if !out.stdout.is_empty() || out.status == headless::status::OK {
+        let mut stdout = io::stdout().lock();
+        let written = stdout
+            .write_all(out.stdout.as_bytes())
+            .and_then(|()| stdout.flush());
+        if let Err(e) = written {
+            if e.kind() != io::ErrorKind::BrokenPipe {
+                let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
+                return headless::status::IO;
+            }
         }
     }
     let _ = io::stderr().write_all(out.stderr.as_bytes());

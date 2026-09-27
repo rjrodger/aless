@@ -280,6 +280,31 @@ fn an_unwritable_output_is_reported_as_json() {
         .starts_with("cannot write standard output"));
 }
 
+/// A stream that cannot be written reports the renderer's own failure,
+/// with its `output` state, not the plainer error a second flush of the
+/// same full disk would give.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unwritable_render_keeps_the_renderers_report() {
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full");
+    let out = Command::new(BIN)
+        .args(["--render", "csv", "tests/fixtures/sample.jsonl"])
+        .stdin(Stdio::null())
+        .stdout(full)
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 3);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"), "{e}");
+    assert_eq!(e["code"], json!("OUTPUT_FAILED"));
+    assert_eq!(e["file"], json!("tests/fixtures/sample.jsonl"));
+    assert_eq!(e["output"], json!("none"));
+}
+
 #[test]
 fn inputs_over_max_size_are_refused_with_status_5() {
     let len = std::fs::metadata("tests/fixtures/nested.json")
