@@ -1412,6 +1412,28 @@ fn grammar_failures_have_their_shapes_and_statuses() {
         message.starts_with("unknown format: hosts (one of json"),
         "{message}"
     );
+    // A name registered twice is listed once.
+    let kv = format!("hosts={GRAMMARS}/kv.abnf");
+    let hosts = format!("hosts={GRAMMARS}/hosts.abnf");
+    let out = aless(
+        &[
+            "--grammar",
+            &kv,
+            "--grammar",
+            &hosts,
+            "-k",
+            "nope",
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    let message = json(&out.stderr)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(message.ends_with(" text hosts)"), "{message}");
     // The help names the options.
     let help = aless(&["--help"], None);
     let text = String::from_utf8_lossy(&help.stdout);

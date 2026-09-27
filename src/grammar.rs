@@ -673,6 +673,16 @@ word    = ( TX )
         assert_eq!(get(second).unwrap().name, "impl-hostsfile-a");
         assert!(names().contains(&"impl-hosts-a"));
         assert!(registered().iter().any(|(id, _)| *id == second));
+        // The format names list a name once, however often it is registered.
+        register(inline("impl-dup-a", KV), Limits::NONE).unwrap();
+        register(inline("IMPL-DUP-A", KV), Limits::NONE).unwrap();
+        let dup = |list: &[&str]| {
+            list.iter()
+                .filter(|n| n.eq_ignore_ascii_case("impl-dup-a"))
+                .count()
+        };
+        assert_eq!(dup(&names()), 2);
+        assert_eq!(dup(&Format::known_names()), 1);
 
         // Through Format: the name, the extension, the whole file name.
         assert_eq!(

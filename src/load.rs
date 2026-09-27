@@ -103,10 +103,19 @@ impl Format {
     }
 
     /// Every name [`from_name`](Format::from_name) takes as a format's own:
-    /// the built-ins', then the custom grammars'.
+    /// the built-ins', then the custom grammars', each once (a grammar
+    /// registered twice under one name, or under a built-in's, is listed
+    /// once, as it resolves once).
     pub fn known_names() -> Vec<&'static str> {
         let mut names: Vec<&'static str> = Format::ALL.iter().map(|f| f.name()).collect();
-        names.extend(grammar::names());
+        for name in grammar::names() {
+            if !names
+                .iter()
+                .any(|n| n.to_lowercase() == name.to_lowercase())
+            {
+                names.push(name);
+            }
+        }
         names
     }
 
