@@ -97,6 +97,9 @@ pub fn plan(format: Format, at_root: bool) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
         Format::Jsonl | Format::Csv | Format::Tsv if at_root => Plan::Lines,
+        // A grammar from the command line is nobody's verified grammar,
+        // whatever it is named (it may take a built-in's name).
+        Format::Custom(_) => Plan::Materialize,
         f if capability::incremental(f.name()) => Plan::Incremental {
             prune: f != Format::Yaml,
         },
@@ -332,8 +335,18 @@ fn run<S: Sink + Send + 'static>(
                 }
             }
             Input::Text(text) => {
-                let mut parser =
-                    load::make_parser(format).expect("plain text is refused before a run");
+                let mut parser = match load::make_parser(format) {
+                    Ok(parser) => parser.expect("plain text is refused before a run"),
+                    // A custom grammar's engine would not take its spec:
+                    // reported as the grammar's failure, which it is.
+                    Err(e) => {
+                        return Ran {
+                            outcome: Outcome::Panicked(e.message),
+                            stop: None,
+                            verdict: None,
+                        }
+                    }
+                };
                 let notify = abort.clone();
                 let stop = load::guard(&mut parser, deadline.clone(), move || notify.abort());
                 let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -431,7 +444,7 @@ fn materialize<S: Sink>(
 /// verified, pruning the exported array as it streams (see the module
 /// doc for why YAML is not pruned).
 fn mode_for(job: &Job) -> SourceMode {
-    if !capability::incremental(job.format.name()) {
+    if job.format.is_custom() || !capability::incremental(job.format.name()) {
         return SourceMode::Materialize;
     }
     let prune = if job.format == Format::Yaml {

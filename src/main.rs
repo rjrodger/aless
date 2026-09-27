@@ -24,6 +24,7 @@ use crossterm::terminal::{
 use crossterm::{execute, queue};
 
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
+use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
 use aless::render::{self, Color, Screen, Style};
@@ -87,6 +88,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     aless -k csv --json < data.csv          stdin is JSON unless -k says
     aless --render csv --path .items x.json the records under .items as CSV
     aless --render json big.yaml            the document as JSON, streamed
+    aless --grammar hosts=hosts.abnf --paths /etc/hosts   a format of your own
+    aless --grammar-expr 'kv=…' --json settings.kv        (see --grammar below)
 
 THE VIEWER (in a terminal):
     Each FILE opens in its own tab (Tab / Shift-Tab switch). Files are
@@ -112,7 +115,15 @@ THE VIEWER (in a terminal):
 BOTH:
     -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
                             json jsonl jsonic jsonc json5 yaml toml ini csv tsv
-                            xml zon markdown feed text
+                            xml zon markdown feed text, or a --grammar NAME
+        --grammar <NAME=FILE>
+                            Read a file whose extension or whole name is NAME
+                            (x.hosts, /etc/hosts) with the ABNF grammar in FILE:
+                            RFC 5234 as tabnas/abnf compiles it, with ; @object
+                            and ; @array comments saying what a rule builds.
+                            NAME,NAME2=FILE gives it two names; repeatable
+        --grammar-expr <NAME=ABNF>
+                            The same, with the grammar text on the command line
         --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
                             or G; 0 for no limit): a parse takes about 80 bytes
                             of memory per byte of input
@@ -124,7 +135,12 @@ BOTH:
 
 struct Args {
     files: Vec<PathBuf>,
+    /// `-k`, as given: resolved once the grammars are registered, since it
+    /// may name one.
+    kind_name: Option<String>,
     kind: Option<Format>,
+    /// `--grammar` and `--grammar-expr`, in order.
+    grammars: Vec<Definition>,
     opts: Options,
     mouse: bool,
     /// The operation a headless option asked for.
@@ -157,7 +173,9 @@ const HEADLESS_OPTIONS: &[&str] = &[
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         files: Vec::new(),
+        kind_name: None,
         kind: None,
+        grammars: Vec::new(),
         opts: Options::default(),
         mouse: true,
         op: None,
@@ -210,10 +228,10 @@ fn parse_args() -> Result<Args, String> {
                 let _ = io::stdout().write_all(version.as_bytes());
                 std::process::exit(0);
             }
-            "-k" | "--kind" | "--format" => {
+            "-k" | "--kind" | "--format" => args.kind_name = Some(value()?),
+            "--grammar" | "--grammar-expr" => {
                 let v = value()?;
-                args.kind =
-                    Some(Format::from_name(&v).ok_or_else(|| format!("unknown format: {v}"))?);
+                args.grammars.push(Definition::parse(&name, &v)?);
             }
             "--json" => op = Some(Op::Json),
             "--paths" => op = Some(Op::Paths),
@@ -308,8 +326,21 @@ fn headless_wanted(args_ask: bool) -> bool {
     args_ask || !io::stdout().is_terminal() || std::env::var_os("TERM").is_some_and(|t| t == "dumb")
 }
 
+/// Say that the command line asks for what cannot be done, as JSON on
+/// standard error without a screen and as a line with one, and exit with
+/// status 2.
+fn refuse_usage(e: &str, headless: bool) -> ! {
+    if headless {
+        let error = serde_json::json!({"error": {"kind": "usage", "message": e}});
+        eprint!("{}", headless::render(&error, false));
+    } else {
+        eprintln!("aless: {e}");
+    }
+    std::process::exit(headless::status::USAGE);
+}
+
 fn main() {
-    let args = match parse_args() {
+    let mut args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
             // The options could not be read, so ask the raw ones whether
@@ -318,20 +349,39 @@ fn main() {
                 let a = a.to_string_lossy();
                 HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default())
             });
-            if headless_wanted(asked) {
-                let error = serde_json::json!({"error": {"kind": "usage", "message": e}});
-                eprint!("{}", headless::render(&error, false));
-            } else {
-                eprintln!("aless: {e}");
-            }
-            std::process::exit(headless::status::USAGE);
+            refuse_usage(&e, headless_wanted(asked));
         }
     };
+    let headless = headless_wanted(args.headless);
+    // The grammars come first: -k may name one, and so may a file's
+    // extension. A grammar file is read within --max-size as any input is.
+    let grammars = std::mem::take(&mut args.grammars);
+    if let Err(e) = grammar::register_all(grammars, args.max_size) {
+        let (text, status) = headless::grammar_failure(&e, args.compact);
+        if headless {
+            eprint!("{text}");
+        } else {
+            eprintln!("aless: {e}");
+        }
+        std::process::exit(status);
+    }
+    if let Some(name) = &args.kind_name {
+        match Format::from_name(name) {
+            Some(f) => args.kind = Some(f),
+            None => refuse_usage(
+                &format!(
+                    "unknown format: {name} (one of {})",
+                    Format::known_names().join(" ")
+                ),
+                headless,
+            ),
+        }
+    }
     aless::load::set_limits(aless::load::Limits {
         max_size: args.max_size,
         timeout: args.timeout,
     });
-    if headless_wanted(args.headless) {
+    if headless {
         std::process::exit(print_headless(args));
     }
     // Before any input is read: input that never ends (a pipe left open, a

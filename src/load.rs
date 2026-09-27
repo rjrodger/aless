@@ -15,8 +15,12 @@ use std::time::{Duration, Instant};
 use tabnas::Tabnas;
 
 use crate::doc::Doc;
+use crate::grammar::{self, CustomId};
 use crate::prov;
 
+/// A format aless reads: a built-in grammar, plain text, or a grammar the
+/// command line gave (`--grammar`, `--grammar-expr`), which
+/// [`Format::Custom`] names by its place in the [`grammar`] registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
     Json,
@@ -34,9 +38,13 @@ pub enum Format {
     Markdown,
     Feed,
     Text,
+    /// A grammar registered from the command line; see [`grammar`].
+    Custom(CustomId),
 }
 
 impl Format {
+    /// The built-in formats. A custom grammar is not among them: the
+    /// registry lists those ([`grammar::registered`]).
     pub const ALL: [Format; 15] = [
         Format::Json,
         Format::Jsonl,
@@ -72,21 +80,42 @@ impl Format {
             Format::Markdown => "markdown",
             Format::Feed => "feed",
             Format::Text => "text",
+            // An id only comes from the registry, so the grammar is there.
+            Format::Custom(id) => grammar::get(id).map_or("custom", |g| g.name),
         }
     }
 
+    /// Whether this is a grammar from the command line rather than a
+    /// built-in format.
+    pub fn is_custom(self) -> bool {
+        matches!(self, Format::Custom(_))
+    }
+
     /// A format by name or by a common alias (`yml`, `md`, `ndjson`, `txt`).
+    /// A custom grammar's name comes first: the command line asked for it,
+    /// even over a built-in's.
     pub fn from_name(s: &str) -> Option<Format> {
         let s = s.trim().to_ascii_lowercase();
-        Format::ALL
-            .iter()
-            .copied()
-            .find(|f| f.name() == s)
+        grammar::lookup(&s)
+            .map(Format::Custom)
+            .or_else(|| Format::ALL.iter().copied().find(|f| f.name() == s))
             .or_else(|| Format::from_extension(&s))
     }
 
-    /// The format a file extension (without the dot) implies.
+    /// Every name [`from_name`](Format::from_name) takes as a format's own:
+    /// the built-ins', then the custom grammars'.
+    pub fn known_names() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = Format::ALL.iter().map(|f| f.name()).collect();
+        names.extend(grammar::names());
+        names
+    }
+
+    /// The format a file extension (without the dot) implies: a custom
+    /// grammar of that name first, then the built-in table.
     pub fn from_extension(ext: &str) -> Option<Format> {
+        if let Some(id) = grammar::lookup(ext) {
+            return Some(Format::Custom(id));
+        }
         Some(match ext.to_ascii_lowercase().as_str() {
             "json" | "geojson" | "har" | "jsonld" | "webmanifest" => Format::Json,
             "jsonl" | "ndjson" => Format::Jsonl,
@@ -107,12 +136,25 @@ impl Format {
         })
     }
 
-    /// The format of a path, from its extension; plain text when unknown.
+    /// The format of a path: a custom grammar whose name is the whole file
+    /// name (`/etc/hosts`), else the extension's ([`from_extension`]);
+    /// plain text when neither says.
     pub fn detect(path: &Path) -> Format {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .and_then(Format::from_extension)
-            .unwrap_or(Format::Text)
+        Format::detect_known(path).unwrap_or(Format::Text)
+    }
+
+    /// [`detect`](Format::detect), or `None` when nothing claims the path.
+    pub fn detect_known(path: &Path) -> Option<Format> {
+        let whole = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(grammar::lookup)
+            .map(Format::Custom);
+        whole.or_else(|| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .and_then(Format::from_extension)
+        })
     }
 }
 
@@ -823,8 +865,11 @@ pub struct Loaded {
 }
 
 /// The tabnas parser for a format; `None` for plain text, which has none.
-pub(crate) fn make_parser(format: Format) -> Option<Tabnas> {
-    Some(match format {
+/// A custom grammar's is a fresh engine with its compiled spec installed;
+/// should that fail (it was installed once when the grammar was
+/// registered, so it does not), the error is a `grammar` one.
+pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
+    Ok(Some(match format {
         Format::Json => tabnas_json::make(),
         Format::Jsonl => tabnas_jsonl::make(),
         Format::Jsonic => tabnas_jsonic::make(),
@@ -843,8 +888,18 @@ pub(crate) fn make_parser(format: Format) -> Option<Tabnas> {
         Format::Zon => tabnas_zon::make(),
         Format::Markdown => tabnas_markdown::make(),
         Format::Feed => tabnas_feed::make(),
-        Format::Text => return None,
-    })
+        Format::Text => return Ok(None),
+        Format::Custom(id) => {
+            let Some(g) = grammar::get(id) else {
+                return Err(grammar_failed(format, "the grammar is not registered"));
+            };
+            // The compiler's install is a plugin's code too.
+            match catch_grammar(|| g.parser()) {
+                Ok(Ok(parser)) => parser,
+                Ok(Err(e)) | Err(e) => return Err(grammar_failed(format, &e)),
+            }
+        }
+    }))
 }
 
 /// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
@@ -1004,7 +1059,7 @@ pub(crate) fn on_parse_thread<T: Send>(
 }
 
 fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<Doc, LoadError> {
-    let Some(parser) = make_parser(format) else {
+    let Some(parser) = make_parser(format)? else {
         return Ok(Doc::from_lines(&lines(src)));
     };
     parse_with(parser, src, format, deadline)
@@ -1253,10 +1308,59 @@ mod tests {
         assert_eq!(Format::detect(Path::new("x.YML")), Format::Yaml);
         assert_eq!(Format::detect(Path::new("notes")), Format::Text);
         assert_eq!(Format::detect(Path::new("weird.xyz")), Format::Text);
+        assert_eq!(Format::detect_known(Path::new("weird.xyz")), None);
+        assert_eq!(
+            Format::detect_known(Path::new("a.toml")),
+            Some(Format::Toml)
+        );
         assert_eq!(Format::from_name("md"), Some(Format::Markdown));
         assert_eq!(Format::from_name("Markdown"), Some(Format::Markdown));
         assert_eq!(Format::from_name("nope"), None);
         assert_eq!(Format::from_name("ndjson"), Some(Format::Jsonl));
+        assert!(Format::known_names().starts_with(&["json", "jsonl"]));
+        assert!(!Format::Json.is_custom());
+    }
+
+    /// A custom grammar is detected by the whole file name (`/etc/hosts`)
+    /// as well as by the extension, whatever the case, and only by those.
+    #[test]
+    fn custom_grammars_are_detected_by_file_name_or_extension() {
+        let def = grammar::Definition::parse(
+            "--grammar-expr",
+            "impl-etc-hosts,impl-etc-hosts.conf=doc = *entry\nentry = TX \"=\" TX\n",
+        )
+        .unwrap();
+        let id = grammar::register(def, None).unwrap();
+        let custom = Format::Custom(id);
+        for path in [
+            "/etc/impl-etc-hosts",
+            "impl-etc-hosts",
+            "./IMPL-ETC-HOSTS",
+            "backup/hosts.impl-etc-hosts",
+            "/etc/impl-etc-hosts.conf",
+            "Impl-Etc-Hosts.Conf",
+        ] {
+            assert_eq!(Format::detect(Path::new(path)), custom, "{path}");
+            assert_eq!(
+                Format::detect_known(Path::new(path)),
+                Some(custom),
+                "{path}"
+            );
+        }
+        for path in ["impl-etc-hosts.bak", "impl-etc-hosts/x.json", "x.conf"] {
+            assert_ne!(Format::detect(Path::new(path)), custom, "{path}");
+        }
+        assert_eq!(Format::from_name("impl-etc-hosts.conf"), Some(custom));
+        assert!(custom.is_custom());
+        assert!(Format::known_names().contains(&"impl-etc-hosts"));
+        // A parse through the format (`:` is an ordinary character in
+        // plain text), and a parse error in its name.
+        let doc = parse("a: = b:c\nd = e\n", custom).unwrap();
+        assert!(doc.len() > 1);
+        // The position is the entry the parse could not complete.
+        let e = parse("a = 1\nb\nc = 3\n", custom).unwrap_err();
+        assert_eq!((e.line, e.col), (2, 1), "{e}");
+        assert_eq!(e.code, "unexpected");
     }
 
     #[test]
@@ -1445,7 +1549,9 @@ mod tests {
             std::thread::Builder::new()
                 .stack_size(PARSE_STACK)
                 .spawn_scoped(scope, || {
-                    let mut parser = make_parser(Format::Yaml).expect("YAML has a grammar");
+                    let mut parser = make_parser(Format::Yaml)
+                        .expect("YAML's grammar installs")
+                        .expect("YAML has a grammar");
                     assert!(parser.parse_guards.contains_key("depth"));
                     parser.remove_parse_guard("depth");
                     parse_with(parser, src, Format::Yaml, None)
@@ -1753,6 +1859,12 @@ mod tests {
                 "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>t</title><item><title>i</title></item></channel></rss>",
             ),
         ];
+        // Every built-in but plain text has a sample: `ALL` is the list this
+        // (and `make_parser`, `name`) must be exhaustive over, and a custom
+        // grammar is never in it.
+        assert_eq!(samples.len() + 1, Format::ALL.len());
+        assert!(Format::ALL.contains(&Format::Text));
+        assert!(!Format::ALL.iter().any(|f| f.is_custom()));
         for (format, src) in samples {
             let doc = parse(src, format).unwrap_or_else(|e| panic!("{format}: {e}"));
             assert!(doc.len() > 1, "{format} produced a scalar-only document");
