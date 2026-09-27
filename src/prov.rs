@@ -124,7 +124,7 @@ fn capture_with(parser: &mut Tabnas, words: bool) -> Capture {
     let s2 = sink.clone();
     parser.subscribe_tokens(move |t: &Token| {
         let tok = Tok::from_token(t);
-        if !worth_keeping(&tok) && !(words && tok.text && tok.has_src) {
+        if !(worth_keeping(&tok) || (words && tok.text && tok.has_src)) {
             return;
         }
         if let Ok(mut v) = s2.lock() {
