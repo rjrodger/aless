@@ -97,6 +97,7 @@ aless --find '"image":' deploy.yaml                # nodes whose text matches
 aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 is in
 aless --where --path .spec.replicas deploy.yaml    # the line a path is on
 aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
+aless --render csv --path .items orders.json       # the records as CSV, streamed
 ```
 
 | Option | Effect |
@@ -106,6 +107,7 @@ aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 | `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
 | `--where` | the start's entry |
 | `--check` | parse every input and report on each |
+| `--render csv\|json` | the records at the start as CSV, or the value there as JSON, streamed as the input is read ([Exporting](#exporting)) |
 | `--path PATH` | start at PATH instead of the root |
 | `--at LINE[:COL]` | start at the node at that source position |
 | `--depth N` | `--paths` and `--find` go at most N levels below the start |
@@ -188,11 +190,11 @@ $ aless bad.json
 | Exit | Meaning | Error `kind` |
 |---|---|---|
 | 0 | success: standard output holds the answer | |
-| 1 | the input did not parse; with `--check`, some input failed and the report says which | `parse` |
+| 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
 | 2 | bad usage: an unknown option, a bad path, no input, a directory, or the viewer without a terminal | `usage` |
-| 3 | an input could not be read, or the output could not be written | `io` |
+| 3 | an input could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
-| 5 | an input is larger than `--max-size` | `too_large` |
+| 5 | an input is larger than `--max-size`; with `--render`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
 | 6 | a parse ran longer than `--timeout` | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
@@ -227,7 +229,98 @@ kill. Pipes are safe both ways: standard input can be a pipe or a file,
 and a reader that stops early (`aless --json big.json | head`) ends
 aless quietly with status 0, though the parse has already been paid for.
 To take part of a large document, `--path` and `--depth` keep the output
-small; the input is still parsed in full.
+small; the input is still parsed in full. `--render` is the exception:
+it streams, as the next section says.
+
+### Exporting
+
+`--render csv` writes a document's records as CSV, and `--render json`
+writes the document as JSON text, both **streamed**: each record is
+written as it is read, through the [tabnas
+transducer](https://github.com/tabnas/transduce) and its
+[renderers](https://github.com/tabnas/render), rather than after the
+whole document has been built.
+
+```bash
+aless --render csv data.jsonl                                   # one line, one row
+aless --render csv --path .response.payload.deep.records response.json
+aless --render json big.yaml                                    # --json, streamed
+aless -k jsonl --render csv < events.log                        # stdin, a record at a time
+```
+
+The **rows** are the elements of the root array, or of the array at
+`--path`; for JSON Lines the lines, for CSV and TSV the records. The
+**columns** are the members of the first row, in its order (a later row's
+extra members are dropped; one it lacks is an empty field). Rows that are
+all scalars make one column, `value`; a row that is neither an object nor
+a scalar, or of the other kind than the first, fails the export with its
+path. A root that is not an array fails with a message that says to give
+`--path` to one. The CSV is the standard profile: every field quoted with
+`"` doubled, records ending in CRLF, a header row, `null` and a missing
+member both written as the empty string (so the two cannot be told apart:
+this default export is lossy there, as the profile is), a nested container
+written as compact JSON text in its cell, and a number as the source
+spelled it where the source provides its lexeme (the JSON family, YAML,
+ZON and JSON Lines). An empty array exports as nothing. `--render json`
+takes `--compact` and `--indent` as `--json` does; `--at` is not accepted,
+nor a path that counts from the end (`[-1]`), since the input is read once
+front to back.
+
+```
+$ aless --render csv --path .response.payload.deep.records response.json
+"id","person","account"
+"123","{""name"":""Alice""}","{""balance"":50.25}"
+"456","{""name"":""Bob""}","{""balance"":72}"
+```
+
+**Errors** keep their shape. A failure of the transducer's is
+`"kind": "transduce"`, with the transducer's `code` (`INPUT_INVALID`,
+`RESOURCE_LIMIT_EXCEEDED`, `OUTPUT_FAILED`, …), its `message`, the
+`file` and `format`, then `path`, `limit` (`{name, value}`), `line` and
+`col` when the failure has them, and `output`: `"partial"` when some of
+the result had been written before the failure (a stream cannot take bytes
+back; the renderer writes whole records, and holds its output until the
+end when it can), else `"none"`. The status follows the code, as the table
+above says. aless's own limits report as they do for a parse, plus that
+`output` field: nesting past its cap is a `parse` error with the code
+`too_deep`, and a run past `--timeout` a `timeout` error. A `--path` that
+names nothing is `not_found`, its `nearest` entry without a source
+position.
+
+```
+$ aless --render csv broken.json
+{
+  "error": {
+    "kind": "transduce",
+    "file": "broken.json",
+    "format": "json",
+    "code": "INPUT_INVALID",
+    "message": "unexpected: unexpected character(s): }",
+    "line": 2,
+    "col": 8,
+    "output": "none"
+  }
+}
+```
+
+**Streaming, honestly.** JSON Lines, CSV and TSV with the rows at the
+root are read from the file a record (or a chunk of records) at a time,
+so the file is never in memory whole and `--max-size` does not apply to
+it; the transducer's own limits per record do (a line over
+`max_record_bytes`, 64 MB, fails). Every other format is parsed whole by
+the tabnas engine, within `--max-size`, and the note above about memory
+per input byte stands. What differs is when the output starts: for the
+JSON family, YAML and ZON the records are streamed out as the parse
+proceeds, and the exported array is not kept behind them (except in YAML,
+whose aliases may still refer to it); for the rest they are streamed out
+after the parse, from the value it built. `--timeout` stops either kind
+at the deadline, with `output` saying whether records had already been
+written.
+
+`--render` on its own is the default export. Programs that select,
+project and reshape on the way through, in the
+[alchemy](https://github.com/tabnas/alchemy) language, are coming as
+`--alchemy PROGRAM`, beside `--render`.
 
 These shapes are a contract: fields may be added, but none is renamed,
 removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
@@ -526,9 +619,10 @@ supplies each sibling from its own repository. When the crates are
 published, the `git` entries become version requirements and the patch
 tables go; nothing else changes.
 
-The other dependencies: crossterm (terminal), notify (file watching),
-regex (search), unicode-width (layout), serde_json (JSON output),
-arboard (clipboard, optional).
+`tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
+way. The other dependencies: crossterm (terminal), notify (file
+watching), regex (search), unicode-width (layout), serde_json (JSON
+output), arboard (clipboard, optional).
 
 ## Development
 
@@ -546,9 +640,10 @@ the library is terminal-free and unit tested:
 |---|---|
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
 | `explorer` | directory trees as documents, listed lazily |
+| `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
-| `load` | format detection; the tabnas grammars; errors with positions; text fallback |
+| `load` | format detection; the tabnas grammars; errors with positions; the size, depth and time limits; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |
