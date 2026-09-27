@@ -1224,6 +1224,75 @@ fn a_custom_grammar_may_shadow_a_built_in() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// When no thread can be started for the compiler, the compile runs on
+/// aless's own thread, where it cannot be stopped, and is still held to
+/// `--timeout`: once it ends, one that ended past the limit is refused as
+/// a `timeout`, status 6, with a hint that says it ran to its end. What
+/// makes the thread impossible here is an address-space limit below the
+/// 64 MiB stack it asks for; the limit that lets aless start and compile
+/// but not start that thread depends on the build, so it is found by
+/// raising the limit 8 MiB at a time until aless answers at all.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_compile_with_no_thread_of_its_own_is_held_to_the_timeout() {
+    use std::os::unix::process::CommandExt;
+    let mut seen = Vec::new();
+    for mib in (16..=512).step_by(8) {
+        let bytes: libc::rlim_t = mib << 20;
+        let mut command = Command::new(BIN);
+        command
+            .args([
+                "--grammar-expr",
+                "slow=doc = 1*300\"a\"\n",
+                "--timeout",
+                "0.001",
+                "--json",
+                "tests/fixtures/lines.txt",
+            ])
+            .stdin(Stdio::null());
+        // SAFETY: the closure runs in the child between fork and exec, and
+        // calls only setrlimit, which is async-signal-safe.
+        unsafe {
+            command.pre_exec(move || {
+                let limit = libc::rlimit {
+                    rlim_cur: bytes,
+                    rlim_max: bytes,
+                };
+                match libc::setrlimit(libc::RLIMIT_AS, &limit) {
+                    0 => Ok(()),
+                    _ => Err(std::io::Error::last_os_error()),
+                }
+            });
+        }
+        let out = command.output().unwrap();
+        if out.status.code() != Some(6) {
+            seen.push((mib, out.status.code()));
+            continue;
+        }
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"), "{e}");
+        assert_eq!(e["grammar"], json!("slow"));
+        assert_eq!(e["seconds"], json!(0.001));
+        assert_eq!(
+            e["message"],
+            json!("--grammar-expr slow: timeout: the grammar took longer than 0.001 s to compile")
+        );
+        // The first limit aless answers under is one it could not start
+        // the compiler's thread under: the compile ran on its own thread,
+        // to its end, and was refused for its time, not waited on.
+        let hint = e["hint"].as_str().unwrap();
+        assert!(
+            hint.starts_with(
+                "No thread could be started for the compiler, so it ran to its end on \
+                 aless's own and took "
+            ),
+            "at {mib} MiB, after {seen:?}: {e}"
+        );
+        return;
+    }
+    panic!("aless never answered with a timeout: {seen:?}");
+}
+
 /// A grammar that does not compile is the command's mistake (status 2), a
 /// grammar file that cannot be read is an io error (3), and an input the
 /// grammar refuses is a parse error (1) in the grammar's name.
