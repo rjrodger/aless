@@ -14,13 +14,15 @@ JSON it parses to:
 | `passwd.abnf` | `passwd.sample` | `{"name", "password", "uid", "gid", "gecos", "home", "shell"}` |
 | `group.abnf` | `group.sample` | `{"name", "password", "gid", "members": […]}` |
 | `fstab.abnf` | `fstab.sample` | `{"spec", "file", "vfstype", "options": […], "freq", "passno"}` |
-| `resolv.conf.abnf` | `resolv.conf.sample` | `{"nameserver": "10.0.0.53"}`, `{"search": [...]}`, `{"domain": …}`, `{"options": […]}`, `{"sortlist": […]}` |
+| `resolv.conf.abnf` | `resolv.conf.sample` | `{"nameserver": "10.0.0.53"}`, `{"search": [...]}`, `{"domain": …}`, `{"options": […]}`, `{"sortlist": […]}`, `{"comment": ["generated", "by", …]}` for a `;` line |
 | `kv.abnf` (shell-style `KEY=value`) | `kv.sample` | `{"key": "NAME", "value": "\"Ubuntu\""}` |
 
 `NAME.expected.json` is the exact value (pretty-printed) that
 `aless --grammar NAME=NAME.abnf --json` prints for `NAME.sample`. Every
-value is an array of records, one per line of the file; comment lines
-and blank lines produce nothing. Field values are the source text,
+value is an array of records, one per line of the file; `#` comment
+lines and blank lines produce nothing (the one exception is
+resolv.conf's `;` comment line, which the lexer does not drop and the
+grammar keeps as a `comment` record). Field values are the source text,
 always strings (`"uid": "0"`, not `0`).
 
 ```sh
@@ -190,7 +192,11 @@ minimal grammar and what happened.
 - `fstab`: `vfstype` may be a comma list (`udf,iso9660`) and is kept as
   text; `options` is a list; `freq` and `passno` are `""` when omitted.
 - `resolv.conf`: each keyword is its own record shape; unknown keywords
-  fail the parse.
+  fail the parse. A `;` comment line, which resolv.conf(5) allows
+  beside `#`, is kept as `{"comment": [words]}` (`{"comment": []}` for a
+  bare `;`), since the lexer drops `#` comments only and a grammar
+  cannot match a line and build nothing; a `;` anywhere but the first
+  column fails the parse.
 - `kv`: `KEY=value` with no spaces around `=`; the value keeps its
   quotes; `#` starts a comment unless inside quotes.
 

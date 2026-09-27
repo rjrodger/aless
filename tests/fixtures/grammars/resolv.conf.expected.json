@@ -1,5 +1,12 @@
 [
   {
+    "comment": [
+      "generated",
+      "by",
+      "/sbin/dhclient-script"
+    ]
+  },
+  {
     "domain": "corp.example.com"
   },
   {
