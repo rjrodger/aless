@@ -354,6 +354,14 @@ fn main() {
         }
     };
     let headless = headless_wanted(args.headless);
+    // Before any input is read, grammar files included: input that never
+    // ends (a pipe left open, a FIFO) would otherwise keep a viewer that
+    // cannot start waiting.
+    if !headless {
+        if let Err(e) = key_terminal() {
+            refuse_viewer(&e);
+        }
+    }
     // The grammars come first: -k may name one, and so may a file's
     // extension. A grammar file is read within --max-size as any input is,
     // and compiled within --timeout as any parse runs.
@@ -386,11 +394,6 @@ fn main() {
     aless::load::set_limits(limits);
     if headless {
         std::process::exit(print_headless(args));
-    }
-    // Before any input is read: input that never ends (a pipe left open, a
-    // FIFO) would otherwise keep a viewer that cannot start waiting.
-    if let Err(e) = key_terminal() {
-        refuse_viewer(&e);
     }
     let (width, height) = terminal::size().unwrap_or((80, 24));
     let mut app = App::new(args.opts, width, height);
