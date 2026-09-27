@@ -669,6 +669,8 @@ struct GrammarFixture {
     file: PathBuf,
     samples: Vec<PathBuf>,
     expected: Value,
+    /// The expected file's text: what `--json` prints, byte for byte.
+    expected_text: String,
 }
 
 /// Every `NAME.abnf` under the grammars directory. A grammar without its
@@ -686,9 +688,9 @@ fn grammar_fixtures() -> Vec<GrammarFixture> {
         .map(|file| {
             let name = file.file_stem().unwrap().to_str().unwrap().to_string();
             let expected = dir.join(format!("{name}.expected.json"));
-            let expected = std::fs::read_to_string(&expected)
+            let expected_text = std::fs::read_to_string(&expected)
                 .unwrap_or_else(|e| panic!("{}: {e}", expected.display()));
-            let expected: Value = serde_json::from_str(&expected).unwrap();
+            let expected: Value = serde_json::from_str(&expected_text).unwrap();
             let samples: Vec<PathBuf> = [dir.join(format!("{name}.sample")), dir.join(&name)]
                 .into_iter()
                 .filter(|p| p.is_file())
@@ -702,14 +704,17 @@ fn grammar_fixtures() -> Vec<GrammarFixture> {
                 file,
                 samples,
                 expected,
+                expected_text,
             }
         })
         .collect()
 }
 
 /// Every fixture grammar reads its sample to exactly the JSON its expected
-/// file holds, from the grammar file and from the same text inline, and a
-/// sample named as the real file is detected by that name.
+/// file holds (the value compact, and the file's bytes pretty-printed, as
+/// the library's README says of it), from the grammar file and from the
+/// same text inline, and a sample named as the real file is detected by
+/// that name.
 #[test]
 fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
     let fixtures = grammar_fixtures();
@@ -742,6 +747,19 @@ fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
                 String::from_utf8_lossy(&out.stdout).lines().count(),
                 1,
                 "{sample}: --compact"
+            );
+            // Pretty-printed, --json is the expected file itself.
+            let mut pretty = vec!["--grammar", &grammar, "--json"];
+            if !by_name {
+                pretty.extend(["-k", &f.name]);
+            }
+            pretty.push(sample);
+            let out = aless(&pretty, None);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                f.expected_text,
+                "{sample}: --json is not {}.expected.json byte for byte",
+                f.name
             );
             // --check names the format after the grammar.
             let mut check = vec!["--grammar", &grammar, "--check"];
@@ -779,6 +797,132 @@ fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
         );
         assert_eq!(json(&out.stdout), f.expected, "{}: inline", f.name);
     }
+}
+
+/// The hosts grammar, as the README's "Custom grammars" section runs it
+/// on the library's own sample: the first lines on standard input with
+/// `-k hosts`, a position to a path, the records as CSV with the nested
+/// `names` as JSON text in its cell; then the outline, the same text
+/// inline, and the two inputs that build nothing. The README's output is
+/// held to this byte for byte.
+#[test]
+fn the_hosts_grammar_runs_as_the_readme_shows() {
+    let grammar = format!("hosts={GRAMMARS}/hosts.abnf");
+    let sample = format!("{GRAMMARS}/hosts");
+    let text = std::fs::read_to_string(&sample).unwrap();
+    // `head -5 hosts | aless … -k hosts --json --compact`
+    let head: String = text.lines().take(5).map(|l| format!("{l}\n")).collect();
+    assert!(head.starts_with("# /etc/hosts") && head.ends_with("workstation\n"));
+    let out = aless(
+        &["--grammar", &grammar, "-k", "hosts", "--json", "--compact"],
+        Some(&head),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[{\"address\":\"127.0.0.1\",\"names\":[\"localhost\"]},{\"address\":\"127.0.1.1\",\"names\":[\"workstation.example.com\",\"workstation\"]}]\n"
+    );
+    // `--where --at 5:17`: the first name on line 5.
+    let out = aless(
+        &[
+            "--grammar",
+            &grammar,
+            "--where",
+            "--at",
+            "5:17",
+            "--compact",
+            &sample,
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!(
+            "{{\"file\":\"{sample}\",\"format\":\"hosts\",\"path\":\"[1].names[0]\",\"kind\":\"string\",\"line\":5,\"col\":17,\"value\":\"workstation.example.com\"}}\n"
+        )
+    );
+    // `--render csv | head -3`: a header and a row per record, the names
+    // array as JSON text in its cell, CRLF line ends.
+    let out = aless(&["--grammar", &grammar, "--render", "csv", &sample], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let csv = String::from_utf8_lossy(&out.stdout);
+    let rows: Vec<&str> = csv.split("\r\n").collect();
+    assert_eq!(
+        &rows[..3],
+        [
+            "\"address\",\"names\"",
+            "\"127.0.0.1\",\"[\"\"localhost\"\"]\"",
+            "\"127.0.1.1\",\"[\"\"workstation.example.com\"\",\"\"workstation\"\"]\"",
+        ]
+    );
+    assert_eq!(rows.len(), 13, "a header, eleven records, the final CRLF");
+    assert_eq!(rows[12], "");
+    // The outline: the array, then one record per host line, each at
+    // its line in the file (comments and blank lines take none).
+    let out = aless(
+        &["--grammar", &grammar, "--paths", "--depth", "1", &sample],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let v = json(&out.stdout);
+    assert_eq!(v["format"], json!("hosts"));
+    assert_eq!(v["total"], json!(12));
+    assert_eq!(v["entries"][0]["kind"], json!("array"));
+    assert_eq!(v["entries"][0]["length"], json!(11));
+    let lines: Vec<u64> = v["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .map(|e| e["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, [4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16]);
+    // The same grammar inline reads the same.
+    let expr = format!(
+        "hosts={}",
+        std::fs::read_to_string(format!("{GRAMMARS}/hosts.abnf")).unwrap()
+    );
+    let inline = aless(
+        &["--grammar-expr", &expr, "--json", "--compact", &sample],
+        None,
+    );
+    let file = aless(
+        &["--grammar", &grammar, "--json", "--compact", &sample],
+        None,
+    );
+    assert_eq!(
+        code(&inline),
+        0,
+        "{}",
+        String::from_utf8_lossy(&inline.stderr)
+    );
+    assert_eq!(inline.stdout, file.stdout);
+    // Nothing to build: an empty file is null, and a file of comments and
+    // blank lines is what the grammar's repetition makes of nothing.
+    let dir = std::env::temp_dir().join(format!("aless-hosts-agent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let empty = dir.join("empty.hosts");
+    std::fs::write(&empty, "").unwrap();
+    let out = aless(
+        &[
+            "--grammar",
+            &grammar,
+            "--json",
+            "--compact",
+            empty.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "null\n");
+    let out = aless(
+        &["--grammar", &grammar, "-k", "hosts", "--json", "--compact"],
+        Some("# only\n\n# comments\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[]\n");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A custom grammar is a format like any other to every operation: `-k`
