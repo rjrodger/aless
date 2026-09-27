@@ -1170,7 +1170,12 @@ fn parse_capped(
     max_depth: usize,
 ) -> Result<Doc, LoadError> {
     let stopped = guard(&mut parser, deadline.clone(), max_depth, || {});
-    let sink = prov::capture(&mut parser);
+    // Under a grammar of plain text, a lone `*` is a word and a value.
+    let sink = if format.is_custom() {
+        prov::capture_words(&mut parser)
+    } else {
+        prov::capture(&mut parser)
+    };
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
         let _guard = CatchGuard::enter();

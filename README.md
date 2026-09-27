@@ -504,9 +504,12 @@ some 80 µs (300,000 lines of `hosts`: 24 s, 2.8 GB; 86,000 lines: 7 s,
 
 **Source positions** come from the token alignment every format has
 ([Source positions](#source-positions)): a value that is one token's
-text (a `TX` word) is placed exactly; one assembled from several tokens
-or characters (a `1*DIGIT` rule, a group of several parts) is not, and
-shows no position of its own.
+text (a `TX` word, `*` included) is placed exactly; one assembled from
+several tokens or characters (a `1*DIGIT` rule, a group of several
+parts, `gecos = *( word / " " )`) is not, and shows no position of its
+own. `--where` at a position inside such a value answers, as on any
+line, the last placed node before it: the field before it, or the
+record.
 
 ## Keys
 

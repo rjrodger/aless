@@ -965,6 +965,47 @@ fn custom_grammars_work_with_every_operation() {
     assert_eq!(v["path"], json!("[1].value"));
     assert_eq!(v["value"], json!("line"));
     assert_eq!((v["line"].clone(), v["col"].clone()), (json!(3), json!(8)));
+    // A word of one punctuation character is a value, placed like any
+    // word: the `*` password of `guest:*:1002:1002::/home/guest:`.
+    let passwd = format!("passwd={GRAMMARS}/passwd.abnf");
+    let sample = format!("{GRAMMARS}/passwd.sample");
+    let out = aless(
+        &[
+            "--grammar",
+            &passwd,
+            "-k",
+            "passwd",
+            "--where",
+            "--at",
+            "15:7",
+            "--compact",
+            &sample,
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let v = json(&out.stdout);
+    assert_eq!(v["path"], json!("[12].password"));
+    assert_eq!((v["line"].clone(), v["col"].clone()), (json!(15), json!(7)));
+    assert_eq!(v["value"], json!("*"));
+    // Inside a value assembled from several tokens (the gecos field), the
+    // answer is the last placed node before the position: the field
+    // before it.
+    let out = aless(
+        &[
+            "--grammar",
+            &passwd,
+            "-k",
+            "passwd",
+            "--where",
+            "--at",
+            "13:22",
+            "--compact",
+            &sample,
+        ],
+        None,
+    );
+    assert_eq!(json(&out.stdout)["path"], json!("[10].gid"));
     // Search, with the viewer's pattern.
     let out = aless(&["--grammar", &kv, "--find", "aless", file], None);
     let v = json(&out.stdout);

@@ -38,6 +38,9 @@ pub struct Tok {
     /// A single punctuation character standing for itself (`,` `:` `]`),
     /// as opposed to a quoted one-character string value.
     pub bare_punct: bool,
+    /// The engine's word token (`#TX`), whatever its text: under a grammar
+    /// of plain text a lone `*` is a word, and a value.
+    pub text: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +78,7 @@ impl Tok {
                 _ => None,
             },
             bare_punct: single_punct && matches!(&t.val, Value::String(v) if v == bare),
+            text: t.name.as_str() == "#TX",
             val,
         }
     }
@@ -104,11 +108,23 @@ pub fn worth_keeping(tok: &Tok) -> bool {
 
 /// Subscribe to the parser's token stream, returning the sink it fills.
 pub fn capture(parser: &mut Tabnas) -> Capture {
+    capture_with(parser, false)
+}
+
+/// [`capture`], keeping a word token (`#TX`) too when it is a single
+/// punctuation character: under a grammar from the command line the text
+/// is plain, so `*` (a passwd password) is a word and a value, where under
+/// the JSON family punctuation stands for itself and is not kept.
+pub fn capture_words(parser: &mut Tabnas) -> Capture {
+    capture_with(parser, true)
+}
+
+fn capture_with(parser: &mut Tabnas, words: bool) -> Capture {
     let sink: Capture = Arc::new(Mutex::new(Vec::new()));
     let s2 = sink.clone();
     parser.subscribe_tokens(move |t: &Token| {
         let tok = Tok::from_token(t);
-        if !worth_keeping(&tok) {
+        if !worth_keeping(&tok) && !(words && tok.text && tok.has_src) {
             return;
         }
         if let Ok(mut v) = s2.lock() {
@@ -343,6 +359,26 @@ mod tests {
             vals,
             vec!["{", "a", "[", "1", "true", "null", "b", "x", "c", "-"]
         );
+    }
+
+    /// Under a grammar of plain text a lone punctuation character is a
+    /// word (`*` for a passwd password), and is placed like any word; the
+    /// JSON family's capture leaves such a token out.
+    #[test]
+    fn a_word_of_one_punctuation_character_is_placed_for_plain_text() {
+        let grammar = crate::grammar::compile("doc = *word   ; @array\nword = ( TX )\n").unwrap();
+        let mut p = grammar.parser().unwrap();
+        let sink = capture_words(&mut p);
+        let v = p.parse("a * b\n- x").unwrap();
+        let mut doc = Doc::from_value(&v);
+        align(&mut doc, &sink.lock().unwrap());
+        let pos: Vec<(u32, u32)> = doc.nodes.iter().skip(1).map(|n| (n.line, n.col)).collect();
+        assert_eq!(pos, vec![(1, 1), (1, 3), (1, 5), (2, 1), (2, 3)]);
+        let mut p = grammar.parser().unwrap();
+        let sink = capture(&mut p);
+        p.parse("a * b").unwrap();
+        let kept: Vec<bool> = sink.lock().unwrap().iter().map(|t| t.text).collect();
+        assert_eq!(kept.len(), 2, "the `*` is not kept for the JSON family");
     }
 
     #[test]
