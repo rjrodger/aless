@@ -57,7 +57,9 @@ use tabnas_transduce::{
 
 use crate::fmt;
 use crate::headless::{kind_of_event, Seg, KEYS_LISTED};
-use crate::load::{self, Deadline, Format, LoadError, Stop, MAX_RULE_DEPTH, STOP_DEPTH, STOP_TIME};
+use crate::load::{
+    self, Deadline, Deep, Format, LoadError, Stop, STOP_DEPTH, STOP_TIME, STOP_VALUE_DEPTH,
+};
 
 /// The output `--render` writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +117,9 @@ pub fn plan(format: Format, at_root: bool) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
         Format::Jsonl | Format::Csv | Format::Tsv if at_root => Plan::Lines,
+        // A grammar from the command line is nobody's verified grammar,
+        // whatever it is named (it may take a built-in's name).
+        Format::Custom(_) => Plan::Materialize,
         f if capability::incremental(f.name()) => Plan::Incremental {
             prune: !matches!(f, Format::Yaml | Format::Jsonic | Format::Markdown),
         },
@@ -405,14 +410,29 @@ fn run<S: Sink + Send + 'static>(
                 }
             }
             Input::Text(text) => {
-                let mut parser =
-                    load::make_parser(format).expect("plain text is refused before a run");
+                let mut parser = match load::make_parser(format) {
+                    Ok(parser) => parser.expect("plain text is refused before a run"),
+                    // A custom grammar's engine would not take its spec:
+                    // reported as the grammar's failure, which it is.
+                    Err(e) => {
+                        return Ran {
+                            outcome: Outcome::Panicked(e.message),
+                            stop: None,
+                            verdict: None,
+                        }
+                    }
+                };
                 let notify = abort.clone();
-                let stop = load::guard(&mut parser, deadline.clone(), move || notify.abort());
+                let stop = load::guard(
+                    &mut parser,
+                    deadline.clone(),
+                    load::max_rule_depth(format),
+                    move || notify.abort(),
+                );
                 let text = text.strip_prefix('\u{feff}').unwrap_or(text);
                 match mode {
                     SourceMode::Materialize => {
-                        materialize(parser, text, deadline, &abort, &parsed, scope, stop)
+                        materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
                     }
                     mode => {
                         // The source checks the grammar's name against the
@@ -455,8 +475,10 @@ fn run<S: Sink + Send + 'static>(
 /// is known. From then on the deadline is the alarm's to enforce, through
 /// the abort flag the walk polls; and a deadline that passed during the
 /// parse's last step, which no guard saw, is caught here too.
+#[allow(clippy::too_many_arguments)]
 fn materialize<S: Sink>(
     parser: Tabnas,
+    format: Format,
     text: &str,
     deadline: Option<Deadline>,
     abort: &AbortFlag,
@@ -494,6 +516,17 @@ fn materialize<S: Sink>(
         Ok(Ok(value)) => value,
     };
     drop(parser);
+    // A custom grammar's nesting is measured on its value, as the loader
+    // measures it; the value is let go without recursing into it.
+    if format.is_custom() && load::nests_past(&value, load::MAX_VALUE_DEPTH) {
+        stop.mark(STOP_VALUE_DEPTH);
+        load::drop_deep(value);
+        return Ran {
+            outcome: Outcome::Failed(Fail::aborted()),
+            stop: Some(stop),
+            verdict: None,
+        };
+    }
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
     let outcome = ValueSource(&value).run(&mut guarded);
     let scope = guarded.into_inner();
@@ -508,6 +541,10 @@ fn materialize<S: Sink>(
 /// verified, pruning the exported array as it streams where [`plan`]
 /// allows.
 fn mode_for(job: &Job) -> SourceMode {
+    // A custom grammar builds its value whole; nothing streams it.
+    if job.format.is_custom() {
+        return SourceMode::Materialize;
+    }
     let prune = match plan(job.format, job.path.is_empty()) {
         Some(Plan::Incremental { prune }) => prune,
         // A line-delimited format handed over as one text: JSON Lines is
@@ -618,8 +655,14 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
     match stop.as_ref().map(|s| s.why()) {
         Some(STOP_DEPTH) => {
             let (line, col) = stop.as_ref().map_or((0, 0), |s| s.position());
-            return load(too_deep(job, line, col, None));
+            return load(too_deep(
+                job,
+                line,
+                col,
+                Deep::Rules(load::max_rule_depth(job.format)),
+            ));
         }
+        Some(STOP_VALUE_DEPTH) => return load(too_deep(job, 0, 0, Deep::Value)),
         Some(STOP_TIME) => {
             let (line, col) = stop.as_ref().map_or((0, 0), |s| s.position());
             return load(timed_out(job, line, col));
@@ -643,7 +686,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
                 || fail.message.starts_with("the grammar stopped the parse") =>
         {
             let (line, col) = position(&fail);
-            load(too_deep(job, line, col, Some(job.format)))
+            load(too_deep(job, line, col, Deep::Grammar))
         }
         Code::OutputFailed if broken.load(Ordering::Relaxed) => ExportError::ReaderGone,
         _ => {
@@ -696,27 +739,9 @@ fn positioned(
     e
 }
 
-/// `too_deep`, worded as the loader words it: aless's cap, or the
-/// grammar's own when `grammar` says which.
-fn too_deep(job: &Job, line: u32, col: u32, grammar: Option<Format>) -> LoadError {
-    let (message, hint) = match grammar {
-        None => (
-            format!(
-                "too_deep: nested deeper than aless reads (about {} levels)",
-                MAX_RULE_DEPTH / 3
-            ),
-            "Nesting this deep would overflow the parser's stack, so the parse \
-             stopped here.\nReal documents nest a few dozen levels at most."
-                .to_string(),
-        ),
-        Some(format) => (
-            format!("too_deep: nested deeper than the {format} grammar reads"),
-            format!(
-                "The {format} grammar has a nesting limit of its own, and the parse stopped \
-                 where the document passed it.\nReal documents nest a few dozen levels at most."
-            ),
-        ),
-    };
+/// `too_deep`, worded as the loader words it ([`load::too_deep_words`]).
+fn too_deep(job: &Job, line: u32, col: u32, why: Deep) -> LoadError {
+    let (message, hint) = load::too_deep_words(job.format, why);
     positioned(job, "too_deep", message, &hint, line, col)
 }
 

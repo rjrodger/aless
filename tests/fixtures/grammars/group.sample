@@ -1,0 +1,16 @@
+root:x:0:
+daemon:x:1:
+adm:x:4:syslog,alice
+tty:x:5:
+sudo:x:27:alice,bob
+audio:x:29:pulse
+www-data:x:33:
+plugdev:x:46:alice
+users:x:100:
+# system groups
+systemd-journal:x:999:
+docker:x:998:alice,bob,carol
+
+alice:x:1000:
+bob:x:1001:
+nogroup:x:65534:

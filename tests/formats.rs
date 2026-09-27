@@ -26,6 +26,10 @@ fn every_fixture_loads() {
     let mut seen = Vec::new();
     for entry in std::fs::read_dir(fixture("")).unwrap() {
         let path = entry.unwrap().path();
+        if !path.is_file() {
+            // The grammars have their own tests (`agent.rs`, below).
+            continue;
+        }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let result = load::load_path(&path, None);
         if name == "bad.json" {
@@ -61,6 +65,29 @@ fn every_fixture_loads() {
     ] {
         assert!(seen.contains(&f), "no fixture exercised {f}");
     }
+}
+
+/// Every fixture grammar compiles, as the option that names it would
+/// compile it at startup; the values they parse to are checked against the
+/// built binary in `agent.rs`.
+#[test]
+fn every_fixture_grammar_compiles() {
+    let mut count = 0;
+    for entry in std::fs::read_dir(fixture("grammars")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|x| x != "abnf") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let compiled =
+            aless::grammar::compile(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        compiled.parser().unwrap();
+        count += 1;
+    }
+    assert!(
+        count >= 2,
+        "the implementer's two grammars at least: {count}"
+    );
 }
 
 #[test]

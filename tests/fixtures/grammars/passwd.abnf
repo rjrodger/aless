@@ -1,0 +1,11 @@
+; /etc/passwd: seven colon-separated fields; the gecos field may hold spaces.
+passwd   = *( entry %x0A / %x0A ) [ entry ]   ; @array
+entry    = name ":" password ":" uid ":" gid ":" gecos ":" home ":" shell   ; @object name password uid gid gecos home shell
+name     = word
+password = [ word ]
+uid      = word
+gid      = word
+gecos    = *( word / " " )
+home     = [ word ]
+shell    = [ word ]
+word     = ( TX )

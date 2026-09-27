@@ -1,0 +1,8 @@
+; The implementer's fixture: `key = value` lines, one object a line, with
+; spaces allowed around the `=` (the engine skips them). The newline is not
+; named: an entry is three tokens and needs no line end to stop at, so
+; comments and blank lines cost nothing and a value cannot hold a space.
+settings = *entry             ; @array
+entry    = key "=" value      ; @object key value
+key      = ( TX )
+value    = ( TX )

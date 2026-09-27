@@ -35,7 +35,8 @@ pub struct Entry {
     pub os_name: OsString,
     pub kind: EntryKind,
     pub size: u64,
-    /// The format the extension implies, when a grammar handles it.
+    /// The format the file's extension or whole name implies, when a
+    /// grammar handles it.
     pub format: Option<Format>,
 }
 
@@ -118,12 +119,7 @@ fn read_listing(dir: &Path) -> Listing {
                         (EntryKind::Other, 0)
                     };
                     let format = (kind == EntryKind::File)
-                        .then(|| {
-                            Path::new(&name)
-                                .extension()
-                                .and_then(|x| x.to_str())
-                                .and_then(Format::from_extension)
-                        })
+                        .then(|| Format::detect_known(Path::new(&name)))
                         .flatten();
                     Entry {
                         name,

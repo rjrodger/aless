@@ -1,0 +1,23 @@
+[
+  {
+    "first": "alpha",
+    "rest": [
+      "1"
+    ]
+  },
+  {
+    "first": "beta",
+    "rest": [
+      "two",
+      "2"
+    ]
+  },
+  {
+    "first": "gamma",
+    "rest": [
+      "3.5",
+      "x",
+      "y"
+    ]
+  }
+]

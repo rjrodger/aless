@@ -1,0 +1,8 @@
+; The implementer's fixture: a word and the words after it, one object a
+; line. The newline is named, so the list of words stops at the line's end
+; and a line of one word is refused.
+lines = *( line %x0A / %x0A ) [ line ]   ; @array
+line  = first rest                       ; @object first rest
+first = ( TX )
+rest  = 1*word                           ; @array
+word  = ( TX )

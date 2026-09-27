@@ -22,6 +22,7 @@ dependencies = [
  "regex",
  "serde_json",
  "tabnas",
+ "tabnas-abnf",
  "tabnas-csv",
  "tabnas-feed",
  "tabnas-ini",
@@ -746,6 +747,31 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tabnas-abnf"
+version = "0.4.16"
+source = "git+https://github.com/tabnas/abnf#8ae40a50c76f6d532e79a2e13ae0e481a515f391"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas",
+ "tabnas-bnf",
+]
+
+[[package]]
+name = "tabnas-bnf"
+version = "0.1.22"
+source = "git+https://github.com/tabnas/bnf#d96fd275fae8bdc02ce960594b3ff4f9f9e22167"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas",
 ]
 
 [[package]]

@@ -15,8 +15,12 @@ use std::time::{Duration, Instant};
 use tabnas::Tabnas;
 
 use crate::doc::Doc;
+use crate::grammar::{self, CustomId};
 use crate::prov;
 
+/// A format aless reads: a built-in grammar, plain text, or a grammar the
+/// command line gave (`--grammar`, `--grammar-expr`), which
+/// [`Format::Custom`] names by its place in the [`grammar`] registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
     Json,
@@ -34,9 +38,13 @@ pub enum Format {
     Markdown,
     Feed,
     Text,
+    /// A grammar registered from the command line; see [`grammar`].
+    Custom(CustomId),
 }
 
 impl Format {
+    /// The built-in formats. A custom grammar is not among them: the
+    /// registry lists those ([`grammar::registered`]).
     pub const ALL: [Format; 15] = [
         Format::Json,
         Format::Jsonl,
@@ -72,21 +80,51 @@ impl Format {
             Format::Markdown => "markdown",
             Format::Feed => "feed",
             Format::Text => "text",
+            // An id only comes from the registry, so the grammar is there.
+            Format::Custom(id) => grammar::get(id).map_or("custom", |g| g.name),
         }
     }
 
+    /// Whether this is a grammar from the command line rather than a
+    /// built-in format.
+    pub fn is_custom(self) -> bool {
+        matches!(self, Format::Custom(_))
+    }
+
     /// A format by name or by a common alias (`yml`, `md`, `ndjson`, `txt`).
+    /// A custom grammar's name comes first: the command line asked for it,
+    /// even over a built-in's.
     pub fn from_name(s: &str) -> Option<Format> {
-        let s = s.trim().to_ascii_lowercase();
-        Format::ALL
-            .iter()
-            .copied()
-            .find(|f| f.name() == s)
+        let s = s.trim().to_lowercase();
+        grammar::lookup(&s)
+            .map(Format::Custom)
+            .or_else(|| Format::ALL.iter().copied().find(|f| f.name() == s))
             .or_else(|| Format::from_extension(&s))
     }
 
-    /// The format a file extension (without the dot) implies.
+    /// Every name [`from_name`](Format::from_name) takes as a format's own:
+    /// the built-ins', then the custom grammars', each once (a grammar
+    /// registered twice under one name, or under a built-in's, is listed
+    /// once, as it resolves once).
+    pub fn known_names() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = Format::ALL.iter().map(|f| f.name()).collect();
+        for name in grammar::names() {
+            if !names
+                .iter()
+                .any(|n| n.to_lowercase() == name.to_lowercase())
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// The format a file extension (without the dot) implies: a custom
+    /// grammar of that name first, then the built-in table.
     pub fn from_extension(ext: &str) -> Option<Format> {
+        if let Some(id) = grammar::lookup(ext) {
+            return Some(Format::Custom(id));
+        }
         Some(match ext.to_ascii_lowercase().as_str() {
             "json" | "geojson" | "har" | "jsonld" | "webmanifest" => Format::Json,
             "jsonl" | "ndjson" => Format::Jsonl,
@@ -107,12 +145,25 @@ impl Format {
         })
     }
 
-    /// The format of a path, from its extension; plain text when unknown.
+    /// The format of a path: a custom grammar whose name is the whole file
+    /// name (`/etc/hosts`), else the extension's ([`from_extension`]);
+    /// plain text when neither says.
     pub fn detect(path: &Path) -> Format {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .and_then(Format::from_extension)
-            .unwrap_or(Format::Text)
+        Format::detect_known(path).unwrap_or(Format::Text)
+    }
+
+    /// [`detect`](Format::detect), or `None` when nothing claims the path.
+    pub fn detect_known(path: &Path) -> Option<Format> {
+        let whole = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(grammar::lookup)
+            .map(Format::Custom);
+        whole.or_else(|| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .and_then(Format::from_extension)
+        })
     }
 }
 
@@ -171,6 +222,12 @@ impl Limits {
     /// depends on the machine, so only the caller can say.
     pub const DEFAULT: Limits = Limits {
         max_size: Some(DEFAULT_MAX_SIZE),
+        timeout: None,
+    };
+
+    /// No limit on either.
+    pub const NONE: Limits = Limits {
+        max_size: None,
         timeout: None,
     };
 
@@ -286,15 +343,44 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 /// process, and slow down with the square of the depth long before that.
 pub const MAX_RULE_DEPTH: usize = 3_000;
 
+/// The cap for a grammar from the command line ([`Format::Custom`]). The
+/// ABNF compiler writes a repetition (`*entry`) as a rule that calls itself
+/// once per item, so the engine keeps a rule open for every item matched
+/// so far (two, for the line shapes of the grammar library) and a long
+/// flat file costs the depth a nested one would: 1,500 lines of `hosts`
+/// reached [`MAX_RULE_DEPTH`]. The engine keeps its rule frames on the
+/// heap, so the machine stack is safe at any count and this cap bounds
+/// memory alone; nesting is measured on the value the grammar built
+/// instead ([`MAX_VALUE_DEPTH`]). It is room for some 500,000 lines of the
+/// library's grammars, about 30 MB of `hosts`.
+pub const MAX_CUSTOM_RULE_DEPTH: usize = 1_000_000;
+
+/// How deep the value a custom grammar built may nest: the levels
+/// [`MAX_RULE_DEPTH`] works out to for the other grammars. It is measured
+/// once the parse is done, since that grammar's rule stack says nothing
+/// about nesting.
+pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
+
+/// The rule-stack cap a parse as `format` runs under.
+pub fn max_rule_depth(format: Format) -> usize {
+    if format.is_custom() {
+        MAX_CUSTOM_RULE_DEPTH
+    } else {
+        MAX_RULE_DEPTH
+    }
+}
+
 /// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
 /// margin, whatever the calling thread has (a Windows main thread has
-/// 1 MB).
-const PARSE_STACK: usize = 64 << 20;
+/// 1 MB). The rule stack itself is the engine's, on the heap.
+pub(crate) const PARSE_STACK: usize = 64 << 20;
 
-/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or
-/// time past the timeout.
+/// Why aless stopped a parse itself: nesting past [`max_rule_depth`], time
+/// past the timeout, or a value nested past [`MAX_VALUE_DEPTH`] once the
+/// parse was done.
 pub(crate) const STOP_DEPTH: u8 = 1;
 pub(crate) const STOP_TIME: u8 = 2;
+pub(crate) const STOP_VALUE_DEPTH: u8 = 3;
 
 /// When a parse must be done by.
 #[derive(Clone)]
@@ -346,7 +432,14 @@ impl Stop {
         self.why.store(why, Ordering::Relaxed);
     }
 
-    /// [`STOP_DEPTH`], [`STOP_TIME`], or 0 when aless did not stop it.
+    /// Record `why` with no position: the parse was done when aless
+    /// refused its value.
+    pub(crate) fn mark(&self, why: u8) {
+        self.why.store(why, Ordering::Relaxed);
+    }
+
+    /// [`STOP_DEPTH`], [`STOP_TIME`], [`STOP_VALUE_DEPTH`], or 0 when aless
+    /// did not stop it.
     pub(crate) fn why(&self) -> u8 {
         self.why.load(Ordering::Relaxed)
     }
@@ -423,26 +516,51 @@ impl LoadError {
         let per_byte =
             format!("Parsing takes about {MEMORY_PER_BYTE} bytes of memory per byte of input");
         let hint = match size {
-            Some(n) => {
-                // Suggest the first doubling of the limit that holds it.
-                let mut room = limit.saturating_mul(2);
-                while room < n {
-                    room = room.saturating_mul(2);
-                }
-                format!(
-                    "{per_byte}, so this one would need about {}. Pass --max-size {} \
-                     (or more) to read it, or --max-size 0 for no limit.",
-                    human_size(n.saturating_mul(MEMORY_PER_BYTE)),
-                    size_flag(room)
-                )
-            }
+            Some(n) => format!(
+                "{per_byte}, so this one would need about {}. Pass --max-size {} \
+                 (or more) to read it, or --max-size 0 for no limit.",
+                human_size(n.saturating_mul(MEMORY_PER_BYTE)),
+                size_flag(room_for(size, limit))
+            ),
             None => format!(
                 "{per_byte}. Pass a larger --max-size, such as {}, to read it, or \
                  --max-size 0 for no limit.",
-                size_flag(limit.saturating_mul(4))
+                size_flag(room_for(size, limit))
             ),
         };
         LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// A grammar file over the size limit: as [`too_large`](Self::too_large),
+    /// worded for a file no parse of which is coming.
+    pub(crate) fn grammar_too_large(size: Option<u64>, limit: u64) -> LoadError {
+        use crate::explorer::human_size;
+        let message = match size {
+            Some(n) => format!(
+                "the grammar file is {}, over the {} limit",
+                human_size(n),
+                human_size(limit)
+            ),
+            None => format!("the grammar file is over the {} limit", human_size(limit)),
+        };
+        let hint = format!(
+            "A grammar file over --max-size is not read. Pass --max-size {} (or more) to \
+             read it, or --max-size 0 for no limit.",
+            size_flag(room_for(size, limit))
+        );
+        LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// A grammar whose compile ran past the time limit. The compiler cannot
+    /// be interrupted, so aless stopped waiting for it.
+    pub(crate) fn compile_timed_out(limit: Duration) -> LoadError {
+        let limit = seconds(limit);
+        let message = format!("timeout: the grammar took longer than {limit} s to compile");
+        let hint = "The compiler cannot be interrupted, so aless stopped waiting for it.\nPass \
+                    a larger --timeout to let it finish, or --timeout 0 for no limit. A \
+                    repetition count in the hundreds (1*1000word) or thousands of productions \
+                    make a grammar slow to compile.";
+        LoadError::tagged("timeout", message).with_hint(hint)
     }
 
     /// A parse that finished, but after its time limit. It stopped nowhere
@@ -551,6 +669,22 @@ impl LoadError {
     /// The report without its colour codes.
     pub fn plain_report(&self) -> String {
         strip_ansi(&self.report)
+    }
+}
+
+/// The `--max-size` to suggest for an input of `size` bytes over `limit`:
+/// the first doubling of the limit that holds it, or four times the limit
+/// when the size is not known (a stream).
+fn room_for(size: Option<u64>, limit: u64) -> u64 {
+    match size {
+        Some(n) => {
+            let mut room = limit.saturating_mul(2);
+            while room < n {
+                room = room.saturating_mul(2);
+            }
+            room
+        }
+        None => limit.saturating_mul(4),
     }
 }
 
@@ -823,8 +957,11 @@ pub struct Loaded {
 }
 
 /// The tabnas parser for a format; `None` for plain text, which has none.
-pub(crate) fn make_parser(format: Format) -> Option<Tabnas> {
-    Some(match format {
+/// A custom grammar's is a fresh engine with its compiled spec installed;
+/// should that fail (it was installed once when the grammar was
+/// registered, so it does not), the error is a `grammar` one.
+pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
+    Ok(Some(match format {
         Format::Json => tabnas_json::make(),
         Format::Jsonl => tabnas_jsonl::make(),
         Format::Jsonic => tabnas_jsonic::make(),
@@ -843,8 +980,18 @@ pub(crate) fn make_parser(format: Format) -> Option<Tabnas> {
         Format::Zon => tabnas_zon::make(),
         Format::Markdown => tabnas_markdown::make(),
         Format::Feed => tabnas_feed::make(),
-        Format::Text => return None,
-    })
+        Format::Text => return Ok(None),
+        Format::Custom(id) => {
+            let Some(g) = grammar::get(id) else {
+                return Err(grammar_failed(format, "the grammar is not registered"));
+            };
+            // The compiler's install is a plugin's code too.
+            match catch_grammar(|| g.parser()) {
+                Ok(Ok(parser)) => parser,
+                Ok(Err(e)) | Err(e) => return Err(grammar_failed(format, &e)),
+            }
+        }
+    }))
 }
 
 /// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
@@ -920,10 +1067,12 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
 /// Parse `src` as `format`, stopping after `timeout`.
 ///
 /// The parse runs on a thread of its own with a large stack
-/// ([`PARSE_STACK`]), and stops at [`MAX_RULE_DEPTH`]: nesting that deep
-/// fails as `too_deep` rather than overflowing the stack, which would end
-/// the process where no error can be caught, as does nesting past a
-/// grammar's own, lower limit. Past `timeout` it fails as
+/// ([`PARSE_STACK`]), and stops at its rule cap ([`max_rule_depth`]):
+/// nesting that deep fails as `too_deep` rather than overflowing the
+/// stack, which would end the process where no error can be caught, as
+/// does nesting past a grammar's own, lower limit, and as does a custom
+/// grammar's value found nested past [`MAX_VALUE_DEPTH`]. Past `timeout`
+/// it fails as
 /// `timeout`: stopped at the place it had reached, or, when its last step
 /// ran past the time, as soon as it finishes.
 pub fn parse_within(
@@ -1004,7 +1153,7 @@ pub(crate) fn on_parse_thread<T: Send>(
 }
 
 fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<Doc, LoadError> {
-    let Some(parser) = make_parser(format) else {
+    let Some(parser) = make_parser(format)? else {
         return Ok(Doc::from_lines(&lines(src)));
     };
     parse_with(parser, src, format, deadline)
@@ -1013,13 +1162,29 @@ fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<D
 /// Parse `src` as `format` with `parser`, within aless's caps: the work of
 /// [`parse_here`] once it has a parser.
 fn parse_with(
-    mut parser: Tabnas,
+    parser: Tabnas,
     src: &str,
     format: Format,
     deadline: Option<Deadline>,
 ) -> Result<Doc, LoadError> {
-    let stopped = guard(&mut parser, deadline.clone(), || {});
-    let sink = prov::capture(&mut parser);
+    parse_capped(parser, src, format, deadline, max_rule_depth(format))
+}
+
+/// [`parse_with`] under a rule cap of `max_depth`, which a test lowers.
+fn parse_capped(
+    mut parser: Tabnas,
+    src: &str,
+    format: Format,
+    deadline: Option<Deadline>,
+    max_depth: usize,
+) -> Result<Doc, LoadError> {
+    let stopped = guard(&mut parser, deadline.clone(), max_depth, || {});
+    // Under a grammar of plain text, a lone `*` is a word and a value.
+    let sink = if format.is_custom() {
+        prov::capture_words(&mut parser)
+    } else {
+        prov::capture(&mut parser)
+    };
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
         let _guard = CatchGuard::enter();
@@ -1042,11 +1207,18 @@ fn parse_with(
     }
     match outcome {
         Ok(Ok(value)) => {
+            // The parser goes first: should it share any of the value, the
+            // value's containers are then the last holders.
+            drop(parser);
+            if format.is_custom() && nests_past(&value, MAX_VALUE_DEPTH) {
+                drop_deep(value);
+                let (message, hint) = too_deep_words(format, Deep::Value);
+                return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
+            }
             let mut doc = Doc::from_value(&value);
             // The engine's tree is not needed past this point; letting it
             // go before the alignment lowers the peak on a large document.
             drop(value);
-            drop(parser);
             if let Ok(toks) = sink.lock() {
                 prov::align(&mut doc, &toks);
             }
@@ -1056,13 +1228,7 @@ fn parse_with(
             let mut e = *e;
             e.tag = "aless".to_string();
             e.code = "too_deep".to_string();
-            e.detail = format!(
-                "too_deep: nested deeper than aless reads (about {} levels)",
-                MAX_RULE_DEPTH / 3
-            );
-            e.hint = "Nesting this deep would overflow the parser's stack, so the parse \
-                      stopped here.\nReal documents nest a few dozen levels at most."
-                .to_string();
+            (e.detail, e.hint) = too_deep_words(format, Deep::Rules(max_depth));
             Err(LoadError::from_tabnas(&e, None))
         }
         Ok(Err(e)) if stop == STOP_TIME => {
@@ -1086,11 +1252,7 @@ fn parse_with(
             let mut e = *e;
             e.tag = "aless".to_string();
             e.code = "too_deep".to_string();
-            e.detail = format!("too_deep: nested deeper than the {format} grammar reads");
-            e.hint = format!(
-                "The {format} grammar has a nesting limit of its own, and the parse stopped \
-                 where the document passed it.\nReal documents nest a few dozen levels at most."
-            );
+            (e.detail, e.hint) = too_deep_words(format, Deep::Grammar);
             Err(LoadError::from_tabnas(&e, None))
         }
         Ok(Err(e)) => {
@@ -1101,8 +1263,9 @@ fn parse_with(
     }
 }
 
-/// Stop the parse when its rule stack passes [`MAX_RULE_DEPTH`], or when
-/// its deadline passes. Both are looked at between every two steps of the
+/// Stop the parse when its rule stack passes `max_depth` (the format's
+/// [`max_rule_depth`]), or when its deadline passes. Both are looked at
+/// between every two steps of the
 /// engine, in the parse budget. A grammar's own depth limit is a parse
 /// guard, which the engine runs beside the budget rather than in it, so
 /// setting this one leaves it in place; a budget the grammar keeps itself
@@ -1114,6 +1277,7 @@ fn parse_with(
 pub(crate) fn guard(
     parser: &mut Tabnas,
     deadline: Option<Deadline>,
+    max_depth: usize,
     notify: impl Fn() + Send + Sync + 'static,
 ) -> Arc<Stop> {
     let stopped = Stop::new();
@@ -1121,7 +1285,7 @@ pub(crate) fn guard(
     let own = parser.config().parse.budget;
     let (every, check) = (own.check_every_n, own.on_check);
     parser.parse_budget(1, move |ctx| {
-        if ctx.rule_stack.len() > MAX_RULE_DEPTH {
+        if ctx.rule_stack.len() > max_depth {
             flag.record(STOP_DEPTH, ctx);
             notify();
             return false;
@@ -1137,6 +1301,118 @@ pub(crate) fn guard(
         }
     });
     stopped
+}
+
+/// Why a parse was `too_deep`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Deep {
+    /// Its rule stack passed this cap (the format's [`max_rule_depth`]).
+    Rules(usize),
+    /// A custom grammar's value nests past [`MAX_VALUE_DEPTH`], which is
+    /// found once the parse is done.
+    Value,
+    /// The grammar's own nesting limit stopped it (the engine's `cancel`).
+    Grammar,
+}
+
+/// The message and hint of a `too_deep` error, as the loader and the
+/// exporter both word it. The message starts with the code, as the
+/// engine's own do.
+pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
+    match why {
+        Deep::Rules(cap) if format.is_custom() => (
+            format!("too_deep: the {format} grammar had {cap} rules open at once"),
+            "A repetition in a grammar (`*entry`) keeps one rule open for every item it has \
+             matched, so a long file costs depth as a nested document would, and the parse \
+             stopped here.\nSplit the input: about half that many items of one repetition fit."
+                .to_string(),
+        ),
+        Deep::Rules(cap) => (
+            format!(
+                "too_deep: nested deeper than aless reads (about {} levels)",
+                cap / 3
+            ),
+            "Nesting this deep would overflow the parser's stack, so the parse stopped \
+             here.\nReal documents nest a few dozen levels at most."
+                .to_string(),
+        ),
+        Deep::Value => (
+            format!(
+                "too_deep: the {format} grammar built a value nested deeper than aless reads \
+                 (about {MAX_VALUE_DEPTH} levels)"
+            ),
+            "The value is measured once the parse is done, since a grammar from the command \
+             line keeps rules open for its repetitions, not only for nesting.\nReal documents \
+             nest a few dozen levels at most."
+                .to_string(),
+        ),
+        Deep::Grammar => (
+            format!("too_deep: nested deeper than the {format} grammar reads"),
+            format!(
+                "The {format} grammar has a nesting limit of its own, and the parse stopped \
+                 where the document passed it.\nReal documents nest a few dozen levels at most."
+            ),
+        ),
+    }
+}
+
+/// Whether `value` nests more than `cap` levels deep (the root is level
+/// one). Walked with a stack of its own: the value may be too deep to
+/// recurse over.
+pub(crate) fn nests_past(value: &tabnas::Value, cap: usize) -> bool {
+    use tabnas::Value;
+    let mut stack = vec![(value, 1usize)];
+    while let Some((v, depth)) = stack.pop() {
+        if depth > cap {
+            return true;
+        }
+        match v {
+            Value::Array(items) => stack.extend(items.iter().map(|c| (c, depth + 1))),
+            Value::ListRef(list) => stack.extend(list.value.iter().map(|c| (c, depth + 1))),
+            Value::Object(map) => stack.extend(map.values().map(|c| (c, depth + 1))),
+            Value::MapRef(map) => stack.extend(map.value.values().map(|c| (c, depth + 1))),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Let go of a value without recursing into it. A value found nested past
+/// [`MAX_VALUE_DEPTH`] is refused, and dropping it the ordinary way would
+/// recurse once per level, on a stack that has room for far fewer levels
+/// than the rule cap allows. Each container is taken out of its `Arc`
+/// when this is its last holder, and its children queued.
+pub(crate) fn drop_deep(value: tabnas::Value) {
+    use tabnas::Value;
+    let mut queue = vec![value];
+    while let Some(v) = queue.pop() {
+        match v {
+            Value::Array(items) => {
+                if let Ok(items) = Arc::try_unwrap(items) {
+                    queue.extend(items);
+                }
+            }
+            Value::ListRef(list) => {
+                if let Ok(list) = Arc::try_unwrap(list) {
+                    queue.extend(list.value);
+                    if let Some(child) = list.child {
+                        queue.push(*child);
+                    }
+                }
+            }
+            Value::Object(map) => {
+                if let Ok(map) = Arc::try_unwrap(map) {
+                    queue.extend(map.into_values());
+                }
+            }
+            Value::MapRef(map) => {
+                if let Ok(map) = Arc::try_unwrap(map) {
+                    queue.extend(map.value.into_values());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Parse an in-memory source (stdin) as `format`, within the time limit of
@@ -1253,10 +1529,149 @@ mod tests {
         assert_eq!(Format::detect(Path::new("x.YML")), Format::Yaml);
         assert_eq!(Format::detect(Path::new("notes")), Format::Text);
         assert_eq!(Format::detect(Path::new("weird.xyz")), Format::Text);
+        assert_eq!(Format::detect_known(Path::new("weird.xyz")), None);
+        assert_eq!(
+            Format::detect_known(Path::new("a.toml")),
+            Some(Format::Toml)
+        );
         assert_eq!(Format::from_name("md"), Some(Format::Markdown));
         assert_eq!(Format::from_name("Markdown"), Some(Format::Markdown));
         assert_eq!(Format::from_name("nope"), None);
         assert_eq!(Format::from_name("ndjson"), Some(Format::Jsonl));
+        assert!(Format::known_names().starts_with(&["json", "jsonl"]));
+        assert!(!Format::Json.is_custom());
+    }
+
+    /// A custom grammar is detected by the whole file name (`/etc/hosts`)
+    /// as well as by the extension, whatever the case, and only by those.
+    #[test]
+    fn custom_grammars_are_detected_by_file_name_or_extension() {
+        let def = grammar::Definition::parse(
+            "--grammar-expr",
+            "impl-etc-hosts,impl-etc-hosts.conf=doc = *entry\nentry = TX \"=\" TX\n",
+        )
+        .unwrap();
+        let id = grammar::register(def, Limits::NONE).unwrap();
+        let custom = Format::Custom(id);
+        for path in [
+            "/etc/impl-etc-hosts",
+            "impl-etc-hosts",
+            "./IMPL-ETC-HOSTS",
+            "backup/hosts.impl-etc-hosts",
+            "/etc/impl-etc-hosts.conf",
+            "Impl-Etc-Hosts.Conf",
+        ] {
+            assert_eq!(Format::detect(Path::new(path)), custom, "{path}");
+            assert_eq!(
+                Format::detect_known(Path::new(path)),
+                Some(custom),
+                "{path}"
+            );
+        }
+        for path in ["impl-etc-hosts.bak", "impl-etc-hosts/x.json", "x.conf"] {
+            assert_ne!(Format::detect(Path::new(path)), custom, "{path}");
+        }
+        assert_eq!(Format::from_name("impl-etc-hosts.conf"), Some(custom));
+        assert!(custom.is_custom());
+        assert!(Format::known_names().contains(&"impl-etc-hosts"));
+        // A parse through the format (`:` is an ordinary character in
+        // plain text), and a parse error in its name.
+        let doc = parse("a: = b:c\nd = e\n", custom).unwrap();
+        assert!(doc.len() > 1);
+        // The position is the entry the parse could not complete.
+        let e = parse("a = 1\nb\nc = 3\n", custom).unwrap_err();
+        assert_eq!((e.line, e.col), (2, 1), "{e}");
+        assert_eq!(e.code, "unexpected");
+    }
+
+    /// A grammar from the command line keeps a rule open for every item of
+    /// a repetition, so a long flat file is not nesting: it parses up to
+    /// [`MAX_CUSTOM_RULE_DEPTH`], and that cap's error says what it is.
+    #[test]
+    fn a_custom_grammars_repetition_is_not_nesting() {
+        let def = grammar::Definition::parse(
+            "--grammar-expr",
+            &format!("impl-kv-l={}", grammar::tests::KV),
+        )
+        .unwrap();
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
+        // 2,000 lines keep some 4,000 rules open: past the other grammars'
+        // cap, and two levels deep.
+        let flat: String = (0..2_000).map(|i| format!("k{i}=v{i}\n")).collect();
+        let doc = parse(&flat, custom).unwrap();
+        assert_eq!(doc.node(0).children, 2_000);
+        assert_eq!(doc.nodes.iter().map(|n| n.depth).max(), Some(2));
+        // Under a low cap, the error names the open rules, not nesting, and
+        // says where the parse stopped.
+        let parser = make_parser(custom).unwrap().unwrap();
+        let e = parse_capped(parser, &flat, custom, None, 50).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: the impl-kv-l grammar had 50 rules open at once"
+        );
+        assert!(e.hint.contains("Split the input"), "{}", e.hint);
+        assert!(e.line > 0, "{e}");
+        assert!(e.plain_report().starts_with("[aless/too_deep]"));
+        assert_eq!(max_rule_depth(custom), MAX_CUSTOM_RULE_DEPTH);
+        assert_eq!(max_rule_depth(Format::Yaml), MAX_RULE_DEPTH);
+        // The other grammars are worded as before.
+        let (message, hint) = too_deep_words(Format::Yaml, Deep::Rules(MAX_RULE_DEPTH));
+        assert_eq!(
+            message,
+            "too_deep: nested deeper than aless reads (about 1000 levels)"
+        );
+        assert!(hint.contains("overflow the parser's stack"), "{hint}");
+    }
+
+    /// Nesting in a custom grammar's value is found once the parse is
+    /// done, since its rule stack says nothing about it.
+    #[test]
+    fn a_custom_value_nested_past_the_cap_is_too_deep() {
+        let def = grammar::Definition::parse(
+            "--grammar-expr",
+            "impl-nest-l=doc = \"(\" doc \")\" / \"x\"\n",
+        )
+        .unwrap();
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
+        // The compiler's tree: an object and its `kids` array per level.
+        let parens = |n: usize| "(".repeat(n) + "x" + &")".repeat(n);
+        let doc = parse(&parens(400), custom).unwrap();
+        let deepest = doc.nodes.iter().map(|n| n.depth).max().unwrap();
+        assert!((700..1000).contains(&deepest), "{deepest}");
+        let e = parse(&parens(600), custom).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: the impl-nest-l grammar built a value nested deeper than aless reads \
+             (about 1000 levels)"
+        );
+        assert_eq!(
+            (e.line, e.col),
+            (0, 0),
+            "found after the parse: no position"
+        );
+        assert!(e.plain_report().starts_with("[aless/too_deep]"));
+    }
+
+    /// The value walks recurse on nothing: a value nested far deeper than
+    /// the test thread's stack could take is measured and let go.
+    #[test]
+    fn deep_values_are_measured_and_dropped_without_recursion() {
+        use tabnas::Value;
+        assert!(!nests_past(&Value::Null, 1));
+        assert!(nests_past(&Value::Array(Arc::new(vec![Value::Null])), 1));
+        let mut v = Value::String("x".into());
+        for i in 0..200_000 {
+            v = if i % 2 == 0 {
+                Value::Array(Arc::new(vec![v]))
+            } else {
+                Value::Object(Arc::new(std::iter::once(("k".to_string(), v)).collect()))
+            };
+        }
+        assert!(nests_past(&v, MAX_VALUE_DEPTH));
+        assert!(!nests_past(&v, 300_000));
+        drop_deep(v);
     }
 
     #[test]
@@ -1445,7 +1860,9 @@ mod tests {
             std::thread::Builder::new()
                 .stack_size(PARSE_STACK)
                 .spawn_scoped(scope, || {
-                    let mut parser = make_parser(Format::Yaml).expect("YAML has a grammar");
+                    let mut parser = make_parser(Format::Yaml)
+                        .expect("YAML's grammar installs")
+                        .expect("YAML has a grammar");
                     assert!(parser.parse_guards.contains_key("depth"));
                     parser.remove_parse_guard("depth");
                     parse_with(parser, src, Format::Yaml, None)
@@ -1753,6 +2170,12 @@ mod tests {
                 "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>t</title><item><title>i</title></item></channel></rss>",
             ),
         ];
+        // Every built-in but plain text has a sample: `ALL` is the list this
+        // (and `make_parser`, `name`) must be exhaustive over, and a custom
+        // grammar is never in it.
+        assert_eq!(samples.len() + 1, Format::ALL.len());
+        assert!(Format::ALL.contains(&Format::Text));
+        assert!(!Format::ALL.iter().any(|f| f.is_custom()));
         for (format, src) in samples {
             let doc = parse(src, format).unwrap_or_else(|e| panic!("{format}: {e}"));
             assert!(doc.len() > 1, "{format} produced a scalar-only document");
