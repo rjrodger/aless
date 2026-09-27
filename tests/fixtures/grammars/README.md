@@ -179,6 +179,25 @@ minimal grammar and what happened.
   tabnas-bnf's `*`/`1*` desugaring (`H = inner H / ε`), which only the
   `X = prefix [ sep X ]` shape escapes as a same-depth repeat.
 
+  That cap is a workaround, and the rule it works around is the fleet's:
+  a repetition is replacement, never a push chain. An alternate in the
+  engine that hands control to another rule either pushes a child rule
+  (`p`), a new frame for something the tree must nest, or replaces the
+  current rule (`r`), the same frame re-entered for the next item of a
+  sequence. `*entry` is a sequence, so
+  it is meant to compile to a replace loop, the loop `r` and the item
+  `p` where it nests, and the loop's iterations then add nothing to rule depth (the
+  engine's `d`): a hosts file
+  of any length costs the depth of one line. tabnas-bnf's `H = inner H /
+  ε` is a push chain instead, which is why aless lets a grammar from the
+  command line open 1,000,000 rules; once aless pins a bnf and abnf that
+  compile the star as `r`, that cap goes back to the shared 3,000 and
+  this item goes away. Write `*entry` and leave the loop to the compiler
+  rather than spelling it as a rule that calls itself, which is the same
+  chain by hand. Rule depth over a repetition is constant; a test that
+  repeats an item ten thousand times and asserts the maximum `d` stays
+  what a single item needs is the proof.
+
 ## Simplifications per format
 
 - `hosts`: none.
