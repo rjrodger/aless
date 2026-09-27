@@ -364,7 +364,9 @@ fn help_leads_with_the_agent_interface() {
     assert_eq!(code(&out), 0);
     let text = String::from_utf8_lossy(&out.stdout);
     let head: String = text.lines().take(30).collect::<Vec<_>>().join("\n");
-    for flag in ["--json", "--paths", "--find", "--where", "--check"] {
+    for flag in [
+        "--json", "--paths", "--find", "--where", "--check", "--render",
+    ] {
         assert!(head.contains(flag), "{flag} in the first lines:\n{head}");
     }
     assert!(text.find("WITHOUT A SCREEN") < text.find("THE VIEWER"));
@@ -396,5 +398,203 @@ fn a_reader_that_stops_early_is_not_an_error() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The worked example of the transducer's design: the records under a
+/// path, as the always-quoted CSV the spec fixes, byte for byte.
+#[test]
+fn render_csv_exports_the_records_at_a_path() {
+    let out = aless(
+        &[
+            "--render",
+            "csv",
+            "--path",
+            ".response.payload.deep.records",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty());
+    assert_eq!(
+        out.stdout,
+        b"\"id\",\"person\",\"account\"\r\n\"123\",\"{\"\"name\"\":\"\"Alice\"\"}\",\"{\"\"balance\"\":50.25}\"\r\n\"456\",\"{\"\"name\"\":\"\"Bob\"\"}\",\"{\"\"balance\"\":72}\"\r\n"
+    );
+    // Line-delimited inputs, a record at a time: the rows are the lines,
+    // or the records keyed by the header.
+    let out = aless(&["--render", "csv", "tests/fixtures/sample.jsonl"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"id\",\"name\",\"tags\"\r\n\"1\",\"ada\",\"[\"\"a\"\",\"\"b\"\"]\"\r\n\"2\",\"lin\",\"[]\"\r\n\"3\",\"kim\",\"[\"\"c\"\"]\"\r\n"
+    );
+    let out = aless(&["--render", "csv", "tests/fixtures/sample.csv"], None);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"name\",\"age\",\"city\"\r\n\"ada\",\"36\",\"london\"\r\n\"lin\",\"28\",\"helsinki\"\r\n"
+    );
+    // Standard input too, with -k saying the format.
+    let out = aless(
+        &["-k", "jsonl", "--render", "csv"],
+        Some("{\"n\": 1}\n{\"n\": 2.50}\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"n\"\r\n\"1\"\r\n\"2.50\"\r\n"
+    );
+}
+
+/// `--render json` is `--json`, streamed: the same value for every fixture.
+#[test]
+fn render_json_agrees_with_json_for_every_fixture() {
+    /// Numbers as 64-bit floats: the two paths spell a number differently
+    /// (`1.0` keeps its lexeme when streamed, `--json` prints `1`), and
+    /// serde_json tells an integer from a float.
+    fn normal(v: Value) -> Value {
+        match v {
+            Value::Number(n) => json!(n.as_f64().unwrap()),
+            Value::Array(a) => Value::Array(a.into_iter().map(normal).collect()),
+            Value::Object(m) => Value::Object(m.into_iter().map(|(k, v)| (k, normal(v))).collect()),
+            v => v,
+        }
+    }
+    let mut files: Vec<String> = std::fs::read_dir("tests/fixtures")
+        .unwrap()
+        .map(|e| e.unwrap().path().display().to_string())
+        .filter(|f| !f.ends_with("bad.json") && !f.ends_with("lines.txt"))
+        .collect();
+    files.sort();
+    assert!(files.len() >= 16, "{files:?}");
+    for file in &files {
+        let streamed = aless(&["--render", "json", file], None);
+        assert_eq!(
+            code(&streamed),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&streamed.stderr)
+        );
+        let whole = aless(&["--json", "--compact", file], None);
+        assert_eq!(
+            normal(json(&streamed.stdout)),
+            normal(json(&whole.stdout)),
+            "{file}"
+        );
+        assert!(streamed.stdout.ends_with(b"\n"), "{file}");
+    }
+    // Indented like --json unless --compact, and from a path.
+    let out = aless(
+        &[
+            "--render",
+            "json",
+            "--path",
+            ".store.books[0].tags",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[\n  \"cs\",\n  \"classic\"\n]\n"
+    );
+    let out = aless(
+        &[
+            "--render",
+            "json",
+            "--compact",
+            "--path",
+            ".store.books[0].tags",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[\"cs\",\"classic\"]\n"
+    );
+}
+
+#[test]
+fn render_failures_have_the_transduce_shape_and_status() {
+    // The input did not parse: status 1, the transducer's code, the position.
+    let out = aless(&["--render", "json", "tests/fixtures/bad.json"], None);
+    assert_eq!(code(&out), 1);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("INPUT_INVALID"));
+    assert_eq!(e["file"], json!("tests/fixtures/bad.json"));
+    assert_eq!(e["format"], json!("json"));
+    assert!(e["line"].is_u64() && e["col"].is_u64(), "{e}");
+    assert_eq!(e["output"], json!("none"));
+    let out = aless(&["--render", "csv"], Some("[{\"a\": 1},\n {\"b\": }]"));
+    assert_eq!(code(&out), 1);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"));
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
+    // An object is not a list of records: say so, and how to pick one.
+    let out = aless(&["--render", "csv", "tests/fixtures/nested.json"], None);
+    assert_eq!(code(&out), 1);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"));
+    assert!(e["message"].as_str().unwrap().contains("--path"), "{e}");
+    // A path that names nothing: status 4, as for --json.
+    let out = aless(
+        &[
+            "--render",
+            "csv",
+            "--path",
+            ".store.nope",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 4);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("not_found"));
+    assert_eq!(e["keys"], json!(["name", "open", "books", "counts"]));
+    // Mistakes in the command: status 2.
+    for args in [
+        &["--render", "csv", "--json", "tests/fixtures/nested.json"][..],
+        &["--render", "csv", "--at", "3", "tests/fixtures/nested.json"],
+        &["--render", "xml", "tests/fixtures/nested.json"],
+        &["--render", "csv", "tests/fixtures/lines.txt"],
+        &[
+            "--render",
+            "csv",
+            "--path",
+            ".store.books[-1]",
+            "tests/fixtures/nested.json",
+        ],
+    ] {
+        let out = aless(args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            json(&out.stderr)["error"]["kind"],
+            json!("usage"),
+            "{args:?}"
+        );
+    }
+    // A reader that stops early is no failure here either.
+    let dir = std::env::temp_dir().join(format!("aless-render-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = dir.join("big.json");
+    let items: Vec<String> = (0..20_000).map(|i| format!("{{\"n\": {i}}}")).collect();
+    std::fs::write(&big, format!("[{}]", items.join(","))).unwrap();
+    let mut child = Command::new(BIN)
+        .args(["--render", "csv"])
+        .arg(&big)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = [0u8; 16];
+    child.stdout.take().unwrap().read_exact(&mut first).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }

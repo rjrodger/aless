@@ -10,18 +10,31 @@
 //! Nothing here touches the terminal. `main.rs` decides when to come here,
 //! and prints what [`run`] returns.
 
-use std::io::{self, Read};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
+use tabnas_transduce::{Code, Fail, JsonEvent};
 
 use crate::doc::{Doc, Key, Kind, NodeId};
+use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer};
 use crate::fmt;
 use crate::load::{self, Format, Limits, LoadError, Loaded};
 use crate::search;
 
 /// Exit statuses.
+///
+/// `--render` reports through the same numbers. A failure of its own
+/// (`"kind": "transduce"`) carries the transducer's code, and the code
+/// picks the status: `RESOURCE_LIMIT_EXCEEDED` is [`TOO_LARGE`],
+/// `OUTPUT_FAILED` is [`IO`], `ABORTED` is [`TIMEOUT`], and every other
+/// code (`INPUT_INVALID`, the protocol and target codes) is [`PARSE`].
+/// aless's own limits report as they do for a parse: nesting past its cap
+/// is a `parse` error with the code `too_deep` ([`PARSE`]), and the
+/// deadline a `timeout` error ([`TIMEOUT`]). A `--path` that names
+/// nothing is [`NOT_FOUND`] as ever.
 pub mod status {
     /// Standard output holds the answer.
     pub const OK: i32 = 0;
@@ -32,11 +45,12 @@ pub mod status {
     /// or path syntax, no input, a directory, or the viewer without a
     /// terminal.
     pub const USAGE: i32 = 2;
-    /// An input could not be read.
+    /// An input could not be read, or the output not written.
     pub const IO: i32 = 3;
     /// `--path` or `--at` names nothing in the document.
     pub const NOT_FOUND: i32 = 4;
-    /// An input is larger than `--max-size` allows.
+    /// An input is larger than `--max-size` allows, or an export passed
+    /// one of the transducer's limits.
     pub const TOO_LARGE: i32 = 5;
     /// A parse ran longer than `--timeout` allows.
     pub const TIMEOUT: i32 = 6;
@@ -49,7 +63,7 @@ pub const DEFAULT_LIMIT: usize = 200;
 pub const VALUE_CHARS: usize = 200;
 
 /// How many keys a not-found error lists.
-const KEYS_LISTED: usize = 20;
+pub(crate) const KEYS_LISTED: usize = 20;
 
 /// What to print.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +78,9 @@ pub enum Op {
     Where,
     /// Whether each input parses.
     Check,
+    /// The records at the start as CSV, or the value there as JSON text,
+    /// streamed (see [`crate::export`]).
+    Render(Renderer),
 }
 
 impl Op {
@@ -75,6 +92,7 @@ impl Op {
             Op::Find(_) => "--find",
             Op::Where => "--where",
             Op::Check => "--check",
+            Op::Render(_) => "--render",
         }
     }
 }
@@ -166,13 +184,51 @@ pub struct Output {
 
 /// Standard input; the caller passes none when it is a terminal, which
 /// nobody is going to type a document into. It is read to its end, but
-/// never held past the size limit.
-pub type Stdin<'a> = Option<&'a mut dyn Read>;
+/// never held past the size limit; `--render` on a line-delimited format
+/// reads it a record at a time.
+pub type Stdin<'a> = Option<&'a mut (dyn Read + Send)>;
 
-/// Carry out a request.
-pub fn run(req: &Request, mut stdin: Stdin<'_>) -> Output {
-    let result = match req.op {
+/// Where a streamed result (`--render`) goes; the other results come back
+/// in the [`Output`]. Owned, since the parse's subscriber holds it.
+pub type Stdout = Box<dyn Write + Send>;
+
+/// Carry out a request. A `--render` result is collected into the output
+/// like any other; [`run_to`] streams it instead.
+pub fn run(req: &Request, stdin: Stdin<'_>) -> Output {
+    let collected = Arc::new(Mutex::new(Vec::new()));
+    let mut out = run_to(req, stdin, Box::new(Collect(collected.clone())));
+    let bytes = std::mem::take(&mut *collected.lock().unwrap_or_else(|e| e.into_inner()));
+    if !bytes.is_empty() {
+        out.stdout = String::from_utf8_lossy(&bytes).into_owned();
+    }
+    out
+}
+
+/// A writer into a shared buffer, for [`run`].
+struct Collect(Arc<Mutex<Vec<u8>>>);
+
+impl Write for Collect {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Carry out a request, streaming a `--render` result to `out` as it is
+/// produced; `Output::stdout` is then empty.
+pub fn run_to(req: &Request, mut stdin: Stdin<'_>, out: Stdout) -> Output {
+    let result = match &req.op {
         Op::Check => check(req, &mut stdin),
+        Op::Render(renderer) => {
+            export(req, *renderer, &mut stdin, out).map(|()| (String::new(), status::OK))
+        }
         _ => single(req, &mut stdin),
     };
     match result {
@@ -189,13 +245,9 @@ pub fn run(req: &Request, mut stdin: Stdin<'_>) -> Output {
     }
 }
 
-fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure> {
-    // A bad pattern is a mistake in the command; say so before reading.
-    let pattern = match &req.op {
-        Op::Find(p) => Some(search::compile(p).map_err(Failure::usage)?),
-        _ => None,
-    };
-    let sources = sources(req);
+/// The one input of an operation that reads one.
+fn one_source(req: &Request) -> Result<Source, Failure> {
+    let mut sources = sources(req);
     if sources.len() > 1 {
         return Err(Failure::usage(format!(
             "{} reads one input, and was given {}: run aless once per file, or use --check to check several",
@@ -203,7 +255,17 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
             sources.len()
         )));
     }
-    let (name, loaded) = load(&sources[0], req, stdin)?;
+    Ok(sources.remove(0))
+}
+
+fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure> {
+    // A bad pattern is a mistake in the command; say so before reading.
+    let pattern = match &req.op {
+        Op::Find(p) => Some(search::compile(p).map_err(Failure::usage)?),
+        _ => None,
+    };
+    let source = one_source(req)?;
+    let (name, loaded) = load(&source, req, stdin)?;
     let doc = &loaded.doc;
     let start = select(doc, &req.start, &name, loaded.format)?;
     let head = |m: &mut Map<String, Value>| {
@@ -249,8 +311,139 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
             render(&Value::Object(m), req.compact)
         }
         Op::Check => unreachable!("--check is run by check()"),
+        Op::Render(_) => unreachable!("--render is run by export()"),
     };
     Ok((out, status::OK))
+}
+
+/// `--render`: the input streamed through the transducer to `out`.
+fn export(
+    req: &Request,
+    renderer: Renderer,
+    stdin: &mut Stdin<'_>,
+    out: Stdout,
+) -> Result<(), Failure> {
+    let path = match &req.start {
+        Start::Root => Vec::new(),
+        Start::Path(text) => parse_path(text).map_err(Failure::usage)?,
+        Start::At(..) => {
+            return Err(Failure::usage(
+                "--render reads the input once, front to back, and cannot find a source \
+                 position in it: start it with --path, or use --where --at to find the path",
+            ))
+        }
+    };
+    let source = one_source(req)?;
+    let implicit = req.files.is_empty();
+    let (name, origin, format) = match &source {
+        Source::Stdin => (
+            "-".to_string(),
+            "(stdin)".to_string(),
+            req.kind.unwrap_or(Format::Json),
+        ),
+        Source::File(p) => {
+            let name = p.display().to_string();
+            if p.is_dir() {
+                return Err(Failure::usage(format!(
+                    "{name} is a directory: aless reads files (list a directory with ls or find)"
+                )));
+            }
+            (
+                name,
+                load::origin_of(p),
+                req.kind.unwrap_or_else(|| Format::detect(p)),
+            )
+        }
+    };
+    let Some(plan) = export::plan(format, path.is_empty()) else {
+        return Err(Failure::usage(format!(
+            "{name} is plain text, which has no records to export: name its format with -k, \
+             such as -k jsonl or -k csv"
+        )));
+    };
+    let job = Job {
+        name: name.clone(),
+        origin,
+        format,
+        renderer,
+        path,
+        compact: req.compact,
+        indent: req.indent,
+        timeout: req.timeout,
+    };
+    // Read the input the way the plan wants it: a line-delimited file is
+    // read a record at a time, so `--max-size` does not apply to it; the
+    // rest is read whole, within the limit, as a parse reads it.
+    let too_large = |e: &LoadError, size| Failure::load(&name, format, e).limited(size, req);
+    let result = match (&source, plan) {
+        (Source::Stdin, plan) => {
+            let Some(read) = stdin.as_mut() else {
+                return Err(Failure::usage(if implicit {
+                    "no input: name a FILE, or pipe a document into aless"
+                } else {
+                    "standard input is a terminal: pipe a document into aless, or name a FILE"
+                }));
+            };
+            if plan == Plan::Lines {
+                let mut reader = io::BufReader::new(read);
+                let empty = reader.fill_buf().map(<[u8]>::is_empty).unwrap_or(false);
+                if implicit && empty {
+                    return Err(Failure::usage(
+                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
+                    ));
+                }
+                export::export(&job, Input::Lines(Box::new(reader)), out)
+            } else {
+                let bytes = load::read_within(read, req.max_size)
+                    .map_err(|e| too_large(&e.with_origin("(stdin)"), None))?;
+                if implicit && bytes.is_empty() {
+                    return Err(Failure::usage(
+                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
+                    ));
+                }
+                let text = String::from_utf8_lossy(&bytes);
+                export::export(&job, Input::Text(&text), out)
+            }
+        }
+        (Source::File(p), Plan::Lines) => {
+            let file = std::fs::File::open(p).map_err(|e| {
+                let e = LoadError::new(e.to_string()).with_origin(&job.origin);
+                Failure::load(&name, format, &e)
+            })?;
+            export::export(&job, Input::Lines(Box::new(io::BufReader::new(file))), out)
+        }
+        (Source::File(p), _) => {
+            let text =
+                load::read_path_within(p, req.max_size).map_err(|e| too_large(&e, file_size(p)))?;
+            export::export(&job, Input::Text(&text), out)
+        }
+    };
+    let failure = match result {
+        Ok(()) => return Ok(()),
+        // The reader of the output went away (`| head`): nothing to report.
+        Err(ExportError::ReaderGone) => return Ok(()),
+        Err(e) => e,
+    };
+    Err(match failure {
+        ExportError::Usage(m) => Failure::usage(m),
+        ExportError::Load { error, partial } => {
+            let mut f = Failure::load(&name, format, &error).limited(None, req);
+            f.error.insert(
+                "output".into(),
+                if partial { "partial" } else { "none" }.into(),
+            );
+            f
+        }
+        ExportError::Transduce(fail) => Failure::transduce(&name, format, &fail),
+        ExportError::NotFound { message, nearest } => {
+            let path = match &req.start {
+                Start::Path(text) => text.trim().to_string(),
+                _ => ".".to_string(),
+            };
+            Failure::not_found_streamed(&name, format, &path, message, &nearest)
+        }
+        ExportError::ReaderGone => unreachable!("handled above"),
+    })
 }
 
 /// `--check`: every input is read and parsed, and each gets a verdict.
@@ -672,6 +865,19 @@ pub fn kind_name(kind: &Kind) -> &'static str {
     }
 }
 
+/// The kind of the value a source event begins, in the same words.
+pub fn kind_of_event(ev: &JsonEvent<'_>) -> &'static str {
+    match ev {
+        JsonEvent::ObjectStart | JsonEvent::ObjectEnd => "object",
+        JsonEvent::ArrayStart | JsonEvent::ArrayEnd => "array",
+        JsonEvent::String(_) => "string",
+        JsonEvent::Number(_) => "number",
+        JsonEvent::Bool(_) => "boolean",
+        JsonEvent::Null => "null",
+        JsonEvent::Key(_) | JsonEvent::End => "none",
+    }
+}
+
 fn with_article(word: &str) -> String {
     match word.chars().next() {
         Some('a' | 'e' | 'i' | 'o' | 'u') => format!("an {word}"),
@@ -878,6 +1084,77 @@ impl Failure {
             status: status::NOT_FOUND,
             error,
         }
+    }
+
+    /// [`Failure::not_found`] for a streamed run, which has no tree to
+    /// take the nearest node's entry from: the entry is built from what
+    /// the stream showed, with no source position.
+    fn not_found_streamed(
+        file: &str,
+        format: Format,
+        path: &str,
+        message: String,
+        near: &Nearest,
+    ) -> Failure {
+        let mut error = Map::new();
+        error.insert("kind".into(), "not_found".into());
+        error.insert("file".into(), file.into());
+        error.insert("format".into(), format.name().into());
+        error.insert("path".into(), path.into());
+        error.insert("message".into(), message.into());
+        let mut entry = Map::new();
+        entry.insert("path".into(), near.path.clone().into());
+        entry.insert("kind".into(), near.kind.into());
+        entry.insert("line".into(), Value::Null);
+        entry.insert("col".into(), Value::Null);
+        match (&near.length, &near.value) {
+            (Some(n), _) => {
+                entry.insert("length".into(), (*n).into());
+            }
+            (None, Some(v)) => {
+                entry.insert("value".into(), v.clone());
+            }
+            (None, None) => {}
+        }
+        error.insert("nearest".into(), Value::Object(entry));
+        error.insert(
+            "keys".into(),
+            near.keys.as_ref().map_or(Value::Null, |k| {
+                Value::Array(k.iter().map(|k| k.as_str().into()).collect())
+            }),
+        );
+        Failure {
+            status: status::NOT_FOUND,
+            error,
+        }
+    }
+
+    /// A transducer stage failed (`"kind": "transduce"`): the transducer's
+    /// `code`, its `message`, the `file` and `format`, then `path`,
+    /// `limit` (`{name, value}`), `line` and `col` when the failure has
+    /// them, and `output`, `"partial"` when some of the result had been
+    /// written before the failure, else `"none"`. The status follows the
+    /// code (see [`status`]).
+    fn transduce(file: &str, format: Format, fail: &Fail) -> Failure {
+        let status = match fail.code {
+            Code::ResourceLimitExceeded => status::TOO_LARGE,
+            Code::OutputFailed => status::IO,
+            Code::Aborted => status::TIMEOUT,
+            _ => status::PARSE,
+        };
+        let mut error = Map::new();
+        error.insert("kind".into(), "transduce".into());
+        error.insert("file".into(), file.into());
+        error.insert("format".into(), format.name().into());
+        let Value::Object(detail) = fail.to_json() else {
+            unreachable!("a failure is an object")
+        };
+        for (k, v) in detail {
+            // The transducer's `row` is aless's `line`.
+            let k = if k == "row" { "line".to_string() } else { k };
+            error.insert(k, v);
+        }
+        Failure { status, error }
     }
 }
 
@@ -1500,6 +1777,156 @@ mod tests {
         };
         assert_eq!(keys(&v), keys(&json_of(&missing.stderr)));
         assert!(!write_failure(&e, true).trim_end().contains('\n'));
+    }
+
+    const RECORDS: &str = r#"{"rows": [{"a": 1.50, "b": "x"}, {"b": "y", "c": null}], "n": 2}"#;
+
+    #[test]
+    fn render_streams_csv_and_json() {
+        let mut r = req(Op::Render(Renderer::Csv));
+        r.start = Start::Path(".rows".into());
+        let out = with_stdin(&r, RECORDS);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stderr, "");
+        assert_eq!(
+            out.stdout,
+            "\"a\",\"b\"\r\n\"1.50\",\"x\"\r\n\"\",\"y\"\r\n"
+        );
+        // JSON: the value at the start, as `--json` prints it but streamed.
+        r.op = Op::Render(Renderer::Json);
+        r.compact = true;
+        let out = with_stdin(&r, RECORDS);
+        assert_eq!(
+            out.stdout,
+            "[{\"a\":1.50,\"b\":\"x\"},{\"b\":\"y\",\"c\":null}]\n"
+        );
+        r.start = Start::Root;
+        r.compact = false;
+        let out = with_stdin(&r, r#"{"a": [1]}"#);
+        assert_eq!(out.stdout, "{\n  \"a\": [\n    1\n  ]\n}\n");
+        // Standard input in a line-delimited format is read a record at a
+        // time, and -k says which.
+        let mut lines = req(Op::Render(Renderer::Csv));
+        lines.kind = Some(Format::Jsonl);
+        let out = with_stdin(&lines, "{\"id\": 1}\n{\"id\": 2, \"x\": true}\n");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "\"id\"\r\n\"1\"\r\n\"2\"\r\n");
+        lines.kind = Some(Format::Csv);
+        let out = with_stdin(&lines, "a,b\n1,2\n");
+        assert_eq!(out.stdout, "\"a\",\"b\"\r\n\"1\",\"2\"\r\n");
+        // The size limit does not apply to a line-by-line read.
+        lines.max_size = Some(4);
+        let out = with_stdin(&lines, "a,b\n1,2\n");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        // It does to the rest.
+        r.max_size = Some(4);
+        assert_eq!(with_stdin(&r, RECORDS).status, status::TOO_LARGE);
+        assert_eq!(Op::Render(Renderer::Csv).flag(), "--render");
+    }
+
+    #[test]
+    fn render_failures_keep_the_error_shape() {
+        let r = req(Op::Render(Renderer::Csv));
+        // The input did not parse: the transducer's code, and the position.
+        let out = with_stdin(&r, "[{\"a\": 1},\n {\"b\": }]");
+        assert_eq!(out.status, status::PARSE);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("json"));
+        assert_eq!(e["code"], json!("INPUT_INVALID"));
+        assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
+        assert_eq!(e["output"], json!("none"));
+        assert!(
+            e.get("row").is_none(),
+            "the transducer's row is aless's line"
+        );
+        // Records that are not records.
+        let e = json_of(&with_stdin(&r, r#"{"a": 1}"#).stderr);
+        assert_eq!(e["error"]["code"], json!("INPUT_INVALID"));
+        assert!(
+            e["error"]["message"].as_str().unwrap().contains("--path"),
+            "{e}"
+        );
+        assert_eq!(e["error"]["path"], json!("."));
+        let mut deep = r.clone();
+        deep.start = Start::Path(".rows".into());
+        let e = json_of(&with_stdin(&deep, r#"{"rows": [{"a": 1}, 2]}"#).stderr);
+        assert_eq!(e["error"]["path"], json!(".rows[1]"));
+        // A limit of the transducer's is status 5, and says which limit.
+        let wide: String = (0..10_001).map(|i| format!("\"k{i}\":1,")).collect();
+        let e = json_of(&with_stdin(&r, &format!("[{{{}}}]", wide.trim_end_matches(','))).stderr);
+        assert_eq!(e["error"]["code"], json!("RESOURCE_LIMIT_EXCEEDED"));
+        assert_eq!(e["error"]["limit"]["name"], json!("max_columns"));
+        let out = with_stdin(&r, &format!("[{{{}}}]", wide.trim_end_matches(',')));
+        assert_eq!(out.status, status::TOO_LARGE);
+        // A path that names nothing: not_found, with the nearest node.
+        let mut absent = r.clone();
+        absent.start = Start::Path(".rows.nope".into());
+        let out = with_stdin(&absent, RECORDS);
+        assert_eq!(out.status, status::NOT_FOUND);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("not_found"));
+        assert_eq!(e["path"], json!(".rows.nope"));
+        assert_eq!(
+            e["message"],
+            json!("no .rows.nope in -: .rows has 2 items, [0] to [1]")
+        );
+        assert_eq!(
+            e["nearest"],
+            json!({"path": ".rows", "kind": "array", "line": null, "col": null, "length": 2})
+        );
+        assert_eq!(e["keys"], Value::Null);
+        absent.start = Start::Path(".zz".into());
+        let e = json_of(&with_stdin(&absent, RECORDS).stderr);
+        assert_eq!(e["error"]["keys"], json!(["rows", "n"]));
+        assert_eq!(e["error"]["nearest"]["kind"], json!("object"));
+        // Mistakes in the command.
+        let usage = |out: Output| {
+            assert_eq!(out.status, status::USAGE, "{}", out.stderr);
+            let e = json_of(&out.stderr);
+            assert_eq!(e["error"]["kind"], json!("usage"));
+            e["error"]["message"].as_str().unwrap().to_string()
+        };
+        let mut at = r.clone();
+        at.start = Start::At(1, None);
+        assert!(usage(with_stdin(&at, RECORDS)).contains("--path"));
+        let mut last = r.clone();
+        last.start = Start::Path(".rows[-1]".into());
+        assert!(usage(with_stdin(&last, RECORDS)).contains("[-1]"));
+        let mut text = r.clone();
+        text.kind = Some(Format::Text);
+        assert!(usage(with_stdin(&text, "hello\n")).contains("-k"));
+        assert!(usage(run(&r, None)).starts_with("no input"));
+        let mut lines = r.clone();
+        lines.kind = Some(Format::Jsonl);
+        assert!(usage(with_stdin(&lines, "")).contains("standard input is empty"));
+        let mut two = r.clone();
+        two.files = vec!["a.json".into(), "b.json".into()];
+        assert!(usage(run(&two, None)).contains("--render reads one input"));
+        // aless's own limits report as they do for a parse.
+        let mut slow = req(Op::Render(Renderer::Json));
+        slow.kind = Some(Format::Toml);
+        slow.timeout = Some(Duration::from_millis(1));
+        let toml: String = (0..3_000)
+            .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
+            .collect();
+        let out = with_stdin(&slow, &toml);
+        assert_eq!(out.status, status::TIMEOUT, "{}", out.stderr);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"));
+        assert_eq!(e["code"], json!("timeout"));
+        assert_eq!(e["seconds"], json!(0.001));
+        assert_eq!(e["output"], json!("none"));
+        assert!(e["line"].as_u64().unwrap() > 0, "{e}");
+        assert!(e["report"].as_str().unwrap().contains("(stdin):"), "{e}");
+        let deep = format!("{}1{}", "[".repeat(300), "]".repeat(300));
+        let out = with_stdin(&req(Op::Render(Renderer::Json)), &deep);
+        assert_eq!(out.status, status::PARSE);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("parse"));
+        assert_eq!(e["code"], json!("too_deep"));
     }
 
     #[test]

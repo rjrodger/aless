@@ -9,6 +9,7 @@ pub mod app;
 pub mod clip;
 pub mod doc;
 pub mod explorer;
+pub mod export;
 pub mod fmt;
 pub mod headless;
 pub mod load;
