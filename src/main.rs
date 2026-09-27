@@ -231,8 +231,14 @@ fn parse_args() -> Result<Args, String> {
             }
             "-k" | "--kind" | "--format" => args.kind_name = Some(value()?),
             "--grammar" | "--grammar-expr" => {
-                let v = value()?;
-                args.grammars.push(Definition::parse(&name, &v)?);
+                // Raw, not through `value()`: FILE is a path, and a path's
+                // bytes need not be UTF-8. Attached (`--grammar=NAME=FILE`),
+                // the value is what follows the argument's own first `=`.
+                let v = match inline.take() {
+                    Some(_) => grammar::after_eq(&arg),
+                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
+                };
+                args.grammars.push(Definition::parse_os(&name, &v)?);
             }
             "--json" => op = Some(Op::Json),
             "--paths" => op = Some(Op::Paths),

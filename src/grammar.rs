@@ -18,6 +18,7 @@
 //! resolves to the later grammar, as a repeated option would be expected
 //! to. Tests register grammars of their own under names of their own.
 
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{mpsc, RwLock};
@@ -120,6 +121,32 @@ impl Definition {
             source,
         })
     }
+
+    /// [`Definition::parse`] for a value as the command line gives it:
+    /// the names and ABNF text are read as text, and FILE, a path, keeps
+    /// bytes that are not UTF-8, as an input path does.
+    pub fn parse_os(option: &str, value: &OsStr) -> Result<Definition, String> {
+        let mut def = Definition::parse(option, &value.to_string_lossy())?;
+        if let Source::File(path) = &mut def.source {
+            *path = PathBuf::from(after_eq(value));
+        }
+        Ok(def)
+    }
+}
+
+/// What follows the first `=` of a command-line value, with its bytes as
+/// given. `=` is ASCII, so the raw value and its lossy text cut at the
+/// same `=`, and what follows it is not re-encoded.
+pub fn after_eq(raw: &OsStr) -> OsString {
+    let bytes = raw.as_encoded_bytes();
+    let at = bytes
+        .iter()
+        .position(|&b| b == b'=')
+        .map_or(bytes.len(), |i| i + 1);
+    // SAFETY: the cut is just after an ASCII `=`, which the encoding
+    // allows (`OsStr::from_encoded_bytes_unchecked`: split before or after
+    // any non-empty valid UTF-8 substring).
+    unsafe { OsStr::from_encoded_bytes_unchecked(&bytes[at..]) }.to_owned()
 }
 
 /// The engine's options for a grammar of plain text, merged into the
@@ -494,6 +521,25 @@ entry    = key \"=\" val      ; @object key val
 key      = ( TX )
 val      = ( TX / NR )
 ";
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_keeps_path_bytes_that_are_not_utf8() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let raw = OsStr::from_bytes(b"hosts=g\xff/x=y.abnf");
+        let d = Definition::parse_os("--grammar", raw).unwrap();
+        assert_eq!(d.names, ["hosts"]);
+        let file = PathBuf::from(OsString::from_vec(b"g\xff/x=y.abnf".to_vec()));
+        assert_eq!(d.source, Source::File(file));
+        // Inline text is text, as `parse` reads it.
+        let d = Definition::parse_os("--grammar-expr", OsStr::new("kv=doc = *TX\n")).unwrap();
+        assert_eq!(d.source, Source::Inline("doc = *TX\n".into()));
+        // The attached form cuts at the argument's first `=`.
+        assert_eq!(
+            after_eq(OsStr::from_bytes(b"--grammar=hosts=g\xff.abnf")).as_bytes(),
+            b"hosts=g\xff.abnf"
+        );
+    }
 
     fn inline(names: &str, text: &str) -> Definition {
         Definition::parse("--grammar-expr", &format!("{names}={text}")).unwrap()

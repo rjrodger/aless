@@ -1487,3 +1487,50 @@ fn grammar_failures_have_their_shapes_and_statuses() {
         "{text}"
     );
 }
+
+/// A `--grammar` FILE is a path like any input's: one whose bytes are not
+/// UTF-8 is read at those bytes, given as the next argument or attached
+/// (`--grammar=NAME=FILE`), and not at a lossy spelling of them.
+#[cfg(unix)]
+#[test]
+fn a_grammar_file_whose_path_is_not_utf8_is_read_where_it_is() {
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let dir = std::env::temp_dir().join(format!("aless-nonutf8-grammar-{}", std::process::id()));
+    let raw = dir.join(OsStr::from_bytes(b"g\xff"));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&raw) {
+        eprintln!("skipping: this filesystem refuses non-UTF-8 names ({e})");
+        return;
+    }
+    let file = raw.join("hosts.abnf");
+    std::fs::copy(format!("{GRAMMARS}/hosts.abnf"), &file).unwrap();
+    // A different grammar at the lossy spelling: reading it would be a
+    // silent wrong answer, not just a missing file.
+    let lossy = dir.join("g\u{fffd}");
+    std::fs::create_dir_all(&lossy).unwrap();
+    std::fs::write(lossy.join("hosts.abnf"), "doc = *TX\n").unwrap();
+    let sample = format!("{GRAMMARS}/hosts.sample");
+    let expected: Value = json(&std::fs::read(format!("{GRAMMARS}/hosts.expected.json")).unwrap());
+    let mut value = b"hosts=".to_vec();
+    value.extend_from_slice(file.as_os_str().as_bytes());
+    let mut attached = b"--grammar=".to_vec();
+    attached.extend_from_slice(&value);
+    for grammar in [
+        vec![
+            OsString::from("--grammar"),
+            OsString::from_vec(value.clone()),
+        ],
+        vec![OsString::from_vec(attached)],
+    ] {
+        let out = Command::new(BIN)
+            .args(&grammar)
+            .args(["-k", "hosts", "--json", "--compact", &sample])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(json(&out.stdout), expected, "{grammar:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
