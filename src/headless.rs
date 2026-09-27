@@ -1814,6 +1814,15 @@ mod tests {
         lines.kind = Some(Format::Csv);
         let out = with_stdin(&lines, "a,b\n1,2\n");
         assert_eq!(out.stdout, "\"a\",\"b\"\r\n\"1\",\"2\"\r\n");
+        // A grammar that refuses to stream a document part-way (jsonic's
+        // implicit list with a container first) is run again from the
+        // whole value, and the answer is --json's.
+        let mut jsonic = req(Op::Render(Renderer::Json));
+        jsonic.kind = Some(Format::Jsonic);
+        jsonic.compact = true;
+        let out = with_stdin(&jsonic, "{a:1}\n{b:2}\n");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "[{\"a\":1},{\"b\":2}]\n");
         // The size limit does not apply to a line-by-line read.
         lines.max_size = Some(4);
         let out = with_stdin(&lines, "a,b\n1,2\n");

@@ -316,12 +316,18 @@ it; the transducer's own limits per record do (a line over
 `max_record_bytes`, 64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
-JSON family, YAML and ZON the records are streamed out as the parse
-proceeds, and the exported array is not kept behind them (except in YAML,
-whose aliases may still refer to it); for the rest they are streamed out
-after the parse, from the value it built. `--timeout` stops either kind
-at the deadline, with `output` saying whether records had already been
-written.
+JSON family, jsonic, YAML, ZON and Markdown the records are streamed out
+as the parse proceeds, and the exported array is not kept behind them
+(except in YAML, jsonic and Markdown, whose grammars may still refer to
+it); for the rest they are streamed out after the parse, from the value
+it built. Where one of those grammars refuses to stream a particular
+document part-way (a jsonic implicit list whose first element is a
+container, a YAML stream of several documents or a `<<` merge key, a
+repeated member the grammar merges), aless falls back once to parsing it
+whole and streaming its value, provided nothing has been written yet;
+otherwise the refusal is reported with `output: "partial"`. `--timeout`
+stops either kind at the deadline, with `output` saying whether records
+had already been written.
 
 `--render` on its own is the default export. Programs that select,
 project and reshape on the way through, in the

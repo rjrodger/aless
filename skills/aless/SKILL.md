@@ -182,9 +182,12 @@ pipe `--json` into jq.
 - `--render` streams: JSON Lines, CSV and TSV are read a record at a
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);
-  the records leave as the parse proceeds for the JSON family, YAML and
-  ZON, and after it for the rest. So for a huge export, prefer JSON Lines
-  or CSV input, or convert once with `--render json`.
+  the records leave as the parse proceeds for the JSON family, jsonic,
+  YAML, ZON and Markdown, and after it for the rest. A document one of
+  those grammars refuses to stream part-way (a jsonic implicit list, a
+  YAML `---` stream or `<<` merge key) is parsed whole and exported all
+  the same, when nothing has been written yet. So for a huge export,
+  prefer JSON Lines or CSV input, or convert once with `--render json`.
 - A parse runs at about a megabyte a second, so a big file can outlast
   your command runner. If the runner has a timeout, pass `--timeout` a
   few seconds shorter (`--timeout 50` under a 60 s limit). A slow parse

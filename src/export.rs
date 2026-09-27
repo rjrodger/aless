@@ -15,12 +15,21 @@
 //!   (or a chunk of records) at a time from a reader, so the file is never
 //!   in memory whole and `--max-size` does not apply to it;
 //! - a grammar the transducer has verified for incremental streaming
-//!   (`capability::incremental`: the JSON family, YAML and ZON) is parsed
-//!   whole, the events leaving as the parse proceeds, and the exported
-//!   array is emptied behind the stream so it is not held twice — except
-//!   for YAML, whose aliases copy their anchor's value when the alias is
-//!   met, and would copy an emptied array;
+//!   (`capability::incremental`: the JSON family, jsonic, YAML, ZON and
+//!   Markdown) is parsed whole, the events leaving as the parse proceeds,
+//!   and the exported array is emptied behind the stream so it is not held
+//!   twice — except where the grammar may read a container back after it
+//!   was streamed (see [`plan`]);
 //! - every other grammar is parsed whole and its value walked afterwards.
+//!
+//! A verified grammar may still refuse to stream a particular document
+//! part-way (a jsonic implicit list whose first element is a container, a
+//! YAML stream of several documents or a `<<` merge key, a repeated member
+//! the grammar merges): the transducer stops with `STREAMABILITY_UNKNOWN`
+//! or `DUPLICATE_MEMBER` before a wrong stream can complete. When nothing
+//! has reached the output yet, the export falls back once to the other
+//! path, parsing the document whole and streaming its value; when output
+//! had been written, the failure is reported with `output: "partial"`.
 //!
 //! Everything here is terminal-free: the output is any writer, and the
 //! result is a value `headless` turns into JSON. aless's own caps hold as
@@ -33,7 +42,7 @@
 
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -93,12 +102,21 @@ pub enum Plan {
 
 /// The plan for a format, given whether the export starts at the root.
 /// `None` for plain text, which has no grammar and so no events.
+///
+/// Pruning empties the exported array in the engine's tree as its
+/// elements are streamed, which is sound only while the grammar never
+/// reads that array back. YAML does: an alias copies its anchor's value
+/// when the alias is met. jsonic rewrites containers in place after they
+/// are built (a value promoted into an implicit list, repeated members
+/// merged), and Markdown builds its tree imperatively, appending to nodes
+/// it already inserted; whether either reads a streamed array back is not
+/// established, so neither is pruned. The rest keep the memory saving.
 pub fn plan(format: Format, at_root: bool) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
         Format::Jsonl | Format::Csv | Format::Tsv if at_root => Plan::Lines,
         f if capability::incremental(f.name()) => Plan::Incremental {
-            prune: f != Format::Yaml,
+            prune: !matches!(f, Format::Yaml | Format::Jsonic | Format::Markdown),
         },
         _ => Plan::Materialize,
     })
@@ -178,23 +196,28 @@ fn limits() -> Limits {
 pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result<(), ExportError> {
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
-    let out = WriteOut::new(Pipe {
-        inner: out,
-        written: written.clone(),
-        broken: broken.clone(),
-    });
-    let target = job.path.clone();
-    let outcome = match job.renderer {
+    // Shared, so that a second chain of sinks (the fallback) can write to
+    // the same output without the first chain having to hand it back.
+    let out = Arc::new(Mutex::new(out));
+    let pipe = || {
+        WriteOut::new(Pipe {
+            inner: out.clone(),
+            written: written.clone(),
+            broken: broken.clone(),
+        })
+    };
+    match job.renderer {
         Renderer::Json => {
             let options = JsonOptions {
                 indent: (!job.compact).then_some(job.indent),
                 trailing_newline: true,
             };
-            run(
-                job,
-                input,
-                Scope::new(target, JsonRenderer::new(out, options)),
-            )
+            attempt(job, input, &written, &broken, || {
+                Ok(Scope::new(
+                    job.path.clone(),
+                    JsonRenderer::new(pipe(), options.clone()),
+                ))
+            })
         }
         Renderer::Csv => {
             let options = CsvOptions {
@@ -205,28 +228,77 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
                 missing: MissingText::Text("".into()),
                 ..CsvOptions::default()
             };
-            let csv =
-                CsvRenderer::new(out, options).map_err(|f| ExportError::Transduce(Box::new(f)))?;
-            // The rows are the elements of the array the scope re-roots
-            // the stream at, so the binding selects the root's elements.
-            let binding = TableBinding {
-                schema: Schema::Infer,
-                rows: Selector::root().each_index(),
-            };
-            let table = TableFromJson::new(
-                binding,
-                &limits(),
-                // The grammars keep a repeated member's last value; the
-                // export agrees with `--json` rather than failing.
-                Duplicates::LastWins,
-                Metrics::new(),
-                EmptyOk::new(csv),
-            )
-            .map_err(|f| ExportError::Transduce(Box::new(f)))?;
-            run(job, input, Scope::new(target, Rows::new(table)))
+            attempt(job, input, &written, &broken, || {
+                let csv = CsvRenderer::new(pipe(), options.clone())
+                    .map_err(|f| ExportError::Transduce(Box::new(f)))?;
+                // The rows are the elements of the array the scope re-roots
+                // the stream at, so the binding selects the root's elements.
+                let binding = TableBinding {
+                    schema: Schema::Infer,
+                    rows: Selector::root().each_index(),
+                };
+                let table = TableFromJson::new(
+                    binding,
+                    &limits(),
+                    // The grammars keep a repeated member's last value; the
+                    // export agrees with `--json` rather than failing.
+                    Duplicates::LastWins,
+                    Metrics::new(),
+                    EmptyOk::new(csv),
+                )
+                .map_err(|f| ExportError::Transduce(Box::new(f)))?;
+                Ok(Scope::new(job.path.clone(), Rows::new(table)))
+            })
         }
+    }
+}
+
+/// Run the export through a fresh chain of sinks from `chain`, and once
+/// more through the whole-value path when the incremental stream was
+/// refused part-way before anything reached the output (see the module
+/// doc); a refusal after output was written is reported as it is.
+fn attempt<S: Sink + Send + 'static>(
+    job: &Job,
+    input: Input<'_>,
+    written: &AtomicU64,
+    broken: &AtomicBool,
+    chain: impl Fn() -> Result<Scope<S>, ExportError>,
+) -> Result<(), ExportError> {
+    let mode = mode_for(job);
+    let text = match &input {
+        Input::Text(text) => Some(*text),
+        Input::Lines(_) => None,
     };
-    outcome.map_err(|failed| classify(job, *failed, &written, &broken))
+    let failed = match run(job, input, chain()?, mode.clone()) {
+        Ok(()) => return Ok(()),
+        Err(failed) => failed,
+    };
+    let refused = failed.verdict.is_none()
+        && match &failed.why {
+            Outcome::Failed(f) => {
+                matches!(f.code, Code::StreamabilityUnknown | Code::DuplicateMember)
+                    // The rows sink refused a root that is not an array at
+                    // its first event. For a grammar that may wrap the root
+                    // in a list after streaming it (jsonic's implicit list,
+                    // a YAML stream of documents), the whole value may yet
+                    // be one; every other grammar's root is final.
+                    || (f.code == Code::InputInvalid
+                        && f.path.as_deref() == Some(".")
+                        && matches!(job.format, Format::Jsonic | Format::Yaml))
+            }
+            _ => false,
+        };
+    match text {
+        Some(text)
+            if refused
+                && mode != SourceMode::Materialize
+                && written.load(Ordering::Relaxed) == 0 =>
+        {
+            run(job, Input::Text(text), chain()?, SourceMode::Materialize)
+                .map_err(|f| classify(job, *f, written, broken))
+        }
+        _ => Err(classify(job, *failed, written, broken)),
+    }
 }
 
 /// How a run ended.
@@ -295,11 +367,13 @@ impl Alarm {
     }
 }
 
-/// Drive `input` into `scope` on the parse thread, under `--timeout`.
+/// Drive `input` into `scope` on the parse thread, under `--timeout`; a
+/// text input is read in `mode`.
 fn run<S: Sink + Send + 'static>(
     job: &Job,
     input: Input<'_>,
     scope: Scope<S>,
+    mode: SourceMode,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
     let abort = AbortFlag::new();
@@ -309,7 +383,6 @@ fn run<S: Sink + Send + 'static>(
         abort: abort.clone(),
     };
     let parsed = alarm.parsed.clone();
-    let mode = mode_for(job);
     let ran = load::on_parse_thread(
         job.timeout,
         move || alarm.fire(),
@@ -342,8 +415,12 @@ fn run<S: Sink + Send + 'static>(
                         materialize(parser, text, deadline, &abort, &parsed, scope, stop)
                     }
                     mode => {
+                        // The source checks the grammar's name against the
+                        // verified list itself, and refuses an unlisted one
+                        // before parsing.
                         let source = ParserSource::new(parser, text)
                             .mode(mode)
+                            .grammar(format.name())
                             .limits(limits())
                             .abort(abort);
                         match load::catch_grammar(|| source.run_owned(scope)) {
@@ -428,15 +505,17 @@ fn materialize<S: Sink>(
 }
 
 /// The source mode for a text input: incremental where the grammar is
-/// verified, pruning the exported array as it streams (see the module
-/// doc for why YAML is not pruned).
+/// verified, pruning the exported array as it streams where [`plan`]
+/// allows.
 fn mode_for(job: &Job) -> SourceMode {
-    if !capability::incremental(job.format.name()) {
-        return SourceMode::Materialize;
-    }
-    let prune = if job.format == Format::Yaml {
-        Prune::Never
-    } else {
+    let prune = match plan(job.format, job.path.is_empty()) {
+        Some(Plan::Incremental { prune }) => prune,
+        // A line-delimited format handed over as one text: JSON Lines is
+        // verified, CSV and TSV are not.
+        Some(Plan::Lines) if capability::incremental(job.format.name()) => true,
+        _ => return SourceMode::Materialize,
+    };
+    let prune = if prune {
         // The array exported: named by its elements for CSV, as the rows
         // selector does, and by itself for JSON; the source prunes the
         // same array either way.
@@ -445,6 +524,8 @@ fn mode_for(job: &Job) -> SourceMode {
             Renderer::Csv => array.each_index(),
             Renderer::Json => array,
         })
+    } else {
+        Prune::Never
     };
     SourceMode::Incremental { prune }
 }
@@ -554,8 +635,13 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
             load(timed_out(job, line, col))
         }
         // A grammar's own depth limit stops the parse with the engine's
-        // `cancel`, as the viewer's loader reads it too.
-        Code::InputInvalid if fail.message.starts_with("cancel") => {
+        // `cancel`, as the viewer's loader reads it too: the transducer's
+        // source words it as the grammar's guard, the materialized path
+        // here reports the engine's code as it is.
+        Code::InputInvalid
+            if fail.message.starts_with("cancel")
+                || fail.message.starts_with("the grammar stopped the parse") =>
+        {
             let (line, col) = position(&fail);
             load(too_deep(job, line, col, Some(job.format)))
         }
@@ -683,7 +769,7 @@ fn with_article(word: &str) -> String {
 /// output, so a failure can say whether output is partial, and notices a
 /// reader that went away, which is not a failure.
 struct Pipe {
-    inner: Box<dyn Write + Send>,
+    inner: Arc<Mutex<Box<dyn Write + Send>>>,
     written: Arc<AtomicU64>,
     broken: Arc<AtomicBool>,
 }
@@ -701,14 +787,18 @@ impl Pipe {
 
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let r = self.inner.write_all(buf);
+        let r = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write_all(buf);
         self.note(r)?;
         self.written.fetch_add(buf.len() as u64, Ordering::Relaxed);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let r = self.inner.flush();
+        let r = self.inner.lock().unwrap_or_else(|e| e.into_inner()).flush();
         self.note(r)
     }
 }
@@ -1270,6 +1360,7 @@ mod tests {
             .mode(SourceMode::Incremental {
                 prune: Prune::Never,
             })
+            .grammar("json")
             .run_owned(Vec::new());
         r.unwrap();
         rec
@@ -1298,19 +1389,15 @@ mod tests {
                 "{f}"
             );
         }
-        assert_eq!(
-            plan(Format::Yaml, true),
-            Some(Plan::Incremental { prune: false }),
-            "aliases copy their anchor when met"
-        );
-        for f in [
-            Format::Jsonic,
-            Format::Toml,
-            Format::Ini,
-            Format::Xml,
-            Format::Markdown,
-            Format::Feed,
-        ] {
+        // Verified, but they may read a streamed container back.
+        for f in [Format::Yaml, Format::Jsonic, Format::Markdown] {
+            assert_eq!(
+                plan(f, true),
+                Some(Plan::Incremental { prune: false }),
+                "{f}"
+            );
+        }
+        for f in [Format::Toml, Format::Ini, Format::Xml, Format::Feed] {
             assert_eq!(plan(f, true), Some(Plan::Materialize), "{f}");
         }
         assert_eq!(plan(Format::Text, true), None);
@@ -1693,6 +1780,73 @@ mod tests {
         }
     }
 
+    /// The document as `--json --compact` prints it, newline included.
+    fn whole(text: &str, format: Format) -> String {
+        let doc = load::parse(text, format).unwrap();
+        format!("{}\n", fmt::to_json_compact(&doc, 0))
+    }
+
+    #[test]
+    fn a_stream_refused_part_way_falls_back_to_the_whole_value() {
+        // A jsonic top-level implicit list whose first element is a
+        // container, and a YAML stream of documents: the incremental
+        // source streams the first value as the root, then finds it
+        // wrapped, and refuses. Nothing had reached the output, so the
+        // export runs again from the whole value, and agrees with --json.
+        for (format, text) in [
+            (Format::Jsonic, "{a:1}\n{b:2}\n"),
+            (Format::Yaml, "a: 1\n---\nb: 2\n"),
+            // A YAML merge key rewrites the map after it was streamed.
+            (
+                Format::Yaml,
+                "base: &b\n  x: 1\nderived:\n  <<: *b\n  y: 2\n",
+            ),
+            // A repeated member whose values the grammar merges.
+            (Format::Json5, "{a: {x: 1}, a: {y: 2}}"),
+        ] {
+            let j = job(format, Renderer::Json, ".");
+            let (r, out) = run_text(&j, text);
+            r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
+            assert_eq!(out, whole(text, format), "{format}: {text:?}");
+        }
+        // Rows too: the CSV chain is rebuilt for the second run. Here the
+        // rows sink refuses the streamed root (an object) before the
+        // grammar wraps it, which for these two grammars is not final.
+        for (format, text) in [
+            (Format::Jsonic, "{a:1}\n{a:2}\n"),
+            (Format::Yaml, "a: 1\n---\na: 2\n"),
+        ] {
+            let j = job(format, Renderer::Csv, ".");
+            let (r, out) = run_text(&j, text);
+            r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
+            assert_eq!(out, "\"a\"\r\n\"1\"\r\n\"2\"\r\n", "{format}");
+        }
+        // A root that really is an object still fails, once for a grammar
+        // that could not have wrapped it and twice over for one that could.
+        for format in [Format::Json, Format::Jsonic] {
+            let j = job(format, Renderer::Csv, ".");
+            match run_text(&j, r#"{"a": 1}"#).0.unwrap_err() {
+                ExportError::Transduce(f) => {
+                    assert_eq!(f.code, Code::InputInvalid, "{format}");
+                    assert!(f.message.contains("--path"), "{format}: {}", f.message);
+                }
+                other => panic!("{format}: {other:?}"),
+            }
+        }
+        // Once output has left, a refusal stays a refusal, and says so.
+        let long = "x".repeat(2 * tabnas_render::DEFAULT_BUDGET);
+        let j = job(Format::Jsonic, Renderer::Json, ".");
+        let (r, out) = run_text(&j, &format!("{{a:'{long}'}}\n{{b:2}}\n"));
+        match r.unwrap_err() {
+            ExportError::Transduce(f) => {
+                assert_eq!(f.code, Code::StreamabilityUnknown);
+                assert!(f.committed_output);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(out.starts_with("{\"a\":\"xxx"), "{}", &out[..20]);
+    }
+
     #[test]
     fn the_deadline_covers_the_walk_after_a_parse() {
         // A sink slow enough that a small, quickly parsed TOML takes far
@@ -1710,7 +1864,13 @@ mod tests {
         let toml: String = (0..60).map(|i| format!("k{i} = {i}\n")).collect();
         let mut j = job(Format::Toml, Renderer::Json, ".");
         j.timeout = Some(Duration::from_millis(100));
-        let failed = run(&j, Input::Text(&toml), Scope::new(Vec::new(), Slow)).unwrap_err();
+        let failed = run(
+            &j,
+            Input::Text(&toml),
+            Scope::new(Vec::new(), Slow),
+            SourceMode::Materialize,
+        )
+        .unwrap_err();
         match (&failed.why, failed.stop.as_ref().map(|s| s.why())) {
             (Outcome::Failed(fail), Some(0)) => {
                 assert_eq!(fail.code, Code::Aborted, "the alarm stopped the walk");
@@ -1724,7 +1884,13 @@ mod tests {
         }
         // With time enough the same walk finishes.
         j.timeout = Some(Duration::from_secs(120));
-        run(&j, Input::Text("a = 1\n"), Scope::new(Vec::new(), Slow)).unwrap();
+        run(
+            &j,
+            Input::Text("a = 1\n"),
+            Scope::new(Vec::new(), Slow),
+            SourceMode::Materialize,
+        )
+        .unwrap();
     }
 
     #[test]

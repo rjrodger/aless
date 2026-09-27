@@ -540,6 +540,37 @@ fn render_json_agrees_with_json_for_every_fixture() {
     );
 }
 
+/// A grammar that refuses to stream a document part-way (jsonic's implicit
+/// list with a container first, a YAML stream of documents) is run again
+/// from the whole value, and the answer is --json's.
+#[test]
+fn render_falls_back_when_a_grammar_refuses_to_stream() {
+    for (kind, text) in [("jsonic", "{a:1}\n{b:2}\n"), ("yaml", "a: 1\n---\nb: 2\n")] {
+        let streamed = aless(&["-k", kind, "--render", "json", "--compact"], Some(text));
+        assert_eq!(
+            code(&streamed),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&streamed.stderr)
+        );
+        assert!(streamed.stderr.is_empty(), "{kind}");
+        let whole = aless(&["-k", kind, "--json", "--compact"], Some(text));
+        assert_eq!(streamed.stdout, whole.stdout, "{kind}");
+        let csv = aless(&["-k", kind, "--render", "csv"], Some(text));
+        assert_eq!(
+            code(&csv),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&csv.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&csv.stdout).starts_with("\"a\""),
+            "{kind}: {}",
+            String::from_utf8_lossy(&csv.stdout)
+        );
+    }
+}
+
 #[test]
 fn render_failures_have_the_transduce_shape_and_status() {
     // The input did not parse: status 1, the transducer's code, the position.
