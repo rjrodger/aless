@@ -170,6 +170,8 @@ def no_terminal_scenario(work):
     target = os.path.join(work, "nested.json")
     fifo = os.path.join(work, "never-written.fifo")
     os.mkfifo(fifo)
+    grammar_fifo = os.path.join(work, "never-written.abnf")
+    os.mkfifo(grammar_fifo)
     cases = (
         ("TERM=xterm-256color", "xterm-256color", [target], subprocess.DEVNULL, 2),
         # Input that never ends must not be read first: the refusal comes
@@ -178,6 +180,9 @@ def no_terminal_scenario(work):
          subprocess.PIPE, 2),
         ("TERM=xterm-256color, a FIFO nobody writes", "xterm-256color", [fifo],
          subprocess.DEVNULL, 2),
+        # A grammar file is input too: it is not opened before the refusal.
+        ("TERM=xterm-256color, a --grammar FIFO nobody writes", "xterm-256color",
+         ["--grammar", f"kv={grammar_fifo}", target], subprocess.DEVNULL, 2),
         ("TERM=dumb", "dumb", [target], subprocess.DEVNULL, 0),
     )
     for name, term, args, stdin, want_code in cases:

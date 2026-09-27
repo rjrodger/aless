@@ -457,8 +457,7 @@ impl App {
 "keys": "F1 or :help shows the key map; q quits",
 "watch": "opened files reload when they change, keeping your place"}}"#,
             env!("CARGO_PKG_VERSION"),
-            serde_json::to_string(&Format::ALL.iter().map(|f| f.name()).collect::<Vec<_>>())
-                .unwrap_or_default()
+            serde_json::to_string(&Format::known_names()).unwrap_or_default()
         );
         let id = self.next_id;
         self.next_id += 1;
@@ -1095,11 +1094,7 @@ impl App {
                 },
                 None => self.error(format!(
                     "Unknown format: {rest} (one of {})",
-                    Format::ALL
-                        .iter()
-                        .map(|f| f.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    Format::known_names().join(", ")
                 )),
             },
             "depth" | "fold" => match rest.parse::<u32>() {
@@ -1588,7 +1583,8 @@ TABS, FILES AND WATCHING
   ancestor and then the node closest to its old source line; folds that
   still exist are kept, and the focus stays on the same screen row.
   Formats: json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon
-  markdown feed text (by extension; --kind or :open ... FORMAT to force).
+  markdown feed text, and the NAME of any --grammar (by extension or whole
+  file name; --kind or :open ... FORMAT to force).
 "#;
     HELP.lines().map(str::to_string).collect()
 }

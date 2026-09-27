@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom. Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -90,6 +90,42 @@ text in its cell. Every field is quoted, records end in CRLF, and a header
 row comes first. Use `--paths --depth 2` first to find the array to
 export. Standard output is CSV bytes, not JSON, when the status is 0.
 
+Read a file in a format aless has no parser for, with an ABNF grammar
+(the syntax is tabnas/abnf's; `; @object` and `; @array` comments on a
+rule say what it builds, and the values are the source text, as
+strings). Ready-made grammars for `/etc/hosts`, crontabs, `/etc/passwd`,
+`/etc/group`, `/etc/fstab`, `/etc/resolv.conf` and `KEY=value` files are
+under `tests/fixtures/grammars/` in the aless repository, with a guide to
+writing one:
+
+```bash
+aless --grammar hosts=hosts.abnf --json /etc/hosts          # files named `hosts` or `*.hosts`
+aless --grammar crontab=crontab.abnf --paths --depth 1 /etc/crontab
+crontab -l | aless --grammar crontab-user=crontab-user.abnf -k crontab-user --json
+aless --grammar-expr 'kv=settings = *entry ; @array
+entry = key "=" value ; @object key value
+key = ( TX )
+value = ( TX )' --json --compact settings.kv                  # the grammar inline
+```
+
+NAME (`hosts`) is the format's name, `format` in every output and what
+`-k` takes, and what a file's extension or whole file name must be,
+case-insensitively; `NAME,NAME2=FILE` gives one grammar two names; both
+options repeat. A grammar that does not compile exits 2 before any
+input is read, with `{"error": {"kind": "usage", "message": "--grammar
+hosts: …", "grammar": "hosts", "file": "hosts.abnf"}}` (`file` absent
+for `--grammar-expr`; a repetition count over 1,024, or repetitions that
+would have the compiler write more than 1,024 rules, is refused the same
+way: `1*255word` writes 509, and a rule's repetitions are written again
+into every alternative that starts with that rule); a grammar
+file that cannot be read exits 3 (`io`), one over `--max-size` exits 5
+(`too_large`, with `size` and `limit`), and a compile past `--timeout`
+exits 6 (`timeout`, with `seconds`), each with that kind's fields
+(`file` the grammar file, `format` null) plus `grammar`; an input the
+grammar rejects is a `parse` error, exit 1, with `format` the grammar's
+name and the `line` and `col` it stopped at. `--render csv` works on
+the records (the input is parsed whole first).
+
 ## Output
 
 An **entry** describes one node:
@@ -130,11 +166,11 @@ Exit statuses, and the `error.kind` that goes with each:
 |---|---|---|
 | 0 | none | success |
 | 1 | `parse`, `transduce` | the input did not parse; with `--check`, a file failed; with `--render`, the input or its records will not do |
-| 2 | `usage` | bad option or path syntax, no input, a directory, or no terminal for the viewer |
+| 2 | `usage` | bad option or path syntax, no input, a directory, a `--grammar` that does not compile, or no terminal for the viewer |
 | 3 | `io`, `transduce` | the file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
-| 5 | `too_large`, `transduce` | the input is larger than `--max-size` (default 64M); with `--render`, over a limit of the transducer's |
-| 6 | `timeout` | the parse ran longer than `--timeout` (default none) |
+| 5 | `too_large`, `transduce` | the input, or a `--grammar` file, is larger than `--max-size` (default 64M); with `--render`, over a limit of the transducer's |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none) |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -168,7 +204,7 @@ pipe `--json` into jq.
 - `--json` writes NaN and the infinities as `null`. Entries write them as
   `"NaN"`, `"Infinity"` and `"-Infinity"`, with kind `number`.
 - Unknown extensions are read as plain text: an array of lines. Use `-k`
-  to name the format.
+  to name the format, or `--grammar` to give the format one.
 - Big files are costly. aless reads and parses the whole input before it
   prints anything, using about 80 bytes of memory per byte of input: 13 MB
   takes about 1 GB and some seconds. Inputs over `--max-size` (default
@@ -178,7 +214,10 @@ pipe `--json` into jq.
 - A document nested deeper than aless reads fails with code `too_deep`
   rather than crashing: past about 1,000 levels, or sooner where the
   grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
-  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC.
+  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC. A `--grammar`
+  grammar's nesting is measured on the value it built, after the parse
+  (the error then has no `line`); its files may run to some 500,000
+  lines, at about 10 KB of memory a line.
 - `--render` streams: JSON Lines, CSV and TSV are read a record at a
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);

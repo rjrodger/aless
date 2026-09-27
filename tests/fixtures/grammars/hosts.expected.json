@@ -1,0 +1,74 @@
+[
+  {
+    "address": "127.0.0.1",
+    "names": [
+      "localhost"
+    ]
+  },
+  {
+    "address": "127.0.1.1",
+    "names": [
+      "workstation.example.com",
+      "workstation"
+    ]
+  },
+  {
+    "address": "10.0.0.5",
+    "names": [
+      "fileserver",
+      "files",
+      "nas"
+    ]
+  },
+  {
+    "address": "192.168.1.20",
+    "names": [
+      "printer"
+    ]
+  },
+  {
+    "address": "::1",
+    "names": [
+      "localhost",
+      "ip6-localhost",
+      "ip6-loopback"
+    ]
+  },
+  {
+    "address": "fe00::0",
+    "names": [
+      "ip6-localnet"
+    ]
+  },
+  {
+    "address": "ff00::0",
+    "names": [
+      "ip6-mcastprefix"
+    ]
+  },
+  {
+    "address": "ff02::1",
+    "names": [
+      "ip6-allnodes"
+    ]
+  },
+  {
+    "address": "ff02::2",
+    "names": [
+      "ip6-allrouters"
+    ]
+  },
+  {
+    "address": "2001:db8::10",
+    "names": [
+      "db.example.com",
+      "db"
+    ]
+  },
+  {
+    "address": "fe80::1%lo0",
+    "names": [
+      "link-local"
+    ]
+  }
+]

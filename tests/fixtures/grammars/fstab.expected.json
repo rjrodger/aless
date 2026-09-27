@@ -1,0 +1,110 @@
+[
+  {
+    "spec": "UUID=3f2b1c9e-8a4d-4e5f-9b6a-1c2d3e4f5a6b",
+    "file": "/",
+    "vfstype": "ext4",
+    "options": [
+      "errors=remount-ro"
+    ],
+    "freq": "0",
+    "passno": "1"
+  },
+  {
+    "spec": "UUID=A1B2-C3D4",
+    "file": "/boot/efi",
+    "vfstype": "vfat",
+    "options": [
+      "umask=0077"
+    ],
+    "freq": "0",
+    "passno": "1"
+  },
+  {
+    "spec": "LABEL=home",
+    "file": "/home",
+    "vfstype": "ext4",
+    "options": [
+      "defaults",
+      "noatime"
+    ],
+    "freq": "0",
+    "passno": "2"
+  },
+  {
+    "spec": "/dev/sdb1",
+    "file": "/data",
+    "vfstype": "xfs",
+    "options": [
+      "defaults",
+      "nofail"
+    ],
+    "freq": "0",
+    "passno": "2"
+  },
+  {
+    "spec": "/dev/mapper/cryptswap",
+    "file": "none",
+    "vfstype": "swap",
+    "options": [
+      "sw"
+    ],
+    "freq": "0",
+    "passno": "0"
+  },
+  {
+    "spec": "tmpfs",
+    "file": "/tmp",
+    "vfstype": "tmpfs",
+    "options": [
+      "defaults",
+      "size=2G",
+      "mode=1777"
+    ],
+    "freq": "0",
+    "passno": "0"
+  },
+  {
+    "spec": "proc",
+    "file": "/proc",
+    "vfstype": "proc",
+    "options": [
+      "defaults"
+    ],
+    "freq": "0",
+    "passno": "0"
+  },
+  {
+    "spec": "nas.example.com:/export/media",
+    "file": "/mnt/media",
+    "vfstype": "nfs",
+    "options": [
+      "ro",
+      "soft",
+      "intr"
+    ],
+    "freq": "0",
+    "passno": "0"
+  },
+  {
+    "spec": "//fileserver/share",
+    "file": "/mnt/share",
+    "vfstype": "cifs",
+    "options": [
+      "credentials=/etc/smbcred",
+      "uid=1000"
+    ],
+    "freq": "0",
+    "passno": "0"
+  },
+  {
+    "spec": "/dev/sr0",
+    "file": "/media/cdrom0",
+    "vfstype": "udf,iso9660",
+    "options": [
+      "user",
+      "noauto"
+    ],
+    "freq": "",
+    "passno": ""
+  }
+]

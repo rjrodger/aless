@@ -1,0 +1,145 @@
+[
+  {
+    "env": "SHELL=/bin/sh"
+  },
+  {
+    "env": "PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
+  },
+  {
+    "minute": "17",
+    "hour": "*",
+    "dom": "*",
+    "month": "*",
+    "dow": "*",
+    "user": "root",
+    "command": [
+      "cd",
+      "/",
+      "&&",
+      "run-parts",
+      "--report",
+      "/etc/cron.hourly"
+    ]
+  },
+  {
+    "minute": "25",
+    "hour": "6",
+    "dom": "*",
+    "month": "*",
+    "dow": "*",
+    "user": "root",
+    "command": [
+      "test",
+      "-x",
+      "/usr/sbin/anacron",
+      "||",
+      "(",
+      "cd",
+      "/",
+      "&&",
+      "run-parts",
+      "--report",
+      "/etc/cron.daily",
+      ")"
+    ]
+  },
+  {
+    "minute": "47",
+    "hour": "6",
+    "dom": "*",
+    "month": "*",
+    "dow": "7",
+    "user": "root",
+    "command": [
+      "test",
+      "-x",
+      "/usr/sbin/anacron",
+      "||",
+      "(",
+      "cd",
+      "/",
+      "&&",
+      "run-parts",
+      "--report",
+      "/etc/cron.weekly",
+      ")"
+    ]
+  },
+  {
+    "minute": "52",
+    "hour": "6",
+    "dom": "1",
+    "month": "*",
+    "dow": "*",
+    "user": "root",
+    "command": [
+      "test",
+      "-x",
+      "/usr/sbin/anacron",
+      "||",
+      "(",
+      "cd",
+      "/",
+      "&&",
+      "run-parts",
+      "--report",
+      "/etc/cron.monthly",
+      ")"
+    ]
+  },
+  {
+    "minute": "*/15",
+    "hour": "*",
+    "dom": "*",
+    "month": "*",
+    "dow": "*",
+    "user": "root",
+    "command": [
+      "/usr/local/bin/check-disks",
+      "--warn",
+      "90"
+    ]
+  },
+  {
+    "minute": "0",
+    "hour": "2,14",
+    "dom": "*",
+    "month": "*",
+    "dow": "mon-fri",
+    "user": "backup",
+    "command": [
+      "/usr/local/bin/nightly-backup",
+      "--full"
+    ]
+  },
+  {
+    "minute": "30",
+    "hour": "4",
+    "dom": "1-7",
+    "month": "*",
+    "dow": "*",
+    "user": "root",
+    "command": [
+      "/usr/sbin/logrotate",
+      "/etc/logrotate.conf"
+    ]
+  },
+  {
+    "when": "@reboot",
+    "user": "root",
+    "command": [
+      "/usr/local/bin/mount-shares"
+    ]
+  },
+  {
+    "when": "@daily",
+    "user": "www-data",
+    "command": [
+      "/usr/bin/php",
+      "/var/www/cron.php",
+      ">",
+      "/dev/null",
+      "2>&1"
+    ]
+  }
+]
