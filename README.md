@@ -81,7 +81,7 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
-| `--timeout SECONDS` | stop a parse that runs longer than this (`2.5`, `90s`, `2m`; default none) |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none) |
 
 `NO_COLOR` in the environment also disables colour.
 
@@ -122,7 +122,7 @@ aless --render csv --path .items orders.json       # the records as CSV, streame
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
 | `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
-| `--timeout SECONDS` | stop a parse that runs longer than this (default none) |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none) |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
 straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, and `[-1]`
@@ -201,8 +201,8 @@ $ aless bad.json
 | 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` that does not compile, or the viewer without a terminal | `usage` |
 | 3 | an input could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
-| 5 | an input is larger than `--max-size`; with `--render`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
-| 6 | a parse ran longer than `--timeout` | `timeout` |
+| 5 | an input, or a `--grammar` file, is larger than `--max-size`; with `--render`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
+| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout` | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
@@ -219,9 +219,12 @@ parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
 saying how long it took. A `usage` error has only `kind` and `message`,
 except for a `--grammar` that does not compile, which adds the `grammar`
-name and, when it came from a file, the `file`; a grammar file that
-cannot be read is an `io` error with those two fields ([Custom
-grammars](#custom-grammars)).
+name and, when it came from a file, the `file`. A grammar file that
+cannot be read is an `io` error, one over `--max-size` a `too_large`
+error and a compile past `--timeout` a `timeout` error, each with the
+fields of that kind — `file` the grammar file (`null` for
+`--grammar-expr`), `format` `null`, and `size`, `limit` or `seconds` as
+above — plus `grammar` ([Custom grammars](#custom-grammars)).
 A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
@@ -471,11 +474,19 @@ behind this are listed at the end of the library's README.
 before any input is read: status 2, and without a screen
 `{"error": {"kind": "usage", "message": "--grammar hosts: <the
 compiler's message>", "grammar": "hosts", "file": "hosts.abnf"}}`
-(`file` omitted for `--grammar-expr`). A grammar file that cannot be
-read is an `io` error, status 3, with the same `grammar` and `file`. An
-input the grammar does not accept is a `parse` error like any other,
-with `format` the grammar's name and the line and column the parse
-stopped at.
+(`file` omitted for `--grammar-expr`); the compiler's message is one
+line, without its colour codes. A repetition count over 1,024
+(`2000"a"`, `1*5000word`) is refused the same way: the compiler writes
+out every copy, and a count in the millions would take gigabytes before
+any input was read. A grammar file that cannot be read is an `io`
+error, status 3; one over `--max-size` is `too_large`, status 5, with
+its `size` and the `limit`; and the compile is held to `--timeout` as a
+parse is — on a thread of its own, which cannot be interrupted, so
+aless stops waiting for it and exits — with a `timeout` error, status
+6, and the `seconds`. Each has the fields of that kind (`file` the
+grammar file, `format` `null`) plus `grammar`. An input the grammar
+does not accept is a `parse` error like any other, with `format` the
+grammar's name and the line and column the parse stopped at.
 
 **Limits.** The compiler writes a repetition (`*entry`) as a rule that
 calls itself once per item, so the engine keeps a rule open for every

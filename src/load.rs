@@ -216,6 +216,12 @@ impl Limits {
         timeout: None,
     };
 
+    /// No limit on either.
+    pub const NONE: Limits = Limits {
+        max_size: None,
+        timeout: None,
+    };
+
     /// The limits [`set_limits`] last set for this process.
     pub fn current() -> Limits {
         let set = |n: u64| (n > 0).then_some(n);
@@ -501,26 +507,51 @@ impl LoadError {
         let per_byte =
             format!("Parsing takes about {MEMORY_PER_BYTE} bytes of memory per byte of input");
         let hint = match size {
-            Some(n) => {
-                // Suggest the first doubling of the limit that holds it.
-                let mut room = limit.saturating_mul(2);
-                while room < n {
-                    room = room.saturating_mul(2);
-                }
-                format!(
-                    "{per_byte}, so this one would need about {}. Pass --max-size {} \
-                     (or more) to read it, or --max-size 0 for no limit.",
-                    human_size(n.saturating_mul(MEMORY_PER_BYTE)),
-                    size_flag(room)
-                )
-            }
+            Some(n) => format!(
+                "{per_byte}, so this one would need about {}. Pass --max-size {} \
+                 (or more) to read it, or --max-size 0 for no limit.",
+                human_size(n.saturating_mul(MEMORY_PER_BYTE)),
+                size_flag(room_for(size, limit))
+            ),
             None => format!(
                 "{per_byte}. Pass a larger --max-size, such as {}, to read it, or \
                  --max-size 0 for no limit.",
-                size_flag(limit.saturating_mul(4))
+                size_flag(room_for(size, limit))
             ),
         };
         LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// A grammar file over the size limit: as [`too_large`](Self::too_large),
+    /// worded for a file no parse of which is coming.
+    pub(crate) fn grammar_too_large(size: Option<u64>, limit: u64) -> LoadError {
+        use crate::explorer::human_size;
+        let message = match size {
+            Some(n) => format!(
+                "the grammar file is {}, over the {} limit",
+                human_size(n),
+                human_size(limit)
+            ),
+            None => format!("the grammar file is over the {} limit", human_size(limit)),
+        };
+        let hint = format!(
+            "A grammar file over --max-size is not read. Pass --max-size {} (or more) to \
+             read it, or --max-size 0 for no limit.",
+            size_flag(room_for(size, limit))
+        );
+        LoadError::tagged("too_large", message).with_hint(&hint)
+    }
+
+    /// A grammar whose compile ran past the time limit. The compiler cannot
+    /// be interrupted, so aless stopped waiting for it.
+    pub(crate) fn compile_timed_out(limit: Duration) -> LoadError {
+        let limit = seconds(limit);
+        let message = format!("timeout: the grammar took longer than {limit} s to compile");
+        let hint = "The compiler cannot be interrupted, so aless stopped waiting for it.\nPass \
+                    a larger --timeout to let it finish, or --timeout 0 for no limit. A \
+                    repetition count in the hundreds (1*1000word) or thousands of productions \
+                    make a grammar slow to compile.";
+        LoadError::tagged("timeout", message).with_hint(hint)
     }
 
     /// A parse that finished, but after its time limit. It stopped nowhere
@@ -629,6 +660,22 @@ impl LoadError {
     /// The report without its colour codes.
     pub fn plain_report(&self) -> String {
         strip_ansi(&self.report)
+    }
+}
+
+/// The `--max-size` to suggest for an input of `size` bytes over `limit`:
+/// the first doubling of the limit that holds it, or four times the limit
+/// when the size is not known (a stream).
+fn room_for(size: Option<u64>, limit: u64) -> u64 {
+    match size {
+        Some(n) => {
+            let mut room = limit.saturating_mul(2);
+            while room < n {
+                room = room.saturating_mul(2);
+            }
+            room
+        }
+        None => limit.saturating_mul(4),
     }
 }
 
@@ -1490,7 +1537,7 @@ mod tests {
             "impl-etc-hosts,impl-etc-hosts.conf=doc = *entry\nentry = TX \"=\" TX\n",
         )
         .unwrap();
-        let id = grammar::register(def, None).unwrap();
+        let id = grammar::register(def, Limits::NONE).unwrap();
         let custom = Format::Custom(id);
         for path in [
             "/etc/impl-etc-hosts",
@@ -1533,7 +1580,7 @@ mod tests {
             &format!("impl-kv-l={}", grammar::tests::KV),
         )
         .unwrap();
-        let custom = Format::Custom(grammar::register(def, None).unwrap());
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
         // 2,000 lines keep some 4,000 rules open: past the other grammars'
         // cap, and two levels deep.
         let flat: String = (0..2_000).map(|i| format!("k{i}=v{i}\n")).collect();
@@ -1572,7 +1619,7 @@ mod tests {
             "impl-nest-l=doc = \"(\" doc \")\" / \"x\"\n",
         )
         .unwrap();
-        let custom = Format::Custom(grammar::register(def, None).unwrap());
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
         // The compiler's tree: an object and its `kids` array per level.
         let parens = |n: usize| "(".repeat(n) + "x" + &")".repeat(n);
         let doc = parse(&parens(400), custom).unwrap();

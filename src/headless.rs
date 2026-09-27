@@ -996,13 +996,18 @@ impl Failure {
     /// "message": "--grammar NAME: <the compiler's message>", "grammar":
     /// NAME, "file": FILE}`, `file` left out for `--grammar-expr`, status
     /// [`status::USAGE`]. A grammar file that cannot be read is the usual
-    /// `io` ([`status::IO`]), or `too_large` ([`status::TOO_LARGE`]), with
-    /// the same `grammar` and `file` and that error's `code` and `hint`.
+    /// `io` ([`status::IO`]), one over `--max-size` `too_large`
+    /// ([`status::TOO_LARGE`]), and a compile past `--timeout` `timeout`
+    /// ([`status::TIMEOUT`]): each with the fields of that kind as
+    /// [`load`](Self::load) and [`limited`](Self::limited) give them (the
+    /// grammar file as `file`, `format` null) plus `grammar`.
     fn grammar(e: &GrammarError) -> Failure {
         let (kind, status) = if e.error.is_io() {
             ("io", status::IO)
         } else if e.error.is_too_large() {
             ("too_large", status::TOO_LARGE)
+        } else if e.error.is_timeout() {
+            ("timeout", status::TIMEOUT)
         } else {
             ("usage", status::USAGE)
         };
@@ -1013,16 +1018,37 @@ impl Failure {
         if let Some(file) = &e.file {
             error.insert("file".into(), file.clone().into());
         }
-        if kind != "usage" {
-            error.insert("code".into(), e.error.code.clone().into());
+        if kind == "usage" {
+            return Failure { status, error };
+        }
+        error.entry("file").or_insert(Value::Null);
+        error.insert("format".into(), Value::Null);
+        error.insert("code".into(), e.error.code.clone().into());
+        error.insert("line".into(), Value::Null);
+        error.insert("col".into(), Value::Null);
+        error.insert(
+            "hint".into(),
+            if e.error.hint.is_empty() {
+                Value::Null
+            } else {
+                e.error.hint.as_ref().into()
+            },
+        );
+        error.insert("source_line".into(), Value::Null);
+        error.insert("report".into(), e.error.plain_report().into());
+        if status == status::TOO_LARGE {
+            error.insert("size".into(), e.size.map_or(Value::Null, Value::from));
             error.insert(
-                "hint".into(),
-                if e.error.hint.is_empty() {
-                    Value::Null
-                } else {
-                    e.error.hint.as_ref().into()
-                },
+                "limit".into(),
+                e.limits.max_size.map_or(Value::Null, Value::from),
             );
+        }
+        if status == status::TIMEOUT {
+            let secs = e
+                .limits
+                .timeout
+                .map_or(Value::Null, |t| t.as_secs_f64().into());
+            error.insert("seconds".into(), secs);
         }
         Failure { status, error }
     }
@@ -1986,7 +2012,7 @@ mod tests {
             &format!("impl-kv-h={}", crate::grammar::tests::KV),
         )
         .unwrap();
-        let custom = Format::Custom(grammar::register(def, None).unwrap());
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
         let src = "a=1\nb = two\n";
         let mut r = req(Op::Json);
         r.kind = Some(custom);
@@ -2052,7 +2078,7 @@ mod tests {
         use crate::grammar::{self, Definition};
         let e = grammar::register(
             Definition::parse("--grammar-expr", "impl-bad-h=doc = nope\n").unwrap(),
-            None,
+            Limits::NONE,
         )
         .unwrap_err();
         let (text, status) = grammar_failure(&e, true);
@@ -2073,7 +2099,7 @@ mod tests {
         // A grammar file that cannot be read is an io error, with the file.
         let e = grammar::register(
             Definition::parse("--grammar", "impl-missing-h=/nonexistent/g.abnf").unwrap(),
-            None,
+            Limits::NONE,
         )
         .unwrap_err();
         let (text, status) = grammar_failure(&e, false);
@@ -2088,6 +2114,79 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .starts_with("--grammar impl-missing-h: /nonexistent/g.abnf: "),
+            "{err}"
+        );
+        // With the fields of any io error: the grammar file is the file,
+        // and there is no input format.
+        for key in ["format", "line", "col", "hint", "source_line"] {
+            assert_eq!(err[key], Value::Null, "{key}: {err}");
+        }
+        let report = err["report"].as_str().unwrap();
+        assert!(
+            report.starts_with("[aless/io]: ") && report.contains("--> /nonexistent/g.abnf"),
+            "{report}"
+        );
+        // A grammar file over --max-size: too_large, with its size and the
+        // limit, and a hint worded for a grammar file.
+        let dir = std::env::temp_dir().join(format!("aless-grammar-h-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("big.abnf");
+        std::fs::write(&file, crate::grammar::tests::KV).unwrap();
+        let def =
+            Definition::parse("--grammar", &format!("impl-big-h={}", file.display())).unwrap();
+        let limits = Limits {
+            max_size: Some(8),
+            timeout: None,
+        };
+        let e = grammar::register(def, limits).unwrap_err();
+        let (text, status) = grammar_failure(&e, true);
+        assert_eq!(status, status::TOO_LARGE);
+        let err = &json_of(&text)["error"];
+        assert_eq!(err["kind"], json!("too_large"));
+        assert_eq!(err["code"], json!("too_large"));
+        assert_eq!(err["grammar"], json!("impl-big-h"));
+        assert_eq!(err["file"], json!(file.display().to_string()));
+        assert_eq!(err["format"], Value::Null);
+        assert_eq!(err["size"], json!(crate::grammar::tests::KV.len()));
+        assert_eq!(err["limit"], json!(8));
+        assert!(
+            err["hint"]
+                .as_str()
+                .unwrap()
+                .starts_with("A grammar file over --max-size is not read. Pass --max-size "),
+            "{err}"
+        );
+        assert!(
+            err["report"]
+                .as_str()
+                .unwrap()
+                .starts_with("[aless/too_large]: the grammar file is "),
+            "{err}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        // A compile past --timeout: timeout, with the seconds; inline text
+        // has no file.
+        let def = Definition::parse("--grammar-expr", "impl-slow-h=doc = 1*300\"a\"\n").unwrap();
+        let limits = Limits {
+            max_size: None,
+            timeout: Some(std::time::Duration::from_millis(1)),
+        };
+        let e = grammar::register(def, limits).unwrap_err();
+        let (text, status) = grammar_failure(&e, true);
+        assert_eq!(status, status::TIMEOUT);
+        let err = &json_of(&text)["error"];
+        assert_eq!(err["kind"], json!("timeout"));
+        assert_eq!(err["code"], json!("timeout"));
+        assert_eq!(err["grammar"], json!("impl-slow-h"));
+        assert_eq!(err["file"], Value::Null);
+        assert_eq!(err["format"], Value::Null);
+        assert_eq!(err["seconds"], json!(0.001));
+        assert_eq!(err["line"], Value::Null);
+        assert!(
+            err["message"]
+                .as_str()
+                .unwrap()
+                .ends_with("took longer than 0.001 s to compile"),
             "{err}"
         );
     }

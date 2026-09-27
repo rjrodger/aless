@@ -76,9 +76,9 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     parse. Exit status: 0 success, 1 the input did not parse (--check: an
     input failed; --render: the input or its records will not do), 2 bad
     usage or no terminal for the viewer, 3 an input could not be read (or
-    the output not written), 4 --path or --at names nothing, 5 an input is
-    over --max-size (--render: over a limit of the transducer's), 6 a
-    parse ran past --timeout.
+    the output not written), 4 --path or --at names nothing, 5 an input (or
+    a --grammar file) is over --max-size (--render: over a limit of the
+    transducer's), 6 a parse (or a --grammar compile) ran past --timeout.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -126,9 +126,10 @@ BOTH:
                             The same, with the grammar text on the command line
         --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
                             or G; 0 for no limit): a parse takes about 80 bytes
-                            of memory per byte of input
-        --timeout <SECONDS> Stop a parse that runs longer than this (2.5, 90s,
-                            2m; default none): a large input can take minutes
+                            of memory per byte of input. A --grammar FILE too
+        --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
+                            longer than this (2.5, 90s, 2m; default none): a
+                            large input can take minutes
     -h, --help              This help
     -V, --version           Version
 ";
@@ -354,9 +355,14 @@ fn main() {
     };
     let headless = headless_wanted(args.headless);
     // The grammars come first: -k may name one, and so may a file's
-    // extension. A grammar file is read within --max-size as any input is.
+    // extension. A grammar file is read within --max-size as any input is,
+    // and compiled within --timeout as any parse runs.
     let grammars = std::mem::take(&mut args.grammars);
-    if let Err(e) = grammar::register_all(grammars, args.max_size) {
+    let limits = aless::load::Limits {
+        max_size: args.max_size,
+        timeout: args.timeout,
+    };
+    if let Err(e) = grammar::register_all(grammars, limits) {
         let (text, status) = headless::grammar_failure(&e, args.compact);
         if headless {
             eprint!("{text}");
@@ -377,10 +383,7 @@ fn main() {
             ),
         }
     }
-    aless::load::set_limits(aless::load::Limits {
-        max_size: args.max_size,
-        timeout: args.timeout,
-    });
+    aless::load::set_limits(limits);
     if headless {
         std::process::exit(print_headless(args));
     }

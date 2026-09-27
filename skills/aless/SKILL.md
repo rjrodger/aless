@@ -114,11 +114,15 @@ case-insensitively; `NAME,NAME2=FILE` gives one grammar two names; both
 options repeat. A grammar that does not compile exits 2 before any
 input is read, with `{"error": {"kind": "usage", "message": "--grammar
 hosts: …", "grammar": "hosts", "file": "hosts.abnf"}}` (`file` absent
-for `--grammar-expr`); a grammar file that cannot be read exits 3
-(`io`, with the same `grammar` and `file`); an input the grammar
-rejects is a `parse` error, exit 1, with `format` the grammar's name
-and the `line` and `col` it stopped at. `--render csv` works on the
-records (the input is parsed whole first).
+for `--grammar-expr`; a repetition count over 1,024 is refused the same
+way); a grammar file that cannot be read exits 3 (`io`), one over
+`--max-size` exits 5 (`too_large`, with `size` and `limit`), and a
+compile past `--timeout` exits 6 (`timeout`, with `seconds`), each with
+that kind's fields (`file` the grammar file, `format` null) plus
+`grammar`; an input the grammar rejects is a `parse` error, exit 1,
+with `format` the grammar's name and the `line` and `col` it stopped
+at. `--render csv` works on the records (the input is parsed whole
+first).
 
 ## Output
 
@@ -163,8 +167,8 @@ Exit statuses, and the `error.kind` that goes with each:
 | 2 | `usage` | bad option or path syntax, no input, a directory, a `--grammar` that does not compile, or no terminal for the viewer |
 | 3 | `io`, `transduce` | the file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
-| 5 | `too_large`, `transduce` | the input is larger than `--max-size` (default 64M); with `--render`, over a limit of the transducer's |
-| 6 | `timeout` | the parse ran longer than `--timeout` (default none) |
+| 5 | `too_large`, `transduce` | the input, or a `--grammar` file, is larger than `--max-size` (default 64M); with `--render`, over a limit of the transducer's |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none) |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its

@@ -1218,6 +1218,112 @@ fn grammar_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["grammar"], json!("hosts"));
     assert_eq!(e["file"], json!("/nonexistent/hosts.abnf"));
     assert_eq!(e["code"], json!("io"));
+    // With the fields of any io error: the grammar file is the file, and
+    // there is no input format.
+    for key in ["format", "line", "col", "hint", "source_line"] {
+        assert_eq!(e[key], Value::Null, "{key}: {e}");
+    }
+    assert!(
+        e["report"].as_str().unwrap().starts_with("[aless/io]: "),
+        "{e}"
+    );
+    // A grammar file over --max-size: too_large, status 5, with its size
+    // and the limit.
+    let hosts = format!("hosts={GRAMMARS}/hosts.abnf");
+    let out = aless(
+        &[
+            "--max-size",
+            "100",
+            "--grammar",
+            &hosts,
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 5);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("too_large"));
+    assert_eq!(e["code"], json!("too_large"));
+    assert_eq!(e["grammar"], json!("hosts"));
+    assert_eq!(e["file"], json!(format!("{GRAMMARS}/hosts.abnf")));
+    assert_eq!(e["format"], Value::Null);
+    let len = std::fs::metadata(format!("{GRAMMARS}/hosts.abnf"))
+        .unwrap()
+        .len();
+    assert_eq!(e["size"], json!(len));
+    assert_eq!(e["limit"], json!(100));
+    assert!(e["hint"].as_str().unwrap().contains("--max-size"), "{e}");
+    // A compile past --timeout: timeout, status 6, with the seconds (300
+    // nested optionals take the compiler well over a millisecond).
+    let out = aless(
+        &[
+            "--grammar-expr",
+            "slow=doc = 1*300\"a\"\n",
+            "--timeout",
+            "0.001",
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("timeout"));
+    assert_eq!(e["code"], json!("timeout"));
+    assert_eq!(e["grammar"], json!("slow"));
+    assert_eq!(e["file"], Value::Null);
+    assert_eq!(e["seconds"], json!(0.001));
+    assert!(
+        e["message"].as_str().unwrap().ends_with("to compile"),
+        "{e}"
+    );
+    // A repetition count the compiler would write out by the million is
+    // the command's mistake, refused before it starts.
+    let out = aless(
+        &[
+            "--grammar-expr",
+            "big=doc = 99999999999999999999999\"a\"\n",
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("usage"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("a repetition count of"),
+        "{e}"
+    );
+    // The compiler's message is one plain line: no colour codes, no line
+    // breaks.
+    let out = aless(
+        &[
+            "--grammar-expr",
+            "g=doc = *\n",
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    let message = json(&out.stderr)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        !message.contains('\u{1b}') && !message.contains('\n'),
+        "{message:?}"
+    );
+    assert!(
+        message.ends_with("[tabnas/unexpected]: unexpected character(s): *"),
+        "{message}"
+    );
     // An input the grammar does not accept: a parse error, positioned, in
     // the grammar's name.
     let kv = format!("impl-kv={GRAMMARS}/impl-kv.abnf");

@@ -20,13 +20,14 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{mpsc, RwLock};
+use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 use tabnas::Tabnas;
-use tabnas_abnf::{AbnfConvertOptions, GrammarSpec};
+use tabnas_abnf::{AbnfConvertOptions, Element, GrammarSpec, Kind};
 
-use crate::load::{self, LoadError};
+use crate::load::{self, Limits, LoadError};
 
 /// The index of a custom grammar in the registry: what `Format::Custom`
 /// carries. Only [`register`] makes one, so every id names a grammar.
@@ -177,6 +178,12 @@ pub struct Compiled {
     spec: GrammarSpec,
 }
 
+impl fmt::Debug for Compiled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Compiled({} rules)", self.spec.rule.len())
+    }
+}
+
 impl Compiled {
     /// A fresh engine with the grammar installed.
     pub fn parser(&self) -> Result<Tabnas, String> {
@@ -186,22 +193,116 @@ impl Compiled {
     }
 }
 
-/// Compile ABNF text: the compiler's conversion, with the start rule its
-/// default (the grammar's first production) and `word_keywords` on, so a
-/// quoted keyword (`"nameserver"`) matches whole words and not the front
+/// The largest count a repetition may carry (`1024"a"`, `1*1024word`).
+/// The compiler writes out every copy: `min` copies of the element, then
+/// one nested optional rule per copy up to `max`, so a count in the
+/// millions takes gigabytes and minutes before any input is read
+/// (`10000000"a"` reached 5 GB; `99999999999999999999999"a"` saturates to
+/// 2^64 copies). Measured: `1*1000"a"` compiles in 1 s, `1*5000"a"` in
+/// 35 s. Real grammars stay in the hundreds (`1*255`).
+pub const MAX_REPEAT: usize = 1024;
+
+/// Compile ABNF text: the compiler's parse, a check of the repetition
+/// counts against [`MAX_REPEAT`], then its conversion, with the start rule
+/// its default (the grammar's first production) and `word_keywords` on, so
+/// a quoted keyword (`"nameserver"`) matches whole words and not the front
 /// of a longer one; then the engine options of [`plain_text_options`]; and
 /// the result installed once on a fresh engine to be sure it takes. The
-/// error is the compiler's own message, or the engine's.
+/// error is the compiler's own message, or the engine's, on one line and
+/// without its colour codes.
 pub fn compile(source: &str) -> Result<Compiled, String> {
     let options = AbnfConvertOptions {
         word_keywords: true,
         ..AbnfConvertOptions::default()
     };
-    let mut spec = tabnas_abnf::abnf_convert(source, Some(&options)).map_err(|e| e.to_string())?;
+    let grammar = tabnas_abnf::parse_abnf(source).map_err(|e| one_line(&e.to_string()))?;
+    check_repeats(&grammar)?;
+    let mut spec = tabnas_abnf::emit_grammar_spec(&grammar, Some(&options))
+        .map_err(|e| one_line(&e.to_string()))?;
     plain_text_options(&mut spec);
     let compiled = Compiled { spec };
-    compiled.parser()?;
+    compiled.parser().map_err(|e| one_line(&e))?;
     Ok(compiled)
+}
+
+/// A compiler's message as a report carries it: the engine colours its
+/// diagnostics and the regex crate's run to several lines, where a
+/// `message` is one line of plain text. Escapes are stripped, control
+/// characters shown escaped (`\n`).
+fn one_line(message: &str) -> String {
+    load::escape_controls(&load::strip_ansi(message))
+}
+
+/// Refuse a repetition count over [`MAX_REPEAT`] before the compiler
+/// writes the copies out. The elements are walked with a stack of their
+/// own; the compiler bounds their nesting itself, later.
+fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
+    let mut stack: Vec<&Element> = grammar
+        .productions
+        .iter()
+        .flat_map(|p| p.alts.iter().flatten())
+        .collect();
+    while let Some(el) = stack.pop() {
+        match &el.kind {
+            Kind::Rep { min, max, inner } => {
+                let count = max.unwrap_or(0).max(*min);
+                if count > MAX_REPEAT {
+                    let at = match el.sp.and_then(|sp| sp.r.zip(sp.c)) {
+                        Some((row, col)) => format!(" at line {row}, column {col}"),
+                        None => String::new(),
+                    };
+                    return Err(format!(
+                        "abnf: a repetition count of {count}{at} is more than aless compiles \
+                         (at most {MAX_REPEAT}): the compiler writes out every copy, so write \
+                         `*word` or `1*word` for a run of any length"
+                    ));
+                }
+                stack.push(inner);
+            }
+            Kind::Opt { inner } | Kind::Star { inner, .. } | Kind::Plus { inner } => {
+                stack.push(inner)
+            }
+            Kind::Group { alts } => stack.extend(alts.iter().flatten()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// [`compile`] on a thread of its own, within `timeout`. A compile cannot
+/// be interrupted, so past the deadline the thread is left to itself (the
+/// process exits on the error, which ends it) and the error says so. A
+/// panic in the compiler is a `grammar` error, as one in a parse is.
+fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, LoadError> {
+    let (tx, rx) = mpsc::channel();
+    let text = source.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("aless-grammar".into())
+        .stack_size(load::PARSE_STACK)
+        .spawn(move || {
+            let _ = tx.send(load::catch_grammar(|| compile(&text)));
+        });
+    let outcome = match spawned {
+        // A time too far off to reach is no limit.
+        Ok(_) => match timeout.filter(|t| std::time::Instant::now().checked_add(*t).is_some()) {
+            Some(limit) => rx
+                .recv_timeout(limit)
+                .map_err(|_| LoadError::compile_timed_out(limit))?,
+            None => rx
+                .recv()
+                .map_err(|_| LoadError::tagged("grammar", "the compiler gave no answer"))?,
+        },
+        // No thread to be had: compile on this one, with no deadline.
+        Err(_) => load::catch_grammar(|| compile(source)),
+    };
+    match outcome {
+        Ok(Ok(compiled)) => Ok(compiled),
+        Ok(Err(message)) => Err(LoadError::tagged("grammar", message)),
+        Err(panic) => Err(LoadError::tagged(
+            "grammar",
+            format!("the compiler failed: {panic}"),
+        )),
+    }
 }
 
 /// A registered grammar.
@@ -239,16 +340,22 @@ pub struct GrammarError {
     pub grammar: String,
     /// The grammar file, as given; `None` for `--grammar-expr`.
     pub file: Option<String>,
-    /// What went wrong: reading the file (`io`, `too_large`), or the
-    /// compiler's refusal (`grammar`), which is a mistake in the command.
+    /// What went wrong: reading the file (`io`, `too_large`), the compile
+    /// running past its time (`timeout`), or the compiler's refusal
+    /// (`grammar`), which is a mistake in the command.
     pub error: LoadError,
+    /// The grammar file's size, when it is a regular file.
+    pub size: Option<u64>,
+    /// The limits the grammar was read and compiled under.
+    pub limits: Limits,
 }
 
 impl GrammarError {
     /// Whether the command asked for what cannot be done (the grammar does
-    /// not compile), as against the file not being readable.
+    /// not compile), as against the file not being readable or the compile
+    /// not finishing in time.
     pub fn is_usage(&self) -> bool {
-        !self.error.is_io() && !self.error.is_too_large()
+        !self.error.is_io() && !self.error.is_too_large() && !self.error.is_timeout()
     }
 }
 
@@ -273,29 +380,45 @@ fn registry() -> std::sync::RwLockReadGuard<'static, Vec<&'static Grammar>> {
     REGISTRY.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Register a grammar: read its file (within `max_size`, as any input is),
-/// compile it, and give it a place in the registry. A later grammar with
-/// one of the same names is the one that name resolves to. (The error is
-/// boxed: it carries a whole report.)
-pub fn register(def: Definition, max_size: Option<u64>) -> Result<CustomId, Box<GrammarError>> {
+/// Register a grammar: read its file (within the size limit, as any input
+/// is), compile it (within the time limit, as any parse runs), and give it
+/// a place in the registry. A later grammar with one of the same names is
+/// the one that name resolves to. (The error is boxed: it carries a whole
+/// report.)
+pub fn register(def: Definition, limits: Limits) -> Result<CustomId, Box<GrammarError>> {
     let name = def.names.first().cloned().unwrap_or_default();
+    let size = match &def.source {
+        Source::File(path) => std::fs::metadata(path)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len()),
+        Source::Inline(_) => None,
+    };
     let fail = |error: LoadError| {
         Box::new(GrammarError {
             option: def.source.option(),
             grammar: name.clone(),
             file: def.source.file(),
             error,
+            size,
+            limits,
         })
     };
     let source = match &def.source {
-        Source::File(path) => load::read_path_within(path, max_size).map_err(|e| {
-            let mut e = e;
+        Source::File(path) => load::read_path_within(path, limits.max_size).map_err(|e| {
+            let mut e = if e.is_too_large() {
+                // Worded for a grammar file: no parse of it is coming.
+                LoadError::grammar_too_large(size, limits.max_size.unwrap_or(0))
+                    .with_origin(&load::origin_of(path))
+            } else {
+                e
+            };
             e.message = format!("{}: {}", path.display(), e.message);
             fail(e)
         })?,
         Source::Inline(text) => text.clone(),
     };
-    let compiled = compile(&source).map_err(|m| fail(LoadError::tagged("grammar", m)))?;
+    let compiled = compile_within(&source, limits.timeout).map_err(fail)?;
     let mut all = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
     let id = u16::try_from(all.len()).map_err(|_| {
         fail(LoadError::tagged(
@@ -317,9 +440,9 @@ pub fn register(def: Definition, max_size: Option<u64>) -> Result<CustomId, Box<
 /// Register every definition in turn, stopping at the first that fails.
 pub fn register_all(
     defs: impl IntoIterator<Item = Definition>,
-    max_size: Option<u64>,
+    limits: Limits,
 ) -> Result<Vec<CustomId>, Box<GrammarError>> {
-    defs.into_iter().map(|d| register(d, max_size)).collect()
+    defs.into_iter().map(|d| register(d, limits)).collect()
 }
 
 /// The grammar an id names.
@@ -515,7 +638,7 @@ word    = ( TX )
 
     #[test]
     fn a_grammar_compiles_once_and_parses_to_the_value_it_builds() {
-        let id = register(inline("impl-kv-a", KV), None).unwrap();
+        let id = register(inline("impl-kv-a", KV), Limits::NONE).unwrap();
         let g = get(id).unwrap();
         assert_eq!(g.name, "impl-kv-a");
         assert_eq!(
@@ -527,7 +650,7 @@ word    = ( TX )
             ])
         );
         // Without annotations, the compiler's tree.
-        let id = register(inline("impl-tree-a", "pair = TX \"=\" TX\n"), None).unwrap();
+        let id = register(inline("impl-tree-a", "pair = TX \"=\" TX\n"), Limits::NONE).unwrap();
         let v = parse_json(id, "a=b");
         assert_eq!(v["rule"], "pair");
         assert_eq!(v["src"], "a=b");
@@ -536,13 +659,13 @@ word    = ( TX )
 
     #[test]
     fn names_resolve_case_insensitively_and_the_latest_wins() {
-        let first = register(inline("impl-hosts-a,impl-hostsfile-a", KV), None).unwrap();
+        let first = register(inline("impl-hosts-a,impl-hostsfile-a", KV), Limits::NONE).unwrap();
         assert_eq!(lookup("impl-hosts-a"), Some(first));
         assert_eq!(lookup("IMPL-HOSTSFILE-A"), Some(first));
         assert_eq!(lookup(" impl-hosts-a "), Some(first));
         assert_eq!(lookup("impl-nope-a"), None);
         assert_eq!(lookup(""), None);
-        let second = register(inline("impl-hostsfile-a", KV), None).unwrap();
+        let second = register(inline("impl-hostsfile-a", KV), Limits::NONE).unwrap();
         assert_ne!(first, second);
         assert_eq!(lookup("impl-hostsfile-a"), Some(second));
         assert_eq!(lookup("impl-hosts-a"), Some(first));
@@ -580,7 +703,7 @@ word    = ( TX )
     fn a_custom_name_shadows_a_built_in() {
         // `webmanifest` is a JSON extension nothing else here relies on.
         assert_eq!(Format::from_extension("webmanifest"), Some(Format::Json));
-        let id = register(inline("webmanifest", KV), None).unwrap();
+        let id = register(inline("webmanifest", KV), Limits::NONE).unwrap();
         assert_eq!(
             Format::from_extension("webmanifest"),
             Some(Format::Custom(id))
@@ -597,7 +720,7 @@ word    = ( TX )
 
     #[test]
     fn a_grammar_that_does_not_compile_is_the_commands_mistake() {
-        let e = register(inline("impl-bad-a", "doc = undefined_rule\n"), None).unwrap_err();
+        let e = register(inline("impl-bad-a", "doc = undefined_rule\n"), Limits::NONE).unwrap_err();
         assert_eq!(e.option, "--grammar-expr");
         assert_eq!(e.grammar, "impl-bad-a");
         assert_eq!(e.file, None);
@@ -611,7 +734,7 @@ word    = ( TX )
         assert_eq!(lookup("impl-bad-a"), None, "nothing is registered");
         // A grammar file that cannot be read is an io error.
         let d = Definition::parse("--grammar", "impl-missing-a=/nonexistent/x.abnf").unwrap();
-        let e = register(d, None).unwrap_err();
+        let e = register(d, Limits::NONE).unwrap_err();
         assert_eq!(e.option, "--grammar");
         assert_eq!(e.file, Some("/nonexistent/x.abnf".to_string()));
         assert!(!e.is_usage());
@@ -627,12 +750,144 @@ word    = ( TX )
         let file = dir.join("big.abnf");
         std::fs::write(&file, KV).unwrap();
         let d = Definition::parse("--grammar", &format!("impl-big-a={}", file.display())).unwrap();
-        let e = register(d.clone(), Some(8)).unwrap_err();
+        let e = register(
+            d.clone(),
+            Limits {
+                max_size: Some(8),
+                timeout: None,
+            },
+        )
+        .unwrap_err();
         assert!(e.error.is_too_large() && !e.is_usage());
+        assert_eq!(e.size, Some(KV.len() as u64));
+        assert_eq!(e.limits.max_size, Some(8));
+        assert!(
+            e.error.message.ends_with(&format!(
+                "the grammar file is {} B, over the 8 B limit",
+                KV.len()
+            )),
+            "{}",
+            e.error.message
+        );
+        assert!(
+            e.error
+                .hint
+                .starts_with("A grammar file over --max-size is not read"),
+            "{}",
+            e.error.hint
+        );
+        assert!(
+            e.error.plain_report().contains("--> "),
+            "{}",
+            e.error.plain_report()
+        );
         // And within it, a file registers.
-        let id = register(d, Some(1 << 20)).unwrap();
+        let id = register(
+            d,
+            Limits {
+                max_size: Some(1 << 20),
+                timeout: None,
+            },
+        )
+        .unwrap();
         assert_eq!(get(id).unwrap().origin, Source::File(file.clone()));
         assert_eq!(get(id).unwrap().source, KV);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A repetition count the compiler would write out in the millions is
+    /// refused before it starts, as the command's mistake; one within
+    /// [`MAX_REPEAT`] compiles. A count too large for the grammar's
+    /// number type saturates, and is refused the same way.
+    #[test]
+    fn repetition_counts_are_bounded() {
+        for (text, count) in [
+            ("doc = 10000000\"a\"\n", "10000000".to_string()),
+            ("doc = *99999999\"a\"\n", "99999999".to_string()),
+            ("doc = 1*1000000000\"a\"\n", "1000000000".to_string()),
+            (
+                "doc = 99999999999999999999999\"a\"\n",
+                usize::MAX.to_string(),
+            ),
+            ("doc = word\nword = ( 2000TX )\n", "2000".to_string()),
+            ("doc = 1025\"a\"\n", "1025".to_string()),
+        ] {
+            let e = compile(text).unwrap_err();
+            assert!(
+                e.starts_with(&format!("abnf: a repetition count of {count}")),
+                "{text:?}: {e}"
+            );
+            assert!(e.contains("at most 1024") && e.contains("`*word`"), "{e}");
+        }
+        for text in [
+            "doc = 1024\"a\"\n",
+            "doc = 1*255\"a\"\n",
+            "doc = *word\nword = ( TX )\n",
+        ] {
+            compile(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        }
+        let e = register(inline("impl-rep-a", "doc = 5000\"a\"\n"), Limits::NONE).unwrap_err();
+        assert!(e.is_usage());
+        assert_eq!(e.error.code, "grammar");
+        assert!(
+            e.to_string()
+                .starts_with("--grammar-expr impl-rep-a: abnf: a repetition count of 5000"),
+            "{e}"
+        );
+    }
+
+    /// The compile runs within the time limit a parse would, on a thread
+    /// of its own: past it, the grammar is a `timeout` error, and the
+    /// compiler is left to finish on its own.
+    #[test]
+    fn a_compile_past_the_time_limit_is_a_timeout() {
+        // Some 300 nested optionals take the compiler well over a
+        // millisecond (`1*1000"a"` takes about a second in a release build).
+        let slow = inline("impl-slow-a", "doc = 1*300\"a\"\n");
+        let limits = Limits {
+            max_size: None,
+            timeout: Some(Duration::from_millis(1)),
+        };
+        let e = register(slow, limits).unwrap_err();
+        assert!(!e.is_usage());
+        assert!(e.error.is_timeout(), "{}", e.error.message);
+        assert_eq!(e.limits, limits);
+        assert_eq!(
+            e.to_string(),
+            "--grammar-expr impl-slow-a: timeout: the grammar took longer than 0.001 s to compile"
+        );
+        assert!(
+            e.error.hint.contains("--timeout 0 for no limit"),
+            "{}",
+            e.error.hint
+        );
+        assert!(e.error.plain_report().starts_with("[aless/timeout]"));
+        assert_eq!(lookup("impl-slow-a"), None);
+        // With time enough, a grammar registers under a limit.
+        let limits = Limits {
+            max_size: None,
+            timeout: Some(Duration::from_secs(600)),
+        };
+        assert!(register(inline("impl-slow-b", "doc = 1*20\"a\"\n"), limits).is_ok());
+    }
+
+    /// A compiler message is one line of plain text: the engine's colour
+    /// codes are stripped and control characters shown escaped, as a
+    /// report's `message` is for a parse error.
+    #[test]
+    fn compiler_messages_are_one_plain_line() {
+        for text in ["doc = *\n", "doc = \"a\u{1}b\"\n", "doc = %x7E-21\n"] {
+            let e = compile(text).unwrap_err();
+            assert!(!e.contains('\u{1b}'), "{text:?}: {e:?}");
+            assert!(!e.chars().any(char::is_control), "{text:?}: {e:?}");
+            assert!(e.starts_with("abnf: "), "{text:?}: {e}");
+        }
+        let e = compile("doc = *\n").unwrap_err();
+        assert!(
+            e.contains("[tabnas/unexpected]: unexpected character(s): *"),
+            "{e}"
+        );
+        let e = compile("doc = %x7E-21\n").unwrap_err();
+        assert!(e.contains("regex parse error:\\n"), "{e}");
     }
 }
