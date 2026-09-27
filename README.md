@@ -499,9 +499,12 @@ alternatives that start with one another above all, since each copies
 the other's alternatives, and `--timeout` is what bounds a compile. A grammar file that cannot be read is an `io`
 error, status 3; one over `--max-size` is `too_large`, status 5, with
 its `size` and the `limit`; and the compile is held to `--timeout` as a
-parse is — on a thread of its own, which cannot be interrupted, so
-aless stops waiting for it and exits — with a `timeout` error, status
-6, and the `seconds`. Each has the fields of that kind (`file` the
+parse is, with a `timeout` error, status 6, and the `seconds`. It runs
+on a thread of its own, which cannot be interrupted, so past the limit
+aless stops waiting for it and exits; when no thread can be started
+(the process is out of threads or memory), it runs on aless's own
+thread to its end instead, and one that ended past the limit is refused
+all the same, its hint saying how long it took. Each has the fields of that kind (`file` the
 grammar file, `format` `null`) plus `grammar`. An input the grammar
 does not accept is a `parse` error like any other, with `format` the
 grammar's name and the line and column the parse stopped at.

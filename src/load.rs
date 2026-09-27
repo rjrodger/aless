@@ -554,13 +554,43 @@ impl LoadError {
     /// A grammar whose compile ran past the time limit. The compiler cannot
     /// be interrupted, so aless stopped waiting for it.
     pub(crate) fn compile_timed_out(limit: Duration) -> LoadError {
-        let limit = seconds(limit);
-        let message = format!("timeout: the grammar took longer than {limit} s to compile");
-        let hint = "The compiler cannot be interrupted, so aless stopped waiting for it.\nPass \
-                    a larger --timeout to let it finish, or --timeout 0 for no limit. A \
-                    repetition count in the hundreds (1*1000word) or thousands of productions \
-                    make a grammar slow to compile.";
-        LoadError::tagged("timeout", message).with_hint(hint)
+        let hint = format!(
+            "The compiler cannot be interrupted, so aless stopped waiting for it.\nPass a \
+             larger --timeout to let it finish, or --timeout 0 for no limit. {}",
+            Self::SLOW_GRAMMARS
+        );
+        Self::compile_late(limit).with_hint(&hint)
+    }
+
+    /// A grammar whose compile ended past the time limit on the caller's
+    /// thread, the one place it can run when no thread of its own can be
+    /// started: it cannot be stopped there, so it ran to its end, and the
+    /// report says how long it took, as a parse that finished late does.
+    pub(crate) fn compile_finished_late(limit: Duration, took: Duration) -> LoadError {
+        // To the millisecond, and never 0.
+        let took = Duration::from_millis(timeout_ms(Some(took)));
+        let hint = format!(
+            "No thread could be started for the compiler, so it ran to its end on aless's \
+             own and took {} s.\nPass a larger --timeout to have the grammar, or --timeout 0 \
+             for no limit. {}",
+            seconds(took),
+            Self::SLOW_GRAMMARS
+        );
+        Self::compile_late(limit).with_hint(&hint)
+    }
+
+    /// What makes a grammar slow to compile, for the hints above.
+    const SLOW_GRAMMARS: &'static str = "Long repetitions (1*500word), and rules of several \
+                                         alternatives that start with one another, make a \
+                                         grammar slow to compile.";
+
+    /// The message both of those carry.
+    fn compile_late(limit: Duration) -> LoadError {
+        let message = format!(
+            "timeout: the grammar took longer than {} s to compile",
+            seconds(limit)
+        );
+        LoadError::tagged("timeout", message)
     }
 
     /// A parse that finished, but after its time limit. It stopped nowhere

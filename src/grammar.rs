@@ -469,12 +469,14 @@ fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, L
 
 /// [`compile`] on this thread, for when no other can be had. It cannot be
 /// stopped, so it is timed: one that ends past `timeout`, with a grammar
-/// or an error, is a `timeout`, as it is when a thread waits on it.
+/// or an error, is a `timeout`, as it is when a thread waits on it, and
+/// its hint says the compile ran to its end.
 fn compile_here(source: &str, timeout: Option<Duration>) -> Result<Compiled, LoadError> {
     let start = Instant::now();
     let outcome = load::catch_grammar(|| compile(source));
-    if let Some(limit) = timeout.filter(|t| start.elapsed() >= *t) {
-        return Err(LoadError::compile_timed_out(limit));
+    let took = start.elapsed();
+    if let Some(limit) = timeout.filter(|t| took >= *t) {
+        return Err(LoadError::compile_finished_late(limit, took));
     }
     settle(outcome)
 }
@@ -1215,6 +1217,15 @@ word    = ( TX )
             "{}",
             e.error.hint
         );
+        // On a thread of its own, the compile is left running: aless
+        // stopped waiting for it.
+        assert!(
+            e.error
+                .hint
+                .starts_with("The compiler cannot be interrupted, so aless stopped waiting"),
+            "{}",
+            e.error.hint
+        );
         assert!(e.error.plain_report().starts_with("[aless/timeout]"));
         assert_eq!(lookup("impl-slow-a"), None);
         // With time enough, a grammar registers under a limit.
@@ -1239,6 +1250,17 @@ word    = ( TX )
             e.message,
             "timeout: the grammar took longer than 0.001 s to compile"
         );
+        // The hint says what happened: the compile ran to its end, on
+        // aless's own thread, and was refused for its time.
+        assert!(
+            e.hint.starts_with(
+                "No thread could be started for the compiler, so it ran to its end on \
+                 aless's own and took "
+            ),
+            "{}",
+            e.hint
+        );
+        assert!(!e.hint.contains("stopped waiting"), "{}", e.hint);
         // A late refusal is late too: the time is the answer, not the error.
         let late_error = "doc = 1*300\"a\"\nbad = 99999999999999999999999\"a\"\n";
         let e = compile_here(late_error, Some(Duration::from_nanos(1)))
