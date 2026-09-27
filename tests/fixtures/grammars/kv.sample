@@ -10,6 +10,7 @@ SHELL_QUOTE='single quotes work too'
 
 # application settings
 LOG_LEVEL=debug        # inline comments are allowed
+export DEBIAN_FRONTEND=noninteractive
 MAX_CONNECTIONS=250
 RETRY_DELAY=1.5
 FEATURE_FLAGS=alpha,beta

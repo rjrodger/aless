@@ -36,6 +36,10 @@
     "value": "debug"
   },
   {
+    "key": "DEBIAN_FRONTEND",
+    "value": "noninteractive"
+  },
+  {
     "key": "MAX_CONNECTIONS",
     "value": "250"
   },

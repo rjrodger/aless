@@ -15,7 +15,7 @@ JSON it parses to:
 | `group.abnf` | `group.sample` | `{"name", "password", "gid", "members": […]}` |
 | `fstab.abnf` | `fstab.sample` | `{"spec", "file", "vfstype", "options": […], "freq", "passno"}` |
 | `resolv.conf.abnf` | `resolv.conf.sample` | `{"nameserver": "10.0.0.53"}`, `{"search": [...]}`, `{"domain": …}`, `{"options": […]}`, `{"sortlist": […]}`, `{"comment": ["generated", "by", …]}` for a `;` line |
-| `kv.abnf` (shell-style `KEY=value`) | `kv.sample` | `{"key": "NAME", "value": "\"Ubuntu\""}` |
+| `kv.abnf` (shell-style `KEY=value`, `export KEY=value`) | `kv.sample` | `{"key": "NAME", "value": "\"Ubuntu\""}` |
 
 `NAME.expected.json` is the exact value (pretty-printed) that
 `aless --grammar NAME=NAME.abnf --json` prints for `NAME.sample`. Every
@@ -198,7 +198,10 @@ minimal grammar and what happened.
   cannot match a line and build nothing; a `;` anywhere but the first
   column fails the parse.
 - `kv`: `KEY=value` with no spaces around `=`; the value keeps its
-  quotes; `#` starts a comment unless inside quotes.
+  quotes; `#` starts a comment unless inside quotes. `export KEY=value`
+  is accepted and the `export` dropped (a second line shape, since an
+  optional literal would count as a member); as `export` is then a
+  keyword, a key named `export` itself fails the parse.
 
 ## What aless sets (findings for the implementation)
 

@@ -1,7 +1,9 @@
 ; Shell-style settings (os-release, .env, /etc/default/*): KEY=value per line,
-; no spaces around the =; a value is bare words or a quoted string.
-kv    = *( entry %x0A / %x0A ) [ entry ]   ; @array
-entry = key "=" value                     ; @object key value
-key   = word
-value = *( word / ST / "=" )
-word  = ( TX )
+; no spaces around the =; a value is bare words or a quoted string. A leading
+; `export`, as .env and /etc/default files write it, is accepted and dropped.
+kv       = *( entry %x0A / exported %x0A / %x0A ) [ entry / exported ]   ; @array
+entry    = key "=" value                     ; @object key value
+exported = "export" key "=" value            ; @object key value
+key      = word
+value    = *( word / ST / "=" )
+word     = ( TX )
