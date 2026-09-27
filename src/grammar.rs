@@ -232,14 +232,24 @@ impl Compiled {
 /// 35 s. Real grammars stay in the hundreds (`1*255`).
 pub const MAX_REPEAT: usize = 1024;
 
+/// The most copies all of a grammar's repetitions may write out between
+/// them. Counts within [`MAX_REPEAT`] still add up, and the compiler's
+/// time grows about as the square of the total: two `1*1024` took 2.8 s,
+/// four 11 s, sixteen 153 s and 870 MB. Nesting adds, it does not
+/// multiply (`1024(1024"a")` writes 1024 + 1024 copies), and a rule is
+/// written out once however often it is named, so its counts are added
+/// once. Real grammars total in the hundreds.
+pub const MAX_REPEAT_TOTAL: usize = 2 * MAX_REPEAT;
+
 /// Compile ABNF text: the compiler's parse, a check of the repetition
-/// counts against [`MAX_REPEAT`], then its conversion, with the start rule
-/// its default (the grammar's first production) and `word_keywords` on, so
-/// a quoted keyword (`"nameserver"`) matches whole words and not the front
-/// of a longer one; then the engine options of [`plain_text_options`]; and
-/// the result installed once on a fresh engine to be sure it takes. The
-/// error is the compiler's own message, or the engine's, on one line and
-/// without its colour codes.
+/// counts against [`MAX_REPEAT`] each and [`MAX_REPEAT_TOTAL`] in all,
+/// then its conversion, with the start rule its default (the grammar's
+/// first production) and `word_keywords` on, so a quoted keyword
+/// (`"nameserver"`) matches whole words and not the front of a longer one;
+/// then the engine options of [`plain_text_options`]; and the result
+/// installed once on a fresh engine to be sure it takes. The error is the
+/// compiler's own message, or the engine's, on one line and without its
+/// colour codes.
 pub fn compile(source: &str) -> Result<Compiled, String> {
     let options = AbnfConvertOptions {
         word_keywords: true,
@@ -263,15 +273,18 @@ fn one_line(message: &str) -> String {
     load::escape_controls(&load::strip_ansi(message))
 }
 
-/// Refuse a repetition count over [`MAX_REPEAT`] before the compiler
-/// writes the copies out. The elements are walked with a stack of their
-/// own; the compiler bounds their nesting itself, later.
+/// Refuse a repetition count over [`MAX_REPEAT`], or counts that add up
+/// to more than [`MAX_REPEAT_TOTAL`], before the compiler writes the
+/// copies out. A count over the limit is named first, wherever it is. The
+/// elements are walked with a stack of their own; the compiler bounds
+/// their nesting itself, later.
 fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
     let mut stack: Vec<&Element> = grammar
         .productions
         .iter()
         .flat_map(|p| p.alts.iter().flatten())
         .collect();
+    let mut total = 0usize;
     while let Some(el) = stack.pop() {
         match &el.kind {
             Kind::Rep { min, max, inner } => {
@@ -287,6 +300,7 @@ fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
                          `*word` or `1*word` for a run of any length"
                     ));
                 }
+                total = total.saturating_add(count);
                 stack.push(inner);
             }
             Kind::Opt { inner } | Kind::Star { inner, .. } | Kind::Plus { inner } => {
@@ -295,6 +309,13 @@ fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
             Kind::Group { alts } => stack.extend(alts.iter().flatten()),
             _ => {}
         }
+    }
+    if total > MAX_REPEAT_TOTAL {
+        return Err(format!(
+            "abnf: the repetition counts add up to {total}, more than aless compiles (at most \
+             {MAX_REPEAT_TOTAL} copies in a grammar): the compiler writes out every copy of \
+             every repetition, so write `*word` or `1*word` for a run of any length"
+        ));
     }
     Ok(())
 }
@@ -926,6 +947,57 @@ word    = ( TX )
                 .starts_with("--grammar-expr impl-rep-a: abnf: a repetition count of 5000"),
             "{e}"
         );
+    }
+
+    /// Counts within [`MAX_REPEAT`] each still add up: the compiler writes
+    /// out every copy of every repetition, and its time grows about as
+    /// the square of the total, so the total is bounded too. Nesting adds,
+    /// it does not multiply.
+    #[test]
+    fn repetition_counts_are_bounded_in_total() {
+        // Sixteen `1*1024` took 153 s and 870 MB before the total was
+        // checked. Registered under a time limit, so that a regression
+        // fails in seconds, as a `timeout`, rather than holding the suite.
+        let many = inline(
+            "impl-rep-total",
+            &format!("doc ={}\n", " 1*1024\"a\"".repeat(16)),
+        );
+        let limits = Limits {
+            max_size: None,
+            timeout: Some(Duration::from_secs(10)),
+        };
+        let e = register(many, limits).unwrap_err();
+        assert!(
+            e.is_usage() && e.error.code == "grammar",
+            "{}",
+            e.error.message
+        );
+        assert!(
+            e.error
+                .message
+                .contains("the repetition counts add up to 16384"),
+            "{}",
+            e.error.message
+        );
+        assert!(
+            e.error.message.contains("at most 2048") && e.error.message.contains("`*word`"),
+            "{}",
+            e.error.message
+        );
+        assert_eq!(lookup("impl-rep-total"), None);
+        // Across rules as within one: a rule is written out once, however
+        // often it is named, so its counts are added once.
+        let e = compile("doc = 1024r 1024r\nr = 1*1024\"a\"\n").unwrap_err();
+        assert!(e.contains("add up to 3072"), "{e}");
+        // One count over the limit is named as such, wherever it is.
+        let e = compile("doc = 1024\"a\" 1024\"a\" 5000\"a\"\n").unwrap_err();
+        assert!(e.contains("a repetition count of 5000"), "{e}");
+        let e = compile("doc = 5000\"a\" 1024\"a\" 1024\"a\"\n").unwrap_err();
+        assert!(e.contains("a repetition count of 5000"), "{e}");
+        // 1024 + 1024 copies, nested or side by side, compile.
+        for text in ["doc = 1024(1024\"a\")\n", "doc = 1024\"a\" 1024\"b\"\n"] {
+            compile(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        }
     }
 
     /// The compile runs within the time limit a parse would, on a thread

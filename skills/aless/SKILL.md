@@ -114,15 +114,15 @@ case-insensitively; `NAME,NAME2=FILE` gives one grammar two names; both
 options repeat. A grammar that does not compile exits 2 before any
 input is read, with `{"error": {"kind": "usage", "message": "--grammar
 hosts: …", "grammar": "hosts", "file": "hosts.abnf"}}` (`file` absent
-for `--grammar-expr`; a repetition count over 1,024 is refused the same
-way); a grammar file that cannot be read exits 3 (`io`), one over
-`--max-size` exits 5 (`too_large`, with `size` and `limit`), and a
-compile past `--timeout` exits 6 (`timeout`, with `seconds`), each with
-that kind's fields (`file` the grammar file, `format` null) plus
-`grammar`; an input the grammar rejects is a `parse` error, exit 1,
-with `format` the grammar's name and the `line` and `col` it stopped
-at. `--render csv` works on the records (the input is parsed whole
-first).
+for `--grammar-expr`; a repetition count over 1,024, or counts adding up
+to more than 2,048 in one grammar, is refused the same way); a grammar
+file that cannot be read exits 3 (`io`), one over `--max-size` exits 5
+(`too_large`, with `size` and `limit`), and a compile past `--timeout`
+exits 6 (`timeout`, with `seconds`), each with that kind's fields
+(`file` the grammar file, `format` null) plus `grammar`; an input the
+grammar rejects is a `parse` error, exit 1, with `format` the grammar's
+name and the `line` and `col` it stopped at. `--render csv` works on
+the records (the input is parsed whole first).
 
 ## Output
 

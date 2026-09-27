@@ -482,9 +482,11 @@ before any input is read: status 2, and without a screen
 compiler's message>", "grammar": "hosts", "file": "hosts.abnf"}}`
 (`file` omitted for `--grammar-expr`); the compiler's message is one
 line, without its colour codes. A repetition count over 1,024
-(`2000"a"`, `1*5000word`) is refused the same way: the compiler writes
-out every copy, and a count in the millions would take gigabytes before
-any input was read. A grammar file that cannot be read is an `io`
+(`2000"a"`, `1*5000word`) is refused the same way, and so are counts
+that add up to more than 2,048 in one grammar (three `1*1024word`): the
+compiler writes out every copy, its time grows about as the square of
+the total, and a count in the millions would take gigabytes before any
+input was read. A grammar file that cannot be read is an `io`
 error, status 3; one over `--max-size` is `too_large`, status 5, with
 its `size` and the `limit`; and the compile is held to `--timeout` as a
 parse is — on a thread of its own, which cannot be interrupted, so

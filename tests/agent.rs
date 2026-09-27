@@ -1372,6 +1372,32 @@ fn grammar_failures_have_their_shapes_and_statuses() {
             .contains("a repetition count of"),
         "{e}"
     );
+    // Counts within the limit each still add up, and the total is bounded
+    // too: three `1*1024` would keep the compiler busy for seconds, and
+    // sixteen for minutes. The timeout turns a regression into a status 6
+    // within ten seconds, not a held suite.
+    let out = aless(
+        &[
+            "--grammar-expr",
+            "many=doc = 1*1024\"a\" 1*1024\"a\" 1*1024\"a\"\n",
+            "--timeout",
+            "10",
+            "--json",
+            "tests/fixtures/lines.txt",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("usage"));
+    assert_eq!(e["grammar"], json!("many"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("the repetition counts add up to 3072"),
+        "{e}"
+    );
     // The compiler's message is one plain line: no colour codes, no line
     // breaks.
     let out = aless(
