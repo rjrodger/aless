@@ -54,6 +54,9 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --where             The start's entry: its path and source position
         --check             Parse each FILE and report
                             {ok, files: [{file, format, ok, error}]}
+        --render <FORMAT>   csv or json: the records at the start (the elements
+                            of an array; JSON Lines and CSV row by row) as CSV,
+                            or the value there as JSON, streamed as it is read
         --path <PATH>       Start at PATH, in the jq syntax every output uses
                             (.a.b[0].\"odd key\"); a.b[0], $.a.b[0] and JSON
                             Pointer (/a/b/0) work too
@@ -65,13 +68,16 @@ WITHOUT A SCREEN (scripts, agents, pipes):
 
     Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
     keyed value is at its key. Numbers are 64-bit floats. Input is read
-    whole before it is parsed, so output starts when the parse ends.
-    Errors are JSON on standard error: {\"error\": {\"kind\", \"message\", …}},
-    with the file, line, col, code and hint when the input did not parse.
-    Exit status: 0 success, 1 the input did not parse (--check: an input
-    failed), 2 bad usage or no terminal for the viewer, 3 an input could
-    not be read (or the output not written), 4 --path or --at names
-    nothing, 5 an input is over --max-size, 6 a parse ran past --timeout.
+    whole before it is parsed, so output starts when the parse ends;
+    --render streams instead, and reads JSON Lines and CSV a record at a
+    time. Errors are JSON on standard error: {\"error\": {\"kind\", \"message\",
+    …}}, with the file, line, col, code and hint when the input did not
+    parse. Exit status: 0 success, 1 the input did not parse (--check: an
+    input failed; --render: the input or its records will not do), 2 bad
+    usage or no terminal for the viewer, 3 an input could not be read (or
+    the output not written), 4 --path or --at names nothing, 5 an input is
+    over --max-size (--render: over a limit of the transducer's), 6 a
+    parse ran past --timeout.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -79,6 +85,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     aless --find '\"image\":' deploy.yaml     every image, with its line
     aless --check $(git ls-files '*.toml')  do they all parse?
     aless -k csv --json < data.csv          stdin is JSON unless -k says
+    aless --render csv --path .items x.json the records under .items as CSV
+    aless --render json big.yaml            the document as JSON, streamed
 
 THE VIEWER (in a terminal):
     Each FILE opens in its own tab (Tab / Shift-Tab switch). Files are
@@ -139,6 +147,7 @@ const HEADLESS_OPTIONS: &[&str] = &[
     "--find",
     "--where",
     "--check",
+    "--render",
     "--path",
     "--at",
     "--limit",
@@ -211,6 +220,12 @@ fn parse_args() -> Result<Args, String> {
             "--find" => op = Some(Op::Find(value()?)),
             "--where" => op = Some(Op::Where),
             "--check" => op = Some(Op::Check),
+            "--render" => {
+                let v = value()?;
+                let renderer = aless::export::Renderer::from_name(&v)
+                    .ok_or_else(|| format!("--render writes csv or json, not {v}"))?;
+                op = Some(Op::Render(renderer));
+            }
             "--path" => {
                 let v = value()?;
                 if matches!(args.start, Start::At(..)) {
@@ -254,7 +269,7 @@ fn parse_args() -> Result<Args, String> {
             match &args.op {
                 Some(prev) if prev.flag() != op.flag() => {
                     return Err(format!(
-                        "{} and {} both say what to print: give one of --json, --paths, --find, --where, --check",
+                        "{} and {} both say what to print: give one of --json, --paths, --find, --where, --check, --render",
                         prev.flag(),
                         op.flag()
                     ));
@@ -265,6 +280,12 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.op == Some(Op::Check) && args.start != Start::Root {
         return Err("--check parses whole files: it takes no --path or --at".into());
+    }
+    if matches!(args.op, Some(Op::Render(_))) && matches!(args.start, Start::At(..)) {
+        return Err(
+            "--render reads the input once, front to back, and cannot find a source position              in it: start it with --path, or use --where --at to find the path"
+                .into(),
+        );
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
@@ -384,8 +405,8 @@ fn refuse_viewer(e: &io::Error) -> ! {
     eprintln!(
         "aless: cannot start the viewer: {e}\n\
          The viewer needs a terminal to draw on and read keys from. To read a\n\
-         file without a screen, use --json, --paths, --find, --where or --check\n\
-         (see aless --help); aless FILE > out.json writes the document as JSON."
+         file without a screen, use --json, --paths, --find, --where, --check or\n\
+         --render (see aless --help); aless FILE > out.json writes the document as JSON."
     );
     std::process::exit(headless::status::USAGE);
 }
@@ -469,16 +490,24 @@ fn print_headless(args: Args) -> i32 {
     } else {
         Some(&mut input)
     };
-    let out = headless::run(&req, stdin);
-    // A reader that stops early (`| head`) is not an error.
-    let mut stdout = io::stdout().lock();
-    let written = stdout
-        .write_all(out.stdout.as_bytes())
-        .and_then(|()| stdout.flush());
-    if let Err(e) = written {
-        if e.kind() != io::ErrorKind::BrokenPipe {
-            let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
-            return headless::status::IO;
+    // A streamed result (`--render`) is written as it is produced, through
+    // the renderer's own buffer; the other results come back whole.
+    let out = headless::run_to(&req, stdin, Box::new(io::stdout()));
+    // A stream that failed on its way out has said so in detail, and left
+    // nothing to print: standard output is then not touched again, so that
+    // a flush failing once more cannot replace that report with a plainer
+    // one. (A failed --check still has its report to print.) A reader that
+    // stops early (`| head`) is not an error.
+    if !out.stdout.is_empty() || out.status == headless::status::OK {
+        let mut stdout = io::stdout().lock();
+        let written = stdout
+            .write_all(out.stdout.as_bytes())
+            .and_then(|()| stdout.flush());
+        if let Err(e) = written {
+            if e.kind() != io::ErrorKind::BrokenPipe {
+                let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
+                return headless::status::IO;
+            }
         }
     }
     let _ = io::stderr().write_all(out.stderr.as_bytes());

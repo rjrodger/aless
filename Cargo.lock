@@ -31,7 +31,9 @@ dependencies = [
  "tabnas-jsonic",
  "tabnas-jsonl",
  "tabnas-markdown",
+ "tabnas-render",
  "tabnas-toml",
+ "tabnas-transduce",
  "tabnas-xml",
  "tabnas-yaml",
  "tabnas-zon",
@@ -857,6 +859,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-render"
+version = "0.1.0"
+source = "git+https://github.com/tabnas/render#cebb1974171d79adca666e0437de7e79e9eac0b8"
+dependencies = [
+ "tabnas",
+ "tabnas-transduce",
+]
+
+[[package]]
 name = "tabnas-toml"
 version = "0.5.9"
 source = "git+https://github.com/tabnas/toml#e5121add23b164e3c572ce2e0f8179c6d76d2efc"
@@ -866,6 +877,18 @@ dependencies = [
  "serde_json",
  "tabnas",
  "tabnas-jsonic",
+]
+
+[[package]]
+name = "tabnas-transduce"
+version = "0.1.0"
+source = "git+https://github.com/tabnas/transduce#74b28822731f53332e010e8ac4007a6d21e6a8cc"
+dependencies = [
+ "indexmap",
+ "serde_json",
+ "tabnas",
+ "tabnas-csv",
+ "tabnas-json",
 ]
 
 [[package]]

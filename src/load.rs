@@ -293,12 +293,12 @@ const PARSE_STACK: usize = 64 << 20;
 
 /// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or
 /// time past the timeout.
-const STOP_DEPTH: u8 = 1;
-const STOP_TIME: u8 = 2;
+pub(crate) const STOP_DEPTH: u8 = 1;
+pub(crate) const STOP_TIME: u8 = 2;
 
 /// When a parse must be done by.
 #[derive(Clone)]
-struct Deadline {
+pub(crate) struct Deadline {
     at: Instant,
     /// The time the parse was given, for its report.
     limit: Duration,
@@ -310,11 +310,52 @@ struct Deadline {
 
 impl Deadline {
     /// Whether the time is up, as the parse finds it between two steps.
-    fn passed(&self) -> bool {
+    pub(crate) fn passed(&self) -> bool {
         match &self.alarm {
             Some(alarm) => alarm.load(Ordering::Relaxed),
             None => Instant::now() >= self.at,
         }
+    }
+}
+
+/// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
+/// [`STOP_TIME`], else 0), and the source position the parse had reached,
+/// so a report can show how far it got when the engine's own error does
+/// not survive (the transducer's `ABORTED` carries no position).
+#[derive(Debug)]
+pub(crate) struct Stop {
+    why: AtomicU8,
+    line: AtomicU64,
+    col: AtomicU64,
+}
+
+impl Stop {
+    fn new() -> Arc<Stop> {
+        Arc::new(Stop {
+            why: AtomicU8::new(0),
+            line: AtomicU64::new(0),
+            col: AtomicU64::new(0),
+        })
+    }
+
+    fn record(&self, why: u8, ctx: &tabnas::Context) {
+        if let Some(t0) = ctx.t0() {
+            self.line.store(t0.site.ri as u64, Ordering::Relaxed);
+            self.col.store(t0.site.ci as u64, Ordering::Relaxed);
+        }
+        self.why.store(why, Ordering::Relaxed);
+    }
+
+    /// [`STOP_DEPTH`], [`STOP_TIME`], or 0 when aless did not stop it.
+    pub(crate) fn why(&self) -> u8 {
+        self.why.load(Ordering::Relaxed)
+    }
+
+    /// The 1-based line and column the parse was at when stopped; 0 when
+    /// unknown.
+    pub(crate) fn position(&self) -> (u32, u32) {
+        let at = |n: &AtomicU64| u32::try_from(n.load(Ordering::Relaxed)).unwrap_or(u32::MAX);
+        (at(&self.line), at(&self.col))
     }
 }
 
@@ -420,7 +461,7 @@ impl LoadError {
 
     /// Add advice to an error aless raised itself, shown under the report
     /// as the engine shows a grammar's.
-    fn with_hint(mut self, hint: &str) -> LoadError {
+    pub(crate) fn with_hint(mut self, hint: &str) -> LoadError {
         let hint = escape_controls_but_newlines(hint);
         self.report.push_str("\n\n");
         for line in wrap(&hint, 72) {
@@ -781,7 +822,8 @@ pub struct Loaded {
     pub source: String,
 }
 
-fn make_parser(format: Format) -> Option<Tabnas> {
+/// The tabnas parser for a format; `None` for plain text, which has none.
+pub(crate) fn make_parser(format: Format) -> Option<Tabnas> {
     Some(match format {
         Format::Json => tabnas_json::make(),
         Format::Jsonl => tabnas_jsonl::make(),
@@ -832,10 +874,10 @@ pub fn parse_in_progress() -> bool {
     CATCHING.try_with(|c| c.get() > 0).unwrap_or(false)
 }
 
-struct CatchGuard;
+pub(crate) struct CatchGuard;
 
 impl CatchGuard {
-    fn enter() -> CatchGuard {
+    pub(crate) fn enter() -> CatchGuard {
         CATCHING.with(|c| c.set(c.get() + 1));
         CatchGuard
     }
@@ -845,6 +887,29 @@ impl Drop for CatchGuard {
     fn drop(&mut self) {
         let _ = CATCHING.try_with(|c| c.set(c.get() - 1));
     }
+}
+
+/// Run a grammar's code under the panic guard: a grammar is a plugin, and
+/// a defect in one must not take the process down. A panic comes back as
+/// its message, for a `grammar` error.
+pub(crate) fn catch_grammar<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    let _guard = CatchGuard::enter();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|panic| panic_message(&*panic))
+}
+
+/// What a panic said, or `unknown panic`.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+/// The error for a grammar that panicked, as the loader reports one.
+pub(crate) fn grammar_failed(format: Format, what: &str) -> LoadError {
+    LoadError::tagged("grammar", format!("{format} grammar failed: {what}"))
 }
 
 /// Parse `src` as `format`, within the time limit of [`Limits::current`].
@@ -870,6 +935,21 @@ pub fn parse_within(
     if format == Format::Text {
         return Ok(Doc::from_lines(&lines(src)));
     }
+    on_parse_thread(timeout, || {}, |deadline| parse_here(src, format, deadline))
+}
+
+/// Run `work`, a parse, on a thread with the stack a parse needs
+/// ([`PARSE_STACK`]), and hand it the deadline `timeout` sets. This thread
+/// only waits, so it keeps the time: once the deadline passes it raises
+/// the alarm the deadline's [`Deadline::passed`] reads, and calls
+/// `on_alarm`, for a parse that has a stop flag of its own to set (the
+/// transducer's). When no thread can be had, `work` runs on this one with
+/// a deadline that reads the clock, and `on_alarm` is never called.
+pub(crate) fn on_parse_thread<T: Send>(
+    timeout: Option<Duration>,
+    on_alarm: impl FnOnce() + Send,
+    work: impl FnOnce(Option<Deadline>) -> T + Send,
+) -> T {
     // A time too far off to reach is no limit.
     let deadline = timeout.and_then(|limit| {
         let at = Instant::now().checked_add(limit)?;
@@ -885,22 +965,27 @@ pub fn parse_within(
         ..d
     });
     let (done, finished) = mpsc::channel::<()>();
+    // The work is taken by whichever thread runs it: a spawn that fails
+    // consumes its closure, so the work cannot be moved into that closure.
+    let slot = std::sync::Mutex::new(Some(work));
+    let take = || slot.lock().unwrap_or_else(|e| e.into_inner()).take();
     std::thread::scope(|scope| {
         let spawned = std::thread::Builder::new()
             .name("aless-parse".into())
             .stack_size(PARSE_STACK)
-            .spawn_scoped(scope, move || {
+            .spawn_scoped(scope, || {
                 // Hung up when the parse ends, however it ends.
                 let _done = done;
-                parse_here(src, format, watched)
+                let work = take().expect("the work runs once");
+                work(watched)
             });
         match spawned {
             Ok(handle) => {
-                // This thread has only to wait, so it keeps the time.
                 if let Some(d) = &deadline {
                     let left = d.at.saturating_duration_since(Instant::now());
                     if finished.recv_timeout(left) == Err(RecvTimeoutError::Timeout) {
                         alarm.store(true, Ordering::Relaxed);
+                        on_alarm();
                     }
                 }
                 // A panic outside the grammar is aless's own: let it through.
@@ -910,7 +995,10 @@ pub fn parse_within(
             }
             // No thread to be had: parse on this one, within the same caps,
             // reading the clock itself.
-            Err(_) => parse_here(src, format, deadline),
+            Err(_) => {
+                let work = take().expect("a failed spawn never ran the work");
+                work(deadline)
+            }
         }
     })
 }
@@ -930,7 +1018,7 @@ fn parse_with(
     format: Format,
     deadline: Option<Deadline>,
 ) -> Result<Doc, LoadError> {
-    let stopped = guard(&mut parser, deadline.clone());
+    let stopped = guard(&mut parser, deadline.clone(), || {});
     let sink = prov::capture(&mut parser);
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
@@ -939,7 +1027,7 @@ fn parse_with(
             parser.parse(src).map_err(Box::new)
         }))
     };
-    let stop = stopped.load(Ordering::Relaxed);
+    let stop = stopped.why();
     let now = Instant::now();
     // The time is looked at between steps, and a step is not cut short: one
     // that reads a long string can run past the deadline and be the parse's
@@ -1009,17 +1097,7 @@ fn parse_with(
             let hints = parser.config().hint;
             Err(LoadError::from_tabnas(&e, hint_template(&hints, &e.code)))
         }
-        Err(panic) => {
-            let what = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_else(|| "unknown panic".to_string());
-            Err(LoadError::tagged(
-                "grammar",
-                format!("{format} grammar failed: {what}"),
-            ))
-        }
+        Err(panic) => Err(grammar_failed(format, &panic_message(&*panic))),
     }
 }
 
@@ -1028,20 +1106,29 @@ fn parse_with(
 /// engine, in the parse budget. A grammar's own depth limit is a parse
 /// guard, which the engine runs beside the budget rather than in it, so
 /// setting this one leaves it in place; a budget the grammar keeps itself
-/// still runs, at its own interval. Returns why aless stopped the parse,
-/// if it did: [`STOP_DEPTH`], [`STOP_TIME`], else 0.
-fn guard(parser: &mut Tabnas, deadline: Option<Deadline>) -> Arc<AtomicU8> {
-    let stopped = Arc::new(AtomicU8::new(0));
+/// still runs, at its own interval. Returns a record of why aless stopped
+/// the parse, if it did, and where. `notify` is called as the parse is
+/// stopped, for a caller with a flag of its own to raise: the transducer
+/// reports a parse its abort flag stopped as `ABORTED`, and anything else
+/// the engine cancelled as the input's fault.
+pub(crate) fn guard(
+    parser: &mut Tabnas,
+    deadline: Option<Deadline>,
+    notify: impl Fn() + Send + Sync + 'static,
+) -> Arc<Stop> {
+    let stopped = Stop::new();
     let flag = stopped.clone();
     let own = parser.config().parse.budget;
     let (every, check) = (own.check_every_n, own.on_check);
     parser.parse_budget(1, move |ctx| {
         if ctx.rule_stack.len() > MAX_RULE_DEPTH {
-            flag.store(STOP_DEPTH, Ordering::Relaxed);
+            flag.record(STOP_DEPTH, ctx);
+            notify();
             return false;
         }
         if deadline.as_ref().is_some_and(Deadline::passed) {
-            flag.store(STOP_TIME, Ordering::Relaxed);
+            flag.record(STOP_TIME, ctx);
+            notify();
             return false;
         }
         match &check {
@@ -1098,21 +1185,29 @@ pub fn load_path_within(
     format: Option<Format>,
     limits: Limits,
 ) -> Result<Loaded, LoadError> {
+    let source = read_path_within(path, limits.max_size)?;
+    let format = format.unwrap_or_else(|| Format::detect(path));
+    load_str_within(source, format, limits).map_err(|e| e.with_origin(&origin_of(path)))
+}
+
+/// Read a file's text, holding no more than `max_size` bytes of it: a file
+/// known to be over the limit is refused before any of it is read. Bytes
+/// that are not UTF-8 are replaced. The error names the file as a report
+/// does ([`origin_of`]).
+pub fn read_path_within(path: &Path, max_size: Option<u64>) -> Result<String, LoadError> {
     let origin = origin_of(path);
     let file = std::fs::File::open(path)
         .map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
-    if let (Some(max), Ok(meta)) = (limits.max_size, file.metadata()) {
+    if let (Some(max), Ok(meta)) = (max_size, file.metadata()) {
         if meta.is_file() && meta.len() > max {
             return Err(LoadError::too_large(Some(meta.len()), max).with_origin(&origin));
         }
     }
-    let bytes = read_within(file, limits.max_size).map_err(|e| e.with_origin(&origin))?;
-    let source = match String::from_utf8(bytes) {
+    let bytes = read_within(file, max_size).map_err(|e| e.with_origin(&origin))?;
+    Ok(match String::from_utf8(bytes) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-    };
-    let format = format.unwrap_or_else(|| Format::detect(path));
-    load_str_within(source, format, limits).map_err(|e| e.with_origin(&origin))
+    })
 }
 
 #[cfg(test)]
@@ -1131,6 +1226,25 @@ mod tests {
             assert!(!elsewhere);
         }
         assert!(!parse_in_progress());
+    }
+
+    #[test]
+    fn a_grammar_panic_is_caught_as_its_message() {
+        assert_eq!(catch_grammar(|| 1 + 1), Ok(2));
+        assert_eq!(catch_grammar(|| panic!("boom")).unwrap_err(), "boom");
+        let n = 3;
+        assert_eq!(
+            catch_grammar(|| -> () { panic!("bad {n}") }).unwrap_err(),
+            "bad 3"
+        );
+        assert!(
+            !parse_in_progress(),
+            "the guard is left when the panic is caught"
+        );
+        let e = grammar_failed(Format::Json, "boom");
+        assert_eq!(e.code, "grammar");
+        assert_eq!(e.message, "json grammar failed: boom");
+        assert!(!e.is_io() && !e.is_timeout() && !e.is_too_large());
     }
 
     #[test]
