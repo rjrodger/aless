@@ -225,7 +225,10 @@ grammars](#custom-grammars)).
 A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
-TOML, INI and ZON, 256 for XML, 512 for JSONC).
+TOML, INI and ZON, 256 for XML, 512 for JSONC). For a grammar from the
+command line the 1,000 levels are measured on the value it built, once
+the parse is done, and the error then has no `line` ([Custom
+grammars](#custom-grammars)).
 
 **Large inputs.** An input is read whole, and parsed whole, before
 anything is printed: the tabnas grammars parse complete documents, so
@@ -474,6 +477,20 @@ input the grammar does not accept is a `parse` error like any other,
 with `format` the grammar's name and the line and column the parse
 stopped at.
 
+**Limits.** The compiler writes a repetition (`*entry`) as a rule that
+calls itself once per item, so the engine keeps a rule open for every
+item matched so far, and a long flat file costs the depth a nested
+document would: 1,500 lines of `hosts` reach the 3,000 open rules the
+built-in grammars stop at. Those rules live on the heap, not the stack,
+so a grammar from the command line is allowed 1,000,000 of them — some
+500,000 lines of the library's grammars, 30 MB of `hosts` — and past
+that the parse fails as `too_deep` with a message that names the open
+rules rather than nesting. Nesting is measured on the value the grammar
+built instead, once the parse is done: over 1,000 levels is `too_deep`
+too, with no `line`. A parse takes about 10 KB of memory a line and
+some 80 µs (300,000 lines of `hosts`: 24 s, 2.8 GB; 86,000 lines: 7 s,
+0.8 GB), so `--timeout` and `--max-size` matter as for any format.
+
 **Source positions** come from the token alignment every format has
 ([Source positions](#source-positions)): a value that is one token's
 text (a `TX` word) is placed exactly; one assembled from several tokens
@@ -690,7 +707,10 @@ down:
   with the same error: JSON, JSONL, JSONic, JSON5, YAML, TOML, INI and
   ZON at 127 levels, XML at 256 open elements, JSONC at 512 levels.
   The parse runs on a thread with a 64 MB stack, whatever the platform
-  gives the main thread.
+  gives the main thread. A grammar from the command line keeps one rule
+  open per item of a repetition, so its cap is 1,000,000 open rules and
+  nesting is measured on its value, once the parse is done ([Custom
+  grammars](#custom-grammars)).
 - **Time.** A parse that runs past `--timeout` stops with a `timeout`
   error showing how far it got. aless looks at the time between every two
   steps of the parser, but cannot cut a step short: one very long string

@@ -208,7 +208,10 @@ pipe `--json` into jq.
 - A document nested deeper than aless reads fails with code `too_deep`
   rather than crashing: past about 1,000 levels, or sooner where the
   grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
-  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC.
+  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC. A `--grammar`
+  grammar's nesting is measured on the value it built, after the parse
+  (the error then has no `line`); its files may run to some 500,000
+  lines, at about 10 KB of memory a line.
 - `--render` streams: JSON Lines, CSV and TSV are read a record at a
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);

@@ -64,8 +64,9 @@ Each rule of that is one you will reuse.
   matched before the newline skipper runs. Write the file as
   `*( entry %x0A / %x0A ) [ entry ]`: entries each followed by a
   newline, blank lines (`/ %x0A`) skipped, and the last line allowed to
-  end without a newline. Use `%x0A`, not the core rule `LF` (see
-  below). A CRLF file works too: the `\r` is treated as a space.
+  end without a newline when its shape has a fixed length (see "What
+  does not work"). Use `%x0A`, not the core rule `LF` (see below). A
+  CRLF file works too: the `\r` is treated as a space.
 - **Comments.** `#` to the end of the line is dropped by the lexer, so
   a comment line looks like a blank line to the grammar and an inline
   comment ends the entry. There is nothing to write for comments.
@@ -156,6 +157,25 @@ minimal grammar and what happened.
 - **Two shapes told apart only by word count.** `MAILTO = root` (three
   words) is neither a one-word setting nor a seven-word entry in
   `crontab.abnf` and fails the parse; `MAILTO=root` is fine.
+- **A last line of open-ended shape with no newline after it.**
+  `1.1.1.1 a b` as the whole of a hosts file, or `search a b c` as the
+  last line of a resolv.conf, fails with "unexpected end of input": once
+  `1*word` has run to the end of the input the trailing `[ entry ]`
+  cannot be told from `entry %x0A`, since the compiler decides between
+  two shapes within a few tokens of where they diverge. A last line of
+  fixed shape (`nameserver 1.1.1.1`, a passwd entry) ends without a
+  newline fine, and every line ending in a newline is fine.
+- **Files past about 500,000 lines.** The compiler writes a repetition
+  as a rule that calls itself once per item, so the engine keeps a rule
+  open for every item matched so far: two per line for the grammars
+  here. aless allows a grammar from the command line 1,000,000 open
+  rules (the built-in grammars stop at 3,000, which these grammars would
+  reach at 1,500 lines) and measures nesting on the value instead, so
+  the limit is some 500,000 lines, 30 MB of `hosts`, at about 10 KB of
+  memory a line (300,000 lines: 24 s and 2.8 GB in a release build).
+  Past it the parse fails as `too_deep`, naming the open rules. This is
+  tabnas-bnf's `*`/`1*` desugaring (`H = inner H / ε`), which only the
+  `X = prefix [ sep X ]` shape escapes as a same-depth repeat.
 
 ## Simplifications per format
 

@@ -1023,6 +1023,82 @@ fn custom_grammars_work_with_every_operation() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A custom grammar keeps a rule open for every item of a repetition, so a
+/// file of thousands of lines is not nesting: it parses, and `--check`
+/// and `--render` take it too. Nesting is measured on the value the
+/// grammar builds, past about 1,000 levels.
+#[test]
+fn custom_grammars_read_files_of_thousands_of_lines() {
+    let dir = std::env::temp_dir().join(format!("aless-long-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let hosts = dir.join("long.hosts");
+    let text: String = std::iter::once("# generated\n".to_string())
+        .chain((0..5_000).map(|i| {
+            format!(
+                "10.{}.{}.{}\thost{i}.example.com alias{i}\n",
+                (i >> 16) & 255,
+                (i >> 8) & 255,
+                i & 255
+            )
+        }))
+        .collect();
+    std::fs::write(&hosts, text).unwrap();
+    let grammar = format!("hosts={GRAMMARS}/hosts.abnf");
+    let file = hosts.to_str().unwrap();
+    let out = aless(&["--grammar", &grammar, "--json", "--compact", file], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let v = json(&out.stdout);
+    assert_eq!(v.as_array().unwrap().len(), 5_000);
+    assert_eq!(
+        v[4_999],
+        json!({"address": "10.0.19.135", "names": ["host4999.example.com", "alias4999"]})
+    );
+    let out = aless(&["--grammar", &grammar, "--check", "--compact", file], None);
+    assert_eq!(code(&out), 0);
+    assert_eq!(json(&out.stdout)["ok"], json!(true));
+    let out = aless(&["--grammar", &grammar, "--render", "csv", file], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 5_001);
+    // A value nested past the cap is too_deep, found once the parse is
+    // done, so without a position; within it, the compiler's tree comes
+    // through (an object and its `kids` array per level).
+    let nest = "n=doc = \"(\" doc \")\" / \"x\"\n";
+    let deep = dir.join("deep.n");
+    std::fs::write(&deep, "(".repeat(600) + "x" + &")".repeat(600)).unwrap();
+    let out = aless(
+        &["--grammar-expr", nest, "--json", deep.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(code(&out), 1);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("parse"));
+    assert_eq!(e["code"], json!("too_deep"));
+    assert_eq!(e["format"], json!("n"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("nested deeper than aless reads (about 1000 levels)"),
+        "{e}"
+    );
+    assert_eq!(e["line"], Value::Null);
+    std::fs::write(&deep, "(".repeat(400) + "x" + &")".repeat(400)).unwrap();
+    let out = aless(
+        &[
+            "--grammar-expr",
+            nest,
+            "--paths",
+            "--depth",
+            "0",
+            "--compact",
+            deep.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The command line may give a built-in format's name to a grammar: that
 /// grammar then reads the extension, and `--render` still parses whole.
 #[test]
