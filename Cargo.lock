@@ -861,7 +861,7 @@ dependencies = [
 [[package]]
 name = "tabnas-render"
 version = "0.1.0"
-source = "git+https://github.com/tabnas/render?branch=claude%2Fstreaming-transducer-render-kzyqua#bfe0ac21f17796f4379d355de95fdbbd75e69de4"
+source = "git+https://github.com/tabnas/render?branch=claude%2Fstreaming-transducer-render-kzyqua#6091c4c0c5147c08d0a379e107a10a03c60c7672"
 dependencies = [
  "tabnas",
  "tabnas-transduce",
