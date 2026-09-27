@@ -181,12 +181,13 @@ minimal grammar and what happened.
 
   That cap is a workaround, and the rule it works around is the fleet's:
   a repetition is replacement, never a push chain. An alternate in the
-  engine either pushes a child rule (`p`), a new frame for something the
-  tree must nest, or replaces the current rule (`r`), the same frame
-  re-entered for the next item of a sequence. `*entry` is a sequence, so
+  engine that hands control to another rule either pushes a child rule
+  (`p`), a new frame for something the tree must nest, or replaces the
+  current rule (`r`), the same frame re-entered for the next item of a
+  sequence. `*entry` is a sequence, so
   it is meant to compile to a replace loop, the loop `r` and the item
-  `p` where it nests, and rule depth (the engine's `d`) is then bounded
-  by the grammar's nesting and never by the file's length: a hosts file
+  `p` where it nests, and the loop's iterations then add nothing to rule depth (the
+  engine's `d`): a hosts file
   of any length costs the depth of one line. tabnas-bnf's `H = inner H /
   ε` is a push chain instead, which is why aless lets a grammar from the
   command line open 1,000,000 rules; once aless pins a bnf and abnf that

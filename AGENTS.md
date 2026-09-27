@@ -40,14 +40,14 @@ working here; `CLAUDE.md` imports it.
   names — runs in O(n²): 800 lines of `hosts` took 31 s in a debug
   build, 0.4 s without the check, and the release build is linear either
   way. `cargo test` and `target/debug/aless` inherit the setting; keep it.
-- **A repetition is a replace loop, never a push chain.** In the engine a
-  rule alternate either pushes a child rule (`p`), which opens a new
-  frame for something the tree must nest, or replaces the current rule
-  (`r`), which re-enters it in the same frame for the next item of a
-  sequence. Every `*A`, `1*A` and `m*A` in a grammar compiles to a
-  replace loop, the loop `r` and the item `p` where it nests, so rule
-  depth is bounded by the grammar's nesting and never by the file's
-  length. That is the maintainer's rule for the whole tabnas fleet, and
+- **A repetition is a replace loop, never a push chain.** In the engine an
+  alternate that hands control to another rule either pushes a child
+  rule (`p`), which opens a new frame for something the tree must nest,
+  or replaces the current rule (`r`), which re-enters it in the same
+  frame for the next item of a sequence. Every `*A`, `1*A` and `m*A` in a grammar compiles to a
+  replace loop, the loop `r` and the item `p` where it nests, so the loop's
+  iterations add no depth: a grammar's real recursion still nests with
+  its input, but depth never grows with a file's length. That is the maintainer's rule for the whole tabnas fleet, and
   `load` is written to it: the shared cap of 3,000 open rules
   (`MAX_RULE_DEPTH` in `src/load.rs`) is a nesting guard, and a flat
   file of any length should stay far under it. tabnas-bnf does not yet
