@@ -1,0 +1,39 @@
+[
+  {
+    "domain": "corp.example.com"
+  },
+  {
+    "search": [
+      "corp.example.com",
+      "example.com",
+      "lab.example.net"
+    ]
+  },
+  {
+    "nameserver": "10.0.0.53"
+  },
+  {
+    "nameserver": "10.0.0.54"
+  },
+  {
+    "nameserver": "2001:db8::53"
+  },
+  {
+    "nameserver": "8.8.8.8"
+  },
+  {
+    "options": [
+      "ndots:2",
+      "timeout:1",
+      "attempts:3",
+      "rotate",
+      "edns0"
+    ]
+  },
+  {
+    "sortlist": [
+      "10.0.0.0/255.255.255.0",
+      "192.168.1.0"
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+; /etc/group: name, password, gid and a comma-separated member list.
+group    = *( entry %x0A / %x0A ) [ entry ]   ; @array
+entry    = name ":" password ":" gid ":" members   ; @object name password gid members
+name     = word
+password = [ word ]
+gid      = word
+members  = [ word *( "," word ) ]              ; @array
+word     = ( TX )

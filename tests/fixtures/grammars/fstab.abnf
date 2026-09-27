@@ -1,0 +1,10 @@
+; /etc/fstab: six whitespace-separated fields; the last two may be omitted.
+fstab   = *( entry %x0A / %x0A ) [ entry ]   ; @array
+entry   = spec file vfstype options freq passno   ; @object spec file vfstype options freq passno
+spec    = word
+file    = word
+vfstype = word *( "," word )
+options = word *( "," word )                 ; @array
+freq    = [ word ]
+passno  = [ word ]
+word    = ( TX )

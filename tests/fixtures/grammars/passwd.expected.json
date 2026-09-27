@@ -1,0 +1,119 @@
+[
+  {
+    "name": "root",
+    "password": "x",
+    "uid": "0",
+    "gid": "0",
+    "gecos": "root",
+    "home": "/root",
+    "shell": "/bin/bash"
+  },
+  {
+    "name": "daemon",
+    "password": "x",
+    "uid": "1",
+    "gid": "1",
+    "gecos": "daemon",
+    "home": "/usr/sbin",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "bin",
+    "password": "x",
+    "uid": "2",
+    "gid": "2",
+    "gecos": "bin",
+    "home": "/bin",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "sys",
+    "password": "x",
+    "uid": "3",
+    "gid": "3",
+    "gecos": "sys",
+    "home": "/dev",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "sync",
+    "password": "x",
+    "uid": "4",
+    "gid": "65534",
+    "gecos": "sync",
+    "home": "/bin",
+    "shell": "/bin/sync"
+  },
+  {
+    "name": "www-data",
+    "password": "x",
+    "uid": "33",
+    "gid": "33",
+    "gecos": "www-data",
+    "home": "/var/www",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "nobody",
+    "password": "x",
+    "uid": "65534",
+    "gid": "65534",
+    "gecos": "nobody",
+    "home": "/nonexistent",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "systemd-network",
+    "password": "x",
+    "uid": "998",
+    "gid": "998",
+    "gecos": "systemd Network Management",
+    "home": "/",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "_apt",
+    "password": "x",
+    "uid": "100",
+    "gid": "65534",
+    "gecos": "",
+    "home": "/nonexistent",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "sshd",
+    "password": "x",
+    "uid": "101",
+    "gid": "65534",
+    "gecos": "",
+    "home": "/run/sshd",
+    "shell": "/usr/sbin/nologin"
+  },
+  {
+    "name": "alice",
+    "password": "x",
+    "uid": "1000",
+    "gid": "1000",
+    "gecos": "Alice Liddell,,,",
+    "home": "/home/alice",
+    "shell": "/bin/bash"
+  },
+  {
+    "name": "bob",
+    "password": "x",
+    "uid": "1001",
+    "gid": "1001",
+    "gecos": "Bob O'Neill,Room 12,555-0100,",
+    "home": "/home/bob",
+    "shell": "/bin/zsh"
+  },
+  {
+    "name": "guest",
+    "password": "*",
+    "uid": "1002",
+    "gid": "1002",
+    "gecos": "",
+    "home": "/home/guest",
+    "shell": ""
+  }
+]

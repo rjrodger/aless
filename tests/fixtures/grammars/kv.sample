@@ -1,0 +1,17 @@
+# Shell-style settings: KEY=value, one per line.
+NAME="Ubuntu"
+VERSION="24.04.1 LTS (Noble Numbat)"
+ID=ubuntu
+ID_LIKE=debian
+PRETTY_NAME="Ubuntu 24.04.1 LTS"
+VERSION_ID="24.04"
+HOME_URL="https://www.ubuntu.com/"
+SHELL_QUOTE='single quotes work too'
+
+# application settings
+LOG_LEVEL=debug        # inline comments are allowed
+MAX_CONNECTIONS=250
+RETRY_DELAY=1.5
+FEATURE_FLAGS=alpha,beta
+EMPTY_VALUE=
+DATABASE_URL=postgres://app:secret@db.internal:5432/app?sslmode=require

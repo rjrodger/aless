@@ -1,0 +1,13 @@
+# Edit this file to introduce tasks to be run by cron.
+#
+# m h  dom mon dow   command
+MAILTO=""
+PATH=/usr/local/bin:/usr/bin:/bin
+
+*/10 * * * * /home/alice/bin/sync-notes >> /home/alice/.sync.log 2>&1
+0 7 * * 1-5 /usr/bin/notify-send "Stand-up in 30 minutes"
+30 23 * * sun tar czf /home/alice/backup/week.tgz /home/alice/docs
+0 0 1 jan,jul * /home/alice/bin/rotate-keys
+
+@hourly /home/alice/bin/fetch-mail
+@reboot sleep 60 && /home/alice/bin/start-agent

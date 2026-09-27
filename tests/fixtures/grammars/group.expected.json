@@ -1,0 +1,100 @@
+[
+  {
+    "name": "root",
+    "password": "x",
+    "gid": "0",
+    "members": []
+  },
+  {
+    "name": "daemon",
+    "password": "x",
+    "gid": "1",
+    "members": []
+  },
+  {
+    "name": "adm",
+    "password": "x",
+    "gid": "4",
+    "members": [
+      "syslog",
+      "alice"
+    ]
+  },
+  {
+    "name": "tty",
+    "password": "x",
+    "gid": "5",
+    "members": []
+  },
+  {
+    "name": "sudo",
+    "password": "x",
+    "gid": "27",
+    "members": [
+      "alice",
+      "bob"
+    ]
+  },
+  {
+    "name": "audio",
+    "password": "x",
+    "gid": "29",
+    "members": [
+      "pulse"
+    ]
+  },
+  {
+    "name": "www-data",
+    "password": "x",
+    "gid": "33",
+    "members": []
+  },
+  {
+    "name": "plugdev",
+    "password": "x",
+    "gid": "46",
+    "members": [
+      "alice"
+    ]
+  },
+  {
+    "name": "users",
+    "password": "x",
+    "gid": "100",
+    "members": []
+  },
+  {
+    "name": "systemd-journal",
+    "password": "x",
+    "gid": "999",
+    "members": []
+  },
+  {
+    "name": "docker",
+    "password": "x",
+    "gid": "998",
+    "members": [
+      "alice",
+      "bob",
+      "carol"
+    ]
+  },
+  {
+    "name": "alice",
+    "password": "x",
+    "gid": "1000",
+    "members": []
+  },
+  {
+    "name": "bob",
+    "password": "x",
+    "gid": "1001",
+    "members": []
+  },
+  {
+    "name": "nogroup",
+    "password": "x",
+    "gid": "65534",
+    "members": []
+  }
+]

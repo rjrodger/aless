@@ -1,0 +1,11 @@
+; /etc/resolv.conf: one keyword per line; each keyword is its own record shape.
+resolv     = *( nameserver %x0A / search %x0A / domain %x0A / options %x0A / sortlist %x0A / %x0A ) [ nameserver / search / domain / options / sortlist ]   ; @array
+nameserver = "nameserver" address    ; @object nameserver
+domain     = "domain" name           ; @object domain
+search     = "search" words          ; @object search
+options    = "options" words         ; @object options
+sortlist   = "sortlist" words        ; @object sortlist
+address    = word
+name       = word
+words      = 1*word                  ; @array
+word       = ( TX )

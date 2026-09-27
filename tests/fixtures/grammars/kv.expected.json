@@ -1,0 +1,58 @@
+[
+  {
+    "key": "NAME",
+    "value": "\"Ubuntu\""
+  },
+  {
+    "key": "VERSION",
+    "value": "\"24.04.1 LTS (Noble Numbat)\""
+  },
+  {
+    "key": "ID",
+    "value": "ubuntu"
+  },
+  {
+    "key": "ID_LIKE",
+    "value": "debian"
+  },
+  {
+    "key": "PRETTY_NAME",
+    "value": "\"Ubuntu 24.04.1 LTS\""
+  },
+  {
+    "key": "VERSION_ID",
+    "value": "\"24.04\""
+  },
+  {
+    "key": "HOME_URL",
+    "value": "\"https://www.ubuntu.com/\""
+  },
+  {
+    "key": "SHELL_QUOTE",
+    "value": "'single quotes work too'"
+  },
+  {
+    "key": "LOG_LEVEL",
+    "value": "debug"
+  },
+  {
+    "key": "MAX_CONNECTIONS",
+    "value": "250"
+  },
+  {
+    "key": "RETRY_DELAY",
+    "value": "1.5"
+  },
+  {
+    "key": "FEATURE_FLAGS",
+    "value": "alpha,beta"
+  },
+  {
+    "key": "EMPTY_VALUE",
+    "value": ""
+  },
+  {
+    "key": "DATABASE_URL",
+    "value": "postgres://app:secret@db.internal:5432/app?sslmode=require"
+  }
+]

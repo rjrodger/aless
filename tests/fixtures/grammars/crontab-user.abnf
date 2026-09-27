@@ -1,0 +1,12 @@
+; A user crontab (crontab -l): like /etc/crontab without the user field.
+crontab = *( timed %x0A / special %x0A / setting %x0A / %x0A ) [ timed / special / setting ]   ; @array
+timed   = minute hour dom month dow command           ; @object minute hour dom month dow command
+special = ( "@reboot" / "@yearly" / "@annually" / "@monthly" / "@weekly" / "@daily" / "@midnight" / "@hourly" ) command   ; @object when command
+setting = word                                        ; @object env
+minute  = word
+hour    = word
+dom     = word
+month   = word
+dow     = word
+command = 1*word                                      ; @array
+word    = ( TX )

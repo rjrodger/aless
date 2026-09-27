@@ -1,0 +1,73 @@
+[
+  {
+    "env": "MAILTO=\"\""
+  },
+  {
+    "env": "PATH=/usr/local/bin:/usr/bin:/bin"
+  },
+  {
+    "minute": "*/10",
+    "hour": "*",
+    "dom": "*",
+    "month": "*",
+    "dow": "*",
+    "command": [
+      "/home/alice/bin/sync-notes",
+      ">>",
+      "/home/alice/.sync.log",
+      "2>&1"
+    ]
+  },
+  {
+    "minute": "0",
+    "hour": "7",
+    "dom": "*",
+    "month": "*",
+    "dow": "1-5",
+    "command": [
+      "/usr/bin/notify-send",
+      "\"Stand-up",
+      "in",
+      "30",
+      "minutes\""
+    ]
+  },
+  {
+    "minute": "30",
+    "hour": "23",
+    "dom": "*",
+    "month": "*",
+    "dow": "sun",
+    "command": [
+      "tar",
+      "czf",
+      "/home/alice/backup/week.tgz",
+      "/home/alice/docs"
+    ]
+  },
+  {
+    "minute": "0",
+    "hour": "0",
+    "dom": "1",
+    "month": "jan,jul",
+    "dow": "*",
+    "command": [
+      "/home/alice/bin/rotate-keys"
+    ]
+  },
+  {
+    "when": "@hourly",
+    "command": [
+      "/home/alice/bin/fetch-mail"
+    ]
+  },
+  {
+    "when": "@reboot",
+    "command": [
+      "sleep",
+      "60",
+      "&&",
+      "/home/alice/bin/start-agent"
+    ]
+  }
+]
