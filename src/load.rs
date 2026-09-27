@@ -1398,7 +1398,14 @@ pub(crate) fn nests_past(value: &tabnas::Value, cap: usize) -> bool {
         }
         match v {
             Value::Array(items) => stack.extend(items.iter().map(|c| (c, depth + 1))),
-            Value::ListRef(list) => stack.extend(list.value.iter().map(|c| (c, depth + 1))),
+            Value::ListRef(list) => {
+                stack.extend(list.value.iter().map(|c| (c, depth + 1)));
+                // `drop_deep` lets the child go too, so it is measured here
+                // as well: depth held there is depth all the same.
+                if let Some(child) = &list.child {
+                    stack.push((child, depth + 1));
+                }
+            }
             Value::Object(map) => stack.extend(map.values().map(|c| (c, depth + 1))),
             Value::MapRef(map) => stack.extend(map.value.values().map(|c| (c, depth + 1))),
             _ => {}
@@ -1701,6 +1708,25 @@ mod tests {
         }
         assert!(nests_past(&v, MAX_VALUE_DEPTH));
         assert!(!nests_past(&v, 300_000));
+        drop_deep(v);
+    }
+
+    /// The measure and the release walk the same links: a chain held in
+    /// a list's `child` counts toward the depth as `drop_deep` frees it.
+    #[test]
+    fn a_lists_child_counts_toward_its_depth() {
+        use tabnas::{ListRef, Value};
+        let mut v = Value::Null;
+        for _ in 0..(MAX_VALUE_DEPTH + 10) {
+            v = Value::ListRef(Arc::new(ListRef {
+                value: Vec::new(),
+                implicit: false,
+                child: Some(Box::new(v)),
+                meta: Default::default(),
+            }));
+        }
+        assert!(nests_past(&v, MAX_VALUE_DEPTH));
+        assert!(!nests_past(&v, MAX_VALUE_DEPTH + 20));
         drop_deep(v);
     }
 
