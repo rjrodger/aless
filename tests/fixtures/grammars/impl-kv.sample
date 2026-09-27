@@ -1,0 +1,5 @@
+# the implementer's settings
+name = aless
+version=0.1.0
+
+mode = line   # a trailing comment
