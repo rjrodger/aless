@@ -43,11 +43,9 @@ tabnas-xml = { git = "https://github.com/tabnas/xml" }
 tabnas-zon = { git = "https://github.com/tabnas/zon" }
 tabnas-markdown = { git = "https://github.com/tabnas/markdown" }
 tabnas-feed = { git = "https://github.com/tabnas/feed" }
-# The streaming transducer and its renderers, behind `--render`. Pinned to
-# the branch their pull requests are on until those merge; then the branch
-# goes and `cargo update -p tabnas-transduce -p tabnas-render` moves on.
-tabnas-transduce = { git = "https://github.com/tabnas/transduce", branch = "claude/streaming-transducer-render-kzyqua" }
-tabnas-render = { git = "https://github.com/tabnas/render", branch = "claude/streaming-transducer-render-kzyqua" }
+# The streaming transducer and its renderers, behind `--render`.
+tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
+tabnas-render = { git = "https://github.com/tabnas/render" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -120,7 +118,7 @@ tabnas-csv = { git = "https://github.com/tabnas/csv" }
 
 [patch."https://github.com/tabnas/render"]
 tabnas = { git = "https://github.com/tabnas/parser" }
-tabnas-transduce = { git = "https://github.com/tabnas/transduce", branch = "claude/streaming-transducer-render-kzyqua" }
+tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 
 [profile.release]
 opt-level = 3
