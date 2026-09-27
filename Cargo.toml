@@ -43,6 +43,10 @@ tabnas-xml = { git = "https://github.com/tabnas/xml" }
 tabnas-zon = { git = "https://github.com/tabnas/zon" }
 tabnas-markdown = { git = "https://github.com/tabnas/markdown" }
 tabnas-feed = { git = "https://github.com/tabnas/feed" }
+# The ABNF compiler behind --grammar and --grammar-expr: a custom grammar's
+# text becomes a GrammarSpec at startup. It emits through tabnas-bnf, the
+# compiler the BNF-family front-ends share.
+tabnas-abnf = { git = "https://github.com/tabnas/abnf" }
 # The streaming transducer and its renderers, behind `--render`. Pinned to
 # the branch their pull requests are on until those merge; then the branch
 # goes and `cargo update -p tabnas-transduce -p tabnas-render` moves on.
@@ -112,6 +116,13 @@ tabnas = { git = "https://github.com/tabnas/parser" }
 tabnas = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 tabnas-xml = { git = "https://github.com/tabnas/xml" }
+
+[patch."https://github.com/tabnas/abnf"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-bnf = { git = "https://github.com/tabnas/bnf" }
+
+[patch."https://github.com/tabnas/bnf"]
+tabnas = { git = "https://github.com/tabnas/parser" }
 
 [patch."https://github.com/tabnas/transduce"]
 tabnas = { git = "https://github.com/tabnas/parser" }
