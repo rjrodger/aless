@@ -488,7 +488,12 @@ fn materialize<S: Sink>(
 ) -> Ran {
     let value = load::catch_grammar(|| parser.parse(text).map_err(Box::new));
     parsed.store(true, Ordering::Relaxed);
-    if deadline.as_ref().is_some_and(Deadline::passed) {
+    // A parse that came to its end after the deadline, with a value or an
+    // error, is too late, as the loader has it: the time is its outcome,
+    // whatever it returned (a stop the guard made is read first, from
+    // `stop`, when the run is classified).
+    let late = deadline.as_ref().is_some_and(Deadline::passed);
+    if late {
         abort.abort();
     }
     let value = match value {
@@ -501,8 +506,9 @@ fn materialize<S: Sink>(
         }
         Ok(Err(e)) => {
             // As the transducer's source maps an engine error: the abort
-            // flag's cancel is aless's, anything else the input's.
-            let fail = if e.code == "cancel" && abort.is_aborted() {
+            // flag's cancel is aless's, anything else the input's, unless
+            // it came too late to count.
+            let fail = if late || (e.code == "cancel" && abort.is_aborted()) {
                 Fail::aborted()
             } else {
                 Fail::from_tabnas(&e)
@@ -516,6 +522,17 @@ fn materialize<S: Sink>(
         Ok(Ok(value)) => value,
     };
     drop(parser);
+    // Before the value's depth is measured, which would report a late
+    // parse as `too_deep`; the value is let go without recursing into it,
+    // as it may nest too deep for that.
+    if late {
+        load::drop_deep(value);
+        return Ran {
+            outcome: Outcome::Failed(Fail::aborted()),
+            stop: Some(stop),
+            verdict: None,
+        };
+    }
     // A custom grammar's nesting is measured on its value, as the loader
     // measures it; the value is let go without recursing into it.
     if format.is_custom() && load::nests_past(&value, load::MAX_VALUE_DEPTH) {
@@ -1916,6 +1933,81 @@ mod tests {
             SourceMode::Materialize,
         )
         .unwrap();
+    }
+
+    /// [`materialize`] with a custom grammar's parse that comes to its end
+    /// after the deadline, classified as the run would be. The deadline
+    /// has passed before the parse starts, and the guard is set without
+    /// it: that stands for a last step that ran past the time with no step
+    /// left for the guard to look at it between (the engine reads trailing
+    /// space after its last check).
+    fn late_custom_parse(format: Format, text: &str) -> ExportError {
+        let mut j = job(format, Renderer::Json, ".");
+        j.timeout = Some(Duration::from_millis(1));
+        let ran = load::on_parse_thread(
+            j.timeout,
+            || {},
+            |deadline| {
+                let d = deadline.clone().expect("a deadline");
+                while !d.passed() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                let mut parser = load::make_parser(format).unwrap().unwrap();
+                let stop = load::guard(&mut parser, None, load::max_rule_depth(format), || {});
+                materialize(
+                    parser,
+                    format,
+                    text,
+                    deadline,
+                    &AbortFlag::new(),
+                    &AtomicBool::new(false),
+                    Scope::new(Vec::new(), Vec::<OwnedJsonEvent>::new()),
+                    stop,
+                )
+            },
+        );
+        let failed = Failed {
+            why: ran.outcome,
+            stop: ran.stop,
+            verdict: ran.verdict,
+        };
+        classify(&j, failed, &AtomicU64::new(0), &AtomicBool::new(false))
+    }
+
+    /// A parse that finishes late fails on the time, as the loader has
+    /// it, with a value or an error: a custom grammar's value that also
+    /// nests past the cap is a `timeout` (status 6), not `too_deep`, and
+    /// neither is an input error found late the input's fault. On time,
+    /// the same value is `too_deep`.
+    #[test]
+    fn a_late_custom_parse_is_a_timeout_before_its_depth() {
+        use crate::grammar::{self, Definition};
+        let def = Definition::parse(
+            "--grammar-expr",
+            "impl-late-nest=doc = \"(\" doc \")\" / \"x\"\n",
+        )
+        .unwrap();
+        let format = Format::Custom(grammar::register(def, crate::load::Limits::NONE).unwrap());
+        let deep = "(".repeat(600) + "x" + &")".repeat(600);
+        for text in [deep.as_str(), "x)"] {
+            match late_custom_parse(format, text) {
+                ExportError::Load { error, partial } => {
+                    assert_eq!(error.code, "timeout", "{text:.8}: {}", error.message);
+                    assert!(!partial);
+                }
+                other => panic!("{text:.8}: {other:?}"),
+            }
+        }
+        let mut j = job(format, Renderer::Json, ".");
+        j.timeout = Some(Duration::from_secs(120));
+        match run_text(&j, &deep).0.unwrap_err() {
+            ExportError::Load { error, .. } => assert_eq!(error.code, "too_deep"),
+            other => panic!("{other:?}"),
+        }
+        match run_text(&j, "x)").0.unwrap_err() {
+            ExportError::Transduce(f) => assert_eq!(f.code, Code::InputInvalid),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
