@@ -3,8 +3,10 @@
 A [jless](https://jless.io)-style terminal viewer for **every format the
 [tabnas](https://github.com/tabnas) parsers read** — JSON, JSON Lines,
 jsonic, JSONC, JSON5, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and
-RSS/Atom feeds — with **tabs** for several files at once and a **watch
-mode** that reloads a file when it changes while **keeping your place**.
+RSS/Atom feeds, and any text format you describe with an ABNF grammar
+([Custom grammars](#custom-grammars)) — with **tabs** for several files
+at once and a **watch mode** that reloads a file when it changes while
+**keeping your place**.
 Without a screen it prints JSON instead, for scripts and agents: outlines,
 values by path, search hits and parse errors, each with its source
 position ([Scripts and agents](#scripts-and-agents)). Pure Rust; runs on
@@ -57,6 +59,7 @@ aless data.json                      # one file
 aless config.toml deploy.yaml a.csv  # several files, one tab each
 curl -s https://api.example/x | aless        # stdin (JSON unless --kind says otherwise)
 aless --kind jsonic notes.txt        # force a format
+aless --grammar hosts=hosts.abnf /etc/hosts   # a format of your own, from an ABNF grammar
 aless --no-watch big.json            # do not reload on change
 aless --mode line --line-numbers x.json
 aless                                # explore the current directory; Enter opens a file
@@ -65,7 +68,9 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 
 | Option | Effect |
 |---|---|
-| `-k`, `--kind FORMAT` | parse every input as FORMAT instead of by extension |
+| `-k`, `--kind FORMAT` | parse every input as FORMAT instead of by extension; FORMAT may be a `--grammar` NAME |
+| `--grammar NAME=FILE` | read files whose extension or whole name is NAME with the ABNF grammar in FILE; `NAME,NAME2=FILE` gives it two names; repeatable ([Custom grammars](#custom-grammars)) |
+| `--grammar-expr NAME=ABNF` | the same, with the grammar text on the command line |
 | `--no-watch` | do not reload files when they change |
 | `-m`, `--mode data\|line` | start in data (default) or line mode |
 | `--depth N` | fold containers deeper than N levels at start |
@@ -83,9 +88,10 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 ## Scripts and agents
 
 aless also runs without a screen. Give it any option from the table
-below except `--depth` and `-k`, which the viewer shares, or let its
-standard output be something other than a terminal (a pipe, a file, an
-agent's tool call), and it prints JSON instead of starting the viewer. It
+below except those the viewer shares (`--depth`, `-k`, the `--grammar`
+options and the limits), or let its standard output be something other
+than a terminal (a pipe, a file, an agent's tool call), and it prints
+JSON instead of starting the viewer. It
 never waits for keys: when the viewer cannot start, aless says so at
 once, before reading any input, and exits with status 2.
 
@@ -114,6 +120,7 @@ aless --render csv --path .items orders.json       # the records as CSV, streame
 | `--limit N` | at most N entries (default 200, 0 for all) |
 | `--compact` | JSON on one line |
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
+| `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
 | `--timeout SECONDS` | stop a parse that runs longer than this (default none) |
 
@@ -191,7 +198,7 @@ $ aless bad.json
 |---|---|---|
 | 0 | success: standard output holds the answer | |
 | 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
-| 2 | bad usage: an unknown option, a bad path, no input, a directory, or the viewer without a terminal | `usage` |
+| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` that does not compile, or the viewer without a terminal | `usage` |
 | 3 | an input could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
 | 5 | an input is larger than `--max-size`; with `--render`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
@@ -210,7 +217,11 @@ its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. A `usage` error has only `kind` and `message`.
+saying how long it took. A `usage` error has only `kind` and `message`,
+except for a `--grammar` that does not compile, which adds the `grammar`
+name and, when it came from a file, the `file`; a grammar file that
+cannot be read is an `io` error with those two fields ([Custom
+grammars](#custom-grammars)).
 A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
@@ -358,7 +369,98 @@ text, one line per row, so every file is viewable.
 | text | txt, text, log, anything else | — |
 
 CSV and TSV show a list of records keyed by the header row. Map keys keep
-their **source order**.
+their **source order**. Any other text format can be given a grammar of
+its own, named on the command line: the next section.
+
+## Custom grammars
+
+A text format aless has no parser for can be read with a grammar you
+write in [ABNF](https://github.com/tabnas/abnf) (RFC 5234, compiled by
+tabnas/abnf). The command line ties the grammar to a name, and a file
+whose extension or whole file name is that name is read with it:
+
+```bash
+aless --grammar hosts=hosts.abnf /etc/hosts              # the whole file name is `hosts`
+aless --grammar hosts=hosts.abnf --json backup.hosts     # or the extension
+aless --grammar crontab,cron=crontab.abnf /etc/crontab jobs.cron   # two names, one grammar
+crontab -l | aless --grammar-expr 'jobs=…' -k jobs       # the text inline; -k for standard input
+```
+
+`--grammar NAME=FILE` reads the grammar from FILE (within `--max-size`);
+`--grammar-expr NAME=ABNF` takes the text itself, everything after the
+first `=`. Both repeat, for several grammars at once. NAME is the
+format's name, as `--paths` and `--check` report it and as `-k` and
+`:format` take it, and what the extension or whole name must be, in any
+case. A name that is a built-in format's (`json`, `conf`) is allowed:
+the grammar then reads that extension.
+
+What the grammar builds is the document. With `; @object a b` and
+`; @array` comments on its rules (the annotation syntax is
+tabnas/abnf's, and [its guide](https://github.com/tabnas/abnf/blob/main/ts/doc/guide.md)
+explains it) the value is JSON of strings: one member per part of the
+rule that produces a value, nested where that part's own rule is
+annotated. Without annotations it is the compiler's parse tree, a
+`{"rule": …, "src": …, "kids": […]}` node per rule. Either way the
+viewer, `--json`, `--paths`, `--find`, `--where`, `--check` and
+`--render` work on it as on any format; `--render` parses the input
+whole before it streams, since no grammar from the command line is one
+the transducer has verified.
+
+The whole of `hosts.abnf`, from the grammar library under
+[`tests/fixtures/grammars/`](tests/fixtures/grammars/):
+
+```abnf
+hosts   = *( entry %x0A / %x0A ) [ entry ]   ; @array
+entry   = address names                      ; @object address names
+address = word
+names   = 1*word                             ; @array
+word    = ( TX )
+```
+
+```
+$ printf '127.0.0.1 localhost myhost\n::1 localhost\n' > hosts
+$ aless --grammar hosts=hosts.abnf --json --compact hosts
+[{"address":"127.0.0.1","names":["localhost","myhost"]},{"address":"::1","names":["localhost"]}]
+$ aless --grammar hosts=hosts.abnf --where --at 2:5 hosts
+{"file":"hosts","format":"hosts","path":"[1].names[0]","kind":"string","line":2,"col":5,"value":"localhost"}
+```
+
+The library holds a grammar for each of `/etc/hosts`, `/etc/crontab` and
+a user's crontab, `/etc/passwd`, `/etc/group`, `/etc/fstab`,
+`/etc/resolv.conf` and shell-style `KEY=value` files, each with a sample
+and the JSON it parses to, and [its README](tests/fixtures/grammars/README.md)
+is the guide to writing one: how a line-oriented grammar names its
+newlines (`%x0A`), where the engine's tokens `TX` (a word), `NR`, `ST`
+and `VL` fit, and what the compiler refuses.
+
+**Plain text.** A grammar reads its file as plain text, not as the JSON
+the tabnas engine lexes by default: `{ } [ ] : ,` are ordinary
+characters, `//` and `/* */` do not open comments, digits and quotes are
+ordinary characters and `true` is a word, so `::1`, `root:x:0:0`, `0,30`
+and `//server/share` are each one word (`TX`) until the grammar names a
+literal (`":"` in a `passwd` grammar splits `root:x:0:0` into fields) or
+a token class (`NR`, `ST` and `VL` bring numbers, quoted strings and
+`true`/`false`/`null` back). `#` starts a comment to the end of the
+line; spaces, tabs and a carriage return before a newline are skipped
+between tokens, so a CRLF file reads as an LF file does; and a quoted
+keyword (`"nameserver"`) matches whole words only. The engine settings
+behind this are listed at the end of the library's README.
+
+**Errors.** A grammar that does not compile is a usage error, raised
+before any input is read: status 2, and without a screen
+`{"error": {"kind": "usage", "message": "--grammar hosts: <the
+compiler's message>", "grammar": "hosts", "file": "hosts.abnf"}}`
+(`file` omitted for `--grammar-expr`). A grammar file that cannot be
+read is an `io` error, status 3, with the same `grammar` and `file`. An
+input the grammar does not accept is a `parse` error like any other,
+with `format` the grammar's name and the line and column the parse
+stopped at.
+
+**Source positions** come from the token alignment every format has
+([Source positions](#source-positions)): a value that is one token's
+text (a `TX` word) is placed exactly; one assembled from several tokens
+or characters (a `1*DIGIT` rule, a group of several parts) is not, and
+shows no position of its own.
 
 ## Keys
 
@@ -626,7 +728,8 @@ published, the `git` entries become version requirements and the patch
 tables go; nothing else changes.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
-way. The other dependencies: crossterm (terminal), notify (file
+way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
+`--grammar`. The other dependencies: crossterm (terminal), notify (file
 watching), regex (search), unicode-width (layout), serde_json (JSON
 output), arboard (clipboard, optional).
 
@@ -648,6 +751,7 @@ the library is terminal-free and unit tested:
 | `explorer` | directory trees as documents, listed lazily |
 | `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
+| `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
 | `load` | format detection; the tabnas grammars; errors with positions; the size, depth and time limits; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |
