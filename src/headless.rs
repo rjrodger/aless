@@ -54,7 +54,8 @@ pub mod status {
     /// An input is larger than `--max-size` allows, or an export passed
     /// one of the transducer's limits.
     pub const TOO_LARGE: i32 = 5;
-    /// A parse ran longer than `--timeout` allows.
+    /// A parse ran longer than `--timeout` allows; under `--render` or
+    /// `--alchemy`, the run, which the deadline covers whole.
     pub const TIMEOUT: i32 = 6;
 }
 
@@ -388,7 +389,9 @@ fn export(
             );
             f
         }
-        ExportError::Transduce(fail) => Failure::transduce(&name, format, &fail),
+        ExportError::Transduce(fail) | ExportError::Program(fail) => {
+            Failure::transduce(&name, format, &fail)
+        }
         ExportError::NotFound { message, nearest } => {
             let path = match &req.start {
                 Start::Path(text) => text.trim().to_string(),
@@ -474,7 +477,13 @@ fn run_program(
             );
             f
         }
-        ExportError::Transduce(fail) => Failure::transduce(&name, format, &fail),
+        // The program's sink's failure that is neither the language's nor
+        // placed in the program, and the source's whatever its code (a
+        // verified grammar that refused to stream part-way, once output
+        // had left: `STREAMABILITY_UNKNOWN` too), are the input's.
+        ExportError::Program(fail) | ExportError::Transduce(fail) => {
+            Failure::transduce(&name, format, &fail)
+        }
         ExportError::NotFound { message, .. } => Failure::usage(message),
         ExportError::ReaderGone => unreachable!("handled above"),
     })
@@ -1338,7 +1347,10 @@ impl Failure {
     /// `file` the program's, `format` null, `line` and `col` in the
     /// program when the failure has them, `path` and `limit` when it has
     /// those, and `output`. A failure met while the program ran adds
-    /// `input`, the document's name.
+    /// `input`, the document's name; whether one met then is the
+    /// program's is `export`'s to say, by where it came from
+    /// ([`ExportError::Program`]), since `STREAMABILITY_UNKNOWN` is the
+    /// source's code too.
     fn alchemy(file: &str, fail: &Fail) -> Failure {
         let programs = alchemy::is_programs(fail.code);
         let status = if programs {
@@ -2197,6 +2209,132 @@ mod tests {
         assert_eq!(out.stdout, "[{\"id\":1},{\"id\":2}]\n");
         r.max_size = Some(4);
         assert_eq!(with_stdin(&r, RECORDS).status, status::TOO_LARGE);
+    }
+
+    /// `STREAMABILITY_UNKNOWN` is a code of both sides: the program's (the
+    /// checker's, the evaluator's `recursion`) and the source's (a verified
+    /// grammar that refuses to stream a document part-way). Once output has
+    /// left, the source's refusal cannot fall back, and it is the input's
+    /// failure, in the transducer's shape with status 1, never the
+    /// program's; the code alone does not tell them apart, where the
+    /// failure came from does.
+    #[test]
+    fn a_grammars_refusal_to_stream_under_a_program_is_the_inputs() {
+        let mut r = req(Op::Alchemy {
+            program: ProgramArg::Expr("def export [input] (json input)".into()),
+            render: None,
+            explain: false,
+        });
+        r.kind = Some(Format::Jsonic);
+        // A jsonic top-level implicit list whose first element is a
+        // container: the first value is streamed as the root, and written
+        // (the string is longer than the writer holds back), before the
+        // grammar wraps it in a list.
+        let long = "x".repeat(2 * tabnas_render::DEFAULT_BUDGET);
+        let out = with_stdin(&r, &format!("{{a:'{long}'}}\n{{b:2}}\n"));
+        assert_eq!(out.status, status::PARSE, "{}", out.stderr);
+        assert!(out.stdout.starts_with("{\"a\":\"xxx"), "output had left");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["code"], json!("STREAMABILITY_UNKNOWN"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("jsonic"));
+        assert_eq!(e["output"], json!("partial"));
+        assert!(e.get("input").is_none(), "{e}");
+        // Before anything has left, the same refusal falls back to the
+        // whole value, as under --render.
+        let out = with_stdin(&r, "{a:1}\n{b:2}\n");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "[{\"a\":1},{\"b\":2}]\n");
+        // The program's own STREAMABILITY_UNKNOWN met at run time (the
+        // evaluator's `recursion`, on an item) is still the program's:
+        // status 2, its position in the program, and the input's name.
+        let w = req(Op::Alchemy {
+            program: ProgramArg::Expr(
+                "def w [f] (f f)\ndef export [input]\n  concat-map (fn [row] (let [x (w w)] \".\")) \
+                 (select (path each-index) input)"
+                    .into(),
+            ),
+            render: None,
+            explain: false,
+        });
+        let out = with_stdin(&w, "[1, 2]");
+        assert_eq!(out.status, status::USAGE, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("alchemy"));
+        assert_eq!(e["code"], json!("STREAMABILITY_UNKNOWN"));
+        assert!(
+            e["message"].as_str().unwrap().starts_with("recursion: "),
+            "{e}"
+        );
+        assert_eq!(e["file"], json!(alchemy::EXPR_NAME));
+        assert_eq!(e["format"], json!(null));
+        assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(12)));
+        assert_eq!(e["input"], json!("-"));
+        assert_eq!(e["output"], json!("none"));
+    }
+
+    /// A program slow on one item works inside one of the parser's events,
+    /// where no guard of aless's runs: `--timeout` reaches the program's
+    /// own flag, in the incremental mode JSON runs in, and the run ends a
+    /// moment after the deadline, status 6, with a `timeout` that says the
+    /// run (the parse and the program) ran too long, not the parse alone.
+    #[test]
+    fn a_program_slow_on_one_item_stops_at_the_deadline_as_a_run_timeout() {
+        let slow =
+            "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] y) \
+                    v)) v)]\n      \".\"\ndef export [input]\n  concat-map slow (select (path \
+                    each-index) input)\n";
+        let mut r = req(Op::Alchemy {
+            program: ProgramArg::Expr(slow.into()),
+            render: None,
+            explain: false,
+        });
+        r.timeout = Some(Duration::from_millis(50));
+        // One row whose quadratic work takes seconds; its parse takes none.
+        let row: Vec<String> = (0..3_000).map(|i| i.to_string()).collect();
+        let doc = format!("[[{}]]", row.join(","));
+        let started = std::time::Instant::now();
+        let out = with_stdin(&r, &doc);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the run went on {:?} past a 50 ms deadline",
+            started.elapsed()
+        );
+        assert_eq!(out.status, status::TIMEOUT, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"));
+        assert_eq!(e["code"], json!("timeout"));
+        assert_eq!(e["seconds"], json!(0.05));
+        assert_eq!(e["output"], json!("none"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("json"));
+        assert_eq!(
+            e["message"],
+            json!("timeout: the run (the parse and the program) ran longer than 0.05 s")
+        );
+        assert!(
+            e["hint"]
+                .as_str()
+                .unwrap()
+                .contains("the program's work on an item"),
+            "{e}"
+        );
+        // A parse stopped at the deadline under --render still names the
+        // parse, as it did.
+        let mut slow_parse = req(Op::Render(Renderer::Json));
+        slow_parse.kind = Some(Format::Toml);
+        slow_parse.timeout = Some(Duration::from_millis(1));
+        let toml: String = (0..3_000)
+            .map(|i| format!("[[item]]\nid = {i}\nname = \"item {i}\"\n\n"))
+            .collect();
+        let e = json_of(&with_stdin(&slow_parse, &toml).stderr);
+        assert_eq!(
+            e["error"]["message"],
+            json!("timeout: the parse ran longer than 0.001 s")
+        );
     }
 
     #[test]

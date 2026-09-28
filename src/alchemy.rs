@@ -85,10 +85,14 @@ pub fn compile(text: &str, file: &str) -> Result<Program, Fail> {
     tabnas_alchemy::compile(text, file)
 }
 
-/// Whether a failure is the program's own: its code is one the language
-/// raises (`DSL_PARSE_ERROR`, `DSL_TYPE_ERROR`, `STREAM_REUSED`,
-/// `STREAMABILITY_UNKNOWN`), so the program is at fault and not the
-/// input.
+/// Whether a failure's code is one the language raises (`DSL_PARSE_ERROR`,
+/// `DSL_TYPE_ERROR`, `STREAM_REUSED`, `STREAMABILITY_UNKNOWN`): from a
+/// compile, or from the program's sink at run time, the program is at
+/// fault and not the input. `STREAMABILITY_UNKNOWN` is the source's code
+/// too (a verified grammar that refuses to stream a document part-way),
+/// so for a failure met while the program ran the code alone does not
+/// say whose it is: `export` says where it came from
+/// ([`ExportError::Program`]), and `headless` reads both.
 pub fn is_programs(code: Code) -> bool {
     matches!(
         code,
@@ -158,9 +162,10 @@ impl Sink for Positioned {
 /// chooses the renderer for a table or JSON events (the program's default
 /// when `None`). The document reaches the program's sink the way an export
 /// reaches its renderer ([`export::run_program`]), with the transducer's
-/// default limits and the run's abort flag handed to the program, so
-/// `--timeout` stops a long computation on one item as it stops a parse.
-/// A failure of the program's own comes back as [`RunError::Program`].
+/// default limits and the program's abort flag handed to it, which the
+/// deadline's alarm raises in every mode, so `--timeout` stops a long
+/// computation on one item as it stops a parse. A failure of the
+/// program's own comes back as [`RunError::Program`].
 pub fn run(
     job: &Job,
     program: &Program,
@@ -173,10 +178,12 @@ pub fn run(
     let result = export::run_program(job, input, out, |pipe, abort| {
         // One sink per attempt: what the last one raised is what counts.
         raised.store(false, Ordering::Relaxed);
+        // A sink that cannot be built (a renderer that does not fit what
+        // the program exports) is the program's side's failure too.
         let sink = program
             .with_abort(abort)
             .sink(pipe, render.map(renderer), &limits, Metrics::new())
-            .map_err(|fail| ExportError::Transduce(Box::new(fail)))?;
+            .map_err(|fail| ExportError::Program(Box::new(fail)))?;
         Ok(Box::new(Positioned {
             sink,
             raised: raised.clone(),
@@ -184,7 +191,11 @@ pub fn run(
     });
     match result {
         Ok(()) => Ok(()),
-        Err(ExportError::Transduce(fail))
+        // The program's sink's failure ([`ExportError::Program`]: where
+        // it came from is `export`'s to say), with a code of the
+        // language's or a position of the program's; the source's, even
+        // under a code the language shares, is an export's.
+        Err(ExportError::Program(fail))
             if is_programs(fail.code) || (raised.load(Ordering::Relaxed) && fail.row.is_some()) =>
         {
             Err(RunError::Program(fail))

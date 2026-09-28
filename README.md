@@ -205,7 +205,7 @@ $ aless bad.json
 | 3 | an input, or an `--alchemy` program file, could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
 | 5 | an input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size`; with `--render` or `--alchemy`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
-| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout` | `timeout` |
+| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout`; with `--render` or `--alchemy`, the whole run | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
@@ -420,7 +420,10 @@ kind and status (`INPUT_INVALID` as `transduce`, status 1) but is placed
 the same way, `file`, `line` and `col` the program's, `format` `null`,
 `input` the document's name: the events a program reads carry no
 positions, so a position on such a failure is never the input's. A
-program file that cannot be read is an
+grammar's refusal to stream part-way once output has left
+(`STREAMABILITY_UNKNOWN` from the input's side, as [above](#exporting))
+is the input's failure, `transduce` with `output: "partial"`, not the
+program's. A program file that cannot be read is an
 `io` error and one over `--max-size` a `too_large` error, `file` the
 program's and `format` `null`. Everything else reports as an export's
 failure does: the transducer's codes as `transduce`
@@ -428,7 +431,9 @@ failure does: the transducer's codes as `transduce`
 program binds its columns to, `RESOURCE_LIMIT_EXCEEDED` naming the
 `limit`, `PROTOCOL_ORDER_ERROR`, …), with `output` saying whether anything
 had been written, and aless's own limits as `parse`/`too_deep` and
-`timeout`, with `output` too.
+`timeout`, with `output` too. The deadline covers the parse and the
+program together, so a program slow on one item stops at it, and its
+`timeout` says the run ran too long, not the parse.
 
 ```
 $ aless --alchemy-expr 'def export [input] (nope input)' data.json

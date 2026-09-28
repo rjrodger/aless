@@ -407,6 +407,28 @@ fn help_leads_with_the_agent_interface() {
         assert!(head.contains(flag), "{flag} in the first lines:\n{head}");
     }
     assert!(text.find("WITHOUT A SCREEN") < text.find("THE VIEWER"));
+    // The exit statuses say what --alchemy adds to each, as the README's
+    // and the skill's tables do: a program file that cannot be read is
+    // status 3, one over --max-size status 5, and the deadline covers the
+    // program's run.
+    let statuses = &text[text.find("Exit status:").unwrap()..text.find("THE VIEWER").unwrap()];
+    for (status, what) in [
+        (
+            "3 an input (or an --alchemy",
+            "program file) could not be read",
+        ),
+        (
+            "5 an input (or a --grammar or --alchemy",
+            "file) is over --max-size",
+        ),
+        (
+            "6 a parse (or a --grammar compile) ran past --timeout",
+            "the whole run",
+        ),
+    ] {
+        assert!(statuses.contains(status), "{status:?} in:\n{statuses}");
+        assert!(statuses.contains(what), "{what:?} in:\n{statuses}");
+    }
 }
 
 #[test]
@@ -2025,5 +2047,70 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["kind"], json!("timeout"));
     assert_eq!(e["seconds"], json!(0.001));
     assert!(e.get("output").is_some(), "{e}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A program slow on one item works inside one of the parser's events,
+/// where no guard of aless's can stop it: `--timeout` must reach the
+/// program's own flag, in the incremental mode JSON runs in, or the
+/// command runs as long as the item's work (seconds here, for one row).
+/// It ends a moment after the deadline instead, status 6, with a
+/// `timeout` worded for the run, the parse and the program, and `output`.
+#[test]
+fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
+    use std::time::{Duration, Instant};
+    // Quadratic work per row: every element mapped over every element.
+    let slow =
+        "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] y) \
+                v)) v)]\n      \".\"\ndef export [input]\n  concat-map slow (select (path \
+                each-index) input)\n";
+    let dir = std::env::temp_dir().join(format!("aless-slow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = dir.join("row.json");
+    let row: Vec<String> = (0..4_000).map(|i| i.to_string()).collect();
+    std::fs::write(&doc, format!("[[{}]]", row.join(","))).unwrap();
+    let started = Instant::now();
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            slow,
+            "--timeout",
+            "0.3",
+            doc.to_str().unwrap(),
+        ],
+        None,
+    );
+    let elapsed = started.elapsed();
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        elapsed < Duration::from_millis(2_300),
+        "the command ran {elapsed:?} against a 0.3 s deadline"
+    );
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("timeout"));
+    assert_eq!(e["code"], json!("timeout"));
+    assert_eq!(e["seconds"], json!(0.3));
+    assert_eq!(e["output"], json!("none"));
+    assert_eq!(e["file"], json!(doc.to_str().unwrap()));
+    assert_eq!(
+        e["message"],
+        json!("timeout: the run (the parse and the program) ran longer than 0.3 s")
+    );
+    // The same program over a small row finishes within the same limit.
+    let small = dir.join("small.json");
+    std::fs::write(&small, "[[1, 2, 3]]").unwrap();
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            slow,
+            "--timeout",
+            "30",
+            small.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.stdout, b".");
     std::fs::remove_dir_all(&dir).unwrap();
 }

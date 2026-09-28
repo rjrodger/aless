@@ -205,7 +205,7 @@ Exit statuses, and the `error.kind` that goes with each:
 | 3 | `io`, `transduce` | the file, or an `--alchemy` program file, could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
 | 5 | `too_large`, `transduce` | the input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size` (default 64M); with `--render` or `--alchemy`, over a limit of the transducer's |
-| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none) |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none); with `--render` or `--alchemy`, the whole run |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -235,8 +235,11 @@ program when it has a position; one met once the input is open adds
 `col` are the program's, `format` is null and `input` names the
 document, since the events a program reads carry no positions of the
 input's; fix the program there. Everything else an `--alchemy` run reports
-is a `transduce` error, or `timeout`/`too_deep`, as under `--render`,
-with `output`.
+is a `transduce` error (a grammar's refusal to stream part-way after
+output has left, `STREAMABILITY_UNKNOWN` with `output: "partial"`, is
+one: the input's, not the program's), or `timeout`/`too_deep`, as under
+`--render`, with `output`; `--timeout` covers the parse and the program
+together, so a program slow on one item stops at it.
 
 ## Paths
 

@@ -85,11 +85,12 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     when the program did not. Exit status: 0 success, 1 the input did not
     parse (--check: an input failed; --render, --alchemy: the input or its
     records will not do), 2 bad usage (a program or --grammar that does not
-    compile too) or no terminal for the viewer, 3 an input could not be
-    read (or the output not written), 4 --path or --at names nothing, 5 an
-    input (or a --grammar file) is over --max-size (--render, --alchemy:
-    over a limit of the transducer's), 6 a parse (or a --grammar compile)
-    ran past --timeout.
+    compile too) or no terminal for the viewer, 3 an input (or an --alchemy
+    program file) could not be read, or the output not written, 4 --path
+    or --at names nothing, 5 an input (or a --grammar or --alchemy program
+    file) is over --max-size (--render, --alchemy: over a limit of the
+    transducer's), 6 a parse (or a --grammar compile) ran past --timeout
+    (--render, --alchemy: the whole run, the program's work included).
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml

@@ -36,9 +36,10 @@
 //! they do for a parse: the depth cap and `--timeout` through [`load::guard`]
 //! on the grammar's parser while it parses, and the deadline's alarm
 //! through the transducer's abort flag for the rest of the run (a
-//! line-by-line read, and the walk of a value after its parse), so the
-//! whole operation is under the deadline; a grammar that panics is caught
-//! at the same boundary the loader has.
+//! line-by-line read, and the walk of a value after its parse) and
+//! through a program's own flag in every mode, so the whole operation is
+//! under the deadline; a grammar that panics is caught at the same
+//! boundary the loader has.
 
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -193,8 +194,17 @@ pub enum ExportError {
         error: Box<LoadError>,
         partial: bool,
     },
-    /// A transducer stage failed; the code says which.
+    /// A transducer stage failed; the code says which. Under a program
+    /// ([`What::Program`]), the source's failures come here and the
+    /// program's own in [`Program`](Self::Program).
     Transduce(Box<Fail>),
+    /// The program's sink failed, as against the source that fed it: a
+    /// failure of the program's own, or one it met in the data, which
+    /// `headless` tells apart by code. A code the language shares with
+    /// the source (`STREAMABILITY_UNKNOWN`: the checker's or the
+    /// evaluator's, and a verified grammar's refusal to stream part-way)
+    /// is the program's only when it came this way.
+    Program(Box<Fail>),
     /// `--path` names nothing.
     NotFound {
         message: String,
@@ -282,8 +292,8 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
 /// deadline's alarm on the rest, the one fallback to the whole value when
 /// a grammar refuses to stream before anything was written, and the same
 /// failures. `chain` builds the sink over the writer it is given and the
-/// run's abort flag, which the program's functions read between steps;
-/// it is called once per attempt.
+/// program's abort flag, which its functions read between steps and the
+/// deadline's alarm raises in every mode; it is called once per attempt.
 pub fn run_program(
     job: &Job,
     input: Input<'_>,
@@ -321,10 +331,21 @@ fn attempt<S: Sink + Send + 'static>(
         Input::Text(text) => Some(*text),
         Input::Lines(_) => None,
     };
-    // One flag per attempt: the source polls it, and a program's sink reads
-    // it between steps, so the deadline stops both.
+    // Two flags per attempt, both fresh: the source polls one, raised by
+    // the parser's guard with the position, or by the alarm where no
+    // guard runs; a program's sink reads the other between steps, which
+    // the alarm raises in every mode (see [`Alarm`]), so the deadline
+    // stops a slow parse and a program slow on one item alike.
     let abort = AbortFlag::new();
-    let failed = match run(job, input, chain(abort.clone())?, mode.clone(), abort) {
+    let program = AbortFlag::new();
+    let failed = match run(
+        job,
+        input,
+        chain(program.clone())?,
+        mode.clone(),
+        abort,
+        program,
+    ) {
         Ok(()) => return Ok(()),
         Err(failed) => failed,
     };
@@ -350,12 +371,14 @@ fn attempt<S: Sink + Send + 'static>(
                 && written.load(Ordering::Relaxed) == 0 =>
         {
             let abort = AbortFlag::new();
+            let program = AbortFlag::new();
             run(
                 job,
                 Input::Text(text),
-                chain(abort.clone())?,
+                chain(program.clone())?,
                 SourceMode::Materialize,
                 abort,
+                program,
             )
             .map_err(|f| classify(job, *f, written, broken))
         }
@@ -391,15 +414,19 @@ struct Ran {
     outcome: Outcome,
     stop: Option<Arc<Stop>>,
     verdict: Option<Verdict>,
+    /// The scope's sink failed (a renderer's chain, or a program's), as
+    /// against the source that fed it.
+    from_sink: bool,
 }
 
-/// A failure with what the run knew: the guard's record and how far the
-/// parse got.
+/// A failure with what the run knew: the guard's record, how far the
+/// parse got, and whether the sink raised it.
 #[derive(Debug)]
 struct Failed {
     why: Outcome,
     stop: Option<Arc<Stop>>,
     verdict: Option<Verdict>,
+    from_sink: bool,
 }
 
 /// What the deadline's alarm does when it fires, on the waiting thread.
@@ -413,16 +440,27 @@ struct Failed {
 /// a time under no guard of aless's, and the walk of a parsed value, which
 /// the source polls the flag on at every event. The alarm raises the flag
 /// in those cases, so the deadline covers the whole operation.
+///
+/// A program's sink has a flag of its own, which the alarm raises in
+/// every mode: while the sink works on one item the parser is inside an
+/// event, where no guard of aless's runs, so nothing but that flag would
+/// stop a program slow per item, and the parse's position is not at
+/// stake, since the parser's guard sees the deadline first the moment
+/// the sink returns.
 struct Alarm {
     lines: bool,
     /// The parse of a whole text has returned, and its value is being
     /// walked.
     parsed: Arc<AtomicBool>,
     abort: AbortFlag,
+    /// The program's flag ([`run_program`]'s `chain` builds the sink over
+    /// it); a render's chain has one too, which nothing reads.
+    program: AbortFlag,
 }
 
 impl Alarm {
     fn fire(&self) {
+        self.program.abort();
         if self.lines || self.parsed.load(Ordering::Relaxed) {
             self.abort.abort();
         }
@@ -430,19 +468,22 @@ impl Alarm {
 }
 
 /// Drive `input` into `scope` on the parse thread, under `--timeout`; a
-/// text input is read in `mode`.
+/// text input is read in `mode`. `abort` is the source's flag and
+/// `program` the sink's (see [`Alarm`]).
 fn run<S: Sink + Send + 'static>(
     job: &Job,
     input: Input<'_>,
     scope: Scope<S>,
     mode: SourceMode,
     abort: AbortFlag,
+    program: AbortFlag,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
     let alarm = Alarm {
         lines: matches!(input, Input::Lines(_)),
         parsed: Arc::new(AtomicBool::new(false)),
         abort: abort.clone(),
+        program,
     };
     let parsed = alarm.parsed.clone();
     let ran = load::on_parse_thread(
@@ -458,11 +499,13 @@ fn run<S: Sink + Send + 'static>(
                         outcome: Outcome::of(outcome),
                         stop: None,
                         verdict: scope.verdict(),
+                        from_sink: scope.sink_failed,
                     },
                     Err(what) => Ran {
                         outcome: Outcome::Panicked(what),
                         stop: None,
                         verdict: None,
+                        from_sink: false,
                     },
                 }
             }
@@ -476,6 +519,7 @@ fn run<S: Sink + Send + 'static>(
                             outcome: Outcome::Panicked(e.message),
                             stop: None,
                             verdict: None,
+                            from_sink: false,
                         }
                     }
                 };
@@ -505,11 +549,13 @@ fn run<S: Sink + Send + 'static>(
                                 outcome: Outcome::of(outcome),
                                 stop: Some(stop),
                                 verdict: scope.verdict(),
+                                from_sink: scope.sink_failed,
                             },
                             Err(what) => Ran {
                                 outcome: Outcome::Panicked(what),
                                 stop: Some(stop),
                                 verdict: None,
+                                from_sink: false,
                             },
                         }
                     }
@@ -523,6 +569,7 @@ fn run<S: Sink + Send + 'static>(
             why,
             stop: ran.stop,
             verdict: ran.verdict,
+            from_sink: ran.from_sink,
         })),
     }
 }
@@ -559,6 +606,7 @@ fn materialize<S: Sink>(
                 outcome: Outcome::Panicked(what),
                 stop: Some(stop),
                 verdict: None,
+                from_sink: false,
             }
         }
         Ok(Err(e)) => {
@@ -574,6 +622,7 @@ fn materialize<S: Sink>(
                 outcome: Outcome::Failed(fail),
                 stop: Some(stop),
                 verdict: None,
+                from_sink: false,
             };
         }
         Ok(Ok(value)) => value,
@@ -588,6 +637,7 @@ fn materialize<S: Sink>(
             outcome: Outcome::Failed(Fail::aborted()),
             stop: Some(stop),
             verdict: None,
+            from_sink: false,
         };
     }
     // A custom grammar's nesting is measured on its value, as the loader
@@ -599,6 +649,7 @@ fn materialize<S: Sink>(
             outcome: Outcome::Failed(Fail::aborted()),
             stop: Some(stop),
             verdict: None,
+            from_sink: false,
         };
     }
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
@@ -608,6 +659,7 @@ fn materialize<S: Sink>(
         outcome: Outcome::of(outcome),
         stop: Some(stop),
         verdict: scope.verdict(),
+        from_sink: scope.sink_failed,
     }
 }
 
@@ -685,7 +737,12 @@ pub fn path_text(path: &[Seg]) -> String {
 
 /// Sort a failure into what it means for aless.
 fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool) -> ExportError {
-    let Failed { why, stop, verdict } = failed;
+    let Failed {
+        why,
+        stop,
+        verdict,
+        from_sink,
+    } = failed;
     let partial = written.load(Ordering::Relaxed) > 0;
     let load = |error: LoadError| ExportError::Load {
         error: Box::new(error),
@@ -766,7 +823,15 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
             if partial {
                 fail = fail.committed();
             }
-            ExportError::Transduce(Box::new(fail))
+            // Where it came from decides whose it is: a program's sink
+            // raising a code the source also raises (a run-time
+            // `STREAMABILITY_UNKNOWN`) is the program's, and the source
+            // raising it (a grammar that refused to stream part-way, once
+            // output had left) is the input's, whatever the code.
+            match job.what {
+                What::Program { .. } if from_sink => ExportError::Program(Box::new(fail)),
+                _ => ExportError::Transduce(Box::new(fail)),
+            }
         }
     }
 }
@@ -817,15 +882,31 @@ fn too_deep(job: &Job, line: u32, col: u32, why: Deep) -> LoadError {
     positioned(job, "too_deep", message, &hint, line, col)
 }
 
-/// `timeout`, worded as the loader words a parse stopped at its deadline.
+/// `timeout`, worded as the loader words a parse stopped at its deadline;
+/// under a program, worded for the whole run, since the deadline covers
+/// the parse and the program together and either may have been running
+/// when it passed.
 fn timed_out(job: &Job, line: u32, col: u32) -> LoadError {
     let limit = job.timeout.map_or(0.0, |t| t.as_secs_f64()).to_string();
-    let message = format!("timeout: the parse ran longer than {limit} s");
-    let hint = format!(
-        "The parse had got this far when --timeout {limit} stopped it; what was written \
-         before that stays written.\nPass a larger --timeout to let it finish, or --timeout 0 \
-         for no limit."
-    );
+    let (message, hint) = match job.what {
+        What::Render(_) => (
+            format!("timeout: the parse ran longer than {limit} s"),
+            format!(
+                "The parse had got this far when --timeout {limit} stopped it; what was written \
+                 before that stays written.\nPass a larger --timeout to let it finish, or \
+                 --timeout 0 for no limit."
+            ),
+        ),
+        What::Program { .. } => (
+            format!("timeout: the run (the parse and the program) ran longer than {limit} s"),
+            format!(
+                "The run had got this far into the input when --timeout {limit} stopped it, in \
+                 the parse or in the program's work on an item; what was written before that \
+                 stays written.\nPass a larger --timeout to let it finish, or --timeout 0 for no \
+                 limit."
+            ),
+        ),
+    };
     positioned(job, "timeout", message, &hint, line, col)
 }
 
@@ -924,6 +1005,9 @@ struct Scope<S> {
     nearest: Option<Nearest>,
     /// Why the scope stopped the run, when it did.
     verdict: Option<Verdict>,
+    /// The inner sink failed an event: the failure is the sink's, not the
+    /// source's.
+    sink_failed: bool,
 }
 
 /// The scope's own reasons to stop a run. Each is returned to the source
@@ -975,6 +1059,7 @@ impl<S: Sink> Scope<S> {
             state: State::Before,
             nearest: None,
             verdict: None,
+            sink_failed: false,
         }
     }
 
@@ -1033,7 +1118,11 @@ impl<S: Sink> Scope<S> {
     }
 
     fn forward(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
-        self.inner.event(ev)
+        let r = self.inner.event(ev);
+        if r.is_err() {
+            self.sink_failed = true;
+        }
+        r
     }
 }
 
@@ -1629,15 +1718,23 @@ mod tests {
         );
     }
 
+    /// The source's flag only where no guard will raise it; the program's
+    /// flag in every mode, since a program at work on one item is inside
+    /// a parser event, where the guard cannot run.
     #[test]
-    fn the_alarm_raises_the_flag_only_where_no_guard_will() {
+    fn the_alarm_raises_the_sources_flag_only_where_no_guard_will() {
         let alarm = Alarm {
             lines: false,
             parsed: Arc::new(AtomicBool::new(false)),
             abort: AbortFlag::new(),
+            program: AbortFlag::new(),
         };
         alarm.fire();
         assert!(!alarm.abort.is_aborted(), "the parser's guard has it");
+        assert!(
+            alarm.program.is_aborted(),
+            "the program, mid-item, has nothing else"
+        );
         alarm.parsed.store(true, Ordering::Relaxed);
         alarm.fire();
         assert!(alarm.abort.is_aborted(), "the walk after the parse");
@@ -1645,9 +1742,11 @@ mod tests {
             lines: true,
             parsed: Arc::new(AtomicBool::new(false)),
             abort: AbortFlag::new(),
+            program: AbortFlag::new(),
         };
         alarm.fire();
         assert!(alarm.abort.is_aborted(), "a line-by-line read");
+        assert!(alarm.program.is_aborted());
     }
 
     #[test]
@@ -1657,6 +1756,7 @@ mod tests {
             why: Outcome::Panicked("boom".into()),
             stop: None,
             verdict: None,
+            from_sink: false,
         };
         match classify(&j, failed, &AtomicU64::new(0), &AtomicBool::new(false)) {
             ExportError::Load { error, partial } => {
@@ -1967,6 +2067,7 @@ mod tests {
             Scope::new(Vec::new(), Slow),
             SourceMode::Materialize,
             AbortFlag::new(),
+            AbortFlag::new(),
         )
         .unwrap_err();
         match (&failed.why, failed.stop.as_ref().map(|s| s.why())) {
@@ -1988,8 +2089,111 @@ mod tests {
             Scope::new(Vec::new(), Slow),
             SourceMode::Materialize,
             AbortFlag::new(),
+            AbortFlag::new(),
         )
         .unwrap();
+    }
+
+    /// The deadline reaches a program's sink in every mode. A sink that
+    /// works on one item until its flag is raised stands for a program
+    /// slow per item: under the incremental source, where the parser is
+    /// inside an event while the sink works and no guard of aless's runs,
+    /// the alarm must raise the program's flag, or the run would last as
+    /// long as the item's work. The run ends a moment after the deadline,
+    /// as a timeout worded for the run.
+    #[test]
+    fn the_alarm_reaches_a_program_slow_on_one_item_in_every_mode() {
+        struct UntilAborted {
+            program: AbortFlag,
+            waited: Arc<AtomicBool>,
+        }
+        impl Sink for UntilAborted {
+            fn event(&mut self, _ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                let started = std::time::Instant::now();
+                // Work on the item, reading the flag as a program does
+                // between steps; give up after a while so a failure of
+                // this test ends.
+                while !self.program.is_aborted() {
+                    if started.elapsed() > Duration::from_secs(10) {
+                        return Ok(Flow::Continue);
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                self.waited.store(true, Ordering::Relaxed);
+                Err(Fail::aborted())
+            }
+        }
+        for (format, mode) in [
+            (
+                Format::Json,
+                SourceMode::Incremental {
+                    prune: Prune::Never,
+                },
+            ),
+            (Format::Toml, SourceMode::Materialize),
+        ] {
+            let text = match format {
+                Format::Json => "[1, 2, 3]",
+                _ => "a = 1\n",
+            };
+            let mut j = job(format, Renderer::Json, ".");
+            j.what = What::Program { rows: None };
+            j.timeout = Some(Duration::from_millis(100));
+            let program = AbortFlag::new();
+            let waited = Arc::new(AtomicBool::new(false));
+            let started = std::time::Instant::now();
+            let failed = run(
+                &j,
+                Input::Text(text),
+                Scope::new(
+                    Vec::new(),
+                    UntilAborted {
+                        program: program.clone(),
+                        waited: waited.clone(),
+                    },
+                ),
+                mode,
+                AbortFlag::new(),
+                program,
+            )
+            .unwrap_err();
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{format}: the run went on {:?} past the deadline",
+                started.elapsed()
+            );
+            assert!(
+                waited.load(Ordering::Relaxed),
+                "{format}: the alarm raised the flag"
+            );
+            assert!(failed.from_sink, "{format}: the sink's failure");
+            match classify(&j, *failed, &AtomicU64::new(0), &AtomicBool::new(false)) {
+                ExportError::Load { error, partial } => {
+                    assert_eq!(error.code, "timeout", "{format}");
+                    assert!(!partial, "{format}");
+                    assert!(
+                        error
+                            .message
+                            .contains("the run (the parse and the program)"),
+                        "{format}: {}",
+                        error.message
+                    );
+                }
+                other => panic!("{format}: {other:?}"),
+            }
+        }
+        // The same sink, the same document, under a render: nothing reads
+        // the program's flag, and the run ends with the parse and the walk.
+        let mut j = job(Format::Json, Renderer::Json, ".");
+        j.timeout = Some(Duration::from_millis(100));
+        match run_text(&j, "[1, 2, 3]").0 {
+            Ok(()) => {}
+            Err(ExportError::Load { error, .. }) => {
+                assert_eq!(error.code, "timeout", "a busy machine's deadline");
+                assert!(error.message.starts_with("timeout: the parse ran longer"));
+            }
+            Err(other) => panic!("{other:?}"),
+        }
     }
 
     /// [`materialize`] with a custom grammar's parse that comes to its end
@@ -2027,6 +2231,7 @@ mod tests {
             why: ran.outcome,
             stop: ran.stop,
             verdict: ran.verdict,
+            from_sink: ran.from_sink,
         };
         classify(&j, failed, &AtomicU64::new(0), &AtomicBool::new(false))
     }
