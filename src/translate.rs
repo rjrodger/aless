@@ -27,7 +27,11 @@
 //! construction; a parse streamed as it proceeds hands on a member its
 //! grammar reads twice, so the run refuses one ([`export::UniqueMembers`]),
 //! and falls back to the parsed value, as `--json` reads it, when nothing
-//! had been written yet.
+//! had been written yet. A render that writes from records needs the tree
+//! adapted to rows in front of it (the inferred table, behind the row check
+//! `--render csv` has), which aless does not compose yet, so the registry
+//! lists only the renders that write from a tree ([`runs`]): until then, a
+//! format whose render writes from records is read and not written.
 
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
@@ -116,15 +120,23 @@ fn read_part(krate: &str, manifest: &str, text: &'static str) -> Option<Part> {
     })
 }
 
-/// Every part the crates hand over, read once.
+/// Every part the crates hand over that aless can run, read once.
 fn parts() -> &'static [Part] {
     static PARTS: OnceLock<Vec<Part>> = OnceLock::new();
     PARTS.get_or_init(|| {
         crates()
             .into_iter()
             .filter_map(|(krate, manifest, text)| read_part(krate, manifest, text))
+            .filter(runs)
             .collect()
     })
+}
+
+/// Whether aless can run a part: one that writes from a tree takes the
+/// source's events as they are. One that writes from records would need
+/// the inferred table in front of it, which aless does not compose yet.
+fn runs(part: &Part) -> bool {
+    part.writes == Shape::Tree
 }
 
 /// The part `--render` names by its id.
@@ -218,6 +230,7 @@ mod tests {
     fn yamls_manifest_names_its_render() {
         let yaml = part("yaml").expect("tabnas-yaml's manifest names a render");
         assert_eq!(yaml.writes, Shape::Tree);
+        assert!(runs(yaml));
         assert_eq!(yaml.file, "tabnas-yaml/alchemy/render.alc");
         assert_eq!(yaml.entry(), "yaml-render");
         assert!(yaml.text.contains("def yaml-render [input]"));
@@ -251,7 +264,8 @@ mod tests {
     }
 
     /// A manifest that names no render of its own, or one alchemy carries,
-    /// or no shape to write from, gives no part.
+    /// or no shape to write from, gives no part; one whose render writes
+    /// from records gives a part aless does not run yet.
     #[test]
     fn a_manifest_without_a_render_of_its_own_gives_no_part() {
         let text = "def x-render [input] input";
@@ -273,6 +287,10 @@ mod tests {
         assert_eq!(part.writes, Shape::Records);
         assert_eq!(part.file, "tabnas-x/alchemy/render.alc");
         assert!(part.loss.is_empty());
+        assert!(
+            !runs(&part),
+            "a records render needs the inferred table first"
+        );
     }
 
     #[test]
