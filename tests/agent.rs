@@ -2204,20 +2204,23 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
 /// naming the file alone, since the program's own span (its evaluator
 /// stamps one on the failure) is no place in the input and the parse was
 /// not what stopped. The deadline is one the parse meets many times
-/// over (about a tenth of a second in a debug build) and the item's work
-/// does not (seconds), so it is the program's flag that ends the run.
+/// over (a few milliseconds for three hundred numbers) and the item's
+/// cubic work does not (seconds), so it is the program's flag that ends
+/// the run, on a slow runner too.
 #[test]
 fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     use std::time::{Duration, Instant};
-    // Quadratic work per row: every element mapped over every element.
+    // Cubic work per row: every element mapped over every element, for
+    // every element. Three hundred numbers parse in a few milliseconds and
+    // take seconds of work, so the deadline lands in the program.
     let slow =
-        "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] y) \
+        "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] (map (fn [z] z) v)) \
                 v)) v)]\n      \".\"\ndef export [input]\n  concat-map slow (select (path \
                 each-index) input)\n";
     let dir = std::env::temp_dir().join(format!("aless-slow-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let doc = dir.join("row.json");
-    let row: Vec<String> = (0..4_000).map(|i| i.to_string()).collect();
+    let row: Vec<String> = (0..300).map(|i| i.to_string()).collect();
     std::fs::write(&doc, format!("[[{}]]", row.join(","))).unwrap();
     let started = Instant::now();
     let out = aless(

@@ -2381,13 +2381,14 @@ mod tests {
     /// `-->` naming the input alone): the program's span, which its
     /// evaluator stamps on the failure, is none, and the parse was not
     /// what stopped. The deadline is one the parse comfortably meets (a
-    /// tenth of a second in a debug build) and the item's work does not
-    /// (seconds), so the parser's guard cannot be what ends the run:
+    /// few milliseconds for three hundred numbers) and the item's cubic
+    /// work does not (seconds), so the parser's guard cannot be what ends
+    /// the run, on a slow runner too:
     /// without the program's flag the run would last the item's work.
     #[test]
     fn a_program_slow_on_one_item_stops_at_the_deadline_as_a_run_timeout() {
         let slow =
-            "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] y) \
+            "def slow [row]\n  let [v (as-vector row)]\n    let [w (map (fn [x] (map (fn [y] (map (fn [z] z) v)) \
                     v)) v)]\n      \".\"\ndef export [input]\n  concat-map slow (select (path \
                     each-index) input)\n";
         let mut r = req(Op::Alchemy {
@@ -2396,9 +2397,8 @@ mod tests {
             explain: false,
         });
         r.timeout = Some(Duration::from_millis(500));
-        // One row whose quadratic work takes seconds; its parse a tenth
-        // of one.
-        let row: Vec<String> = (0..4_000).map(|i| i.to_string()).collect();
+        // One row whose cubic work takes seconds; its parse milliseconds.
+        let row: Vec<String> = (0..300).map(|i| i.to_string()).collect();
         let doc = format!("[[{}]]", row.join(","));
         let started = std::time::Instant::now();
         let out = with_stdin(&r, &doc);
