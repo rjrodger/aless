@@ -1095,10 +1095,9 @@ fn custom_grammars_work_with_every_operation() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A custom grammar keeps a rule open for every item of a repetition, so a
-/// file of thousands of lines is not nesting: it parses, and `--check`
-/// and `--render` take it too. Nesting is measured on the value the
-/// grammar builds, past about 1,000 levels.
+/// A repetition adds no rule depth, so a file of thousands of lines parses
+/// under the shared cap, and `--check` and `--render` take it too. Nesting
+/// is measured on the value the grammar builds, past about 1,000 levels.
 #[test]
 fn custom_grammars_read_files_of_thousands_of_lines() {
     let dir = std::env::temp_dir().join(format!("aless-long-{}", std::process::id()));

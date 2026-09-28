@@ -167,36 +167,31 @@ minimal grammar and what happened.
   two shapes within a few tokens of where they diverge. A last line of
   fixed shape (`nameserver 1.1.1.1`, a passwd entry) ends without a
   newline fine, and every line ending in a newline is fine.
-- **Files past about 500,000 lines.** The compiler writes a repetition
-  as a rule that calls itself once per item, so the engine keeps a rule
-  open for every item matched so far: two per line for the grammars
-  here. aless allows a grammar from the command line 1,000,000 open
-  rules (the built-in grammars stop at 3,000, which these grammars would
-  reach at 1,500 lines) and measures nesting on the value instead, so
-  the limit is some 500,000 lines, 30 MB of `hosts`, at about 10 KB of
-  memory a line (300,000 lines: 24 s and 2.8 GB in a release build).
-  Past it the parse fails as `too_deep`, naming the open rules. This is
-  tabnas-bnf's `*`/`1*` desugaring (`H = inner H / ε`), which only the
-  `X = prefix [ sep X ]` shape escapes as a same-depth repeat.
+- **Files of any length parse at one depth.** A repetition (`*entry`,
+  `1*word`) compiles to a loop that re-enters its rule in one frame, so
+  a hosts file of any length costs the rule depth of one line and runs
+  under the same 3,000-rule cap as the built-in grammars. What bounds a
+  long file is memory and time, about 9 KB and 80 µs a line (300,000
+  lines: 25 to 45 s and 2.7 GB in a release build, as busy as the
+  machine was), and `--timeout` and `--max-size` are the controls.
+  Until tabnas/bnf#80 the compiler spelled a repetition as a rule
+  calling itself once per item (`H = inner H / ε`), which reached the
+  cap at 1,500 lines, and aless allowed a grammar from the command line
+  1,000,000 open rules instead, with nesting measured on the value; the
+  cap went with the pin that took the fix, and the value measure stays.
 
-  That cap is a workaround, and the rule it works around is the fleet's:
-  a repetition is replacement, never a push chain. An alternate in the
-  engine that hands control to another rule either pushes a child rule
-  (`p`), a new frame for something the tree must nest, or replaces the
-  current rule (`r`), the same frame re-entered for the next item of a
-  sequence. `*entry` is a sequence, so
-  it is meant to compile to a replace loop, the loop `r` and the item
-  `p` where it nests, and the loop's iterations then add nothing to rule depth (the
-  engine's `d`): a hosts file
-  of any length costs the depth of one line. tabnas-bnf's `H = inner H /
-  ε` is a push chain instead, which is why aless lets a grammar from the
-  command line open 1,000,000 rules; once aless pins a bnf and abnf that
-  compile the star as `r`, that cap goes back to the shared 3,000 and
-  this item goes away. Write `*entry` and leave the loop to the compiler
-  rather than spelling it as a rule that calls itself, which is the same
-  chain by hand. Rule depth over a repetition is constant; a test that
-  repeats an item ten thousand times and asserts the maximum `d` stays
-  what a single item needs is the proof.
+  The rule the loop keeps is the fleet's: a repetition is replacement,
+  never a push chain. An alternate in the engine that hands control to
+  another rule either pushes a child rule (`p`), a new frame for
+  something the tree must nest, or replaces the current rule (`r`), the
+  same frame re-entered for the next item of a sequence. `*entry` is a
+  sequence, so it compiles to a replace loop, the loop `r` and the item
+  `p` where it nests, and the loop's iterations add nothing to rule
+  depth (the engine's `d`). Write `*entry` and leave the loop to the
+  compiler rather than spelling it as a rule that calls itself, which
+  is a push chain by hand. Rule depth over a repetition is constant; a
+  test that repeats an item ten thousand times and asserts the maximum
+  `d` stays what a single item needs is the proof.
 
 ## Simplifications per format
 

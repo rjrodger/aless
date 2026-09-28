@@ -426,7 +426,7 @@ fn run<S: Sink + Send + 'static>(
                 let stop = load::guard(
                     &mut parser,
                     deadline.clone(),
-                    load::max_rule_depth(format),
+                    load::MAX_RULE_DEPTH,
                     move || notify.abort(),
                 );
                 let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -672,12 +672,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
     match stop.as_ref().map(|s| s.why()) {
         Some(STOP_DEPTH) => {
             let (line, col) = stop.as_ref().map_or((0, 0), |s| s.position());
-            return load(too_deep(
-                job,
-                line,
-                col,
-                Deep::Rules(load::max_rule_depth(job.format)),
-            ));
+            return load(too_deep(job, line, col, Deep::Rules(load::MAX_RULE_DEPTH)));
         }
         Some(STOP_VALUE_DEPTH) => return load(too_deep(job, 0, 0, Deep::Value)),
         Some(STOP_TIME) => {
@@ -1953,7 +1948,7 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 let mut parser = load::make_parser(format).unwrap().unwrap();
-                let stop = load::guard(&mut parser, None, load::max_rule_depth(format), || {});
+                let stop = load::guard(&mut parser, None, load::MAX_RULE_DEPTH, || {});
                 materialize(
                     parser,
                     format,

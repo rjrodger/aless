@@ -740,8 +740,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas"
-version = "0.12.4"
-source = "git+https://github.com/tabnas/parser#198c7c33d9bf1801d6ab346dd6d55c73bad08b5d"
+version = "0.12.5"
+source = "git+https://github.com/tabnas/parser#d8d00c357a3dcfc223b32552720c4ad345fad56c"
 dependencies = [
  "indexmap",
  "regex",
@@ -765,7 +765,7 @@ dependencies = [
 [[package]]
 name = "tabnas-bnf"
 version = "0.1.22"
-source = "git+https://github.com/tabnas/bnf#d96fd275fae8bdc02ce960594b3ff4f9f9e22167"
+source = "git+https://github.com/tabnas/bnf#d0a92270389042c5a6e005c4f587e75bdb314c0e"
 dependencies = [
  "indexmap",
  "regex",
