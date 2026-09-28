@@ -946,7 +946,7 @@ dependencies = [
 [[package]]
 name = "tabnas-yaml"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/yaml#bcfd78b8df23894edf51a3c2945f7d0fe7b203b8"
+source = "git+https://github.com/tabnas/yaml#b7c28c4e89c93111afcf0deb5c41c2a4c65fc941"
 dependencies = [
  "indexmap",
  "regex",
