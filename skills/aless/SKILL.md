@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as YAML, runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -89,6 +89,30 @@ row lacks is an empty field, as is `null`; a nested value is compact JSON
 text in its cell. Every field is quoted, records end in CRLF, and a header
 row comes first. Use `--paths --depth 2` first to find the array to
 export. Standard output is CSV bytes, not JSON, when the status is 0.
+
+Write any of those formats as YAML, streamed the same way:
+
+```bash
+aless --render yaml data.csv                    # the records as YAML
+aless --render yaml --path .spec deploy.json    # the value at a path
+```
+
+The output is one YAML 1.2 document in block style, every string and key
+double-quoted (so none reads back as a boolean, null, number or nested
+mapping), numbers as the source spelled them, `.inf` and `.nan` for the
+non-finite ones. On success standard output holds the YAML alone, and
+standard error holds `{"warning": {"kind": "loss", "message", "file",
+"render", "loss"}}`, where `loss` lists what a YAML document written this
+way does not keep (comments, anchors and aliases, tags, styles, several
+documents): exit status 0 is success whatever standard error holds. A
+member the input repeats (`{"a":1,"a":2}`) is written once, with the last
+value as `--json` reads it, when nothing had been written yet; otherwise
+the run fails with `DUPLICATE_MEMBER` and `output: "partial"`. `--render`
+takes `csv`, `json` or `yaml`; another format is a usage error, and so is
+`--render yaml` with `--alchemy`. aless reading the YAML back misreads a
+quoted key after a block sequence (tabnas/yaml#86) and a flow sequence
+first in an indented block sequence (tabnas/yaml#88); other YAML 1.2
+readers read it as written.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
@@ -190,6 +214,7 @@ What each option prints:
 | `--check` | `{ok, files: [{file, format, ok, error}]}` |
 | `--render csv` | CSV text: a header row, then one record per row, all fields quoted, CRLF |
 | `--render json` | the value itself, streamed |
+| `--render yaml` | the value as one YAML document, streamed; `{"warning": {"kind": "loss", …}}` on standard error |
 | `--alchemy FILE` | what the program exports: text as it is, a table as CSV (`--render json`: JSON records), JSON events as JSON |
 | `--alchemy FILE --explain` | `{entry, output, protocol, chain, retention, …}`, the program's plan report |
 
@@ -226,6 +251,9 @@ refuses rather than export a different one. `[-1]` on an array is a usage
 error under `--render` (a stream cannot count from the end); on an object
 it is the key `-1`. A `--render` run stopped by `--timeout` or by nesting
 reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`.
+An error met while `--render yaml` was writing (a `transduce`,
+`too_deep` or `timeout` error) also carries `loss`, the sentences its
+warning gives on success.
 
 An `alchemy` error is the program's own: `code` is the language's,
 `message` opens with the finer code, `file` is the program's path (or

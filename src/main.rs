@@ -56,9 +56,11 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --where             The start's entry: its path and source position
         --check             Parse each FILE and report
                             {ok, files: [{file, format, ok, error}]}
-        --render <FORMAT>   csv or json: the records at the start (the elements
-                            of an array; JSON Lines and CSV row by row) as CSV,
-                            or the value there as JSON, streamed as it is read
+        --render <FORMAT>   csv, json or yaml: the records at the start (the
+                            elements of an array; JSON Lines and CSV row by
+                            row) as CSV, or the value there as JSON or YAML,
+                            streamed as it is read; yaml says what it does not
+                            keep in a {\"warning\": …} on standard error
         --alchemy <FILE>    Run the alchemy program in FILE over the input and
                             stream what it exports: its own text as it is, a
                             table as CSV (--render json: JSON records), JSON
@@ -82,15 +84,17 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
     \"message\", …}}, with the file, line, col, code and hint when the input
     did not parse, and {\"kind\": \"alchemy\", \"code\", \"file\", \"line\", \"col\"}
-    when the program did not. Exit status: 0 success, 1 the input did not
-    parse (--check: an input failed; --render, --alchemy: the input or its
-    records will not do), 2 bad usage (a program or --grammar that does not
-    compile too) or no terminal for the viewer, 3 an input (or an --alchemy
-    program file) could not be read, or the output not written, 4 --path
-    or --at names nothing, 5 an input (or a --grammar or --alchemy program
-    file) is over --max-size (--render, --alchemy: over a limit of the
-    transducer's), 6 a parse (or a --grammar compile) ran past --timeout
-    (--render, --alchemy: the whole run, the program's work included).
+    when the program did not; one met while --render yaml writes adds
+    \"loss\", the sentences its warning gives on success. Exit status: 0
+    success, 1 the input did not parse (--check: an input failed; --render,
+    --alchemy: the input or its records will not do), 2 bad usage (a
+    program or --grammar that does not compile too) or no terminal for the
+    viewer, 3 an input (or an --alchemy program file) could not be read,
+    or the output not written, 4 --path or --at names nothing,
+    5 an input (or a --grammar or --alchemy program file) is over --max-size
+    (--render, --alchemy: over a limit of the transducer's),
+    6 a parse (or a --grammar compile) ran past --timeout (--render,
+    --alchemy: the whole run, the program's work included).
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -100,6 +104,7 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     aless -k csv --json < data.csv          stdin is JSON unless -k says
     aless --render csv --path .items x.json the records under .items as CSV
     aless --render json big.yaml            the document as JSON, streamed
+    aless --render yaml data.csv            the records as YAML, streamed
     aless --alchemy export.alc api.json     a program's output, streamed
     aless --alchemy export.alc --explain    what the program will do
     aless --grammar hosts=hosts.abnf --paths /etc/hosts   a format of your own
@@ -272,7 +277,7 @@ fn parse_args() -> Result<Args, String> {
             "--render" => {
                 let v = value()?;
                 let renderer = aless::export::Renderer::from_name(&v)
-                    .ok_or_else(|| format!("--render writes csv or json, not {v}"))?;
+                    .ok_or_else(|| aless::translate::refusal(&v))?;
                 op = Some(Op::Render(renderer));
             }
             "--alchemy" => {

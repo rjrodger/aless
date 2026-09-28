@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "tabnas-alchemy"
 version = "0.1.0"
-source = "git+https://github.com/tabnas/alchemy#2bc4bebbecc671d4f48855ca7e0eca759ed215ca"
+source = "git+https://github.com/tabnas/alchemy#5b319516cf1aa582e3fe7c352608a8d414e2d1b6"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -790,8 +790,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.5.10"
-source = "git+https://github.com/tabnas/csv#986d53ef4e61119550600becba173cd1a7b8855e"
+version = "0.5.11"
+source = "git+https://github.com/tabnas/csv#a5a8eb2a5486c3babcab83ab8288b88ea99c7675"
 dependencies = [
  "indexmap",
  "serde",
@@ -922,7 +922,7 @@ dependencies = [
 [[package]]
 name = "tabnas-transduce"
 version = "0.1.0"
-source = "git+https://github.com/tabnas/transduce#74b28822731f53332e010e8ac4007a6d21e6a8cc"
+source = "git+https://github.com/tabnas/transduce#17da362b88a37f03f7c4fa6a19ddf6ca2ec583d1"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -945,8 +945,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.10"
-source = "git+https://github.com/tabnas/yaml#a5c6bbbd6242ffbb26208d4e72d15b381a4e2ae6"
+version = "0.5.11"
+source = "git+https://github.com/tabnas/yaml#b7c28c4e89c93111afcf0deb5c41c2a4c65fc941"
 dependencies = [
  "indexmap",
  "regex",
