@@ -1631,3 +1631,375 @@ fn a_grammar_file_whose_path_is_not_utf8_is_read_where_it_is() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ----- programs (--alchemy) --------------------------------------------------
+
+const PROGRAMS: &str = "tests/fixtures/programs";
+
+/// The worked example of the transducer's design: the program binds a
+/// table by the document's own metadata and renders the spec's CSV, byte
+/// for byte; the same table as JSON records with `--render json`.
+#[test]
+fn alchemy_runs_the_worked_example_byte_for_byte() {
+    let program = format!("{PROGRAMS}/export.alc");
+    let out = aless(
+        &["--alchemy", &program, "tests/fixtures/records.json"],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty());
+    assert_eq!(
+        out.stdout,
+        b"\"Identifier\",\"Full name\",\"Balance\"\r\n\"123\",\"Alice\",\"50.25\"\r\n\"456\",\"Bob\",\"72\"\r\n"
+    );
+    assert_eq!(out.stdout.len(), 77);
+    // The table alone, rendered by aless: CSV by default, JSON records on
+    // request, keyed by the column labels.
+    let table = format!("{PROGRAMS}/table.alc");
+    let csv = aless(&["--alchemy", &table, "tests/fixtures/records.json"], None);
+    assert_eq!(csv.stdout, out.stdout);
+    let records = aless(
+        &[
+            "--alchemy",
+            &table,
+            "--render",
+            "json",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(
+        code(&records),
+        0,
+        "{}",
+        String::from_utf8_lossy(&records.stderr)
+    );
+    assert_eq!(
+        json(&records.stdout),
+        json!([
+            {"Identifier": 123, "Full name": "Alice", "Balance": 50.25},
+            {"Identifier": 456, "Full name": "Bob", "Balance": 72}
+        ])
+    );
+    // A program on the command line, and the option's `=` form.
+    let out = aless(
+        &[
+            "--alchemy-expr=def export [input] (json input)",
+            "--compact",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("{\"response\":{\"metadata\""));
+}
+
+/// A program that passes the document through gives `--json`'s value,
+/// for every fixture and through every path the input can take: parsed
+/// whole, streamed as the parse proceeds, or read a record at a time.
+#[test]
+fn alchemy_echo_agrees_with_json_for_every_fixture() {
+    fn normal(v: Value) -> Value {
+        match v {
+            Value::Number(n) => json!(n.as_f64().unwrap()),
+            Value::Array(a) => Value::Array(a.into_iter().map(normal).collect()),
+            Value::Object(m) => Value::Object(m.into_iter().map(|(k, v)| (k, normal(v))).collect()),
+            v => v,
+        }
+    }
+    let files: Vec<String> = fixture_files()
+        .into_iter()
+        .filter(|f| !f.ends_with("bad.json") && !f.ends_with("lines.txt"))
+        .collect();
+    assert!(files.len() >= 16, "{files:?}");
+    for file in &files {
+        for program in [
+            "def export [input] input",
+            "def export [input] (json input)",
+        ] {
+            let streamed = aless(&["--alchemy-expr", program, file], None);
+            assert_eq!(
+                code(&streamed),
+                0,
+                "{file} {program}: {}",
+                String::from_utf8_lossy(&streamed.stderr)
+            );
+            let whole = aless(&["--json", "--compact", file], None);
+            assert_eq!(
+                normal(json(&streamed.stdout)),
+                normal(json(&whole.stdout)),
+                "{file} {program}"
+            );
+            assert!(streamed.stdout.ends_with(b"\n"), "{file}");
+        }
+    }
+    // Standard input, a record at a time, with -k saying the format; and
+    // a table of the rows from CSV.
+    let out = aless(
+        &["-k", "jsonl", "--alchemy-expr", "def export [input] input"],
+        Some("{\"n\": 1}\n{\"n\": 2.50}\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[{\"n\":1},{\"n\":2.50}]\n"
+    );
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "tests/fixtures/sample.csv",
+        ],
+        None,
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[{\"name\":\"ada\",\"age\":\"36\",\"city\":\"london\"},{\"name\":\"lin\",\"age\":\"28\",\"city\":\"helsinki\"}]\n"
+    );
+    // A grammar that refuses to stream a document part-way is run again
+    // from the whole value.
+    let out = aless(
+        &["-k", "jsonic", "--alchemy-expr", "def export [input] input"],
+        Some("{a:1}\n{b:2}\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[{\"a\":1},{\"b\":2}]\n"
+    );
+}
+
+/// `--explain` prints the plan report as one JSON object, and reads no
+/// input.
+#[test]
+fn alchemy_explain_prints_the_plan_as_json() {
+    let program = format!("{PROGRAMS}/export.alc");
+    let out = aless(&["--alchemy", &program, "--explain"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stderr.is_empty());
+    let v = json(&out.stdout);
+    assert_eq!(v["entry"], json!("export"));
+    assert_eq!(v["output"], json!("Text"));
+    assert_eq!(
+        v["protocol"],
+        json!(["JsonEvents/1", "TableRows/1", "Text"])
+    );
+    assert_eq!(v["chain"], json!(["api-table", "csv"]));
+    assert!(v["retention"].is_array(), "{v}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\n  \"entry\""));
+    let compact = aless(&["--alchemy", &program, "--explain", "--compact"], None);
+    assert_eq!(json(&compact.stdout), v);
+    assert_eq!(String::from_utf8_lossy(&compact.stdout).lines().count(), 1);
+    // No FILE goes with it.
+    let out = aless(
+        &[
+            "--alchemy",
+            &program,
+            "--explain",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert_eq!(json(&out.stderr)["error"]["kind"], json!("usage"));
+}
+
+/// Each way the command line can ask for what a program cannot do.
+#[test]
+fn alchemy_usage_errors_say_what_to_give_instead() {
+    let program = format!("{PROGRAMS}/export.alc");
+    let records = "tests/fixtures/records.json";
+    let cases: [(&[&str], &str); 9] = [
+        (
+            &["--alchemy", &program, "--alchemy-expr", "x", records],
+            "both name the program",
+        ),
+        (
+            &["--alchemy", &program, "--json", records],
+            "--json both say what to print",
+        ),
+        (
+            &["--alchemy", &program, "--check", records],
+            "--check both say what to print",
+        ),
+        (
+            &["--alchemy", &program, "--path", ".a", records],
+            "no --path or --at",
+        ),
+        (
+            &["--alchemy", &program, "--at", "1:1", records],
+            "no --path or --at",
+        ),
+        (&["--explain", records], "give the program with --alchemy"),
+        (
+            &["--alchemy", &program, "--render", "json", records],
+            "renders its own text",
+        ),
+        (
+            &["--alchemy", &program, "-k", "text", records],
+            "plain text, which has no values",
+        ),
+        (
+            &["--alchemy", &program, records, "tests/fixtures/nested.json"],
+            "reads one input",
+        ),
+    ];
+    for (args, expected) in cases {
+        let out = aless(args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("usage"), "{args:?}: {e}");
+        let message = e["message"].as_str().unwrap();
+        assert!(message.contains(expected), "{args:?}: {message}");
+    }
+}
+
+/// The program's own failures and the input's, each in its shape and
+/// with its status.
+#[test]
+fn alchemy_failures_have_their_shapes_and_statuses() {
+    let records = "tests/fixtures/records.json";
+    // The program does not parse: status 2, the language's code, the
+    // finer code leading the message, the position in the program.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input]\n  (json input",
+            records,
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("alchemy"));
+    assert_eq!(e["file"], json!("--alchemy-expr"));
+    assert_eq!(e["format"], json!(null));
+    assert_eq!(e["code"], json!("DSL_PARSE_ERROR"));
+    assert!(
+        e["message"].as_str().unwrap().starts_with("unbalanced: "),
+        "{e}"
+    );
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(14)));
+    assert_eq!(e["output"], json!("none"));
+    assert!(e.get("row").is_none());
+    // Nor type checks; and the program's file is named.
+    let dir = std::env::temp_dir().join(format!("aless-alchemy-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bad = dir.join("bad.alc");
+    std::fs::write(&bad, "def export [input] (nope input)\n").unwrap();
+    let out = aless(&["--alchemy", bad.to_str().unwrap(), records], None);
+    assert_eq!(code(&out), 2);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("alchemy"));
+    assert_eq!(e["file"], json!(bad.to_str().unwrap()));
+    assert_eq!(e["code"], json!("DSL_TYPE_ERROR"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("unknown_name: nope"),
+        "{e}"
+    );
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(21)));
+    // A renderer that does not fit what the program exports is the
+    // program's failure too, met once the input is open: `input` names it.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "csv",
+            records,
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("alchemy"));
+    assert_eq!(e["code"], json!("DSL_TYPE_ERROR"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("protocol_mismatch: "),
+        "{e}"
+    );
+    assert_eq!(e["input"], json!(records));
+    // The rows before the metadata: the input's failure, in the
+    // transducer's shape, before anything was written.
+    let text = std::fs::read_to_string(records).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let meta = v["response"]
+        .as_object_mut()
+        .unwrap()
+        .remove("metadata")
+        .unwrap();
+    v["response"]["metadata"] = meta;
+    let rows_first = dir.join("rows-first.json");
+    std::fs::write(&rows_first, serde_json::to_string(&v).unwrap()).unwrap();
+    let program = format!("{PROGRAMS}/export.alc");
+    let out = aless(&["--alchemy", &program, rows_first.to_str().unwrap()], None);
+    assert_eq!(code(&out), 1);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("INPUT_ORDER_VIOLATION"));
+    assert_eq!(e["file"], json!(rows_first.to_str().unwrap()));
+    assert_eq!(e["format"], json!("json"));
+    assert_eq!(e["path"], json!(".response.payload.deep.records[0]"));
+    assert_eq!(e["output"], json!("none"));
+    // The input does not parse: the transducer's code and position.
+    let out = aless(
+        &["--alchemy-expr", "def export [input] input"],
+        Some("[{\"a\": 1},\n {\"b\": }]"),
+    );
+    assert_eq!(code(&out), 1);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("INPUT_INVALID"));
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
+    // A program file that cannot be read: io, status 3, no format.
+    let out = aless(&["--alchemy", "/nonexistent/p.alc", records], None);
+    assert_eq!(code(&out), 3);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("io"));
+    assert_eq!(e["file"], json!("/nonexistent/p.alc"));
+    assert_eq!(e["format"], json!(null));
+    // One over --max-size: too_large, status 5, with its size and the limit.
+    let out = aless(&["--alchemy", &program, "--max-size", "10", records], None);
+    assert_eq!(code(&out), 5);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("too_large"));
+    assert_eq!(e["file"], json!(program));
+    assert_eq!(e["limit"], json!(10));
+    assert!(e["size"].as_u64().unwrap() > 10, "{e}");
+    // A run past --timeout: status 6, output none, as under --render.
+    let big = dir.join("big.json");
+    let mut text = String::from("[");
+    for i in 0..60_000 {
+        if i > 0 {
+            text.push(',');
+        }
+        text.push_str(&format!("{{\"i\":{i},\"s\":\"xxxxxxxxxxxxxxxxxxxxxxxx\"}}"));
+    }
+    text.push(']');
+    std::fs::write(&big, text).unwrap();
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--timeout",
+            "0.001",
+            big.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("timeout"));
+    assert_eq!(e["seconds"], json!(0.001));
+    assert!(e.get("output").is_some(), "{e}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

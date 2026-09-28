@@ -127,7 +127,20 @@ pub fn plan(format: Format, at_root: bool) -> Option<Plan> {
     })
 }
 
-/// One export.
+/// What a run produces.
+#[derive(Clone, Debug)]
+pub enum What {
+    /// `--render`: the records at the path as CSV, or the value there as
+    /// JSON text.
+    Render(Renderer),
+    /// `--alchemy`: a program's output, whatever it is; `rows` is the
+    /// selector the program reads its rows under, when its plan names
+    /// one, so the parse can be pruned under it as an export's is under
+    /// the exported array (see [`crate::alchemy`]).
+    Program { rows: Option<Selector> },
+}
+
+/// One export, or one program's run.
 #[derive(Clone, Debug)]
 pub struct Job {
     /// The input as errors name it: the path as given, or `-`.
@@ -135,7 +148,7 @@ pub struct Job {
     /// The input as a report names it (`load::origin_of`, or `(stdin)`).
     pub origin: String,
     pub format: Format,
-    pub renderer: Renderer,
+    pub what: What,
     /// The value exported: the root when empty.
     pub path: Vec<Seg>,
     /// JSON on one line.
@@ -199,6 +212,11 @@ fn limits() -> Limits {
 
 /// Run an export: `input` in, rendered text out through `out`.
 pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result<(), ExportError> {
+    let What::Render(renderer) = &job.what else {
+        return Err(ExportError::Usage(
+            "a program's run goes through run_program".to_string(),
+        ));
+    };
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
     // Shared, so that a second chain of sinks (the fallback) can write to
@@ -211,13 +229,13 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
             broken: broken.clone(),
         })
     };
-    match job.renderer {
+    match renderer {
         Renderer::Json => {
             let options = JsonOptions {
                 indent: (!job.compact).then_some(job.indent),
                 trailing_newline: true,
             };
-            attempt(job, input, &written, &broken, || {
+            attempt(job, input, &written, &broken, |_| {
                 Ok(Scope::new(
                     job.path.clone(),
                     JsonRenderer::new(pipe(), options.clone()),
@@ -233,7 +251,7 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
                 missing: MissingText::Text("".into()),
                 ..CsvOptions::default()
             };
-            attempt(job, input, &written, &broken, || {
+            attempt(job, input, &written, &broken, |_| {
                 let csv = CsvRenderer::new(pipe(), options.clone())
                     .map_err(|f| ExportError::Transduce(Box::new(f)))?;
                 // The rows are the elements of the array the scope re-roots
@@ -258,6 +276,35 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
     }
 }
 
+/// Run a program's sink over `input`, through the source plumbing an
+/// export runs on: the input read as [`plan`] says, the parse pruned under
+/// the program's rows, aless's caps and `--timeout` on the parse and the
+/// deadline's alarm on the rest, the one fallback to the whole value when
+/// a grammar refuses to stream before anything was written, and the same
+/// failures. `chain` builds the sink over the writer it is given and the
+/// run's abort flag, which the program's functions read between steps;
+/// it is called once per attempt.
+pub fn run_program(
+    job: &Job,
+    input: Input<'_>,
+    out: Box<dyn Write + Send>,
+    chain: impl Fn(Box<dyn Write + Send>, AbortFlag) -> Result<Box<dyn Sink + Send>, ExportError>,
+) -> Result<(), ExportError> {
+    let written = Arc::new(AtomicU64::new(0));
+    let broken = Arc::new(AtomicBool::new(false));
+    let out = Arc::new(Mutex::new(out));
+    attempt(job, input, &written, &broken, |abort| {
+        let pipe: Box<dyn Write + Send> = Box::new(Pipe {
+            inner: out.clone(),
+            written: written.clone(),
+            broken: broken.clone(),
+        });
+        // A scope at the root passes every event through and never stops
+        // the run: the program does the selecting.
+        Ok(Scope::new(Vec::new(), chain(pipe, abort)?))
+    })
+}
+
 /// Run the export through a fresh chain of sinks from `chain`, and once
 /// more through the whole-value path when the incremental stream was
 /// refused part-way before anything reached the output (see the module
@@ -267,14 +314,17 @@ fn attempt<S: Sink + Send + 'static>(
     input: Input<'_>,
     written: &AtomicU64,
     broken: &AtomicBool,
-    chain: impl Fn() -> Result<Scope<S>, ExportError>,
+    chain: impl Fn(AbortFlag) -> Result<Scope<S>, ExportError>,
 ) -> Result<(), ExportError> {
     let mode = mode_for(job);
     let text = match &input {
         Input::Text(text) => Some(*text),
         Input::Lines(_) => None,
     };
-    let failed = match run(job, input, chain()?, mode.clone()) {
+    // One flag per attempt: the source polls it, and a program's sink reads
+    // it between steps, so the deadline stops both.
+    let abort = AbortFlag::new();
+    let failed = match run(job, input, chain(abort.clone())?, mode.clone(), abort) {
         Ok(()) => return Ok(()),
         Err(failed) => failed,
     };
@@ -299,8 +349,15 @@ fn attempt<S: Sink + Send + 'static>(
                 && mode != SourceMode::Materialize
                 && written.load(Ordering::Relaxed) == 0 =>
         {
-            run(job, Input::Text(text), chain()?, SourceMode::Materialize)
-                .map_err(|f| classify(job, *f, written, broken))
+            let abort = AbortFlag::new();
+            run(
+                job,
+                Input::Text(text),
+                chain(abort.clone())?,
+                SourceMode::Materialize,
+                abort,
+            )
+            .map_err(|f| classify(job, *f, written, broken))
         }
         _ => Err(classify(job, *failed, written, broken)),
     }
@@ -379,9 +436,9 @@ fn run<S: Sink + Send + 'static>(
     input: Input<'_>,
     scope: Scope<S>,
     mode: SourceMode,
+    abort: AbortFlag,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
-    let abort = AbortFlag::new();
     let alarm = Alarm {
         lines: matches!(input, Input::Lines(_)),
         parsed: Arc::new(AtomicBool::new(false)),
@@ -570,14 +627,17 @@ fn mode_for(job: &Job) -> SourceMode {
         _ => return SourceMode::Materialize,
     };
     let prune = if prune {
-        // The array exported: named by its elements for CSV, as the rows
-        // selector does, and by itself for JSON; the source prunes the
-        // same array either way.
-        let array = selector_of(&job.path);
-        Prune::Under(match job.renderer {
-            Renderer::Csv => array.each_index(),
-            Renderer::Json => array,
-        })
+        match &job.what {
+            // The array exported: named by its elements for CSV, as the
+            // rows selector does, and by itself for JSON; the source
+            // prunes the same array either way.
+            What::Render(Renderer::Csv) => Prune::Under(selector_of(&job.path).each_index()),
+            What::Render(Renderer::Json) => Prune::Under(selector_of(&job.path)),
+            // The rows a program reads, when its plan names them; a
+            // program that reads the document some other way keeps it.
+            What::Program { rows: Some(rows) } => Prune::Under(rows.clone()),
+            What::Program { rows: None } => Prune::Never,
+        }
     } else {
         Prune::Never
     };
@@ -1362,7 +1422,7 @@ mod tests {
             name: "-".into(),
             origin: "(stdin)".into(),
             format,
-            renderer,
+            what: What::Render(renderer),
             path: crate::headless::parse_path(path).unwrap(),
             compact: true,
             indent: 2,
@@ -1906,6 +1966,7 @@ mod tests {
             Input::Text(&toml),
             Scope::new(Vec::new(), Slow),
             SourceMode::Materialize,
+            AbortFlag::new(),
         )
         .unwrap_err();
         match (&failed.why, failed.stop.as_ref().map(|s| s.why())) {
@@ -1926,6 +1987,7 @@ mod tests {
             Input::Text("a = 1\n"),
             Scope::new(Vec::new(), Slow),
             SourceMode::Materialize,
+            AbortFlag::new(),
         )
         .unwrap();
     }

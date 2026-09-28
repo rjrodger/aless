@@ -18,8 +18,9 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 use tabnas_transduce::{Code, Fail, JsonEvent};
 
+use crate::alchemy::{self, ProgramArg};
 use crate::doc::{Doc, Key, Kind, NodeId};
-use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer};
+use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer, What};
 use crate::fmt;
 use crate::grammar::GrammarError;
 use crate::load::{self, Format, Limits, LoadError, Loaded};
@@ -82,6 +83,14 @@ pub enum Op {
     /// The records at the start as CSV, or the value there as JSON text,
     /// streamed (see [`crate::export`]).
     Render(Renderer),
+    /// An alchemy program's output over the input, streamed, or with
+    /// `explain` its plan report instead (see [`crate::alchemy`]).
+    /// `render` is `--render`, the renderer for a table or JSON events.
+    Alchemy {
+        program: ProgramArg,
+        render: Option<Renderer>,
+        explain: bool,
+    },
 }
 
 impl Op {
@@ -94,6 +103,7 @@ impl Op {
             Op::Where => "--where",
             Op::Check => "--check",
             Op::Render(_) => "--render",
+            Op::Alchemy { .. } => "--alchemy",
         }
     }
 }
@@ -230,6 +240,12 @@ pub fn run_to(req: &Request, mut stdin: Stdin<'_>, out: Stdout) -> Output {
         Op::Render(renderer) => {
             export(req, *renderer, &mut stdin, out).map(|()| (String::new(), status::OK))
         }
+        Op::Alchemy {
+            program,
+            render,
+            explain,
+        } => run_program(req, program, *render, *explain, &mut stdin, out)
+            .map(|stdout| (stdout, status::OK)),
         _ => single(req, &mut stdin),
     };
     match result {
@@ -313,6 +329,7 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
         }
         Op::Check => unreachable!("--check is run by check()"),
         Op::Render(_) => unreachable!("--render is run by export()"),
+        Op::Alchemy { .. } => unreachable!("--alchemy is run by run_program()"),
     };
     Ok((out, status::OK))
 }
@@ -334,28 +351,7 @@ fn export(
             ))
         }
     };
-    let source = one_source(req)?;
-    let implicit = req.files.is_empty();
-    let (name, origin, format) = match &source {
-        Source::Stdin => (
-            "-".to_string(),
-            "(stdin)".to_string(),
-            req.kind.unwrap_or(Format::Json),
-        ),
-        Source::File(p) => {
-            let name = p.display().to_string();
-            if p.is_dir() {
-                return Err(Failure::usage(format!(
-                    "{name} is a directory: aless reads files (list a directory with ls or find)"
-                )));
-            }
-            (
-                name,
-                load::origin_of(p),
-                req.kind.unwrap_or_else(|| Format::detect(p)),
-            )
-        }
-    };
+    let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, path.is_empty()) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no records to export: name its format with -k, \
@@ -366,58 +362,15 @@ fn export(
         name: name.clone(),
         origin,
         format,
-        renderer,
+        what: What::Render(renderer),
         path,
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
     };
-    // Read the input the way the plan wants it: a line-delimited file is
-    // read a record at a time, so `--max-size` does not apply to it; the
-    // rest is read whole, within the limit, as a parse reads it.
-    let too_large = |e: &LoadError, size| Failure::load(&name, format, e).limited(size, req);
-    let result = match (&source, plan) {
-        (Source::Stdin, plan) => {
-            let Some(read) = stdin.as_mut() else {
-                return Err(Failure::usage(if implicit {
-                    "no input: name a FILE, or pipe a document into aless"
-                } else {
-                    "standard input is a terminal: pipe a document into aless, or name a FILE"
-                }));
-            };
-            if plan == Plan::Lines {
-                let mut reader = io::BufReader::new(read);
-                let empty = reader.fill_buf().map(<[u8]>::is_empty).unwrap_or(false);
-                if implicit && empty {
-                    return Err(Failure::usage(
-                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
-                    ));
-                }
-                export::export(&job, Input::Lines(Box::new(reader)), out)
-            } else {
-                let bytes = load::read_within(read, req.max_size)
-                    .map_err(|e| too_large(&e.with_origin("(stdin)"), None))?;
-                if implicit && bytes.is_empty() {
-                    return Err(Failure::usage(
-                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
-                    ));
-                }
-                let text = String::from_utf8_lossy(&bytes);
-                export::export(&job, Input::Text(&text), out)
-            }
-        }
-        (Source::File(p), Plan::Lines) => {
-            let file = std::fs::File::open(p).map_err(|e| {
-                let e = LoadError::new(e.to_string()).with_origin(&job.origin);
-                Failure::load(&name, format, &e)
-            })?;
-            export::export(&job, Input::Lines(Box::new(io::BufReader::new(file))), out)
-        }
-        (Source::File(p), _) => {
-            let text =
-                load::read_path_within(p, req.max_size).map_err(|e| too_large(&e, file_size(p)))?;
-            export::export(&job, Input::Text(&text), out)
-        }
+    let result = match open_input(req, &source, &name, format, plan, stdin)? {
+        Opened::Text(text) => export::export(&job, Input::Text(&text), out),
+        Opened::Lines(reader) => export::export(&job, Input::Lines(reader), out),
     };
     let failure = match result {
         Ok(()) => return Ok(()),
@@ -445,6 +398,177 @@ fn export(
         }
         ExportError::ReaderGone => unreachable!("handled above"),
     })
+}
+
+/// `--alchemy`: the program compiled, then the input streamed through it
+/// to `out`; with `explain`, the program's plan report as JSON instead,
+/// and no input read.
+fn run_program(
+    req: &Request,
+    program: &ProgramArg,
+    render: Option<Renderer>,
+    explain: bool,
+    stdin: &mut Stdin<'_>,
+    out: Stdout,
+) -> Result<String, Failure> {
+    // The program first: one that does not compile is the command's
+    // mistake, whatever the input holds, and is said so before the input
+    // is read.
+    let file = program.name();
+    let text = program.read(req.max_size).map_err(|e| {
+        let size = program.path().and_then(file_size);
+        Failure::program_read(&file, &e).limited(size, req)
+    })?;
+    let compiled = alchemy::compile(&text, &file).map_err(|fail| Failure::alchemy(&file, &fail))?;
+    if explain {
+        if !req.files.is_empty() {
+            return Err(Failure::usage(
+                "--explain reports the program's plan and reads no input: give no FILE",
+            ));
+        }
+        return Ok(self::render(&compiled.explain_json(), req.compact));
+    }
+    alchemy::check_render(&compiled, render).map_err(Failure::usage)?;
+    let (source, name, origin, format) = streamed_source(req)?;
+    let Some(plan) = export::plan(format, true) else {
+        return Err(Failure::usage(format!(
+            "{name} is plain text, which has no values for a program to read: name its format \
+             with -k, such as -k jsonl or -k csv"
+        )));
+    };
+    let job = Job {
+        name: name.clone(),
+        origin,
+        format,
+        what: What::Program {
+            rows: compiled.row_selector().cloned(),
+        },
+        path: Vec::new(),
+        compact: req.compact,
+        indent: req.indent,
+        timeout: req.timeout,
+    };
+    let result = match open_input(req, &source, &name, format, plan, stdin)? {
+        Opened::Text(text) => alchemy::run(&job, &compiled, render, Input::Text(&text), out),
+        Opened::Lines(reader) => alchemy::run(&job, &compiled, render, Input::Lines(reader), out),
+    };
+    let failure = match result {
+        Ok(()) | Err(ExportError::ReaderGone) => return Ok(String::new()),
+        Err(e) => e,
+    };
+    Err(match failure {
+        ExportError::Usage(m) => Failure::usage(m),
+        ExportError::Load { error, partial } => {
+            let mut f = Failure::load(&name, format, &error).limited(None, req);
+            f.error.insert(
+                "output".into(),
+                if partial { "partial" } else { "none" }.into(),
+            );
+            f
+        }
+        // The program's own failure met while it ran (a `match` no case
+        // took, say) names the program; anything else is the input's.
+        ExportError::Transduce(fail) if alchemy::is_programs(fail.code) => {
+            let mut f = Failure::alchemy(&file, &fail);
+            f.error.insert("input".into(), name.into());
+            f
+        }
+        ExportError::Transduce(fail) => Failure::transduce(&name, format, &fail),
+        ExportError::NotFound { message, .. } => Failure::usage(message),
+        ExportError::ReaderGone => unreachable!("handled above"),
+    })
+}
+
+/// The one input of a streamed run (`--render`, `--alchemy`): where it
+/// is, the name outputs call it by, the origin a report names, and its
+/// format.
+fn streamed_source(req: &Request) -> Result<(Source, String, String, Format), Failure> {
+    let source = one_source(req)?;
+    let (name, origin, format) = match &source {
+        Source::Stdin => (
+            "-".to_string(),
+            "(stdin)".to_string(),
+            req.kind.unwrap_or(Format::Json),
+        ),
+        Source::File(p) => {
+            let name = p.display().to_string();
+            if p.is_dir() {
+                return Err(Failure::usage(format!(
+                    "{name} is a directory: aless reads files (list a directory with ls or find)"
+                )));
+            }
+            (
+                name,
+                load::origin_of(p),
+                req.kind.unwrap_or_else(|| Format::detect(p)),
+            )
+        }
+    };
+    Ok((source, name, origin, format))
+}
+
+/// A streamed run's input, opened the way its plan wants it read.
+enum Opened<'a> {
+    /// The whole text, read within `--max-size` as a parse reads it.
+    Text(String),
+    /// A reader over a line-delimited file, read a record at a time, so
+    /// `--max-size` does not apply to it.
+    Lines(Box<dyn BufRead + Send + 'a>),
+}
+
+/// Open a streamed run's input as `plan` wants it.
+fn open_input<'a>(
+    req: &Request,
+    source: &Source,
+    name: &str,
+    format: Format,
+    plan: Plan,
+    stdin: &'a mut Stdin<'_>,
+) -> Result<Opened<'a>, Failure> {
+    let implicit = req.files.is_empty();
+    let too_large = |e: &LoadError, size| Failure::load(name, format, e).limited(size, req);
+    match (source, plan) {
+        (Source::Stdin, plan) => {
+            let Some(read) = stdin.as_mut() else {
+                return Err(Failure::usage(if implicit {
+                    "no input: name a FILE, or pipe a document into aless"
+                } else {
+                    "standard input is a terminal: pipe a document into aless, or name a FILE"
+                }));
+            };
+            if plan == Plan::Lines {
+                let mut reader = io::BufReader::new(read);
+                let empty = reader.fill_buf().map(<[u8]>::is_empty).unwrap_or(false);
+                if implicit && empty {
+                    return Err(Failure::usage(
+                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
+                    ));
+                }
+                Ok(Opened::Lines(Box::new(reader)))
+            } else {
+                let bytes = load::read_within(read, req.max_size)
+                    .map_err(|e| too_large(&e.with_origin("(stdin)"), None))?;
+                if implicit && bytes.is_empty() {
+                    return Err(Failure::usage(
+                        "no input: standard input is empty; name a FILE, or pipe a document into aless",
+                    ));
+                }
+                Ok(Opened::Text(String::from_utf8_lossy(&bytes).into_owned()))
+            }
+        }
+        (Source::File(p), Plan::Lines) => {
+            let file = std::fs::File::open(p).map_err(|e| {
+                let e = LoadError::new(e.to_string()).with_origin(&load::origin_of(p));
+                Failure::load(name, format, &e)
+            })?;
+            Ok(Opened::Lines(Box::new(io::BufReader::new(file))))
+        }
+        (Source::File(p), _) => {
+            let text =
+                load::read_path_within(p, req.max_size).map_err(|e| too_large(&e, file_size(p)))?;
+            Ok(Opened::Text(text))
+        }
+    }
 }
 
 /// `--check`: every input is read and parsed, and each gets a verdict.
@@ -1192,6 +1316,56 @@ impl Failure {
         }
     }
 
+    /// The program file of `--alchemy` could not be read (`"kind": "io"`)
+    /// or is over `--max-size` (`"too_large"`): the fields of that kind as
+    /// [`load`](Self::load) and [`limited`](Self::limited) give them, with
+    /// the program file as `file` and `format` null, since a program has
+    /// no format.
+    fn program_read(file: &str, e: &LoadError) -> Failure {
+        let mut f = Failure::load(file, Format::Text, e);
+        f.error.insert("format".into(), Value::Null);
+        f
+    }
+
+    /// A failure of the program's own (`"kind": "alchemy"`: it does not
+    /// parse, does not type check, uses a stream twice, or cannot be
+    /// shown to stream; status [`status::USAGE`], as for a `--grammar`
+    /// that does not compile), or one the program's build met that is not
+    /// its own (`"kind": "transduce"`, the status following the code):
+    /// the language's `code`, its `message` (the finer code leads it),
+    /// `file` the program's, `format` null, `line` and `col` in the
+    /// program when the failure has them, `path` and `limit` when it has
+    /// those, and `output`. A failure met while the program ran adds
+    /// `input`, the document's name.
+    fn alchemy(file: &str, fail: &Fail) -> Failure {
+        let programs = alchemy::is_programs(fail.code);
+        let status = if programs {
+            status::USAGE
+        } else {
+            match fail.code {
+                Code::ResourceLimitExceeded => status::TOO_LARGE,
+                Code::OutputFailed => status::IO,
+                Code::Aborted => status::TIMEOUT,
+                _ => status::PARSE,
+            }
+        };
+        let mut error = Map::new();
+        error.insert(
+            "kind".into(),
+            if programs { "alchemy" } else { "transduce" }.into(),
+        );
+        error.insert("file".into(), file.into());
+        error.insert("format".into(), Value::Null);
+        let Value::Object(detail) = fail.to_json() else {
+            unreachable!("a failure is an object")
+        };
+        for (k, v) in detail {
+            let k = if k == "row" { "line".to_string() } else { k };
+            error.insert(k, v);
+        }
+        Failure { status, error }
+    }
+
     /// A transducer stage failed (`"kind": "transduce"`): the transducer's
     /// `code`, its `message`, the `file` and `format`, then `path`,
     /// `limit` (`{name, value}`), `line` and `col` when the failure has
@@ -1903,6 +2077,96 @@ mod tests {
         r.max_size = Some(4);
         assert_eq!(with_stdin(&r, RECORDS).status, status::TOO_LARGE);
         assert_eq!(Op::Render(Renderer::Csv).flag(), "--render");
+    }
+
+    #[test]
+    fn programs_run_over_stdin_and_report_their_own_failures() {
+        let echo = || Op::Alchemy {
+            program: ProgramArg::Expr("def export [input] input".into()),
+            render: None,
+            explain: false,
+        };
+        assert_eq!(echo().flag(), "--alchemy");
+        let mut r = req(echo());
+        r.compact = true;
+        let out = with_stdin(&r, RECORDS);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stderr, "");
+        assert_eq!(
+            out.stdout,
+            "{\"rows\":[{\"a\":1.50,\"b\":\"x\"},{\"b\":\"y\",\"c\":null}],\"n\":2}\n"
+        );
+        // A table bound by the document's own metadata, as CSV and as
+        // JSON records keyed by the column labels.
+        let doc = r#"{"cols": [{"title": "A", "path": ["a"]}, {"title": "B", "path": ["b"]}], "rows": [{"a": 1.50, "b": "x"}, {"a": 2, "b": "y"}]}"#;
+        let table = "def col [c]\n  record\n    entry :label (get \"title\" c)\n    entry :source (as-path (get \"path\" c))\ndef export [input]\n  table-from-json (record (entry :columns (path \"cols\")) (entry :rows (path \"rows\" each-index)) (entry :column col)) input\n";
+        let mut t = req(Op::Alchemy {
+            program: ProgramArg::Expr(table.into()),
+            render: None,
+            explain: false,
+        });
+        let out = with_stdin(&t, doc);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(
+            out.stdout,
+            "\"A\",\"B\"\r\n\"1.50\",\"x\"\r\n\"2\",\"y\"\r\n"
+        );
+        t.op = Op::Alchemy {
+            program: ProgramArg::Expr(table.into()),
+            render: Some(Renderer::Json),
+            explain: false,
+        };
+        let out = with_stdin(&t, doc);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(
+            json_of(&out.stdout),
+            json!([{"A": 1.50, "B": "x"}, {"A": 2, "B": "y"}])
+        );
+        // The plan, and no input read.
+        let mut x = req(Op::Alchemy {
+            program: ProgramArg::Expr("def export [input] input".into()),
+            render: None,
+            explain: true,
+        });
+        x.compact = true;
+        let out = with_stdin(&x, RECORDS);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        let plan = json_of(&out.stdout);
+        assert_eq!(plan["entry"], json!("export"));
+        assert_eq!(plan["output"], json!("JsonEvents/1"));
+        // The program's own failure: its code, its file, its position.
+        let bad = req(Op::Alchemy {
+            program: ProgramArg::Expr("def export [input] (nope input)".into()),
+            render: None,
+            explain: false,
+        });
+        let out = with_stdin(&bad, RECORDS);
+        assert_eq!(out.status, status::USAGE);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("alchemy"));
+        assert_eq!(e["file"], json!(alchemy::EXPR_NAME));
+        assert_eq!(e["format"], json!(null));
+        assert_eq!(e["code"], json!("DSL_TYPE_ERROR"));
+        assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(21)));
+        assert_eq!(e["output"], json!("none"));
+        // The input's failure keeps the transducer's shape.
+        let out = with_stdin(&r, "[{\"a\": 1},\n {\"b\": }]");
+        assert_eq!(out.status, status::PARSE);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["code"], json!("INPUT_INVALID"));
+        assert_eq!(e["file"], json!("-"));
+        // A line-delimited format from standard input is read a record at
+        // a time, so the size limit does not apply to it.
+        let mut lines = req(echo());
+        lines.kind = Some(Format::Jsonl);
+        lines.max_size = Some(4);
+        let out = with_stdin(&lines, "{\"id\": 1}\n{\"id\": 2}\n");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "[{\"id\":1},{\"id\":2}]\n");
+        r.max_size = Some(4);
+        assert_eq!(with_stdin(&r, RECORDS).status, status::TOO_LARGE);
     }
 
     #[test]

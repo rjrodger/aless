@@ -104,6 +104,7 @@ aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 i
 aless --where --path .spec.replicas deploy.yaml    # the line a path is on
 aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 aless --render csv --path .items orders.json       # the records as CSV, streamed
+aless --alchemy export.alc response.json           # a program over the document, streamed
 ```
 
 | Option | Effect |
@@ -114,6 +115,8 @@ aless --render csv --path .items orders.json       # the records as CSV, streame
 | `--where` | the start's entry |
 | `--check` | parse every input and report on each |
 | `--render csv\|json` | the records at the start as CSV, or the value there as JSON, streamed as the input is read ([Exporting](#exporting)) |
+| `--alchemy FILE`, `--alchemy-expr TEXT` | run an alchemy program over the input and stream what it exports; `--render` names the renderer for a table or JSON events ([Programs](#programs)) |
+| `--explain` | with `--alchemy`: the program's plan report as JSON, and no run |
 | `--path PATH` | start at PATH instead of the root |
 | `--at LINE[:COL]` | start at the node at that source position |
 | `--depth N` | `--paths` and `--find` go at most N levels below the start |
@@ -197,11 +200,11 @@ $ aless bad.json
 | Exit | Meaning | Error `kind` |
 |---|---|---|
 | 0 | success: standard output holds the answer | |
-| 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
-| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` that does not compile, or the viewer without a terminal | `usage` |
-| 3 | an input could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
+| 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render` or `--alchemy`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
+| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or the viewer without a terminal | `usage`, `alchemy` |
+| 3 | an input, or an `--alchemy` program file, could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
-| 5 | an input, or a `--grammar` file, is larger than `--max-size`; with `--render`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
+| 5 | an input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size`; with `--render` or `--alchemy`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`) | `too_large`, `transduce` |
 | 6 | a parse, or a `--grammar` compile, ran longer than `--timeout` | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
@@ -246,8 +249,8 @@ kill. Pipes are safe both ways: standard input can be a pipe or a file,
 and a reader that stops early (`aless --json big.json | head`) ends
 aless quietly with status 0, though the parse has already been paid for.
 To take part of a large document, `--path` and `--depth` keep the output
-small; the input is still parsed in full. `--render` is the exception:
-it streams, as the next section says.
+small; the input is still parsed in full. `--render` and `--alchemy` are
+the exceptions: they stream, as the next sections say.
 
 ### Exporting
 
@@ -347,9 +350,91 @@ stops either kind at the deadline, with `output` saying whether records
 had already been written.
 
 `--render` on its own is the default export. Programs that select,
-project and reshape on the way through, in the
-[alchemy](https://github.com/tabnas/alchemy) language, are coming as
-`--alchemy PROGRAM`, beside `--render`.
+project and reshape on the way through are the next section's.
+
+### Programs
+
+`--alchemy FILE` runs a program in the
+[alchemy](https://github.com/tabnas/alchemy) language over the input and
+streams what it exports; `--alchemy-expr TEXT` takes the program on the
+command line. A program's `export` receives the document as a stream of
+JSON events and answers a text, a table or JSON events: aless writes a
+text as it is, renders a table as CSV (`--render json` for JSON records,
+one object per row keyed by the column labels) and JSON events as JSON
+(`--render csv` for a table of them). The JSON a program renders is
+compact, one document on one line. The program does the selecting, so
+`--path` and `--at` are not accepted, and neither is any other output
+option; `--render` given for a program that renders its own text is a
+usage error. `--explain` prints the program's plan report as one JSON
+object instead of running it (the chain of calls, the protocols, what is
+retained and under which limits, the ordering contract, the renderer, the
+guarantee and its qualification; `--compact` puts it on one line), and
+reads no input. The
+[language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
+has the language; the worked example of the transducer's design, a table
+bound by the document's own metadata, is
+[`tests/fixtures/programs/export.alc`](tests/fixtures/programs/export.alc).
+
+```bash
+aless --alchemy export.alc response.json                  # the table the program binds, as CSV
+aless --alchemy export.alc --render json response.json    # the same rows as JSON records
+aless --alchemy-expr 'def export [input] input' data.yaml # the document, as JSON
+aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
+aless --alchemy export.alc --explain                      # the plan; no run
+```
+
+```
+$ aless --alchemy tests/fixtures/programs/export.alc tests/fixtures/records.json
+"Identifier","Full name","Balance"
+"123","Alice","50.25"
+"456","Bob","72"
+```
+
+The input reaches the program the way an export reaches its renderer
+([Streaming, honestly](#exporting)): JSON Lines, CSV and TSV a record at
+a time, a verified grammar's events as the parse proceeds, with the parse
+pruned under the rows the program's plan names, and every other grammar's
+value after its parse; the same fallback when a grammar refuses to
+stream, the same `--timeout` and depth caps, and the transducer's default
+limits, which a failure names. What the run holds is what the program
+retains (`--explain` says what, and under which limit), so a table over a
+JSON Lines file of any size runs in bounded memory.
+
+**Errors.** A program that does not compile (it does not parse, does not
+type check, uses a stream twice, or cannot be shown to stream:
+`DSL_PARSE_ERROR`, `DSL_TYPE_ERROR`, `STREAM_REUSED`,
+`STREAMABILITY_UNKNOWN`) is the command's mistake, `"kind": "alchemy"`
+with status 2: the language's `code`, its `message` (the finer code leads
+it: `unbalanced`, `unknown_name`, `arity`, `protocol_mismatch`, …), `file`
+(the program's path, or `--alchemy-expr`), `format` `null`, `line` and
+`col` in the program when the failure has them, and `output`. A failure
+of the program's own met once the input is open (a `match` no case takes,
+a `--render` that does not fit what it exports) has the same shape plus
+`input`, the document's name. A program file that cannot be read is an
+`io` error and one over `--max-size` a `too_large` error, `file` the
+program's and `format` `null`. Everything else reports as an export's
+failure does: the transducer's codes as `transduce`
+(`INPUT_ORDER_VIOLATION` when a row arrives before the metadata the
+program binds its columns to, `RESOURCE_LIMIT_EXCEEDED` naming the
+`limit`, `PROTOCOL_ORDER_ERROR`, …), with `output` saying whether anything
+had been written, and aless's own limits as `parse`/`too_deep` and
+`timeout`, with `output` too.
+
+```
+$ aless --alchemy-expr 'def export [input] (nope input)' data.json
+{
+  "error": {
+    "kind": "alchemy",
+    "file": "--alchemy-expr",
+    "format": null,
+    "code": "DSL_TYPE_ERROR",
+    "message": "unknown_name: nope is not defined",
+    "line": 1,
+    "col": 21,
+    "output": "none"
+  }
+}
+```
 
 These shapes are a contract: fields may be added, but none is renamed,
 removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
@@ -820,7 +905,8 @@ the library is terminal-free and unit tested:
 |---|---|
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
 | `explorer` | directory trees as documents, listed lazily |
-| `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers |
+| `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers; the source plumbing `--alchemy` runs on |
+| `alchemy` | `--alchemy`: a program in the alchemy language compiled, explained, and run over the input through `export`'s plumbing |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |

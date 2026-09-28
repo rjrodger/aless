@@ -23,6 +23,7 @@ dependencies = [
  "serde_json",
  "tabnas",
  "tabnas-abnf",
+ "tabnas-alchemy",
  "tabnas-csv",
  "tabnas-feed",
  "tabnas-ini",
@@ -760,6 +761,19 @@ dependencies = [
  "serde_json",
  "tabnas",
  "tabnas-bnf",
+]
+
+[[package]]
+name = "tabnas-alchemy"
+version = "0.1.0"
+source = "git+https://github.com/tabnas/alchemy#2bc4bebbecc671d4f48855ca7e0eca759ed215ca"
+dependencies = [
+ "indexmap",
+ "serde_json",
+ "tabnas",
+ "tabnas-json",
+ "tabnas-render",
+ "tabnas-transduce",
 ]
 
 [[package]]

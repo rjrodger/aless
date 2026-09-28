@@ -50,6 +50,9 @@ tabnas-abnf = { git = "https://github.com/tabnas/abnf" }
 # The streaming transducer and its renderers, behind `--render`.
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 tabnas-render = { git = "https://github.com/tabnas/render" }
+# The alchemy language, behind `--alchemy`: a program compiled onto the
+# transducer and the renderers, run over any document the grammars read.
+tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -130,6 +133,12 @@ tabnas-csv = { git = "https://github.com/tabnas/csv" }
 [patch."https://github.com/tabnas/render"]
 tabnas = { git = "https://github.com/tabnas/parser" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
+
+[patch."https://github.com/tabnas/alchemy"]
+tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
+tabnas-render = { git = "https://github.com/tabnas/render" }
+tabnas-json = { git = "https://github.com/tabnas/json" }
 
 # The engine checks its rule stack against a shadow copy on every step
 # when debug assertions are on: an O(depth) check per step, which a deep
