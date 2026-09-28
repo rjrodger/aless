@@ -1960,6 +1960,30 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["kind"], json!("transduce"));
     assert_eq!(e["code"], json!("INPUT_INVALID"));
     assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
+    // A failure the program raises at a record (`fail`) keeps the
+    // transducer's code and status 1, but is placed in the program: `file`
+    // is the program's, `line` and `col` are in it (the `(fail` form),
+    // `format` is null and `input` names the document, since the events a
+    // program reads carry no positions of the input's.
+    let failing = dir.join("failing.alc");
+    std::fs::write(
+        &failing,
+        "def check [r]\n  match (get \"id\" r)\n    case 456 (fail \"no Bob\")\n    case _ (get \"name\" (get \"person\" r))\n\
+         def export [input]\n  join \"\\n\"\n    map check\n      select (path \"response\" \"payload\" \"deep\" \"records\" each-index) input\n",
+    )
+    .unwrap();
+    let out = aless(&["--alchemy", failing.to_str().unwrap(), records], None);
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("INPUT_INVALID"));
+    assert_eq!(e["message"], json!("no Bob"));
+    assert_eq!(e["file"], json!(failing.to_str().unwrap()));
+    assert_eq!(e["format"], json!(null));
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(3), json!(14)));
+    assert_eq!(e["input"], json!(records));
+    assert_eq!(e["output"], json!("none"));
     // A program file that cannot be read: io, status 3, no format.
     let out = aless(&["--alchemy", "/nonexistent/p.alc", records], None);
     assert_eq!(code(&out), 3);

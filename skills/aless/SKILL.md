@@ -102,8 +102,8 @@ under which limit) and reads no input: run it first on a program you did
 not write.
 
 ```bash
-aless --alchemy export.alc api.json                       # a table, as CSV
-aless --alchemy export.alc --render json api.json         # the same rows as JSON records
+aless --alchemy export.alc api.json                       # a table the program renders, as CSV
+aless --alchemy table.alc --render json api.json          # the same rows as JSON records
 aless --alchemy-expr 'def export [input] input' data.yaml # the document as JSON
 aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
 aless --alchemy export.alc --explain                      # the plan; no run
@@ -112,7 +112,9 @@ aless --alchemy export.alc --explain                      # the plan; no run
 The [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
 has the language; `tests/fixtures/programs/export.alc` in the aless
 repository is the worked example, a table bound by the document's own
-metadata. A program that does not compile exits 2 with `{"error":
+metadata and rendered by the program itself as CSV, and `table.alc`
+beside it binds the same table for aless to render, so it is the one that
+takes `--render`. A program that does not compile exits 2 with `{"error":
 {"kind": "alchemy", "code", "message", "file", "line", "col", …}}`, the
 `code` the language's (`DSL_PARSE_ERROR`, `DSL_TYPE_ERROR`,
 `STREAM_REUSED`, `STREAMABILITY_UNKNOWN`), the `message` led by a finer
@@ -227,7 +229,12 @@ An `alchemy` error is the program's own: `code` is the language's,
 `message` opens with the finer code, `file` is the program's path (or
 `--alchemy-expr`), `format` is null, and `line` and `col` are in the
 program when it has a position; one met once the input is open adds
-`input`, the document's name. Everything else an `--alchemy` run reports
+`input`, the document's name. A failure the program raises at a record
+(`fail`) keeps the transducer's code, kind and status (`INPUT_INVALID` as
+`transduce`, status 1) but is placed the same way: `file`, `line` and
+`col` are the program's, `format` is null and `input` names the
+document, since the events a program reads carry no positions of the
+input's; fix the program there. Everything else an `--alchemy` run reports
 is a `transduce` error, or `timeout`/`too_deep`, as under `--render`,
 with `output`.
 

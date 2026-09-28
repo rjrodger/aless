@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 use tabnas_transduce::{Code, Fail, JsonEvent};
 
-use crate::alchemy::{self, ProgramArg};
+use crate::alchemy::{self, ProgramArg, RunError};
 use crate::doc::{Doc, Key, Kind, NodeId};
 use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer, What};
 use crate::fmt;
@@ -453,8 +453,16 @@ fn run_program(
         Opened::Lines(reader) => alchemy::run(&job, &compiled, render, Input::Lines(reader), out),
     };
     let failure = match result {
-        Ok(()) | Err(ExportError::ReaderGone) => return Ok(String::new()),
-        Err(e) => e,
+        Ok(()) | Err(RunError::Export(ExportError::ReaderGone)) => return Ok(String::new()),
+        // The program's own failure met while it ran (a `match` no case
+        // took, a `fail` at a record, say) names the program, and its
+        // position is in the program; anything else is the input's.
+        Err(RunError::Program(fail)) => {
+            let mut f = Failure::alchemy(&file, &fail);
+            f.error.insert("input".into(), name.into());
+            return Err(f);
+        }
+        Err(RunError::Export(e)) => e,
     };
     Err(match failure {
         ExportError::Usage(m) => Failure::usage(m),
@@ -464,13 +472,6 @@ fn run_program(
                 "output".into(),
                 if partial { "partial" } else { "none" }.into(),
             );
-            f
-        }
-        // The program's own failure met while it ran (a `match` no case
-        // took, say) names the program; anything else is the input's.
-        ExportError::Transduce(fail) if alchemy::is_programs(fail.code) => {
-            let mut f = Failure::alchemy(&file, &fail);
-            f.error.insert("input".into(), name.into());
             f
         }
         ExportError::Transduce(fail) => Failure::transduce(&name, format, &fail),
@@ -1330,8 +1331,9 @@ impl Failure {
     /// A failure of the program's own (`"kind": "alchemy"`: it does not
     /// parse, does not type check, uses a stream twice, or cannot be
     /// shown to stream; status [`status::USAGE`], as for a `--grammar`
-    /// that does not compile), or one the program's build met that is not
-    /// its own (`"kind": "transduce"`, the status following the code):
+    /// that does not compile), or one the program's build met, or the
+    /// program raised at a position of its own (`fail`), that is not the
+    /// language's (`"kind": "transduce"`, the status following the code):
     /// the language's `code`, its `message` (the finer code leads it),
     /// `file` the program's, `format` null, `line` and `col` in the
     /// program when the failure has them, `path` and `limit` when it has
@@ -2157,6 +2159,34 @@ mod tests {
         assert_eq!(e["kind"], json!("transduce"));
         assert_eq!(e["code"], json!("INPUT_INVALID"));
         assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("json"));
+        assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
+        // A failure the program raises at a record (`fail`) keeps the
+        // transducer's code and status, but is placed in the program: the
+        // events a program reads carry no positions, so `line` and `col`
+        // are in the program (the input here has one line), `file` is the
+        // program's, `format` null, and `input` names the document.
+        let failing = req(Op::Alchemy {
+            program: ProgramArg::Expr(
+                "def check [r]\n  match (get \"b\" r)\n    case \"y\" (fail \"no y\")\n    case _ \"ok\"\n\
+                 def export [input]\n  join \"\\n\" (map check (select (path \"rows\" each-index) input))"
+                    .into(),
+            ),
+            render: None,
+            explain: false,
+        });
+        let out = with_stdin(&failing, RECORDS);
+        assert_eq!(out.status, status::PARSE, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["code"], json!("INPUT_INVALID"));
+        assert_eq!(e["message"], json!("no y"));
+        assert_eq!(e["file"], json!(alchemy::EXPR_NAME));
+        assert_eq!(e["format"], json!(null));
+        assert_eq!((e["line"].clone(), e["col"].clone()), (json!(3), json!(14)));
+        assert_eq!(e["input"], json!("-"));
+        assert_eq!(e["output"], json!("none"));
         // A line-delimited format from standard input is read a record at
         // a time, so the size limit does not apply to it.
         let mut lines = req(echo());

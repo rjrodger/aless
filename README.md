@@ -372,12 +372,16 @@ guarantee and its qualification; `--compact` puts it on one line), and
 reads no input. The
 [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
 has the language; the worked example of the transducer's design, a table
-bound by the document's own metadata, is
-[`tests/fixtures/programs/export.alc`](tests/fixtures/programs/export.alc).
+bound by the document's own metadata and rendered by the program itself
+as CSV, is
+[`tests/fixtures/programs/export.alc`](tests/fixtures/programs/export.alc),
+and [`table.alc`](tests/fixtures/programs/table.alc) beside it binds the
+same table and leaves the rendering to aless, so it is the one that takes
+`--render`.
 
 ```bash
-aless --alchemy export.alc response.json                  # the table the program binds, as CSV
-aless --alchemy export.alc --render json response.json    # the same rows as JSON records
+aless --alchemy export.alc response.json                  # the table the program renders, as CSV
+aless --alchemy table.alc --render json response.json     # the same rows as JSON records
 aless --alchemy-expr 'def export [input] input' data.yaml # the document, as JSON
 aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
 aless --alchemy export.alc --explain                      # the plan; no run
@@ -410,7 +414,13 @@ it: `unbalanced`, `unknown_name`, `arity`, `protocol_mismatch`, …), `file`
 `col` in the program when the failure has them, and `output`. A failure
 of the program's own met once the input is open (a `match` no case takes,
 a `--render` that does not fit what it exports) has the same shape plus
-`input`, the document's name. A program file that cannot be read is an
+`input`, the document's name. A failure the program raises at a record
+(`fail`, or a function refusing a value) keeps the transducer's code,
+kind and status (`INPUT_INVALID` as `transduce`, status 1) but is placed
+the same way, `file`, `line` and `col` the program's, `format` `null`,
+`input` the document's name: the events a program reads carry no
+positions, so a position on such a failure is never the input's. A
+program file that cannot be read is an
 `io` error and one over `--max-size` a `too_large` error, `file` the
 program's and `format` `null`. Everything else reports as an export's
 failure does: the transducer's codes as `transduce`

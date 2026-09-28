@@ -21,13 +21,18 @@
 //! Everything here is terminal-free. A failure of the program's own (it
 //! does not parse, does not type check, uses a stream twice, or cannot be
 //! shown to stream) is the command's mistake and reports as an `alchemy`
-//! error; every other failure reports as an export's does.
+//! error; one the program raises at a position of its own (`fail`, or a
+//! function refusing a value) keeps the transducer's code but is placed
+//! in the program, not the input; every other failure reports as an
+//! export's does.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tabnas_alchemy::{Output, Program};
-use tabnas_transduce::{Code, Fail, Limits, Metrics};
+use tabnas_transduce::{Code, Fail, Flow, JsonEvent, Limits, Metrics, Sink};
 
 use crate::export::{self, ExportError, Input, Job, Renderer};
 use crate::load::{self, LoadError};
@@ -113,26 +118,79 @@ fn renderer(render: Renderer) -> tabnas_alchemy::Renderer {
     }
 }
 
+/// How a run failed.
+#[derive(Debug)]
+pub enum RunError {
+    /// The program's own failure, met once the input was open: one of the
+    /// language's codes ([`is_programs`]: a `match` no case takes, a
+    /// `--render` that does not fit what it exports), or one the program
+    /// raised at a position of its own (`fail` refusing a record, a
+    /// function refusing a value), whatever its code. The events a program
+    /// reads carry no positions, so a `row` and `column` on a failure its
+    /// sink returns are in the program's text, never the input's.
+    Program(Box<Fail>),
+    /// As an export fails: the input's failure, aless's limits, the reader
+    /// gone.
+    Export(ExportError),
+}
+
+/// The program's sink, noting a failure it raises with a position: the
+/// source's own failures never pass through it, and no event it is handed
+/// carries a position, so such a failure is placed in the program.
+struct Positioned {
+    sink: Box<dyn Sink + Send>,
+    raised: Arc<AtomicBool>,
+}
+
+impl Sink for Positioned {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        let result = self.sink.event(ev);
+        if let Err(fail) = &result {
+            if fail.row.is_some() {
+                self.raised.store(true, Ordering::Relaxed);
+            }
+        }
+        result
+    }
+}
+
 /// Run `program` over `input`, writing what it produces to `out`; `render`
 /// chooses the renderer for a table or JSON events (the program's default
 /// when `None`). The document reaches the program's sink the way an export
 /// reaches its renderer ([`export::run_program`]), with the transducer's
 /// default limits and the run's abort flag handed to the program, so
 /// `--timeout` stops a long computation on one item as it stops a parse.
+/// A failure of the program's own comes back as [`RunError::Program`].
 pub fn run(
     job: &Job,
     program: &Program,
     render: Option<Renderer>,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
-) -> Result<(), ExportError> {
+) -> Result<(), RunError> {
     let limits = Limits::default();
-    export::run_program(job, input, out, |pipe, abort| {
-        program
+    let raised = Arc::new(AtomicBool::new(false));
+    let result = export::run_program(job, input, out, |pipe, abort| {
+        // One sink per attempt: what the last one raised is what counts.
+        raised.store(false, Ordering::Relaxed);
+        let sink = program
             .with_abort(abort)
             .sink(pipe, render.map(renderer), &limits, Metrics::new())
-            .map_err(|fail| ExportError::Transduce(Box::new(fail)))
-    })
+            .map_err(|fail| ExportError::Transduce(Box::new(fail)))?;
+        Ok(Box::new(Positioned {
+            sink,
+            raised: raised.clone(),
+        }))
+    });
+    match result {
+        Ok(()) => Ok(()),
+        Err(ExportError::Transduce(fail))
+            if is_programs(fail.code) || (raised.load(Ordering::Relaxed) && fail.row.is_some()) =>
+        {
+            Err(RunError::Program(fail))
+        }
+        Err(e) => Err(RunError::Export(e)),
+    }
 }
 
 #[cfg(test)]
