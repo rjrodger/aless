@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -13,7 +13,7 @@ prints one JSON value on standard output and exits 0, or prints
 ## Rules
 
 1. **Always pass an output option**: `--json`, `--paths`, `--find`,
-   `--where`, `--check` or `--render`. aless also prints JSON whenever standard output
+   `--where`, `--check`, `--render` or `--alchemy`. aless also prints JSON whenever standard output
    is not a terminal, but an explicit option guarantees it. The viewer is
    never what you want. Without a terminal it refuses with exit status 2;
    in a pseudo-terminal it would wait for keys.
@@ -90,6 +90,41 @@ text in its cell. Every field is quoted, records end in CRLF, and a header
 row comes first. Use `--paths --depth 2` first to find the array to
 export. Standard output is CSV bytes, not JSON, when the status is 0.
 
+Run a program in the [alchemy](https://github.com/tabnas/alchemy)
+streaming language over a file: select, project, reshape and render on
+the way through, in bounded memory. A program's `export` takes the
+document as JSON events and answers a text (written as it is), a table
+(CSV, or JSON records with `--render json`) or JSON events (JSON, or a
+table with `--render csv`). The program does the selecting, so no
+`--path`, `--at` or other output option goes with it. `--explain` prints
+the program's plan as JSON (its chain, protocols, what it retains and
+under which limit) and reads no input: run it first on a program you did
+not write. The plan is the program's, so its `renderer` is the program's
+own default, whatever `--render` names; a `--render` the program refuses
+is the same usage error with `--explain` as without it.
+
+```bash
+aless --alchemy export.alc api.json                       # a table the program renders, as CSV
+aless --alchemy table.alc --render json api.json          # the same rows as JSON records
+aless --alchemy-expr 'def export [input] input' data.yaml # the document as JSON
+aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
+aless --alchemy export.alc --explain                      # the plan; no run
+```
+
+The [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
+has the language; `tests/fixtures/programs/export.alc` in the aless
+repository is the worked example, a table bound by the document's own
+metadata and rendered by the program itself as CSV, and `table.alc`
+beside it binds the same table for aless to render, so it is the one that
+takes `--render`. A program that does not compile exits 2 with `{"error":
+{"kind": "alchemy", "code", "message", "file", "line", "col", …}}`, the
+`code` the language's (`DSL_PARSE_ERROR`, `DSL_TYPE_ERROR`,
+`STREAM_REUSED`, `STREAMABILITY_UNKNOWN`), the `message` led by a finer
+code (`unknown_name`, `arity`, `protocol_mismatch`, …) and `line:col` in
+the program; fix the program there. The input's failures are `transduce`
+errors as under `--render` (`INPUT_ORDER_VIOLATION`: a row came before
+the metadata the program binds its columns to).
+
 Read a file in a format aless has no parser for, with an ABNF grammar
 (the syntax is tabnas/abnf's; `; @object` and `; @array` comments on a
 rule say what it builds, and the values are the source text, as
@@ -155,6 +190,8 @@ What each option prints:
 | `--check` | `{ok, files: [{file, format, ok, error}]}` |
 | `--render csv` | CSV text: a header row, then one record per row, all fields quoted, CRLF |
 | `--render json` | the value itself, streamed |
+| `--alchemy FILE` | what the program exports: text as it is, a table as CSV (`--render json`: JSON records), JSON events as JSON |
+| `--alchemy FILE --explain` | `{entry, output, protocol, chain, retention, …}`, the program's plan report |
 
 `file` is the path as given, or `-` for standard input.
 `truncated: true` means `total` exceeded `--limit` (default 200). Raise
@@ -165,12 +202,12 @@ Exit statuses, and the `error.kind` that goes with each:
 | Exit | Error kind | Meaning |
 |---|---|---|
 | 0 | none | success |
-| 1 | `parse`, `transduce` | the input did not parse; with `--check`, a file failed; with `--render`, the input or its records will not do |
-| 2 | `usage` | bad option or path syntax, no input, a directory, a `--grammar` that does not compile, or no terminal for the viewer |
-| 3 | `io`, `transduce` | the file could not be read, or standard output could not be written |
+| 1 | `parse`, `transduce` | the input did not parse; with `--check`, a file failed; with `--render` or `--alchemy`, the input or its records will not do |
+| 2 | `usage`, `alchemy` | bad option or path syntax, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or no terminal for the viewer |
+| 3 | `io`, `transduce` | the file, or an `--alchemy` program file, could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
-| 5 | `too_large`, `transduce` | the input, or a `--grammar` file, is larger than `--max-size` (default 64M); with `--render`, over a limit of the transducer's |
-| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none) |
+| 5 | `too_large`, `transduce` | the input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size` (default 64M); with `--render` or `--alchemy`, over a limit of the transducer's |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none); with `--render` or `--alchemy`, the whole run |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -189,6 +226,31 @@ refuses rather than export a different one. `[-1]` on an array is a usage
 error under `--render` (a stream cannot count from the end); on an object
 it is the key `-1`. A `--render` run stopped by `--timeout` or by nesting
 reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`.
+
+An `alchemy` error is the program's own: `code` is the language's,
+`message` opens with the finer code, `file` is the program's path (or
+`--alchemy-expr`), `format` is null, and `line` and `col` are in the
+program when it has a position. A transducer limit met while the plan is
+built (`RESOURCE_LIMIT_EXCEEDED` naming `max_plan_steps`) is the
+program's too: a `transduce` error with status 5, `file` the program's,
+`format` null and no `input`. Once the input is open, where a failure
+came from decides whose it is. One from the program's sink is the
+program's when its code is the language's (a `match` no case takes, the
+evaluator's `recursion`: `alchemy`, status 2) or when it has a position,
+whatever its code (`fail` refusing a record: the transducer's code, kind
+and status, `INPUT_INVALID` as `transduce`, status 1), and is placed the
+same way, `file`, `line` and `col` the program's, `format` null, plus
+`input`, the document's name, since the events a program reads carry no
+positions of the input's; fix the program there. One from the program's
+sink with neither (a renderer's `MISSING_VALUE` over the rows the program
+built) and every failure of the source's, whatever its code (a grammar's
+refusal to stream part-way after output has left, `STREAMABILITY_UNKNOWN`
+with `output: "partial"`), are the input's: a `transduce` error, or
+`timeout`/`too_deep`, as under `--render`, with `output`. `--timeout`
+covers the parse and the program together, so a program slow on one item
+stops at it, with `line` and `col` null (a timeout raised in the
+program's work on an item has no input position; one raised in the parse
+shows how far the parse got).
 
 ## Paths
 
@@ -227,6 +289,10 @@ pipe `--json` into jq.
   YAML `---` stream or `<<` merge key) is parsed whole and exported all
   the same, when nothing has been written yet. So for a huge export,
   prefer JSON Lines or CSV input, or convert once with `--render json`.
+- `--alchemy` streams the same way, and holds only what the program
+  retains (`--explain` says what, and under which limit): a table over a
+  JSON Lines file of any size runs in bounded memory. The JSON a program
+  renders is compact, one line.
 - A parse runs at about a megabyte a second, so a big file can outlast
   your command runner. If the runner has a timeout, pass `--timeout` a
   few seconds shorter (`--timeout 50` under a 60 s limit). A slow parse

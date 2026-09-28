@@ -524,18 +524,33 @@ impl LoadError {
     /// A grammar file over the size limit: as [`too_large`](Self::too_large),
     /// worded for a file no parse of which is coming.
     pub(crate) fn grammar_too_large(size: Option<u64>, limit: u64) -> LoadError {
+        LoadError::file_too_large("the grammar file", "A grammar file", size, limit)
+    }
+
+    /// An `--alchemy` program file over the size limit: as
+    /// [`too_large`](Self::too_large), worded for the program, which no
+    /// parse of the input's kind is coming for.
+    pub(crate) fn program_too_large(size: Option<u64>, limit: u64) -> LoadError {
+        LoadError::file_too_large("program", "A program file", size, limit)
+    }
+
+    /// A file of the command line's own (`what`, as the message names it;
+    /// `which`, as the hint opens) over the size limit: the message says
+    /// which file and how large, and the hint how to read it, without the
+    /// parse's memory estimate, which is for an input.
+    fn file_too_large(what: &str, which: &str, size: Option<u64>, limit: u64) -> LoadError {
         use crate::explorer::human_size;
         let message = match size {
             Some(n) => format!(
-                "the grammar file is {}, over the {} limit",
+                "{what} is {}, over the {} limit",
                 human_size(n),
                 human_size(limit)
             ),
-            None => format!("the grammar file is over the {} limit", human_size(limit)),
+            None => format!("{what} is over the {} limit", human_size(limit)),
         };
         let hint = format!(
-            "A grammar file over --max-size is not read. Pass --max-size {} (or more) to \
-             read it, or --max-size 0 for no limit.",
+            "{which} over --max-size is not read. Pass --max-size {} (or more) to read it, \
+             or --max-size 0 for no limit.",
             size_flag(room_for(size, limit))
         );
         LoadError::tagged("too_large", message).with_hint(&hint)

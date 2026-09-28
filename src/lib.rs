@@ -5,6 +5,7 @@
 //! The binary in `main.rs` owns the terminal; everything here is
 //! terminal-free and unit tested.
 
+pub mod alchemy;
 pub mod app;
 pub mod clip;
 pub mod doc;

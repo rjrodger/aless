@@ -78,8 +78,11 @@ working here; `CLAUDE.md` imports it.
   model and rows), `fmt` (text forms, previews, JSON output, paths),
   `load` (format detection, the grammars, errors, the size, depth and
   time limits, the parse's own thread), `headless` (the agent
-  interface: paths, listings, search, positions, checks, JSON errors),
-  `explorer` (directory trees as documents, listed lazily), `prov`
+  interface: paths, listings, search, positions, checks, programs, JSON
+  errors),
+  `alchemy` (programs in the alchemy language: compiled, explained, and
+  run over the input through `export`'s plumbing), `explorer` (directory
+  trees as documents, listed lazily), `prov`
   (source positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,
   tabs, watch scheduling), `render` (the screen as styled lines),

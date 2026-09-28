@@ -23,6 +23,7 @@ use crossterm::terminal::{
 };
 use crossterm::{execute, queue};
 
+use aless::alchemy::ProgramArg;
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
 use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
@@ -58,6 +59,13 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --render <FORMAT>   csv or json: the records at the start (the elements
                             of an array; JSON Lines and CSV row by row) as CSV,
                             or the value there as JSON, streamed as it is read
+        --alchemy <FILE>    Run the alchemy program in FILE over the input and
+                            stream what it exports: its own text as it is, a
+                            table as CSV (--render json: JSON records), JSON
+                            events as JSON (--render csv: a table)
+        --alchemy-expr <TEXT>
+                            The same, with the program on the command line
+        --explain           The program's plan report as JSON, and no run
         --path <PATH>       Start at PATH, in the jq syntax every output uses
                             (.a.b[0].\"odd key\"); a.b[0], $.a.b[0] and JSON
                             Pointer (/a/b/0) work too
@@ -70,15 +78,19 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
     keyed value is at its key. Numbers are 64-bit floats. Input is read
     whole before it is parsed, so output starts when the parse ends;
-    --render streams instead, and reads JSON Lines and CSV a record at a
-    time. Errors are JSON on standard error: {\"error\": {\"kind\", \"message\",
-    …}}, with the file, line, col, code and hint when the input did not
-    parse. Exit status: 0 success, 1 the input did not parse (--check: an
-    input failed; --render: the input or its records will not do), 2 bad
-    usage or no terminal for the viewer, 3 an input could not be read (or
-    the output not written), 4 --path or --at names nothing, 5 an input (or
-    a --grammar file) is over --max-size (--render: over a limit of the
-    transducer's), 6 a parse (or a --grammar compile) ran past --timeout.
+    --render and --alchemy stream instead, and read JSON Lines and CSV a
+    record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
+    \"message\", …}}, with the file, line, col, code and hint when the input
+    did not parse, and {\"kind\": \"alchemy\", \"code\", \"file\", \"line\", \"col\"}
+    when the program did not. Exit status: 0 success, 1 the input did not
+    parse (--check: an input failed; --render, --alchemy: the input or its
+    records will not do), 2 bad usage (a program or --grammar that does not
+    compile too) or no terminal for the viewer, 3 an input (or an --alchemy
+    program file) could not be read, or the output not written, 4 --path
+    or --at names nothing, 5 an input (or a --grammar or --alchemy program
+    file) is over --max-size (--render, --alchemy: over a limit of the
+    transducer's), 6 a parse (or a --grammar compile) ran past --timeout
+    (--render, --alchemy: the whole run, the program's work included).
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -88,6 +100,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     aless -k csv --json < data.csv          stdin is JSON unless -k says
     aless --render csv --path .items x.json the records under .items as CSV
     aless --render json big.yaml            the document as JSON, streamed
+    aless --alchemy export.alc api.json     a program's output, streamed
+    aless --alchemy export.alc --explain    what the program will do
     aless --grammar hosts=hosts.abnf --paths /etc/hosts   a format of your own
     aless --grammar-expr 'kv=…' --json settings.kv        (see --grammar below)
 
@@ -146,6 +160,11 @@ struct Args {
     mouse: bool,
     /// The operation a headless option asked for.
     op: Option<Op>,
+    /// `--alchemy` or `--alchemy-expr`: combined with `op` once every
+    /// option is read, since `--render` may name its renderer.
+    program: Option<ProgramArg>,
+    /// `--explain`.
+    explain: bool,
     start: Start,
     limit: Option<usize>,
     compact: bool,
@@ -165,6 +184,9 @@ const HEADLESS_OPTIONS: &[&str] = &[
     "--where",
     "--check",
     "--render",
+    "--alchemy",
+    "--alchemy-expr",
+    "--explain",
     "--path",
     "--at",
     "--limit",
@@ -180,6 +202,8 @@ fn parse_args() -> Result<Args, String> {
         opts: Options::default(),
         mouse: true,
         op: None,
+        program: None,
+        explain: false,
         start: Start::Root,
         limit: None,
         compact: false,
@@ -251,6 +275,17 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or_else(|| format!("--render writes csv or json, not {v}"))?;
                 op = Some(Op::Render(renderer));
             }
+            "--alchemy" => {
+                // Raw, as --grammar reads its FILE: a path's bytes need not
+                // be UTF-8.
+                let v = match inline.take() {
+                    Some(_) => grammar::after_eq(&arg),
+                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
+                };
+                set_program(&mut args, &name, ProgramArg::File(PathBuf::from(v)))?;
+            }
+            "--alchemy-expr" => set_program(&mut args, &name, ProgramArg::Expr(value()?))?,
+            "--explain" => args.explain = true,
             "--path" => {
                 let v = value()?;
                 if matches!(args.start, Start::At(..)) {
@@ -303,6 +338,36 @@ fn parse_args() -> Result<Args, String> {
             }
         }
     }
+    // A program is what to print, with --render naming its renderer.
+    if let Some(program) = args.program.take() {
+        let render = match args.op.take() {
+            None => None,
+            Some(Op::Render(renderer)) => Some(renderer),
+            Some(other) => {
+                return Err(format!(
+                    "--alchemy and {} both say what to print: the program does the selecting; \
+                     give one",
+                    other.flag()
+                ))
+            }
+        };
+        if args.start != Start::Root {
+            return Err(
+                "--alchemy takes no --path or --at: the program selects what it reads".into(),
+            );
+        }
+        args.op = Some(Op::Alchemy {
+            program,
+            render,
+            explain: args.explain,
+        });
+    } else if args.explain {
+        return Err(
+            "--explain reports a program's plan: give the program with --alchemy FILE or \
+             --alchemy-expr TEXT"
+                .into(),
+        );
+    }
     if args.op == Some(Op::Check) && args.start != Start::Root {
         return Err("--check parses whole files: it takes no --path or --at".into());
     }
@@ -316,6 +381,23 @@ fn parse_args() -> Result<Args, String> {
         args.opts.color = false;
     }
     Ok(args)
+}
+
+/// Record the program `--alchemy` or `--alchemy-expr` (`name`) names,
+/// once: the option given twice, and the two together, are each refused
+/// by a message that names what was given.
+fn set_program(args: &mut Args, name: &str, program: ProgramArg) -> Result<(), String> {
+    match &args.program {
+        None => {}
+        Some(prev) if prev.path().is_some() == program.path().is_some() => {
+            return Err(format!("{name} was given twice: give one program"));
+        }
+        Some(_) => {
+            return Err("--alchemy and --alchemy-expr both name the program: give one".into());
+        }
+    }
+    args.program = Some(program);
+    Ok(())
 }
 
 fn parse_mode(v: &str) -> Result<bool, String> {
