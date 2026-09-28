@@ -104,6 +104,7 @@ aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 i
 aless --where --path .spec.replicas deploy.yaml    # the line a path is on
 aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 aless --render csv --path .items orders.json       # the records as CSV, streamed
+aless --render yaml data.csv                       # any format written as YAML, streamed
 aless --alchemy export.alc response.json           # a program over the document, streamed
 ```
 
@@ -114,7 +115,7 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
 | `--where` | the start's entry |
 | `--check` | parse every input and report on each |
-| `--render csv\|json` | the records at the start as CSV, or the value there as JSON, streamed as the input is read ([Exporting](#exporting)) |
+| `--render csv\|json\|yaml` | the records at the start as CSV, the value there as JSON, or the value there as YAML through its own render, streamed as the input is read ([Exporting](#exporting), [Writing YAML](#writing-yaml)) |
 | `--alchemy FILE`, `--alchemy-expr TEXT` | run an alchemy program over the input and stream what it exports; `--render` names the renderer for a table or JSON events ([Programs](#programs)) |
 | `--explain` | with `--alchemy`: the program's plan report as JSON, and no run |
 | `--path PATH` | start at PATH instead of the root |
@@ -348,6 +349,78 @@ whole and streaming its value, provided nothing has been written yet;
 otherwise the refusal is reported with `output: "partial"`. `--timeout`
 stops either kind at the deadline, with `output` saying whether records
 had already been written.
+
+### Writing YAML
+
+`--render yaml` writes the value at the start as one YAML 1.2 document,
+through the render tabnas-yaml carries: a library in the
+[alchemy](https://github.com/tabnas/alchemy) language, which aless links
+with a one-line program and runs as it runs `--alchemy`, streamed as the
+input is read. Every format aless reads can be written this way, so it is
+a translation: CSV's records become a sequence of mappings, a JSON or
+TOML document a block of mappings and sequences. The input is read as
+`--render json` reads it: JSON Lines, CSV and TSV a record at a time,
+`--path` to start below the root, `--timeout` over the whole run.
+
+```bash
+aless --render yaml data.csv                    # the records as YAML
+aless --render yaml --path .spec deploy.json    # the value at a path
+aless -k jsonl --render yaml < events.log       # stdin, a record at a time
+```
+
+The document is in block style and an always-quoted profile, as the CSV
+export is: every string and every key double-quoted with JSON's escapes,
+so that no string reads back as a boolean, a null, a number or a nested
+mapping; a number as the source spelled it where the source provides its
+lexeme, and `.inf`, `-.inf` or `.nan` where it is not finite; an empty
+container as `{}` or `[]`; a key longer than 1024 characters in the
+explicit `? key` form.
+
+```
+$ aless --render yaml tests/fixtures/sample.csv
+- "name": "ada"
+  "age": "36"
+  "city": "london"
+- "name": "lin"
+  "age": "28"
+  "city": "helsinki"
+```
+
+**What it does not keep** is declared rather than hidden. On a write that
+succeeds, standard output holds the document alone and standard error a
+JSON warning with the render's loss declaration; an error met while it
+was writing carries the same sentences as `loss`. They come from
+tabnas-yaml's manifest, whose `translate` object also names the render:
+
+```
+{"warning": {"kind": "loss", "message": "the document was written as yaml, which does not keep everything a document can hold", "file": "tests/fixtures/sample.csv", "render": "yaml", "loss": ["Comments are not kept.", "Anchors and aliases are not kept: an alias is written as a copy of the value it names.", "Tags are not kept.", "Styles are not kept: every string and key is written double-quoted, and every collection in block style.", "A stream of several documents is written as one document, a sequence of them."]}}
+```
+
+**A tree, each key once.** YAML forbids a repeated key, and the render
+writes what it is given, so the stream is checked on its way in. A member
+the parse streams twice (JSON's `{"a":1,"a":2}`, whose value keeps the
+last) is refused with `DUPLICATE_MEMBER`, and a stream no tree has (what
+the incremental YAML parse streams for a key that is itself a mapping,
+[tabnas/transduce#7](https://github.com/tabnas/transduce/issues/7)) with
+`STREAMABILITY_UNKNOWN`. Either way aless falls back once to the parsed
+value, as `--json` reads it, when nothing has been written; otherwise the
+refusal is reported with `output: "partial"`.
+
+`--render` names a format aless can write: `csv`, `json`, or one whose
+crate carries its own render, `yaml`. A format aless reads and has no
+render for (`--render toml`) is a usage error that says so, and so is
+`--render yaml` with `--alchemy`: a format's own render cannot take a
+program's output yet, so a program's output is rendered as CSV or JSON.
+
+The output is YAML 1.2, which reads back as the same value in a reader
+that follows it. tabnas-yaml's own reader, which aless shows YAML with,
+misreads two shapes the render writes, recorded as
+[tabnas/yaml#86](https://github.com/tabnas/yaml/issues/86) (a quoted key
+after a block sequence is read into the sequence) and
+[tabnas/yaml#88](https://github.com/tabnas/yaml/issues/88) (a flow
+sequence first in an indented block sequence replaces it). The round
+trip over tabnas-yaml's fixtures, `tests/yaml_render.rs`, keeps the
+inputs they affect in a checked ledger.
 
 `--render` on its own is the default export. Programs that select,
 project and reshape on the way through are the next section's.
@@ -941,6 +1014,7 @@ the library is terminal-free and unit tested:
 | `explorer` | directory trees as documents, listed lazily |
 | `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers; the source plumbing `--alchemy` runs on |
 | `alchemy` | `--alchemy`: a program in the alchemy language compiled, explained, and run over the input through `export`'s plumbing |
+| `translate` | `--render yaml`: the formats written by their own render, read from their crates' manifests, each linked with a one-line program and run as a program runs |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |

@@ -81,7 +81,10 @@ working here; `CLAUDE.md` imports it.
   interface: paths, listings, search, positions, checks, programs, JSON
   errors),
   `alchemy` (programs in the alchemy language: compiled, explained, and
-  run over the input through `export`'s plumbing), `explorer` (directory
+  run over the input through `export`'s plumbing), `translate` (`--render
+  yaml`: the formats written by their own render, read from their
+  crates' manifests, each linked with a one-line program and run as a
+  program runs), `explorer` (directory
   trees as documents, listed lazily), `prov`
   (source positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,

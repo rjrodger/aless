@@ -2280,3 +2280,202 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     assert_eq!(out.stdout, b".");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `--render yaml` writes the value at the start as YAML, through
+/// tabnas-yaml's own render: CSV's records as a sequence of mappings,
+/// every string and key double-quoted, and the render's loss declaration
+/// on standard error as a JSON warning, the answer alone on standard
+/// output.
+#[test]
+fn render_yaml_writes_csv_as_a_sequence_of_mappings() {
+    let out = aless(&["--render", "yaml", "tests/fixtures/sample.csv"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "- \"name\": \"ada\"\n  \"age\": \"36\"\n  \"city\": \"london\"\n\
+         - \"name\": \"lin\"\n  \"age\": \"28\"\n  \"city\": \"helsinki\"\n"
+    );
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["kind"], "loss");
+    assert_eq!(note["warning"]["render"], "yaml");
+    assert_eq!(note["warning"]["file"], "tests/fixtures/sample.csv");
+    let loss = note["warning"]["loss"].as_array().unwrap();
+    assert!(
+        loss.iter().any(|l| l == "Comments are not kept."),
+        "{loss:?}"
+    );
+    // From a path, as `--render json` starts there.
+    let out = aless(
+        &[
+            "--render",
+            "yaml",
+            "--path",
+            ".store.books[1]",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"title\": \"TAPL\"\n\"price\": 55\n\"tags\":\n  - \"types\"\n"
+    );
+    // A number is its lexeme, a jsonic spelling that is no JSON number
+    // arrives as its value, and YAML's non-finite numbers keep YAML's
+    // spellings.
+    let out = aless(
+        &["-k", "jsonic", "--render", "yaml"],
+        Some("a: 0xFF\nb: 1_000\nc: 1.50\n"),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"a\": 255\n\"b\": 1000\n\"c\": 1.50\n"
+    );
+    let out = aless(
+        &["-k", "yaml", "--render", "yaml"],
+        Some("- .inf\n- -.inf\n- .nan\n- '.inf'\n- {}\n- []\n"),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "- .inf\n- -.inf\n- .nan\n- \".inf\"\n- {}\n- []\n"
+    );
+}
+
+/// Every fixture can be written as YAML: a document ending in a newline,
+/// with the loss declaration beside it. Whether each reads back as its
+/// value is `tests/yaml_render.rs`'s round trip.
+#[test]
+fn every_fixture_renders_as_yaml() {
+    let files: Vec<String> = fixture_files()
+        .into_iter()
+        .filter(|f| !f.ends_with("bad.json") && !f.ends_with("lines.txt"))
+        .collect();
+    assert!(files.len() >= 16, "{files:?}");
+    for file in &files {
+        let out = aless(&["--render", "yaml", "--compact", file], None);
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.len() > 1 && out.stdout.ends_with(b"\n"),
+            "{file}"
+        );
+        assert_eq!(json(&out.stderr)["warning"]["kind"], "loss", "{file}");
+    }
+}
+
+/// A render takes a tree's events, each key once per mapping. A member the
+/// parse streams twice (JSON's `{"a":1,"a":2}`, whose value keeps the last)
+/// is refused before the render writes it, and the run falls back to the
+/// parsed value, as `--json` reads it, when nothing was written yet; once
+/// output has left, the refusal is the answer, the output partial. A
+/// stream no tree has (the member's value before its key, which the
+/// incremental YAML source streams for a key that is a mapping) falls back
+/// the same way.
+#[test]
+fn render_yaml_holds_a_stream_to_a_trees_events() {
+    let out = aless(&["--render", "yaml"], Some("{\"a\":1,\"a\":2}"));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "\"a\": 2\n");
+    let mut late = String::from("[");
+    for i in 0..5000 {
+        late.push_str(&format!("{{\"k0\":{i},\"k1\":{i},\"k2\":{i}}},"));
+    }
+    late.push_str("{\"a\":1,\"a\":2}]");
+    let out = aless(&["--render", "yaml", "--compact"], Some(&late));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["kind"], "transduce");
+    assert_eq!(error["code"], "DUPLICATE_MEMBER");
+    assert_eq!(error["output"], "partial");
+    assert!(
+        error["loss"].as_array().is_some_and(|l| !l.is_empty()),
+        "{error}"
+    );
+    let out = aless(
+        &["-k", "yaml", "--render", "yaml"],
+        Some("- sun: yellow\n- ? earth: blue\n  : moon: white\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "- \"sun\": \"yellow\"\n- \"earth: blue\":\n    \"moon\": \"white\"\n"
+    );
+}
+
+/// `--render` says what it writes: a format aless reads and has no render
+/// for, a name it does not know, a format's own render after a program,
+/// and plain text are each refused as usage, before anything is written.
+#[test]
+fn render_refuses_what_it_cannot_write() {
+    for (args, message) in [
+        (
+            vec!["--render", "toml", "tests/fixtures/sample.toml"],
+            "--render toml: aless reads toml but has no render for it; --render writes csv, json \
+             or yaml",
+        ),
+        (
+            vec!["--render", "docx", "tests/fixtures/nested.json"],
+            "--render writes csv, json or yaml, not docx",
+        ),
+        (
+            vec![
+                "--alchemy-expr",
+                "def export [input] input",
+                "--render",
+                "yaml",
+                "tests/fixtures/nested.json",
+            ],
+            "--render yaml writes a document through yaml's own render, which cannot take a \
+             program's output yet: render the program's output as csv or json, or give --render \
+             yaml without --alchemy",
+        ),
+        (
+            vec!["--render", "yaml", "tests/fixtures/lines.txt"],
+            "tests/fixtures/lines.txt is plain text, which has no values to write as yaml: name \
+             its format with -k, such as -k jsonl or -k csv",
+        ),
+    ] {
+        let out = aless(&args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        let error = &json(&out.stderr)["error"];
+        assert_eq!(error["kind"], "usage", "{args:?}");
+        assert_eq!(error["message"], message, "{args:?}");
+    }
+}
+
+/// A YAML array of objects written as CSV through the inferred table (a
+/// program's `table-from-json` with `:columns :infer`) is the bytes
+/// `--render csv` writes natively.
+#[test]
+fn yaml_records_through_the_inferred_table_are_the_native_csv() {
+    let native = aless(&["--render", "csv", "tests/fixtures/records.yaml"], None);
+    assert_eq!(
+        code(&native),
+        0,
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        "\"name\",\"age\",\"active\",\"city\"\r\n\"ada\",\"36\",\"true\",\"london\"\r\n\
+         \"lin\",\"28.5\",\"false\",\"helsinki, uusimaa\"\r\n\"quote \"\" mark\",\"41\",\"true\",\"\"\r\n"
+    );
+    let program = "def rows (record (entry :columns :infer) (entry :rows (path each-index)))\n\
+                   def export [input] (table-from-json rows input)";
+    let inferred = aless(
+        &["--alchemy-expr", program, "tests/fixtures/records.yaml"],
+        None,
+    );
+    assert_eq!(
+        code(&inferred),
+        0,
+        "{}",
+        String::from_utf8_lossy(&inferred.stderr)
+    );
+    assert_eq!(inferred.stdout, native.stdout);
+}

@@ -1,0 +1,13 @@
+# Records at the root: a sequence of mappings, one per row, keyed alike.
+- name: ada
+  age: 36
+  active: true
+  city: london
+- name: lin
+  age: 28.5
+  active: false
+  city: "helsinki, uusimaa"
+- name: "quote \" mark"
+  age: 41
+  active: true
+  city: null

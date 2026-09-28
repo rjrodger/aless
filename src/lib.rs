@@ -19,4 +19,5 @@ pub mod prov;
 pub mod render;
 pub mod search;
 pub mod tab;
+pub mod translate;
 pub mod watch;

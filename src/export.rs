@@ -41,6 +41,7 @@
 //! under the deadline; a grammar that panics is caught at the same
 //! boundary the loader has.
 
+use std::collections::HashSet;
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,15 +71,19 @@ pub enum Renderer {
     Csv,
     /// The value as JSON text.
     Json,
+    /// The value in a format written by its own render, an alchemy part
+    /// its crate hands over, named by the manifest's `languageId`
+    /// (`yaml`): see [`crate::translate`].
+    Part(&'static str),
 }
 
 impl Renderer {
-    /// `--render`'s argument.
+    /// `--render`'s argument: a built-in, or a part the registry has.
     pub fn from_name(name: &str) -> Option<Renderer> {
         match name.trim().to_ascii_lowercase().as_str() {
             "csv" => Some(Renderer::Csv),
             "json" => Some(Renderer::Json),
-            _ => None,
+            other => crate::translate::id_of(other).map(Renderer::Part),
         }
     }
 
@@ -86,6 +91,7 @@ impl Renderer {
         match self {
             Renderer::Csv => "csv",
             Renderer::Json => "json",
+            Renderer::Part(id) => id,
         }
     }
 }
@@ -139,6 +145,10 @@ pub enum What {
     /// one, so the parse can be pruned under it as an export's is under
     /// the exported array (see [`crate::alchemy`]).
     Program { rows: Option<Selector> },
+    /// `--render` through a format's own render: a program over the
+    /// value at the path, pruned behind it as JSON's render is (see
+    /// [`crate::translate`]).
+    Part,
 }
 
 /// One export, or one program's run.
@@ -227,10 +237,13 @@ fn limits() -> Limits {
 
 /// Run an export: `input` in, rendered text out through `out`.
 pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result<(), ExportError> {
-    let What::Render(renderer) = &job.what else {
-        return Err(ExportError::Usage(
-            "a program's run goes through run_program".to_string(),
-        ));
+    let renderer = match &job.what {
+        What::Render(Renderer::Part(_)) | What::Part | What::Program { .. } => {
+            return Err(ExportError::Usage(
+                "a program's run, a part's among them, goes through run_program".to_string(),
+            ))
+        }
+        What::Render(renderer) => renderer,
     };
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
@@ -245,6 +258,7 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
         })
     };
     match renderer {
+        Renderer::Part(_) => unreachable!("refused above"),
         Renderer::Json => {
             let options = JsonOptions {
                 indent: (!job.compact).then_some(job.indent),
@@ -296,9 +310,12 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
 /// the program's rows, aless's caps and `--timeout` on the parse and the
 /// deadline's alarm on the rest, the one fallback to the whole value when
 /// a grammar refuses to stream before anything was written, and the same
-/// failures. `chain` builds the sink over the writer it is given and the
-/// program's abort flag, which its functions read between steps and the
-/// deadline's alarm raises in every mode; it is called once per attempt.
+/// failures. The program reads the value at the job's path, re-rooted
+/// there as an export's renderer reads it: a program's own job has none,
+/// and reads the whole document; a part's may. `chain` builds the sink
+/// over the writer it is given and the program's abort flag, which its
+/// functions read between steps and the deadline's alarm raises in every
+/// mode; it is called once per attempt.
 pub fn run_program(
     job: &Job,
     input: Input<'_>,
@@ -315,8 +332,9 @@ pub fn run_program(
             broken: broken.clone(),
         });
         // A scope at the root passes every event through and never stops
-        // the run: the program does the selecting.
-        Ok(Scope::new(Vec::new(), chain(pipe, abort)?))
+        // the run: the program does the selecting. A part's scope re-roots
+        // the stream at `--path`, as an export's does.
+        Ok(Scope::new(job.path.clone(), chain(pipe, abort)?))
     })
 }
 
@@ -388,6 +406,105 @@ fn attempt<S: Sink + Send + 'static>(
             .map_err(|f| classify(job, *f, written, broken))
         }
         _ => Err(classify(job, *failed, written, broken)),
+    }
+}
+
+/// A tree's events: the contract a format's render takes
+/// ([`Renderer::Part`]). Each member is a key and then its value, each key
+/// once per object. A walked value keeps it by construction. A parse
+/// streamed as it proceeds may not: it hands on a member its grammar reads
+/// twice (JSON's `{"a":1,"a":2}`, whose value keeps the last), which a
+/// render would write twice, and YAML forbids a repeated key; and where a
+/// grammar builds a key the adapter cannot stream (a YAML key that is a
+/// mapping), it may stream a value where a key is due. The first is
+/// refused with `DUPLICATE_MEMBER`, the second with
+/// `STREAMABILITY_UNKNOWN`, which the run treats as a grammar refusing to
+/// stream: when nothing had been written it falls back once to the parsed
+/// value, as `--json` reads it. Each open object keeps the keys it has had,
+/// dropped when it closes, so the cost is a lookup per key and the keys of
+/// the objects open at once, which the parse holds in its tree already.
+pub struct UniqueMembers<S> {
+    open: Vec<Open>,
+    inner: S,
+}
+
+/// A container [`UniqueMembers`] has open.
+enum Open {
+    /// The keys the object has had, and whether a key is due next rather
+    /// than a value.
+    Object {
+        keys: HashSet<Box<str>>,
+        key_due: bool,
+    },
+    Array,
+}
+
+impl<S: Sink> UniqueMembers<S> {
+    pub fn new(inner: S) -> Self {
+        UniqueMembers {
+            open: Vec::new(),
+            inner,
+        }
+    }
+
+    /// The failure for events no tree has.
+    fn not_a_tree(what: &str) -> Fail {
+        Fail::new(
+            Code::StreamabilityUnknown,
+            format!(
+                "the parse streamed {what}, which a tree's events never hold, so the stream is \
+                 not the document's"
+            ),
+        )
+    }
+}
+
+impl<S: Sink> Sink for UniqueMembers<S> {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        match &ev {
+            JsonEvent::Key(key) => match self.open.last_mut() {
+                Some(Open::Object { keys, key_due }) if *key_due => {
+                    if !keys.insert((*key).into()) {
+                        return Err(Fail::new(
+                            Code::DuplicateMember,
+                            format!(
+                                "member {key:?} appears twice in one object, and a render \
+                                 writes a tree, each key once"
+                            ),
+                        ));
+                    }
+                    *key_due = false;
+                }
+                _ => return Err(Self::not_a_tree("a key where a value is due")),
+            },
+            JsonEvent::ObjectEnd => match self.open.pop() {
+                Some(Open::Object { key_due: true, .. }) => {}
+                _ => return Err(Self::not_a_tree("an object's end where none is due")),
+            },
+            JsonEvent::ArrayEnd => match self.open.pop() {
+                Some(Open::Array) => {}
+                _ => return Err(Self::not_a_tree("an array's end where none is due")),
+            },
+            JsonEvent::End => {}
+            // A value: in an object, only once its key is in.
+            value => {
+                if let Some(Open::Object { key_due, .. }) = self.open.last_mut() {
+                    if *key_due {
+                        return Err(Self::not_a_tree("a value where a key is due"));
+                    }
+                    *key_due = true;
+                }
+                match value {
+                    JsonEvent::ObjectStart => self.open.push(Open::Object {
+                        keys: HashSet::new(),
+                        key_due: true,
+                    }),
+                    JsonEvent::ArrayStart => self.open.push(Open::Array),
+                    _ => {}
+                }
+            }
+        }
+        self.inner.event(ev)
     }
 }
 
@@ -689,7 +806,9 @@ fn mode_for(job: &Job) -> SourceMode {
             // rows selector does, and by itself for JSON; the source
             // prunes the same array either way.
             What::Render(Renderer::Csv) => Prune::Under(selector_of(&job.path).each_index()),
-            What::Render(Renderer::Json) => Prune::Under(selector_of(&job.path)),
+            What::Render(Renderer::Json) | What::Render(Renderer::Part(_)) | What::Part => {
+                Prune::Under(selector_of(&job.path))
+            }
             // The rows a program reads, when its plan names them; a
             // program that reads the document some other way keeps it.
             What::Program { rows: Some(rows) } => Prune::Under(rows.clone()),
@@ -817,7 +936,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
                 // how far the parse got only when it stops the parse
                 // itself, which the arm above reports with that position;
                 // a run the sink stopped mid-item has none to give.
-                What::Program { .. } if from_sink => (0, 0),
+                What::Program { .. } | What::Part if from_sink => (0, 0),
                 _ => position(&fail),
             };
             load(timed_out(job, line, col))
@@ -845,7 +964,9 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
             // raising it (a grammar that refused to stream part-way, once
             // output had left) is the input's, whatever the code.
             match job.what {
-                What::Program { .. } if from_sink => ExportError::Program(Box::new(fail)),
+                What::Program { .. } | What::Part if from_sink => {
+                    ExportError::Program(Box::new(fail))
+                }
                 _ => ExportError::Transduce(Box::new(fail)),
             }
         }
@@ -915,7 +1036,7 @@ fn timed_out(job: &Job, line: u32, col: u32) -> LoadError {
                  --timeout 0 for no limit."
             ),
         ),
-        What::Program { .. } => (
+        What::Program { .. } | What::Part => (
             format!("timeout: the run (the parse and the program) ran longer than {limit} s"),
             format!(
                 "--timeout {limit} stopped the run, in the parse or in the program's work on an \
@@ -1607,6 +1728,54 @@ mod tests {
         assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Csv));
         assert_eq!(Renderer::from_name("json"), Some(Renderer::Json));
         assert_eq!(Renderer::from_name("xml"), None);
+        // A format written by its own render, by its manifest's id.
+        assert_eq!(Renderer::from_name(" YAML "), Some(Renderer::Part("yaml")));
+        assert_eq!(Renderer::Part("yaml").name(), "yaml");
+        assert_eq!(Renderer::from_name("toml"), None);
+    }
+
+    /// A tree's events pass the guard unchanged. A key repeated in one
+    /// object is `DUPLICATE_MEMBER`, where the same key in another object
+    /// is none, and events no tree has are `STREAMABILITY_UNKNOWN`, the
+    /// two refusals a run falls back from.
+    #[test]
+    fn unique_members_holds_a_stream_to_a_trees_events() {
+        let doc = r#"{"a":{"b":1,"a":2},"b":[{"a":3},{"a":4}],"c":[],"d":{}}"#;
+        let mut guard = UniqueMembers::new(Vec::new());
+        replay(&events(doc), &mut guard).unwrap();
+        assert_eq!(guard.inner, events(doc));
+        let mut guard = UniqueMembers::new(Vec::new());
+        let fail = replay(&streamed(r#"{"a":1,"b":{"a":2},"a":3}"#), &mut guard).unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
+        assert!(fail.message.starts_with("member \"a\""), "{fail}");
+        use OwnedJsonEvent as E;
+        let key = |k: &str| E::Key(k.into());
+        for (bad, why) in [
+            (vec![E::ObjectStart, E::Null], "a value where a key is due"),
+            (
+                vec![E::ObjectStart, key("a"), key("b")],
+                "a key where a value is due",
+            ),
+            (vec![E::ArrayStart, key("a")], "a key where a value is due"),
+            (vec![key("a")], "a key where a value is due"),
+            (
+                vec![E::ObjectStart, key("a"), E::ObjectEnd],
+                "an object's end where none is due",
+            ),
+            (
+                vec![E::ArrayStart, E::ObjectEnd],
+                "an object's end where none is due",
+            ),
+            (
+                vec![E::ObjectStart, E::ArrayEnd],
+                "an array's end where none is due",
+            ),
+        ] {
+            let mut guard = UniqueMembers::new(Vec::new());
+            let fail = replay(&bad, &mut guard).unwrap_err();
+            assert_eq!(fail.code, Code::StreamabilityUnknown, "{bad:?}");
+            assert!(fail.message.contains(why), "{bad:?}: {fail}");
+        }
     }
 
     #[test]

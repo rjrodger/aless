@@ -129,9 +129,16 @@ pub fn is_placed(fail: &Fail) -> bool {
 }
 
 /// What `--render` may ask of a program: nothing of one that renders its
-/// own text. The message is the usage error's.
+/// own text, and no format written by its own render (`--render yaml`),
+/// which cannot take a program's output yet. The message is the usage
+/// error's.
 pub fn check_render(program: &Program, render: Option<Renderer>) -> Result<(), String> {
     match (program.output(), render) {
+        (_, Some(Renderer::Part(id))) => Err(format!(
+            "--render {id} writes a document through {id}'s own render, which cannot take a \
+             program's output yet: render the program's output as csv or json, or give \
+             --render {id} without --alchemy"
+        )),
         (Output::Text, Some(renderer)) => Err(format!(
             "--render {} was given, but the program renders its own text ({}): drop --render, \
              or export a table or JSON events for aless to render",
@@ -142,11 +149,13 @@ pub fn check_render(program: &Program, render: Option<Renderer>) -> Result<(), S
     }
 }
 
-/// alchemy's renderer for aless's.
-fn renderer(render: Renderer) -> tabnas_alchemy::Renderer {
+/// alchemy's renderer for aless's; `None` for a part's, which
+/// [`check_render`] refuses for a program.
+fn renderer(render: Renderer) -> Option<tabnas_alchemy::Renderer> {
     match render {
-        Renderer::Csv => tabnas_alchemy::Renderer::Csv,
-        Renderer::Json => tabnas_alchemy::Renderer::Json,
+        Renderer::Csv => Some(tabnas_alchemy::Renderer::Csv),
+        Renderer::Json => Some(tabnas_alchemy::Renderer::Json),
+        Renderer::Part(_) => None,
     }
 }
 
@@ -173,7 +182,7 @@ pub fn run(
         // the program exports) is the program's side's failure too.
         program
             .with_abort(abort)
-            .sink(pipe, render.map(renderer), &limits, Metrics::new())
+            .sink(pipe, render.and_then(renderer), &limits, Metrics::new())
             .map_err(|fail| ExportError::Program(Box::new(fail)))
     })
 }
