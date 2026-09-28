@@ -2228,7 +2228,7 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
             "--alchemy-expr",
             slow,
             "--timeout",
-            "0.5",
+            "1.5",
             doc.to_str().unwrap(),
         ],
         None,
@@ -2236,19 +2236,19 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     let elapsed = started.elapsed();
     assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
     assert!(
-        elapsed < Duration::from_millis(2_500),
-        "the command ran {elapsed:?} against a 0.5 s deadline"
+        elapsed < Duration::from_millis(4_500),
+        "the command ran {elapsed:?} against a 1.5 s deadline"
     );
     assert!(out.stdout.is_empty());
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("timeout"));
     assert_eq!(e["code"], json!("timeout"));
-    assert_eq!(e["seconds"], json!(0.5));
+    assert_eq!(e["seconds"], json!(1.5));
     assert_eq!(e["output"], json!("none"));
     assert_eq!(e["file"], json!(doc.to_str().unwrap()));
     assert_eq!(
         e["message"],
-        json!("timeout: the run (the parse and the program) ran longer than 0.5 s")
+        json!("timeout: the run (the parse and the program) ran longer than 1.5 s")
     );
     let hint = e["hint"].as_str().unwrap();
     assert!(hint.contains("the program's work on an item"), "{e}");

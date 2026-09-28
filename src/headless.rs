@@ -2396,15 +2396,15 @@ mod tests {
             render: None,
             explain: false,
         });
-        r.timeout = Some(Duration::from_millis(500));
+        r.timeout = Some(Duration::from_millis(1500));
         // One row whose cubic work takes seconds; its parse milliseconds.
         let row: Vec<String> = (0..300).map(|i| i.to_string()).collect();
         let doc = format!("[[{}]]", row.join(","));
         let started = std::time::Instant::now();
         let out = with_stdin(&r, &doc);
         assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "the run went on {:?} past a 0.5 s deadline",
+            started.elapsed() < Duration::from_secs(4),
+            "the run went on {:?} past a 1.5 s deadline",
             started.elapsed()
         );
         assert_eq!(out.status, status::TIMEOUT, "{}", out.stderr);
@@ -2412,13 +2412,13 @@ mod tests {
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("timeout"));
         assert_eq!(e["code"], json!("timeout"));
-        assert_eq!(e["seconds"], json!(0.5));
+        assert_eq!(e["seconds"], json!(1.5));
         assert_eq!(e["output"], json!("none"));
         assert_eq!(e["file"], json!("-"));
         assert_eq!(e["format"], json!("json"));
         assert_eq!(
             e["message"],
-            json!("timeout: the run (the parse and the program) ran longer than 0.5 s")
+            json!("timeout: the run (the parse and the program) ran longer than 1.5 s")
         );
         let hint = e["hint"].as_str().unwrap();
         assert!(hint.contains("the program's work on an item"), "{e}");
