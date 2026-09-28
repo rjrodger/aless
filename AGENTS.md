@@ -35,38 +35,43 @@ working here; `CLAUDE.md` imports it.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,
-  so a parse whose rule stack grows with the input — a custom grammar's
-  repetitions keep one rule open per item, the workaround the next point
-  names — runs in O(n²): 800 lines of `hosts` took 31 s in a debug
-  build, 0.4 s without the check, and the release build is linear either
-  way. `cargo test` and `target/debug/aless` inherit the setting; keep it.
+  an O(depth) check per step that a deep rule stack pays on every one of
+  them: while tabnas-bnf spelled a repetition as a rule calling itself
+  per item (the history the next point tells), a custom grammar's rule
+  stack grew with the input and 800 lines of `hosts` took 31 s in a
+  debug build, 0.4 s without the check. The check is the engine's own
+  self-test, not aless's. `cargo test` and `target/debug/aless` inherit
+  the setting; keep it.
 - **A repetition is a replace loop, never a push chain.** In the engine an
   alternate that hands control to another rule either pushes a child
   rule (`p`), which opens a new frame for something the tree must nest,
   or replaces the current rule (`r`), which re-enters it in the same
-  frame for the next item of a sequence. Every `*A`, `1*A` and `m*A` in a grammar compiles to a
-  replace loop, the loop `r` and the item `p` where it nests, so the loop's
-  iterations add no depth: a grammar's real recursion still nests with
-  its input, but depth never grows with a file's length. That is the maintainer's rule for the whole tabnas fleet, and
-  `load` is written to it: the shared cap of 3,000 open rules
-  (`MAX_RULE_DEPTH` in `src/load.rs`) is a nesting guard, and a flat
-  file of any length should stay far under it. tabnas-bnf does not yet
-  compile it so: its `desugar` spells `*entry` as `H = inner H / ε`, a
-  rule that calls itself once per item, so 1,500 lines of `hosts` were
-  "nested deeper than aless reads". Commit 3ed798c carries the
-  WORKAROUND, and it is one: a `Format::Custom` parse runs under
-  `MAX_CUSTOM_RULE_DEPTH` (1,000,000 open rules), and nesting is measured
-  on the value the grammar built (`MAX_VALUE_DEPTH`) once the parse is
-  done. When `Cargo.lock` pins a bnf and abnf that compile the star as
-  `r`, the custom cap goes back to the shared one; until then do not
-  raise it further, and never write a repetition as a rule that calls
-  itself in a grammar of this repository's own. The observable is the
-  engine's rule depth `d`, what the guard in `load` reads as
-  `ctx.rule_stack.len()`; `a_custom_grammars_repetition_is_not_nesting`
-  asserts today's chain under `parse_capped`, and flips when the pin
-  moves. Rule depth over a repetition is constant; a test that repeats an
-  item ten thousand times and asserts the maximum `d` stays what a single
-  item needs is the proof.
+  frame for the next item of a sequence. Every `*A`, `1*A` and `m*A` in
+  a grammar compiles to a replace loop, the loop `r` and the item `p`
+  where it nests, so the loop's iterations add no depth: a grammar's
+  real recursion still nests with its input, but depth never grows with
+  a file's length. That is the maintainer's rule for the whole tabnas
+  fleet, and `load` is written to it: the shared cap of 3,000 open rules
+  (`MAX_RULE_DEPTH` in `src/load.rs`) is a nesting guard, for a grammar
+  from the command line as for the built-in ones, and a flat file of any
+  length stays far under it. tabnas-bnf has compiled the star so since
+  tabnas/bnf#80, which `Cargo.lock` pins. Until then its `desugar`
+  spelled `*entry` as `H = inner H / ε`, a rule that calls itself once
+  per item, 1,500 lines of `hosts` were "nested deeper than aless
+  reads", and aless carried a workaround (commit 3ed798c): a
+  `Format::Custom` parse ran under a cap of 1,000,000 open rules, with
+  nesting measured on the built value instead. The cap is gone; the
+  value measure stays (`MAX_VALUE_DEPTH`), since a custom grammar builds
+  its value in the compiler's shape, an object and a `kids` array per
+  level, which its rule stack does not count in the same units. Never
+  write a repetition as a rule that calls itself in a grammar of this
+  repository's own. The observable is the engine's rule depth `d`, what
+  the guard in `load` reads as `ctx.rule_stack.len()`:
+  `a_custom_grammars_repetition_is_not_nesting` holds 2,000 lines to
+  the depth of two, and a 10,000-line `hosts` file to the depth of
+  three. Rule depth over a repetition is constant; a test that repeats
+  an item ten thousand times and asserts the maximum `d` stays what a
+  single item needs is the proof.
 - **Layout.** `src/main.rs` is the only file that touches the terminal
   (crossterm) and the only one with platform-specific code. Everything
   in the library is terminal-free and unit tested: `doc` (the arena

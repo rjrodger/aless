@@ -339,43 +339,33 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 /// document. Most grammars stop sooner, each as `too_deep` too: JSON,
 /// JSONL, JSONic, JSON5, YAML, TOML, INI and ZON at 127 levels, XML at
 /// 256 and JSONC at 512. This cap is for a grammar with no limit of its
-/// own: deeper, some recurse until the stack runs out, which ends the
-/// process, and slow down with the square of the depth long before that.
+/// own, a grammar from the command line included: deeper, some recurse
+/// until the stack runs out, which ends the process, and slow down with
+/// the square of the depth long before that.
+///
+/// Rule depth follows nesting, never length: every repetition the
+/// compilers emit is a loop that re-enters its rule in one frame (a
+/// replace, `r`, in the engine's terms), so a flat file of any length
+/// stays at the depth of one item. Until tabnas-bnf compiled a star that
+/// way (tabnas/bnf#80), a grammar from the command line kept one rule
+/// open per item of a repetition and ran under a cap of 1,000,000 open
+/// rules instead; `a_custom_grammars_repetition_is_not_nesting` holds the
+/// loop to constant depth.
 pub const MAX_RULE_DEPTH: usize = 3_000;
-
-/// The cap for a grammar from the command line ([`Format::Custom`]). The
-/// ABNF compiler writes a repetition (`*entry`) as a rule that calls itself
-/// once per item, so the engine keeps a rule open for every item matched
-/// so far (two, for the line shapes of the grammar library) and a long
-/// flat file costs the depth a nested one would: 1,500 lines of `hosts`
-/// reached [`MAX_RULE_DEPTH`]. The engine keeps its rule frames on the
-/// heap, so the machine stack is safe at any count and this cap bounds
-/// memory alone; nesting is measured on the value the grammar built
-/// instead ([`MAX_VALUE_DEPTH`]). It is room for some 500,000 lines of the
-/// library's grammars, about 30 MB of `hosts`.
-pub const MAX_CUSTOM_RULE_DEPTH: usize = 1_000_000;
 
 /// How deep the value a custom grammar built may nest: the levels
 /// [`MAX_RULE_DEPTH`] works out to for the other grammars. It is measured
-/// once the parse is done, since that grammar's rule stack says nothing
-/// about nesting.
+/// once the parse is done: such a grammar builds its value in the
+/// compiler's shape, an object and its `kids` array per level, which its
+/// rule stack does not count in the same units.
 pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
-
-/// The rule-stack cap a parse as `format` runs under.
-pub fn max_rule_depth(format: Format) -> usize {
-    if format.is_custom() {
-        MAX_CUSTOM_RULE_DEPTH
-    } else {
-        MAX_RULE_DEPTH
-    }
-}
 
 /// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
 /// margin, whatever the calling thread has (a Windows main thread has
 /// 1 MB). The rule stack itself is the engine's, on the heap.
 pub(crate) const PARSE_STACK: usize = 64 << 20;
 
-/// Why aless stopped a parse itself: nesting past [`max_rule_depth`], time
+/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], time
 /// past the timeout, or a value nested past [`MAX_VALUE_DEPTH`] once the
 /// parse was done.
 pub(crate) const STOP_DEPTH: u8 = 1;
@@ -1097,7 +1087,7 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
 /// Parse `src` as `format`, stopping after `timeout`.
 ///
 /// The parse runs on a thread of its own with a large stack
-/// ([`PARSE_STACK`]), and stops at its rule cap ([`max_rule_depth`]):
+/// ([`PARSE_STACK`]), and stops at its rule cap ([`MAX_RULE_DEPTH`]):
 /// nesting that deep fails as `too_deep` rather than overflowing the
 /// stack, which would end the process where no error can be caught, as
 /// does nesting past a grammar's own, lower limit, and as does a custom
@@ -1197,7 +1187,7 @@ fn parse_with(
     format: Format,
     deadline: Option<Deadline>,
 ) -> Result<Doc, LoadError> {
-    parse_capped(parser, src, format, deadline, max_rule_depth(format))
+    parse_capped(parser, src, format, deadline, MAX_RULE_DEPTH)
 }
 
 /// [`parse_with`] under a rule cap of `max_depth`, which a test lowers.
@@ -1294,7 +1284,7 @@ fn parse_capped(
 }
 
 /// Stop the parse when its rule stack passes `max_depth` (the format's
-/// [`max_rule_depth`]), or when its deadline passes. Both are looked at
+/// [`MAX_RULE_DEPTH`]), or when its deadline passes. Both are looked at
 /// between every two steps of the
 /// engine, in the parse budget. A grammar's own depth limit is a parse
 /// guard, which the engine runs beside the budget rather than in it, so
@@ -1336,7 +1326,7 @@ pub(crate) fn guard(
 /// Why a parse was `too_deep`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Deep {
-    /// Its rule stack passed this cap (the format's [`max_rule_depth`]).
+    /// Its rule stack passed this cap (the shared [`MAX_RULE_DEPTH`]).
     Rules(usize),
     /// A custom grammar's value nests past [`MAX_VALUE_DEPTH`], which is
     /// found once the parse is done.
@@ -1352,9 +1342,9 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
     match why {
         Deep::Rules(cap) if format.is_custom() => (
             format!("too_deep: the {format} grammar had {cap} rules open at once"),
-            "A repetition in a grammar (`*entry`) keeps one rule open for every item it has \
-             matched, so a long file costs depth as a nested document would, and the parse \
-             stopped here.\nSplit the input: about half that many items of one repetition fit."
+            "Rule depth follows the nesting of the input and of the grammar's own recursion, \
+             not the length of a file: a repetition adds none. The parse stopped here.\nReal \
+             documents nest a few dozen levels at most."
                 .to_string(),
         ),
         Deep::Rules(cap) => (
@@ -1371,9 +1361,9 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 "too_deep: the {format} grammar built a value nested deeper than aless reads \
                  (about {MAX_VALUE_DEPTH} levels)"
             ),
-            "The value is measured once the parse is done, since a grammar from the command \
-             line keeps rules open for its repetitions, not only for nesting.\nReal documents \
-             nest a few dozen levels at most."
+            "The value is measured once the parse is done: a grammar from the command line \
+             builds it in the compiler's shape, which its rule stack does not count in the \
+             same units.\nReal documents nest a few dozen levels at most."
                 .to_string(),
         ),
         Deep::Grammar => (
@@ -1621,9 +1611,25 @@ mod tests {
         assert_eq!(e.code, "unexpected");
     }
 
-    /// A grammar from the command line keeps a rule open for every item of
-    /// a repetition, so a long flat file is not nesting: it parses up to
-    /// [`MAX_CUSTOM_RULE_DEPTH`], and that cap's error says what it is.
+    /// The deepest the engine's rule stack gets over a parse of `src`: the
+    /// rule depth `d`, as the guard reads it.
+    fn deepest_rule(mut parser: Tabnas, src: &str) -> usize {
+        let deepest = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = deepest.clone();
+        parser.parse_budget(1, move |ctx| {
+            seen.fetch_max(ctx.rule_stack.len(), Ordering::Relaxed);
+            true
+        });
+        parser.parse(src).unwrap_or_else(|e| panic!("{e}"));
+        deepest.load(Ordering::Relaxed)
+    }
+
+    /// A repetition in a grammar from the command line adds no rule depth:
+    /// the compiler emits `*entry` as a loop that re-enters its rule in
+    /// one frame, so a flat file of any length parses at the depth of one
+    /// line, under the shared cap. (Until tabnas/bnf#80 the star was a rule
+    /// calling itself once per item, 2,000 lines kept some 4,000 rules
+    /// open, and aless allowed a grammar from the command line 1,000,000.)
     #[test]
     fn a_custom_grammars_repetition_is_not_nesting() {
         let def = grammar::Definition::parse(
@@ -1632,26 +1638,39 @@ mod tests {
         )
         .unwrap();
         let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
-        // 2,000 lines keep some 4,000 rules open: past the other grammars'
-        // cap, and two levels deep.
-        let flat: String = (0..2_000).map(|i| format!("k{i}=v{i}\n")).collect();
+        let lines = |n: usize| -> String { (0..n).map(|i| format!("k{i}=v{i}\n")).collect() };
+        let flat = lines(2_000);
         let doc = parse(&flat, custom).unwrap();
         assert_eq!(doc.node(0).children, 2_000);
         assert_eq!(doc.nodes.iter().map(|n| n.depth).max(), Some(2));
-        // Under a low cap, the error names the open rules, not nesting, and
-        // says where the parse stopped.
+        // The rule stack over 2,000 lines is as deep as over two, and
+        // nowhere near the cap.
+        let two = deepest_rule(make_parser(custom).unwrap().unwrap(), &lines(2));
+        let many = deepest_rule(make_parser(custom).unwrap().unwrap(), &flat);
+        assert_eq!(
+            many, two,
+            "2,000 lines reach rule depth {many} where two lines reach {two}"
+        );
+        assert!(two < MAX_RULE_DEPTH / 100, "{two}");
+        // So a cap at that depth takes the whole file...
         let parser = make_parser(custom).unwrap().unwrap();
-        let e = parse_capped(parser, &flat, custom, None, 50).unwrap_err();
+        let doc = parse_capped(parser, &flat, custom, None, two).unwrap();
+        assert_eq!(doc.node(0).children, 2_000);
+        // ...and under a lower one the error names the open rules, says
+        // that depth is not length, and says where the parse stopped.
+        let parser = make_parser(custom).unwrap().unwrap();
+        let e = parse_capped(parser, &flat, custom, None, two - 1).unwrap_err();
         assert_eq!(e.code, "too_deep");
         assert_eq!(
             e.message,
-            "too_deep: the impl-kv-l grammar had 50 rules open at once"
+            format!(
+                "too_deep: the impl-kv-l grammar had {} rules open at once",
+                two - 1
+            )
         );
-        assert!(e.hint.contains("Split the input"), "{}", e.hint);
+        assert!(e.hint.contains("a repetition adds none"), "{}", e.hint);
         assert!(e.line > 0, "{e}");
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
-        assert_eq!(max_rule_depth(custom), MAX_CUSTOM_RULE_DEPTH);
-        assert_eq!(max_rule_depth(Format::Yaml), MAX_RULE_DEPTH);
         // The other grammars are worded as before.
         let (message, hint) = too_deep_words(Format::Yaml, Deep::Rules(MAX_RULE_DEPTH));
         assert_eq!(
@@ -1659,6 +1678,38 @@ mod tests {
             "too_deep: nested deeper than aless reads (about 1000 levels)"
         );
         assert!(hint.contains("overflow the parser's stack"), "{hint}");
+    }
+
+    /// The fixtures' hosts grammar over 10,000 lines: it parses under the
+    /// shared cap, at the rule depth of a three-line file.
+    #[test]
+    fn a_ten_thousand_line_hosts_file_parses_under_the_shared_cap() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/grammars/hosts.abnf"
+        );
+        let def = grammar::Definition::parse("--grammar", &format!("hosts-l={path}")).unwrap();
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
+        let lines = |n: usize| -> String {
+            (0..n)
+                .map(|i| {
+                    format!(
+                        "10.0.{}.{}\thost{i}.example.com alias{i}\n",
+                        (i >> 8) & 255,
+                        i & 255
+                    )
+                })
+                .collect()
+        };
+        let doc = parse(&lines(10_000), custom).unwrap();
+        assert_eq!(doc.node(0).children, 10_000);
+        let three = deepest_rule(make_parser(custom).unwrap().unwrap(), &lines(3));
+        let many = deepest_rule(make_parser(custom).unwrap().unwrap(), &lines(10_000));
+        assert_eq!(
+            many, three,
+            "10,000 lines reach rule depth {many} where three lines reach {three}"
+        );
+        assert!(three < MAX_RULE_DEPTH / 100, "{three}");
     }
 
     /// Nesting in a custom grammar's value is found once the parse is

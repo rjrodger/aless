@@ -132,13 +132,14 @@ tabnas = { git = "https://github.com/tabnas/parser" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 
 # The engine checks its rule stack against a shadow copy on every step
-# when debug assertions are on: an O(depth) check per step, so a parse
-# whose rule stack grows with the input (a custom grammar's repetitions
-# keep one rule open per item) runs in O(n^2) in a debug build (800
-# hosts lines: 31 s; 1,600: minutes) where the release build is linear
-# (86,000 lines: 5 s). The check is the engine's own self-test, not
-# aless's, so the dev profile (and `cargo test`, which inherits it) turns
-# it off for that package alone; nothing else about the build changes.
+# when debug assertions are on: an O(depth) check per step, which a deep
+# rule stack pays on every one of them (while tabnas-bnf spelled a
+# repetition as a rule calling itself per item, a custom grammar's rule
+# stack grew with the input, and 800 hosts lines took 31 s in a debug
+# build against 0.4 s without the check). The check is the engine's own
+# self-test, not aless's, so the dev profile (and `cargo test`, which
+# inherits it) turns it off for that package alone; nothing else about
+# the build changes.
 [profile.dev.package.tabnas]
 debug-assertions = false
 
