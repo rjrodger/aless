@@ -1824,6 +1824,42 @@ fn alchemy_explain_prints_the_plan_as_json() {
     );
     assert_eq!(code(&out), 2);
     assert_eq!(json(&out.stderr)["error"]["kind"], json!("usage"));
+    // --render is checked against the program before the report, so one
+    // the program refuses is the same usage error with --explain as
+    // without it.
+    let out = aless(
+        &["--alchemy", &program, "--render", "json", "--explain"],
+        None,
+    );
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("usage"));
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("renders its own text"),
+        "{e}"
+    );
+    // The report is the program's: its `renderer` is the program's own
+    // default, whatever --render names.
+    let table = format!("{PROGRAMS}/table.alc");
+    let plain = aless(&["--alchemy", &table, "--explain"], None);
+    assert_eq!(
+        code(&plain),
+        0,
+        "{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let out = aless(
+        &["--alchemy", &table, "--render", "json", "--explain"],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let v = json(&out.stdout);
+    assert_eq!(v["renderer"]["name"], json!("csv"), "{v}");
+    assert_eq!(v, json(&plain.stdout));
 }
 
 /// Each way the command line can ask for what a program cannot do.
@@ -1831,10 +1867,20 @@ fn alchemy_explain_prints_the_plan_as_json() {
 fn alchemy_usage_errors_say_what_to_give_instead() {
     let program = format!("{PROGRAMS}/export.alc");
     let records = "tests/fixtures/records.json";
-    let cases: [(&[&str], &str); 9] = [
+    let cases: [(&[&str], &str); 11] = [
         (
             &["--alchemy", &program, "--alchemy-expr", "x", records],
             "both name the program",
+        ),
+        // The one option twice is that option given twice, not a clash
+        // between the two.
+        (
+            &["--alchemy", &program, "--alchemy", &program, records],
+            "--alchemy was given twice",
+        ),
+        (
+            &["--alchemy-expr", "x", "--alchemy-expr", "y", records],
+            "--alchemy-expr was given twice",
         ),
         (
             &["--alchemy", &program, "--json", records],
@@ -1874,6 +1920,9 @@ fn alchemy_usage_errors_say_what_to_give_instead() {
         assert_eq!(e["kind"], json!("usage"), "{args:?}: {e}");
         let message = e["message"].as_str().unwrap();
         assert!(message.contains(expected), "{args:?}: {message}");
+        if expected.contains("twice") {
+            assert!(!message.contains("both"), "{args:?}: {message}");
+        }
     }
 }
 
@@ -2006,6 +2055,67 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!((e["line"].clone(), e["col"].clone()), (json!(3), json!(14)));
     assert_eq!(e["input"], json!(records));
     assert_eq!(e["output"], json!("none"));
+    // The same rule by code: a failure from the program's sink with one
+    // of the language's codes (the evaluator's `recursion`, met on an
+    // item) is the program's, status 2, placed in the program, with
+    // `input`.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def w [f] (f f)\ndef export [input]\n  concat-map (fn [row] (let [x (w w)] \".\")) \
+             (select (path each-index) input)",
+        ],
+        Some("[1, 2]"),
+    );
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("alchemy"));
+    assert_eq!(e["code"], json!("STREAMABILITY_UNKNOWN"));
+    assert!(
+        e["message"].as_str().unwrap().starts_with("recursion: "),
+        "{e}"
+    );
+    assert_eq!(e["file"], json!("--alchemy-expr"));
+    assert_eq!(e["format"], json!(null));
+    assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(12)));
+    assert_eq!(e["input"], json!("-"));
+    // A failure from the program's sink with neither a language code nor
+    // a position, a renderer's over the rows the program built (a record
+    // without a value for a bound column, rendered as CSV): the input's,
+    // in an export's shape, `file` and `format` the document's and no
+    // `input`, `line` or `col`.
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    v["response"]["payload"]["deep"]["records"][1]["person"]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    let missing = dir.join("missing.json");
+    std::fs::write(&missing, serde_json::to_string(&v).unwrap()).unwrap();
+    let table = format!("{PROGRAMS}/table.alc");
+    let out = aless(&["--alchemy", &table, missing.to_str().unwrap()], None);
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("MISSING_VALUE"));
+    assert_eq!(e["file"], json!(missing.to_str().unwrap()));
+    assert_eq!(e["format"], json!("json"));
+    assert!(e.get("input").is_none(), "{e}");
+    assert!(e.get("line").is_none() && e.get("col").is_none(), "{e}");
+    assert_eq!(e["output"], json!("none"));
+    // Rendered as JSON, the same rows have no missing value to refuse.
+    let out = aless(
+        &[
+            "--alchemy",
+            &table,
+            "--render",
+            "json",
+            missing.to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     // A program file that cannot be read: io, status 3, no format.
     let out = aless(&["--alchemy", "/nonexistent/p.alc", records], None);
     assert_eq!(code(&out), 3);
@@ -2013,14 +2123,48 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["kind"], json!("io"));
     assert_eq!(e["file"], json!("/nonexistent/p.alc"));
     assert_eq!(e["format"], json!(null));
-    // One over --max-size: too_large, status 5, with its size and the limit.
+    // One over --max-size: too_large, status 5, with its size and the
+    // limit; the message names the program, and the hint does not claim
+    // the parser's memory per byte, since no parse of it is coming.
     let out = aless(&["--alchemy", &program, "--max-size", "10", records], None);
     assert_eq!(code(&out), 5);
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("too_large"));
+    assert_eq!(e["code"], json!("too_large"));
     assert_eq!(e["file"], json!(program));
+    assert_eq!(e["format"], json!(null));
     assert_eq!(e["limit"], json!(10));
     assert!(e["size"].as_u64().unwrap() > 10, "{e}");
+    let size = e["size"].as_u64().unwrap();
+    assert_eq!(
+        e["message"],
+        json!(format!("program is {size} B, over the 10 B limit"))
+    );
+    let hint = e["hint"].as_str().unwrap();
+    assert!(!hint.contains("bytes of memory"), "{hint}");
+    assert!(hint.contains("--max-size"), "{hint}");
+    // A transducer limit met while the plan is built (forty nested
+    // doublings ask for 2^40 values before the program reads anything):
+    // the program's, as a transduce error with status 5, `file` the
+    // program's, `format` null, and no `input`, since none was opened.
+    let mut doubling = String::from("def d0 [x] (vector x x)\n");
+    for n in 1..=40 {
+        doubling.push_str(&format!("def d{n} [x] (d{} (d{} x))\n", n - 1, n - 1));
+    }
+    doubling.push_str("def export [input]\n  let [v (d40 1)]\n    json input\n");
+    let steps = dir.join("steps.alc");
+    std::fs::write(&steps, &doubling).unwrap();
+    let out = aless(&["--alchemy", steps.to_str().unwrap(), records], None);
+    assert_eq!(code(&out), 5, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("transduce"));
+    assert_eq!(e["code"], json!("RESOURCE_LIMIT_EXCEEDED"));
+    assert_eq!(e["file"], json!(steps.to_str().unwrap()));
+    assert_eq!(e["format"], json!(null));
+    assert_eq!(e["limit"]["name"], json!("max_plan_steps"));
+    assert!(e.get("input").is_none(), "{e}");
+    assert_eq!(e["output"], json!("none"));
     // A run past --timeout: status 6, output none, as under --render.
     let big = dir.join("big.json");
     let mut text = String::from("[");

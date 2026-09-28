@@ -200,10 +200,15 @@ pub enum ExportError {
     Transduce(Box<Fail>),
     /// The program's sink failed, as against the source that fed it: a
     /// failure of the program's own, or one it met in the data, which
-    /// `headless` tells apart by code. A code the language shares with
-    /// the source (`STREAMABILITY_UNKNOWN`: the checker's or the
-    /// evaluator's, and a verified grammar's refusal to stream part-way)
-    /// is the program's only when it came this way.
+    /// `headless` tells apart by code and position
+    /// (`alchemy::is_placed`: the events a program reads carry no
+    /// positions, so a position on a failure that came this way is in the
+    /// program). A code the language shares with the source
+    /// (`STREAMABILITY_UNKNOWN`: the checker's or the evaluator's, and a
+    /// verified grammar's refusal to stream part-way) is the program's
+    /// only when it came this way. A `Code::Aborted` that came this way
+    /// is the deadline's and is classified as a `timeout` instead, with
+    /// no position.
     Program(Box<Fail>),
     /// `--path` names nothing.
     NotFound {

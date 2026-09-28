@@ -21,18 +21,22 @@
 //! Everything here is terminal-free. A failure of the program's own (it
 //! does not parse, does not type check, uses a stream twice, or cannot be
 //! shown to stream) is the command's mistake and reports as an `alchemy`
-//! error; one the program raises at a position of its own (`fail`, or a
-//! function refusing a value) keeps the transducer's code but is placed
-//! in the program, not the input; every other failure reports as an
-//! export's does.
+//! error. Once the input is open, where a failure came from decides
+//! whose it is, and `export` says where ([`ExportError::Program`] for the
+//! program's sink, `Transduce` for the source): a failure from the
+//! program's sink with one of the language's codes, or with a position,
+//! is the program's and is placed in it (the events a program reads
+//! carry no positions, so a position on such a failure is in the
+//! program's text: `fail` refusing a record, a function refusing a
+//! value); one with neither, a renderer's over the rows the program
+//! built, say, is reported as the input's, as the source's failures are
+//! whatever their code. `headless` applies the rule.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use tabnas_alchemy::{Output, Program};
-use tabnas_transduce::{Code, Fail, Flow, JsonEvent, Limits, Metrics, Sink};
+use tabnas_transduce::{Code, Fail, Limits, Metrics};
 
 use crate::export::{self, ExportError, Input, Job, Renderer};
 use crate::load::{self, LoadError};
@@ -69,10 +73,20 @@ impl ProgramArg {
     }
 
     /// The program's text: a file is read within `max_size`, as any input
-    /// is, and an unreadable or oversized one fails as an input does.
+    /// is, and an unreadable one fails as an input does; one over the
+    /// limit is `too_large` worded for the program
+    /// ([`LoadError::program_too_large`]), since no parse of it is coming.
     pub fn read(&self, max_size: Option<u64>) -> Result<String, LoadError> {
         match self {
-            ProgramArg::File(path) => load::read_path_within(path, max_size),
+            ProgramArg::File(path) => load::read_path_within(path, max_size).map_err(|e| {
+                if e.is_too_large() {
+                    let size = std::fs::metadata(path).ok().map(|m| m.len());
+                    LoadError::program_too_large(size, max_size.unwrap_or(0))
+                        .with_origin(&load::origin_of(path))
+                } else {
+                    e
+                }
+            }),
             ProgramArg::Expr(text) => Ok(text.clone()),
         }
     }
@@ -92,12 +106,26 @@ pub fn compile(text: &str, file: &str) -> Result<Program, Fail> {
 /// too (a verified grammar that refuses to stream a document part-way),
 /// so for a failure met while the program ran the code alone does not
 /// say whose it is: `export` says where it came from
-/// ([`ExportError::Program`]), and `headless` reads both.
+/// ([`ExportError::Program`]), and `headless` reads that, the code and
+/// the position together ([`is_placed`]).
 pub fn is_programs(code: Code) -> bool {
     matches!(
         code,
         Code::DslParseError | Code::DslTypeError | Code::StreamReused | Code::StreamabilityUnknown
     )
+}
+
+/// Whether a failure the program's sink returned ([`ExportError::Program`])
+/// is the program's, to be placed in the program with the input named
+/// beside it: one with a code of the language's (a `match` no case takes,
+/// the evaluator's `recursion`), or with a position, whatever its code
+/// (`fail` refusing a record, a function refusing a value: the events a
+/// program reads carry no positions, so a position on such a failure is
+/// in the program's text). One with neither (a renderer's `MISSING_VALUE`
+/// over the rows the program built, a table with no columns) is reported
+/// as the input's. The source's failures never come this way.
+pub fn is_placed(fail: &Fail) -> bool {
+    is_programs(fail.code) || fail.row.is_some()
 }
 
 /// What `--render` may ask of a program: nothing of one that renders its
@@ -122,86 +150,32 @@ fn renderer(render: Renderer) -> tabnas_alchemy::Renderer {
     }
 }
 
-/// How a run failed.
-#[derive(Debug)]
-pub enum RunError {
-    /// The program's own failure, met once the input was open: one of the
-    /// language's codes ([`is_programs`]: a `match` no case takes, a
-    /// `--render` that does not fit what it exports), or one the program
-    /// raised at a position of its own (`fail` refusing a record, a
-    /// function refusing a value), whatever its code. The events a program
-    /// reads carry no positions, so a `row` and `column` on a failure its
-    /// sink returns are in the program's text, never the input's.
-    Program(Box<Fail>),
-    /// As an export fails: the input's failure, aless's limits, the reader
-    /// gone.
-    Export(ExportError),
-}
-
-/// The program's sink, noting a failure it raises with a position: the
-/// source's own failures never pass through it, and no event it is handed
-/// carries a position, so such a failure is placed in the program.
-struct Positioned {
-    sink: Box<dyn Sink + Send>,
-    raised: Arc<AtomicBool>,
-}
-
-impl Sink for Positioned {
-    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
-        let result = self.sink.event(ev);
-        if let Err(fail) = &result {
-            if fail.row.is_some() {
-                self.raised.store(true, Ordering::Relaxed);
-            }
-        }
-        result
-    }
-}
-
 /// Run `program` over `input`, writing what it produces to `out`; `render`
 /// chooses the renderer for a table or JSON events (the program's default
 /// when `None`). The document reaches the program's sink the way an export
 /// reaches its renderer ([`export::run_program`]), with the transducer's
 /// default limits and the program's abort flag handed to it, which the
 /// deadline's alarm raises in every mode, so `--timeout` stops a long
-/// computation on one item as it stops a parse. A failure of the
-/// program's own comes back as [`RunError::Program`].
+/// computation on one item as it stops a parse. A failure the program's
+/// sink raised comes back as [`ExportError::Program`], the source's as
+/// [`ExportError::Transduce`]; [`is_placed`] says which of the former
+/// are the program's own.
 pub fn run(
     job: &Job,
     program: &Program,
     render: Option<Renderer>,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
-) -> Result<(), RunError> {
+) -> Result<(), ExportError> {
     let limits = Limits::default();
-    let raised = Arc::new(AtomicBool::new(false));
-    let result = export::run_program(job, input, out, |pipe, abort| {
-        // One sink per attempt: what the last one raised is what counts.
-        raised.store(false, Ordering::Relaxed);
+    export::run_program(job, input, out, |pipe, abort| {
         // A sink that cannot be built (a renderer that does not fit what
         // the program exports) is the program's side's failure too.
-        let sink = program
+        program
             .with_abort(abort)
             .sink(pipe, render.map(renderer), &limits, Metrics::new())
-            .map_err(|fail| ExportError::Program(Box::new(fail)))?;
-        Ok(Box::new(Positioned {
-            sink,
-            raised: raised.clone(),
-        }))
-    });
-    match result {
-        Ok(()) => Ok(()),
-        // The program's sink's failure ([`ExportError::Program`]: where
-        // it came from is `export`'s to say), with a code of the
-        // language's or a position of the program's; the source's, even
-        // under a code the language shares, is an export's.
-        Err(ExportError::Program(fail))
-            if is_programs(fail.code) || (raised.load(Ordering::Relaxed) && fail.row.is_some()) =>
-        {
-            Err(RunError::Program(fail))
-        }
-        Err(e) => Err(RunError::Export(e)),
-    }
+            .map_err(|fail| ExportError::Program(Box::new(fail)))
+    })
 }
 
 #[cfg(test)]
@@ -245,6 +219,26 @@ mod tests {
         ] {
             assert!(!is_programs(code), "{code:?}");
         }
+    }
+
+    /// A failure from the program's sink is the program's by its code or
+    /// by its position; with neither it is reported as the input's.
+    #[test]
+    fn a_sinks_failure_is_placed_in_the_program_by_code_or_position() {
+        let recursion = Fail::new(Code::StreamabilityUnknown, "recursion: ...");
+        assert!(is_placed(&recursion), "a language code, no position");
+        let mut refused = Fail::new(Code::InputInvalid, "no Bob");
+        assert!(!is_placed(&refused), "the transducer's code, no position");
+        refused.row = Some(3);
+        refused.column = Some(14);
+        assert!(is_placed(&refused), "the transducer's code at a form");
+        let missing = Fail::new(Code::MissingValue, "row 2 has no value");
+        assert!(
+            !is_placed(&missing),
+            "a renderer's, over the program's rows"
+        );
+        let limit = Fail::new(Code::ResourceLimitExceeded, "max_columns");
+        assert!(!is_placed(&limit));
     }
 
     #[test]

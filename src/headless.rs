@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 use tabnas_transduce::{Code, Fail, JsonEvent};
 
-use crate::alchemy::{self, ProgramArg, RunError};
+use crate::alchemy::{self, ProgramArg};
 use crate::doc::{Doc, Key, Kind, NodeId};
 use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer, What};
 use crate::fmt;
@@ -423,6 +423,11 @@ fn run_program(
         Failure::program_read(&file, &e).limited(size, req)
     })?;
     let compiled = alchemy::compile(&text, &file).map_err(|fail| Failure::alchemy(&file, &fail))?;
+    // --render is checked against the program before anything else,
+    // --explain included: one the program refuses is the same usage error
+    // either way. The plan's `renderer` is the program's own default,
+    // whatever --render names.
+    alchemy::check_render(&compiled, render).map_err(Failure::usage)?;
     if explain {
         if !req.files.is_empty() {
             return Err(Failure::usage(
@@ -431,7 +436,6 @@ fn run_program(
         }
         return Ok(self::render(&compiled.explain_json(), req.compact));
     }
-    alchemy::check_render(&compiled, render).map_err(Failure::usage)?;
     let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, true) else {
         return Err(Failure::usage(format!(
@@ -456,19 +460,15 @@ fn run_program(
         Opened::Lines(reader) => alchemy::run(&job, &compiled, render, Input::Lines(reader), out),
     };
     let failure = match result {
-        Ok(()) | Err(RunError::Export(ExportError::ReaderGone)) => return Ok(String::new()),
-        // The program's own failure met while it ran (a `match` no case
-        // took, a `fail` at a record, say) names the program, and its
-        // position is in the program; anything else is the input's.
-        Err(RunError::Program(fail)) => {
-            let mut f = Failure::alchemy(&file, &fail);
-            f.error.insert("input".into(), name.into());
-            return Err(f);
-        }
-        Err(RunError::Export(e)) => e,
+        Ok(()) | Err(ExportError::ReaderGone) => return Ok(String::new()),
+        Err(e) => e,
     };
     Err(match failure {
         ExportError::Usage(m) => Failure::usage(m),
+        // aless's own limits, the deadline among them: a timeout raised in
+        // the program's work on an item carries no position (`export`
+        // drops the program's span from it), one raised in the parse how
+        // far the parse got.
         ExportError::Load { error, partial } => {
             let mut f = Failure::load(&name, format, &error).limited(None, req);
             f.error.insert(
@@ -477,8 +477,19 @@ fn run_program(
             );
             f
         }
-        // The program's sink's failure that is neither the language's nor
-        // placed in the program, and the source's whatever its code (a
+        // Where a failure came from decides whose it is. One from the
+        // program's sink with a code of the language's (a `match` no case
+        // took, the evaluator's `recursion`) or with a position (a `fail`
+        // at a record: the events a program reads carry no positions, so
+        // the position is in the program) is the program's, placed in it,
+        // with the input named beside it.
+        ExportError::Program(fail) if alchemy::is_placed(&fail) => {
+            let mut f = Failure::alchemy(&file, &fail);
+            f.error.insert("input".into(), name.into());
+            f
+        }
+        // One from the program's sink with neither (a renderer's, over the
+        // rows the program built), and the source's whatever its code (a
         // verified grammar that refused to stream part-way, once output
         // had left: `STREAMABILITY_UNKNOWN` too), are the input's.
         ExportError::Program(fail) | ExportError::Transduce(fail) => {
@@ -1327,7 +1338,8 @@ impl Failure {
     }
 
     /// The program file of `--alchemy` could not be read (`"kind": "io"`)
-    /// or is over `--max-size` (`"too_large"`): the fields of that kind as
+    /// or is over `--max-size` (`"too_large"`, worded for the program:
+    /// [`LoadError::program_too_large`]): the fields of that kind as
     /// [`load`](Self::load) and [`limited`](Self::limited) give them, with
     /// the program file as `file` and `format` null, since a program has
     /// no format.
@@ -1340,17 +1352,19 @@ impl Failure {
     /// A failure of the program's own (`"kind": "alchemy"`: it does not
     /// parse, does not type check, uses a stream twice, or cannot be
     /// shown to stream; status [`status::USAGE`], as for a `--grammar`
-    /// that does not compile), or one the program's build met, or the
-    /// program raised at a position of its own (`fail`), that is not the
-    /// language's (`"kind": "transduce"`, the status following the code):
-    /// the language's `code`, its `message` (the finer code leads it),
-    /// `file` the program's, `format` null, `line` and `col` in the
-    /// program when the failure has them, `path` and `limit` when it has
-    /// those, and `output`. A failure met while the program ran adds
-    /// `input`, the document's name; whether one met then is the
-    /// program's is `export`'s to say, by where it came from
-    /// ([`ExportError::Program`]), since `STREAMABILITY_UNKNOWN` is the
-    /// source's code too.
+    /// that does not compile), or one the program's build met (a
+    /// transducer limit while the plan was built), or the program raised
+    /// at a position of its own (`fail`), that is not the language's
+    /// (`"kind": "transduce"`, the status following the code): the
+    /// `code`, its `message` (a finer code leads the language's), `file`
+    /// the program's, `format` null, `line` and `col` in the program when
+    /// the failure has them, `path` and `limit` when it has those, and
+    /// `output`. A failure met while the program ran adds `input`, the
+    /// document's name; whether one met then is the program's is read
+    /// from where it came from ([`ExportError::Program`]), its code and
+    /// its position together ([`alchemy::is_placed`]), since
+    /// `STREAMABILITY_UNKNOWN` is the source's code too and a `fail`'s
+    /// `INPUT_INVALID` the transducer's.
     fn alchemy(file: &str, fail: &Fail) -> Failure {
         let programs = alchemy::is_programs(fail.code);
         let status = if programs {
@@ -2174,9 +2188,10 @@ mod tests {
         assert_eq!(e["format"], json!("json"));
         assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
         // A failure the program raises at a record (`fail`) keeps the
-        // transducer's code and status, but is placed in the program: the
-        // events a program reads carry no positions, so `line` and `col`
-        // are in the program (the input here has one line), `file` is the
+        // transducer's code and status, but is placed in the program: it
+        // came from the program's sink with a position, and the events a
+        // program reads carry no positions, so `line` and `col` are in
+        // the program (the input here has one line), `file` is the
         // program's, `format` null, and `input` names the document.
         let failing = req(Op::Alchemy {
             program: ProgramArg::Expr(
@@ -2209,6 +2224,88 @@ mod tests {
         assert_eq!(out.stdout, "[{\"id\":1},{\"id\":2}]\n");
         r.max_size = Some(4);
         assert_eq!(with_stdin(&r, RECORDS).status, status::TOO_LARGE);
+    }
+
+    /// A failure from the program's sink with neither a code of the
+    /// language's nor a position is reported as the input's: a renderer's
+    /// over the rows the program built (a record without a value for a
+    /// bound column, as CSV: `MISSING_VALUE`), in an export's shape, `file`
+    /// and `format` the document's, no `input`, `line` or `col`, status 1.
+    #[test]
+    fn a_renderers_failure_over_the_programs_rows_is_reported_as_the_inputs() {
+        let table = "def api-binding\n  record\n    entry :columns (path \"meta\" \"fields\")\n    \
+                     entry :rows (path \"records\" each-index)\n    entry :column (fn [f] (record \
+                     (entry :label (get \"title\" f)) (entry :source (as-path (get \"path\" f)))))\n\
+                     def export [input]\n  table-from-json api-binding input\n";
+        let mut r = req(Op::Alchemy {
+            program: ProgramArg::Expr(table.into()),
+            render: None,
+            explain: false,
+        });
+        r.compact = true;
+        let doc = r#"{"meta": {"fields": [{"title": "Id", "path": ["id"]}, {"title": "Name", "path": ["name"]}]}, "records": [{"id": 1, "name": "a"}, {"id": 2}]}"#;
+        let out = with_stdin(&r, doc);
+        assert_eq!(out.status, status::PARSE, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["code"], json!("MISSING_VALUE"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("json"));
+        assert_eq!(e["output"], json!("none"));
+        assert!(e.get("input").is_none(), "{e}");
+        assert!(e.get("line").is_none() && e.get("col").is_none(), "{e}");
+        // As JSON records the same rows render, a missing value left out.
+        let mut r = req(Op::Alchemy {
+            program: ProgramArg::Expr(table.into()),
+            render: Some(Renderer::Json),
+            explain: false,
+        });
+        r.compact = true;
+        let out = with_stdin(&r, doc);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "[{\"Id\":1,\"Name\":\"a\"},{\"Id\":2}]\n");
+    }
+
+    /// An `--alchemy` program file over `--max-size` is `too_large` with
+    /// the shape, fields and status of an input's, worded for the program:
+    /// the message names it, and the hint claims no memory per byte, since
+    /// no parse of it is coming.
+    #[test]
+    fn an_oversize_program_file_is_too_large_worded_for_the_program() {
+        let dir = std::env::temp_dir().join(format!("aless-program-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.alc");
+        std::fs::write(&path, "def export [input] input\n").unwrap();
+        let mut r = req(Op::Alchemy {
+            program: ProgramArg::File(path.clone()),
+            render: None,
+            explain: false,
+        });
+        r.max_size = Some(10);
+        let out = with_stdin(&r, RECORDS);
+        assert_eq!(out.status, status::TOO_LARGE, "{}", out.stderr);
+        assert_eq!(out.stdout, "");
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("too_large"));
+        assert_eq!(e["code"], json!("too_large"));
+        assert_eq!(e["file"], json!(path.display().to_string()));
+        assert_eq!(e["format"], json!(null));
+        assert_eq!(e["message"], json!("program is 25 B, over the 10 B limit"));
+        assert_eq!(e["size"], json!(25));
+        assert_eq!(e["limit"], json!(10));
+        let hint = e["hint"].as_str().unwrap();
+        assert!(!hint.contains("bytes of memory"), "{hint}");
+        assert!(
+            hint.starts_with("A program file over --max-size is not read."),
+            "{hint}"
+        );
+        assert!(hint.contains("--max-size 0"), "{hint}");
+        assert!(
+            e["report"].as_str().unwrap().contains("program is 25 B"),
+            "{e}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// `STREAMABILITY_UNKNOWN` is a code of both sides: the program's (the

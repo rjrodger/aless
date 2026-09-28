@@ -282,9 +282,9 @@ fn parse_args() -> Result<Args, String> {
                     Some(_) => grammar::after_eq(&arg),
                     None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
                 };
-                set_program(&mut args, ProgramArg::File(PathBuf::from(v)))?;
+                set_program(&mut args, &name, ProgramArg::File(PathBuf::from(v)))?;
             }
-            "--alchemy-expr" => set_program(&mut args, ProgramArg::Expr(value()?))?,
+            "--alchemy-expr" => set_program(&mut args, &name, ProgramArg::Expr(value()?))?,
             "--explain" => args.explain = true,
             "--path" => {
                 let v = value()?;
@@ -383,10 +383,18 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-/// Record the program `--alchemy` or `--alchemy-expr` names, once.
-fn set_program(args: &mut Args, program: ProgramArg) -> Result<(), String> {
-    if args.program.is_some() {
-        return Err("--alchemy and --alchemy-expr both name the program: give one".into());
+/// Record the program `--alchemy` or `--alchemy-expr` (`name`) names,
+/// once: the option given twice, and the two together, are each refused
+/// by a message that names what was given.
+fn set_program(args: &mut Args, name: &str, program: ProgramArg) -> Result<(), String> {
+    match &args.program {
+        None => {}
+        Some(prev) if prev.path().is_some() == program.path().is_some() => {
+            return Err(format!("{name} was given twice: give one program"));
+        }
+        Some(_) => {
+            return Err("--alchemy and --alchemy-expr both name the program: give one".into());
+        }
     }
     args.program = Some(program);
     Ok(())

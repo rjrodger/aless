@@ -365,11 +365,14 @@ one object per row keyed by the column labels) and JSON events as JSON
 compact, one document on one line. The program does the selecting, so
 `--path` and `--at` are not accepted, and neither is any other output
 option; `--render` given for a program that renders its own text is a
-usage error. `--explain` prints the program's plan report as one JSON
-object instead of running it (the chain of calls, the protocols, what is
-retained and under which limits, the ordering contract, the renderer, the
-guarantee and its qualification; `--compact` puts it on one line), and
-reads no input. The
+usage error, with `--explain` as without it, since `--render` is checked
+against the program before anything else. `--explain` prints the
+program's plan report as one JSON object instead of running it (the chain
+of calls, the protocols, what is retained and under which limits, the
+ordering contract, the renderer, the guarantee and its qualification;
+`--compact` puts it on one line), and reads no input; the report is the
+program's, so its `renderer` is the program's own default, whatever
+`--render` names. The
 [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
 has the language; the worked example of the transducer's design, a table
 bound by the document's own metadata and rendered by the program itself
@@ -411,32 +414,45 @@ type check, uses a stream twice, or cannot be shown to stream:
 with status 2: the language's `code`, its `message` (the finer code leads
 it: `unbalanced`, `unknown_name`, `arity`, `protocol_mismatch`, …), `file`
 (the program's path, or `--alchemy-expr`), `format` `null`, `line` and
-`col` in the program when the failure has them, and `output`. A failure
-of the program's own met once the input is open (a `match` no case takes,
-a `--render` that does not fit what it exports) has the same shape plus
-`input`, the document's name. A failure the program raises at a record
-(`fail`, or a function refusing a value) keeps the transducer's code,
-kind and status (`INPUT_INVALID` as `transduce`, status 1) but is placed
-the same way, `file`, `line` and `col` the program's, `format` `null`,
-`input` the document's name: the events a program reads carry no
-positions, so a position on such a failure is never the input's. A
-grammar's refusal to stream part-way once output has left
-(`STREAMABILITY_UNKNOWN` from the input's side, as [above](#exporting))
-is the input's failure, `transduce` with `output: "partial"`, not the
-program's. A program file that cannot be read is an
-`io` error and one over `--max-size` a `too_large` error, `file` the
-program's and `format` `null`. Everything else reports as an export's
-failure does: the transducer's codes as `transduce`
-(`INPUT_ORDER_VIOLATION` when a row arrives before the metadata the
-program binds its columns to, `RESOURCE_LIMIT_EXCEEDED` naming the
-`limit`, `PROTOCOL_ORDER_ERROR`, …), with `output` saying whether anything
-had been written, and aless's own limits as `parse`/`too_deep` and
-`timeout`, with `output` too. The deadline covers the parse and the
-program together, so a program slow on one item stops at it, and its
-`timeout` says the run ran too long, not the parse: one raised while the
-program was working on an item carries no input position (`line` and
-`col` `null`, the report naming the file alone), while one raised in the
-parse carries how far the parse got, as under `--render`.
+`col` in the program when the failure has them, and `output`. A
+transducer limit met while the plan is built (`RESOURCE_LIMIT_EXCEEDED`
+naming `max_plan_steps`: a program of forty nested doublings asks for
+2^40 values before it reads anything) is the program's too, as a
+`transduce` error with status 5, `file` the program's, `format` `null`
+and no `input`, since none was opened. A program file that cannot be
+read is an `io` error and one over `--max-size` a `too_large` error,
+`file` the program's and `format` `null`.
+
+Once the input is open, where a failure came from decides whose it is.
+A failure from the program's sink is the program's when its code is the
+language's (a `match` no case takes, a `--render` that does not fit what
+it exports, the evaluator's `recursion` on an item): `"kind": "alchemy"`,
+status 2, the shape above plus `input`, the document's name. It is the
+program's too when it has a position, whatever its code (`fail` refusing
+a record, a function refusing a value): the events a program reads carry
+no positions, so a position on such a failure is in the program, and it
+keeps the transducer's code, kind and status (`INPUT_INVALID` as
+`transduce`, status 1) placed the same way, `file`, `line` and `col` the
+program's, `format` `null` and `input` the document's name. A failure
+from the program's sink with neither, a renderer's over the rows the
+program built (`MISSING_VALUE` for a row without a value for a bound
+column, `TARGET_VALUE_UNREPRESENTABLE` for a table with no columns), is
+reported as the input's, and so is every failure of the source's,
+whatever its code: a grammar's refusal to stream part-way once output
+has left (`STREAMABILITY_UNKNOWN` from the input's side, as
+[above](#exporting)) is `transduce` with `output: "partial"`, not the
+program's. The input's failures report as an export's do: the
+transducer's codes as `transduce` (`INPUT_ORDER_VIOLATION` when a row
+arrives before the metadata the program binds its columns to,
+`RESOURCE_LIMIT_EXCEEDED` naming the `limit`, `PROTOCOL_ORDER_ERROR`, …),
+with `output` saying whether anything had been written, and aless's own
+limits as `parse`/`too_deep` and `timeout`, with `output` too. The
+deadline covers the parse and the program together, so a program slow on
+one item stops at it, and its `timeout` says the run ran too long, not
+the parse: one raised while the program was working on an item names
+the document and carries no position (`line` and `col` `null`, the
+report naming the file alone), while one raised in the parse carries how
+far the parse got, as under `--render`.
 
 ```
 $ aless --alchemy-expr 'def export [input] (nope input)' data.json

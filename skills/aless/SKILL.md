@@ -99,7 +99,9 @@ table with `--render csv`). The program does the selecting, so no
 `--path`, `--at` or other output option goes with it. `--explain` prints
 the program's plan as JSON (its chain, protocols, what it retains and
 under which limit) and reads no input: run it first on a program you did
-not write.
+not write. The plan is the program's, so its `renderer` is the program's
+own default, whatever `--render` names; a `--render` the program refuses
+is the same usage error with `--explain` as without it.
 
 ```bash
 aless --alchemy export.alc api.json                       # a table the program renders, as CSV
@@ -228,20 +230,27 @@ reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`.
 An `alchemy` error is the program's own: `code` is the language's,
 `message` opens with the finer code, `file` is the program's path (or
 `--alchemy-expr`), `format` is null, and `line` and `col` are in the
-program when it has a position; one met once the input is open adds
-`input`, the document's name. A failure the program raises at a record
-(`fail`) keeps the transducer's code, kind and status (`INPUT_INVALID` as
-`transduce`, status 1) but is placed the same way: `file`, `line` and
-`col` are the program's, `format` is null and `input` names the
-document, since the events a program reads carry no positions of the
-input's; fix the program there. Everything else an `--alchemy` run reports
-is a `transduce` error (a grammar's refusal to stream part-way after
-output has left, `STREAMABILITY_UNKNOWN` with `output: "partial"`, is
-one: the input's, not the program's), or `timeout`/`too_deep`, as under
-`--render`, with `output`; `--timeout` covers the parse and the program
-together, so a program slow on one item stops at it, with `line` and
-`col` `null` (a timeout raised in the program's work on an item has no
-input position; one raised in the parse shows how far the parse got).
+program when it has a position. A transducer limit met while the plan is
+built (`RESOURCE_LIMIT_EXCEEDED` naming `max_plan_steps`) is the
+program's too: a `transduce` error with status 5, `file` the program's,
+`format` null and no `input`. Once the input is open, where a failure
+came from decides whose it is. One from the program's sink is the
+program's when its code is the language's (a `match` no case takes, the
+evaluator's `recursion`: `alchemy`, status 2) or when it has a position,
+whatever its code (`fail` refusing a record: the transducer's code, kind
+and status, `INPUT_INVALID` as `transduce`, status 1), and is placed the
+same way, `file`, `line` and `col` the program's, `format` null, plus
+`input`, the document's name, since the events a program reads carry no
+positions of the input's; fix the program there. One from the program's
+sink with neither (a renderer's `MISSING_VALUE` over the rows the program
+built) and every failure of the source's, whatever its code (a grammar's
+refusal to stream part-way after output has left, `STREAMABILITY_UNKNOWN`
+with `output: "partial"`), are the input's: a `transduce` error, or
+`timeout`/`too_deep`, as under `--render`, with `output`. `--timeout`
+covers the parse and the program together, so a program slow on one item
+stops at it, with `line` and `col` null (a timeout raised in the
+program's work on an item has no input position; one raised in the parse
+shows how far the parse got).
 
 ## Paths
 
