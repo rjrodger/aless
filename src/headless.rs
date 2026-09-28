@@ -2279,7 +2279,14 @@ mod tests {
     /// where no guard of aless's runs: `--timeout` reaches the program's
     /// own flag, in the incremental mode JSON runs in, and the run ends a
     /// moment after the deadline, status 6, with a `timeout` that says the
-    /// run (the parse and the program) ran too long, not the parse alone.
+    /// run (the parse and the program) ran too long, not the parse alone,
+    /// and carries no input position (`line` and `col` null, the report's
+    /// `-->` naming the input alone): the program's span, which its
+    /// evaluator stamps on the failure, is none, and the parse was not
+    /// what stopped. The deadline is one the parse comfortably meets (a
+    /// tenth of a second in a debug build) and the item's work does not
+    /// (seconds), so the parser's guard cannot be what ends the run:
+    /// without the program's flag the run would last the item's work.
     #[test]
     fn a_program_slow_on_one_item_stops_at_the_deadline_as_a_run_timeout() {
         let slow =
@@ -2291,15 +2298,16 @@ mod tests {
             render: None,
             explain: false,
         });
-        r.timeout = Some(Duration::from_millis(50));
-        // One row whose quadratic work takes seconds; its parse takes none.
-        let row: Vec<String> = (0..3_000).map(|i| i.to_string()).collect();
+        r.timeout = Some(Duration::from_millis(500));
+        // One row whose quadratic work takes seconds; its parse a tenth
+        // of one.
+        let row: Vec<String> = (0..4_000).map(|i| i.to_string()).collect();
         let doc = format!("[[{}]]", row.join(","));
         let started = std::time::Instant::now();
         let out = with_stdin(&r, &doc);
         assert!(
             started.elapsed() < Duration::from_secs(2),
-            "the run went on {:?} past a 50 ms deadline",
+            "the run went on {:?} past a 0.5 s deadline",
             started.elapsed()
         );
         assert_eq!(out.status, status::TIMEOUT, "{}", out.stderr);
@@ -2307,20 +2315,24 @@ mod tests {
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("timeout"));
         assert_eq!(e["code"], json!("timeout"));
-        assert_eq!(e["seconds"], json!(0.05));
+        assert_eq!(e["seconds"], json!(0.5));
         assert_eq!(e["output"], json!("none"));
         assert_eq!(e["file"], json!("-"));
         assert_eq!(e["format"], json!("json"));
         assert_eq!(
             e["message"],
-            json!("timeout: the run (the parse and the program) ran longer than 0.05 s")
+            json!("timeout: the run (the parse and the program) ran longer than 0.5 s")
         );
+        let hint = e["hint"].as_str().unwrap();
+        assert!(hint.contains("the program's work on an item"), "{e}");
+        assert!(!hint.contains("got this far"), "{e}");
+        // No input position: the program's, not the parse's, stop.
+        assert_eq!(e["line"], Value::Null, "{e}");
+        assert_eq!(e["col"], Value::Null, "{e}");
+        let report = e["report"].as_str().unwrap();
         assert!(
-            e["hint"]
-                .as_str()
-                .unwrap()
-                .contains("the program's work on an item"),
-            "{e}"
+            report.contains("--> (stdin)\n") && !report.contains("--> (stdin):"),
+            "{report}"
         );
         // A parse stopped at the deadline under --render still names the
         // parse, as it did.

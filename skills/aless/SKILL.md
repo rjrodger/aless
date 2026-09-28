@@ -239,7 +239,9 @@ is a `transduce` error (a grammar's refusal to stream part-way after
 output has left, `STREAMABILITY_UNKNOWN` with `output: "partial"`, is
 one: the input's, not the program's), or `timeout`/`too_deep`, as under
 `--render`, with `output`; `--timeout` covers the parse and the program
-together, so a program slow on one item stops at it.
+together, so a program slow on one item stops at it, with `line` and
+`col` `null` (a timeout raised in the program's work on an item has no
+input position; one raised in the parse shows how far the parse got).
 
 ## Paths
 

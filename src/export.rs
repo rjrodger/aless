@@ -799,11 +799,22 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
         _ => {}
     }
     match fail.code {
-        // Only the deadline's alarm raises the abort flag ahead of the
-        // guard: on a line-by-line read, or once a parse has returned and
-        // its value is being walked, where there is no position to give.
+        // Only the deadline's alarm raises the abort flags ahead of the
+        // guard: the source's on a line-by-line read, or once a parse has
+        // returned and its value is being walked, where there is no
+        // position to give; and a program's in every mode.
         Code::Aborted => {
-            let (line, col) = position(&fail);
+            let (line, col) = match job.what {
+                // The program's sink returns the deadline's Aborted with
+                // the program's own span stamped on it (its evaluator
+                // places every failure at the form it was in), which is
+                // no position in the input. The parser's guard records
+                // how far the parse got only when it stops the parse
+                // itself, which the arm above reports with that position;
+                // a run the sink stopped mid-item has none to give.
+                What::Program { .. } if from_sink => (0, 0),
+                _ => position(&fail),
+            };
             load(timed_out(job, line, col))
         }
         // A grammar's own depth limit stops the parse with the engine's
@@ -885,7 +896,9 @@ fn too_deep(job: &Job, line: u32, col: u32, why: Deep) -> LoadError {
 /// `timeout`, worded as the loader words a parse stopped at its deadline;
 /// under a program, worded for the whole run, since the deadline covers
 /// the parse and the program together and either may have been running
-/// when it passed.
+/// when it passed: a stop in the parse carries how far the parse got, a
+/// stop in the program's work on an item no position at all, so the
+/// program's hint claims none.
 fn timed_out(job: &Job, line: u32, col: u32) -> LoadError {
     let limit = job.timeout.map_or(0.0, |t| t.as_secs_f64()).to_string();
     let (message, hint) = match job.what {
@@ -900,10 +913,9 @@ fn timed_out(job: &Job, line: u32, col: u32) -> LoadError {
         What::Program { .. } => (
             format!("timeout: the run (the parse and the program) ran longer than {limit} s"),
             format!(
-                "The run had got this far into the input when --timeout {limit} stopped it, in \
-                 the parse or in the program's work on an item; what was written before that \
-                 stays written.\nPass a larger --timeout to let it finish, or --timeout 0 for no \
-                 limit."
+                "--timeout {limit} stopped the run, in the parse or in the program's work on an \
+                 item; what was written before that stays written.\nPass a larger --timeout to \
+                 let it finish, or --timeout 0 for no limit."
             ),
         ),
     };
@@ -2100,7 +2112,9 @@ mod tests {
     /// inside an event while the sink works and no guard of aless's runs,
     /// the alarm must raise the program's flag, or the run would last as
     /// long as the item's work. The run ends a moment after the deadline,
-    /// as a timeout worded for the run.
+    /// as a timeout worded for the run and with no position: the sink's
+    /// `Aborted` is not the parse's stop, and the program's own span, if
+    /// a sink stamps one on it, is no position in the input.
     #[test]
     fn the_alarm_reaches_a_program_slow_on_one_item_in_every_mode() {
         struct UntilAborted {
@@ -2120,7 +2134,12 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 self.waited.store(true, Ordering::Relaxed);
-                Err(Fail::aborted())
+                // Stamped with a span of the program's, as alchemy's
+                // evaluator stamps every failure it returns.
+                let mut fail = Fail::aborted();
+                fail.row = Some(3);
+                fail.column = Some(25);
+                Err(fail)
             }
         }
         for (format, mode) in [
@@ -2177,6 +2196,21 @@ mod tests {
                             .contains("the run (the parse and the program)"),
                         "{format}: {}",
                         error.message
+                    );
+                    assert_eq!(
+                        (error.line, error.col),
+                        (0, 0),
+                        "{format}: the program's span is no position in the input"
+                    );
+                    let report = error.plain_report();
+                    assert!(
+                        report.contains("--> (stdin)\n") && !report.contains("--> (stdin):"),
+                        "{format}: {report}"
+                    );
+                    assert!(
+                        !error.hint.contains("got this far"),
+                        "{format}: the hint claims no position: {}",
+                        error.hint
                     );
                 }
                 other => panic!("{format}: {other:?}"),

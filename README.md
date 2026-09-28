@@ -433,7 +433,10 @@ program binds its columns to, `RESOURCE_LIMIT_EXCEEDED` naming the
 had been written, and aless's own limits as `parse`/`too_deep` and
 `timeout`, with `output` too. The deadline covers the parse and the
 program together, so a program slow on one item stops at it, and its
-`timeout` says the run ran too long, not the parse.
+`timeout` says the run ran too long, not the parse: one raised while the
+program was working on an item carries no input position (`line` and
+`col` `null`, the report naming the file alone), while one raised in the
+parse carries how far the parse got, as under `--render`.
 
 ```
 $ aless --alchemy-expr 'def export [input] (nope input)' data.json

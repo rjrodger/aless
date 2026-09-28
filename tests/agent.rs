@@ -2055,7 +2055,13 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
 /// program's own flag, in the incremental mode JSON runs in, or the
 /// command runs as long as the item's work (seconds here, for one row).
 /// It ends a moment after the deadline instead, status 6, with a
-/// `timeout` worded for the run, the parse and the program, and `output`.
+/// `timeout` worded for the run, the parse and the program, and `output`,
+/// and with no input position: `line` and `col` null, the report's `-->`
+/// naming the file alone, since the program's own span (its evaluator
+/// stamps one on the failure) is no place in the input and the parse was
+/// not what stopped. The deadline is one the parse meets many times
+/// over (about a tenth of a second in a debug build) and the item's work
+/// does not (seconds), so it is the program's flag that ends the run.
 #[test]
 fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     use std::time::{Duration, Instant};
@@ -2075,7 +2081,7 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
             "--alchemy-expr",
             slow,
             "--timeout",
-            "0.3",
+            "0.5",
             doc.to_str().unwrap(),
         ],
         None,
@@ -2083,19 +2089,32 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     let elapsed = started.elapsed();
     assert_eq!(code(&out), 6, "{}", String::from_utf8_lossy(&out.stderr));
     assert!(
-        elapsed < Duration::from_millis(2_300),
-        "the command ran {elapsed:?} against a 0.3 s deadline"
+        elapsed < Duration::from_millis(2_500),
+        "the command ran {elapsed:?} against a 0.5 s deadline"
     );
     assert!(out.stdout.is_empty());
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("timeout"));
     assert_eq!(e["code"], json!("timeout"));
-    assert_eq!(e["seconds"], json!(0.3));
+    assert_eq!(e["seconds"], json!(0.5));
     assert_eq!(e["output"], json!("none"));
     assert_eq!(e["file"], json!(doc.to_str().unwrap()));
     assert_eq!(
         e["message"],
-        json!("timeout: the run (the parse and the program) ran longer than 0.3 s")
+        json!("timeout: the run (the parse and the program) ran longer than 0.5 s")
+    );
+    let hint = e["hint"].as_str().unwrap();
+    assert!(hint.contains("the program's work on an item"), "{e}");
+    assert!(!hint.contains("got this far"), "{e}");
+    // Stopped in the program's work on the item, not in the parse: no
+    // position in the input, and none in the report.
+    assert_eq!(e["line"], json!(null), "{e}");
+    assert_eq!(e["col"], json!(null), "{e}");
+    let report = e["report"].as_str().unwrap();
+    let origin = format!("--> {}", doc.to_str().unwrap());
+    assert!(
+        report.contains(&format!("{origin}\n")) && !report.contains(&format!("{origin}:")),
+        "{report}"
     );
     // The same program over a small row finishes within the same limit.
     let small = dir.join("small.json");
