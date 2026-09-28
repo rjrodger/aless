@@ -2162,7 +2162,10 @@ mod tests {
             };
             let mut j = job(format, Renderer::Json, ".");
             j.what = What::Program { rows: None };
-            j.timeout = Some(Duration::from_millis(100));
+            // A deadline a debug build meets for a one-line document on a slow
+            // runner too (a grammar is built first); the sink then outlasts it
+            // by design.
+            j.timeout = Some(Duration::from_millis(500));
             let program = AbortFlag::new();
             let waited = Arc::new(AtomicBool::new(false));
             let started = std::time::Instant::now();
@@ -2182,7 +2185,7 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                started.elapsed() < Duration::from_secs(2),
+                started.elapsed() < Duration::from_secs(3),
                 "{format}: the run went on {:?} past the deadline",
                 started.elapsed()
             );
