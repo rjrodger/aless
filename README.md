@@ -872,7 +872,8 @@ on the next tick, with the folds and the focus kept. A directory's
 modification time moves only as often as its file system's clock ticks,
 16 ms or so on NTFS and up to two seconds on FAT, so a directory read
 within two seconds of its last change is read again and compared on each
-tick until then, and a change in the same tick still shows.
+tick for what is left of those two seconds, timed by this machine's own
+clock, and a change in the same tick still shows.
 
 ## Parse errors
 
