@@ -186,6 +186,8 @@ struct Args {
     /// Those options, as given: `--panes` takes `--render` and the
     /// program for its output pane and refuses the rest.
     headless_given: Vec<String>,
+    /// `--panes` was given, so the viewer opens, whichever panes it names.
+    panes: bool,
     /// The largest input to read, in bytes; `None` for no limit.
     max_size: Option<u64>,
     /// The longest a parse may run; `None` for no limit.
@@ -225,6 +227,7 @@ fn parse_args() -> Result<Args, String> {
         compact: false,
         headless: false,
         headless_given: Vec::new(),
+        panes: false,
         max_size: aless::load::Limits::DEFAULT.max_size,
         timeout: aless::load::Limits::DEFAULT.timeout,
     };
@@ -339,7 +342,16 @@ fn parse_args() -> Result<Args, String> {
             "--no-color" | "--no-colour" => args.opts.color = false,
             "--no-mouse" => args.mouse = false,
             "--panes" => {
-                for part in value()?.split(',').filter(|p| !p.trim().is_empty()) {
+                args.panes = true;
+                let spec = value()?;
+                if spec.split(',').all(|p| p.trim().is_empty()) {
+                    return Err(
+                        "--panes names the panes to open beside the input: out, program, or \
+                         out,program"
+                            .into(),
+                    );
+                }
+                for part in spec.split(',').filter(|p| !p.trim().is_empty()) {
                     match Role::from_name(part) {
                         // The input pane is always there.
                         Some(Role::Input) => {}
@@ -377,7 +389,7 @@ fn parse_args() -> Result<Args, String> {
     }
     // With --panes the viewer opens, and --render and the program say what
     // the output pane shows rather than what to print.
-    if !args.opts.panes.is_empty() {
+    if args.panes {
         let taken = ["--render", "--alchemy", "--alchemy-expr"];
         if let Some(other) = args
             .headless_given
@@ -518,7 +530,7 @@ fn main() {
         }
     };
     let headless = headless_wanted(args.headless);
-    if headless && !args.opts.panes.is_empty() {
+    if headless && args.panes {
         refuse_usage(
             "--panes opens the viewer, which needs a terminal: without one, give --render or \
              --alchemy without --panes",

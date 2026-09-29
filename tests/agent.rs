@@ -2515,6 +2515,16 @@ fn panes_open_the_viewer_or_refuse() {
             vec!["--panes", "program", "tests/fixtures/nested.json"],
             "--panes program shows a program: give it with --alchemy FILE or --alchemy-expr TEXT",
         ),
+        (
+            vec!["--panes", " , ", "tests/fixtures/nested.json"],
+            "--panes names the panes to open beside the input: out, program, or out,program",
+        ),
+        (
+            // The input alone is still the viewer.
+            vec!["--panes", "in", "tests/fixtures/nested.json"],
+            "--panes opens the viewer, which needs a terminal: without one, give --render or \
+             --alchemy without --panes",
+        ),
     ] {
         let out = aless(&args, None);
         assert_eq!(code(&out), 2, "{args:?}");

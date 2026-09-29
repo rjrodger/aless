@@ -408,6 +408,23 @@ impl App {
         View::new(self.tree_height(), self.opts.scrolloff)
     }
 
+    /// The view the pane with `role` shows its tab in: its body's height
+    /// less the error panel, and the scroll-off. A change to a tab
+    /// re-anchors it in the view of the pane that shows it, whichever
+    /// pane has the focus; the focused pane's view when none has `role`.
+    fn pane_view(&self, role: Role) -> View {
+        let Some(at) = self.workspace.position(role) else {
+            return self.view();
+        };
+        let pane = self.workspace.panes[at];
+        let height = self
+            .pane_areas()
+            .get(at)
+            .map_or(0, |a| usize::from(a.body.height));
+        let panel = self.pane_tab_ref(pane).map_or(0, |t| panel_rows(t, height));
+        View::new(height.saturating_sub(panel).max(1), self.opts.scrolloff)
+    }
+
     /// The tab the focused pane shows: the active tab in the input pane,
     /// the output or the program in theirs. The keys that move, fold,
     /// search and copy work on it.
@@ -493,6 +510,9 @@ impl App {
                 && matches!(self.opts.through, Through::Program { .. }));
         if wants_program && self.program.is_none() {
             self.load_program();
+            if self.program.as_ref().is_some_and(|p| p.compiled.is_none()) {
+                self.say_program_failed();
+            }
         }
         if self.workspace.position(Role::Output).is_some() {
             self.refresh_output();
@@ -508,27 +528,33 @@ impl App {
             return;
         };
         let name = arg.name();
-        let (text, compiled, plan) = match arg.read(load::Limits::current().max_size) {
+        // A program that cannot be read has no text to show: its text tab
+        // holds why, as its plan does.
+        let (text, compiled, plan, unread) = match arg.read(load::Limits::current().max_size) {
             Ok(text) => match crate::alchemy::compile(&text, &name) {
                 Ok(program) => {
                     let json =
                         serde_json::to_string_pretty(&program.explain_json()).unwrap_or_default();
-                    (text, Some(program), Ok(json))
+                    (text, Some(program), Ok(json), None)
                 }
                 Err(fail) => (
                     text,
                     None,
                     Err(LoadError::tagged("alchemy", fail.to_string())),
+                    None,
                 ),
             },
-            Err(e) => (String::new(), None, Err(e)),
+            Err(e) => (String::new(), None, Err(e.clone()), Some(e)),
         };
         let generation = self.program.as_ref().map_or(0, |p| p.generation + 1);
-        let view = self.view();
+        let view = self.pane_view(Role::Program);
         let old = self.program.take();
-        let text_tab = match load::load_str(text.clone(), Format::Text) {
-            Ok(loaded) => self.reuse(old.as_ref().map(|p| p.text.clone()), &name, loaded, view),
-            Err(e) => self.error_tab(&name, text, e),
+        let text_tab = match unread {
+            Some(e) => self.error_tab(&name, String::new(), e),
+            None => match load::load_str(text.clone(), Format::Text) {
+                Ok(loaded) => self.reuse(old.as_ref().map(|p| p.text.clone()), &name, loaded, view),
+                Err(e) => self.error_tab(&name, text, e),
+            },
         };
         let plan_title = format!("{name} (plan)");
         let plan_tab = match plan.and_then(|json| load::load_str(json, Format::Json)) {
@@ -567,13 +593,19 @@ impl App {
             (t.id, t.generation)
         };
         let from = (id, generation, program_generation);
-        if self.output.as_ref().is_some_and(|o| o.from == from) {
-            return;
-        }
         let through = self.opts.through.clone();
         let arrow = if self.opts.ascii { "->" } else { "→" };
+        let title = {
+            let input = self.tab_ref().expect("a tab is open");
+            format!("{} {arrow} {}", input.title, through.label())
+        };
+        // The title follows `:set ascii` whether or not the output is
+        // written again.
+        if let Some(o) = self.output.as_mut().filter(|o| o.from == from) {
+            o.tab.title = title;
+            return;
+        }
         let input = self.tab_ref().expect("a tab is open");
-        let title = format!("{} {arrow} {}", input.title, through.label());
         let result = if input.explorer.is_some() {
             Err("a directory has no output: open a file in it".to_string())
         } else if !input.has_doc {
@@ -595,7 +627,7 @@ impl App {
                 load::Limits::current().timeout,
             )
         };
-        let view = self.view();
+        let view = self.pane_view(Role::Output);
         let old = self.output.take().map(|o| o.tab);
         let tab = match result {
             Ok(rendered) => {
@@ -725,7 +757,7 @@ impl App {
     // ----- opening -------------------------------------------------------------------
 
     fn adopt(&mut self, mut tab: Tab) {
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         if tab.explorer.is_none() {
             tab.line_mode = self.opts.line_mode;
             if let Some(d) = self.opts.depth {
@@ -1062,7 +1094,7 @@ impl App {
         if self.tabs.is_empty() || self.input().explorer.is_none() {
             return;
         }
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         let tab = self.input();
         tab.explorer_sync(view);
         let capped = tab.explorer.as_ref().is_some_and(|ex| ex.capped);
@@ -1077,7 +1109,7 @@ impl App {
     /// `Enter` in the explorer: open a file in a new tab, toggle a
     /// directory.
     fn explorer_enter(&mut self) {
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         let tab = self.input();
         let node = tab.focused_node();
         let path = tab.doc.path(node);
@@ -1122,7 +1154,7 @@ impl App {
 
     /// Re-root the active explorer, moving its watch to the new root.
     fn reroot_active(&mut self, dir: &Path) {
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         let tab = self.input();
         let old = tab.path.clone();
         tab.reroot(dir, view);
@@ -1432,9 +1464,14 @@ impl App {
             None => (cmd, false),
         };
         match cmd {
-            // Document-only commands mean nothing for a directory tree.
-            "source" | "src" | "mode" | "format" | "kind" | "ft" | "filetype"
-                if self.tab().explorer.is_some() =>
+            // Document-only commands mean nothing for a directory tree: the
+            // view's for the focused pane's tab, `:format` for the input's,
+            // which it parses again.
+            "source" | "src" | "mode" if self.tab().explorer.is_some() => {
+                self.error(format!(":{cmd} applies to a document, not to the explorer"))
+            }
+            "format" | "kind" | "ft" | "filetype"
+                if self.tab_ref().is_some_and(|t| t.explorer.is_some()) =>
             {
                 self.error(format!(":{cmd} applies to a document, not to the explorer"))
             }
@@ -1467,10 +1504,13 @@ impl App {
             },
             "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
-                Some(f) => match self.input().reformat(f, view) {
-                    Ok(()) => self.info(format!("Parsed as {f}")),
-                    Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
-                },
+                Some(f) => {
+                    let input_view = self.pane_view(Role::Input);
+                    match self.input().reformat(f, input_view) {
+                        Ok(()) => self.info(format!("Parsed as {f}")),
+                        Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
+                    }
+                }
                 None => self.error(format!(
                     "Unknown format: {rest} (one of {})",
                     Format::known_names().join(", ")
@@ -1570,7 +1610,7 @@ impl App {
                         _ => !self.opts.show_hidden,
                     };
                     self.opts.show_hidden = show;
-                    let view = self.view();
+                    let view = self.pane_view(Role::Input);
                     for t in &mut self.tabs {
                         t.set_show_hidden(show, view);
                     }
@@ -1697,7 +1737,7 @@ impl App {
             self.reload_program();
             return;
         }
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         let tab = self.input();
         if !tab.watchable() {
             self.error("Nothing to reload: this tab has no file");
@@ -1776,23 +1816,32 @@ impl App {
         };
         self.load_program();
         if self.program.as_ref().is_some_and(|p| p.compiled.is_none()) {
-            let whose = if self.workspace.position(Role::Program).is_some() {
-                "the program pane"
-            } else {
-                ":pane program"
-            };
-            self.error(format!(
-                "{}: could not be read or compiled — {whose} shows why",
-                path.display()
-            ));
+            self.say_program_failed();
         } else {
             self.info(format!("Reloaded {}", path.display()));
         }
     }
 
+    /// Say on the status line that the program did not load, and where to
+    /// see why.
+    fn say_program_failed(&mut self) {
+        let Through::Program { arg, .. } = &self.opts.through else {
+            return;
+        };
+        let name = arg.name();
+        let whose = if self.workspace.position(Role::Program).is_some() {
+            "the program pane"
+        } else {
+            ":pane program"
+        };
+        self.error(format!(
+            "{name}: could not be read or compiled — {whose} shows why"
+        ));
+    }
+
     pub fn on_tick(&mut self, now: Instant) {
         self.reload_program_if_due(now);
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         for i in 0..self.tabs.len() {
             let tab = &mut self.tabs[i];
             if !tab.watch {
@@ -2934,6 +2983,105 @@ mod tests {
         app.open_source("u.json", "[2]".into(), Format::Json);
         app.prepare();
         assert_eq!(app.pane_tab(output).source, "[\n    2\n]\n");
+    }
+
+    /// A program that cannot be read says why from the first screen: on
+    /// the status line, and in its pane, on its text as on its plan.
+    #[test]
+    fn a_program_that_cannot_be_read_says_why() {
+        let missing = std::env::temp_dir().join(format!(
+            "aless-app-tests-{}-no-such-program.alc",
+            std::process::id()
+        ));
+        let through = Through::Program {
+            arg: ProgramArg::File(missing),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        let message = app.message.clone().unwrap();
+        assert!(message.error, "{}", message.text);
+        assert!(
+            message
+                .text
+                .contains("could not be read or compiled — the program pane shows why"),
+            "{}",
+            message.text
+        );
+        assert_eq!(app.workspace.panes[1].mode, PaneMode::Source);
+        let text = app.pane_tab(Pane::new(Role::Program));
+        assert!(text.shows_error_only(), "the text holds the failure");
+        let why = text.error.clone().unwrap().report;
+        let first = crate::load::strip_ansi(why.lines().next().unwrap_or_default());
+        let screen = crate::render::screen(&mut app).text();
+        let shown: String = first.chars().take(20).collect();
+        assert!(screen.contains(&shown), "{shown:?} not in:\n{screen}");
+    }
+
+    /// `:format` parses the input again, so it is refused for a directory
+    /// whichever pane has the focus.
+    #[test]
+    fn format_is_refused_for_a_directory_from_any_pane() {
+        let dir = write_temp("explored.json", "1");
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_explorer(dir.parent().unwrap());
+        app.prepare();
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused().role, Role::Output);
+        app.run_command("format text");
+        let message = app.message.clone().unwrap();
+        assert!(
+            message.text.starts_with(":format applies to a document"),
+            "{}",
+            message.text
+        );
+        assert!(app.input().explorer.is_some(), "the directory stays one");
+    }
+
+    /// A change to the input re-anchors it in the input pane's view,
+    /// whichever pane has the focus and however tall it is.
+    #[test]
+    fn the_input_is_reanchored_in_its_own_pane() {
+        let opts = Options {
+            panes: vec![Role::Output, Role::Program],
+            through: Through::Program {
+                arg: ProgramArg::Expr("def export [input] input".into()),
+                render: None,
+            },
+            stacked: true,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", "[1, 2, 3]".into(), Format::Json);
+        app.prepare();
+        let bodies: Vec<usize> = app
+            .pane_areas()
+            .iter()
+            .map(|a| usize::from(a.body.height))
+            .collect();
+        assert_ne!(bodies[0], bodies[2], "the stacked panes differ: {bodies:?}");
+        app.handle(ctrl('w'));
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused().role, Role::Program);
+        assert_eq!(app.view().height, bodies[2]);
+        assert_eq!(app.pane_view(Role::Input).height, bodies[0]);
+    }
+
+    /// The output's title follows `:set ascii` at once.
+    #[test]
+    fn the_output_title_follows_the_ascii_option() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        let output = Pane::new(Role::Output);
+        assert_eq!(app.pane_tab(output).title, "t.json → json");
+        app.run_command("set ascii");
+        app.prepare();
+        assert_eq!(app.pane_tab(output).title, "t.json -> json");
+        app.run_command("set noascii");
+        app.prepare();
+        assert_eq!(app.pane_tab(output).title, "t.json → json");
     }
 
     /// A click gives the focus to the pane under it, and to the row.

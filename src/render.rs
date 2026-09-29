@@ -994,6 +994,16 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
     }
     let ascii = app.opts.ascii;
     let tab = app.pane_tab(pane);
+    // A tab with no text to show, one that never read (a program or a
+    // file that could not be opened), shows why instead.
+    if tab.shows_error_only() && tab.source.is_empty() {
+        let report = tab
+            .error
+            .as_ref()
+            .map(|e| e.report.clone())
+            .unwrap_or_default();
+        return report_lines(&report, width, pane_h, "! shows the full report");
+    }
     let focus_line = tab.focused_line().map(|(l, _)| l as usize);
     let error_line = tab
         .error
