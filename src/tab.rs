@@ -862,8 +862,8 @@ impl Tab {
 
     /// Has the file changed since the last stamp? (`None` when there is no
     /// file or it cannot be read.)
-    pub fn stamp_changed(&self) -> bool {
-        if let Some(ex) = &self.explorer {
+    pub fn stamp_changed(&mut self) -> bool {
+        if let Some(ex) = &mut self.explorer {
             return ex.changed();
         }
         match &self.path {

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::doc::{Doc, Key, Kind, Node, NodeId, NO_NODE};
 use crate::load::Format;
@@ -16,6 +16,12 @@ use crate::load::Format;
 /// Directories listed at most, per explorer, so a deep expansion of a
 /// huge tree stays bounded.
 pub const MAX_LISTED: usize = 2000;
+
+/// How long after a directory's last change another change can leave its
+/// modification time as it was. A file system's clock ticks as coarsely
+/// as two seconds (FAT), a second (ext3, HFS+) or the system timer's
+/// 16 ms or so (NTFS), and two changes within one tick get one time.
+const RACY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -83,6 +89,22 @@ pub struct Listing {
     pub entries: Vec<Entry>,
     pub mtime: Option<SystemTime>,
     pub error: Option<String>,
+    /// When the directory was read, as the clock the file system's
+    /// times come from gives it.
+    pub read_at: SystemTime,
+}
+
+impl Listing {
+    /// Was the directory read so soon after its last change that another
+    /// change may yet leave its time as it was? A time ahead of the
+    /// reading's, from a skewed clock, counts as soon.
+    fn racy(&self) -> bool {
+        self.mtime.is_some_and(|m| {
+            self.read_at
+                .duration_since(m)
+                .map_or(true, |age| age < RACY)
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +118,7 @@ pub struct Explorer {
 }
 
 fn read_listing(dir: &Path) -> Listing {
+    let read_at = SystemTime::now();
     let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
     match std::fs::read_dir(dir) {
         Ok(read) => {
@@ -141,12 +164,14 @@ fn read_listing(dir: &Path) -> Listing {
                 entries,
                 mtime,
                 error: None,
+                read_at,
             }
         }
         Err(e) => Listing {
             entries: Vec::new(),
             mtime,
             error: Some(e.to_string()),
+            read_at,
         },
     }
 }
@@ -254,11 +279,28 @@ impl Explorer {
         }
     }
 
-    /// Has any listed directory changed on disk since it was read?
-    pub fn changed(&self) -> bool {
-        self.listed.iter().any(|(dir, listing)| {
-            std::fs::metadata(dir).ok().and_then(|m| m.modified().ok()) != listing.mtime
-        })
+    /// Has any listed directory changed on disk since it was read? Its
+    /// modification time answers for a directory read [`RACY`] or more
+    /// after its last change. One read sooner is read again and compared,
+    /// since a change within its file system's clock tick leaves the time
+    /// as it was; a reading that finds nothing new takes the old one's
+    /// place, so the directory is read again only until a reading comes
+    /// after the window.
+    pub fn changed(&mut self) -> bool {
+        for (dir, listing) in &mut self.listed {
+            let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+            if mtime != listing.mtime {
+                return true;
+            }
+            if listing.racy() {
+                let again = read_listing(dir);
+                if again.entries != listing.entries || again.error != listing.error {
+                    return true;
+                }
+                *listing = again;
+            }
+        }
+        false
     }
 
     fn visible(&self, entry: &Entry) -> bool {
@@ -475,6 +517,32 @@ mod tests {
         let doc = ex.build();
         assert!(doc.resolve(&[Key::Name("new.csv".into())]).is_some());
         assert!(!ex.changed());
+    }
+
+    /// A change within the tick of the file system's clock that gave the
+    /// directory its time leaves the time as it was. A listing read that
+    /// soon after a change is read again and compared, so the change is
+    /// seen all the same; one read after the window is taken at its
+    /// time's word, and not read again.
+    #[test]
+    fn a_change_the_clock_does_not_show_is_still_seen() {
+        let dir = tree("racy");
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        assert!(ex.listed[&root].racy(), "read just after the tree was made");
+        assert!(!ex.changed(), "nothing new");
+        std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
+        // As a coarse clock would leave it: the time the listing has.
+        let now = std::fs::metadata(&root).unwrap().modified().unwrap();
+        ex.listed.get_mut(&root).unwrap().mtime = Some(now);
+        assert!(ex.changed(), "read again and compared");
+        ex.relist_all();
+        assert!(!ex.changed());
+        let listing = ex.listed.get_mut(&root).unwrap();
+        let read_at = listing.mtime.unwrap() + RACY;
+        listing.read_at = read_at;
+        assert!(!ex.changed());
+        assert_eq!(ex.listed[&root].read_at, read_at, "not read again");
     }
 
     #[cfg(unix)]

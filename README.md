@@ -868,7 +868,11 @@ first names, and never more than 2000 directories in one explorer.
 | `yp` | copy the entry's filesystem path |
 
 An explorer tab watches like a file tab: a file added or removed shows up
-on the next tick, with the folds and the focus kept.
+on the next tick, with the folds and the focus kept. A directory's
+modification time moves only as often as its file system's clock ticks,
+16 ms or so on NTFS and up to two seconds on FAT, so a directory read
+within two seconds of its last change is read again and compared on each
+tick until then, and a change in the same tick still shows.
 
 ## Parse errors
 
