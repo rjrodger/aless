@@ -772,7 +772,7 @@ Extensions on keys jless leaves free:
 | `Tab` `Shift-Tab` | next / previous tab |
 | `W` | toggle watching on the tab |
 | `r` | reload the tab now; in the program pane, the program ([Panes](#panes)) |
-| `s` | show the focused pane's text: the raw source, scrolled to the focused node's line (`s` or `Esc` returns) |
+| `s` | show the focused pane's text: the raw source, scrolled to the focused node's line and coloured by its grammar (`s` or `Esc` returns) |
 | `C-w` | move the focus to the next pane ([Panes](#panes)) |
 | `!` | show the tab's parse error report in full (`h` `l` pan a long line) |
 | `C-z` | suspend (Unix) |
@@ -826,6 +826,18 @@ aless --panes out --stacked orders.json                   # its JSON, one above 
   program's file changes, which is watched as a tab's file is. `r` in the
   program pane reads the program again, watched or not. The output keeps
   its place across the rebuild, as a reload does.
+- **Colour.** A pane's text is coloured by what its grammar lexed, with
+  the semantic tokens tabnas-lsp's language server sends an editor:
+  strings green, numbers magenta, keywords yellow, keys and names blue,
+  comments grey. The input and the output are lexed by their format's
+  grammar, the program by alchemy's. The colours are made off the
+  viewer's thread, and the text shows plain until they come in. Text
+  over 512 KiB stays plain, since colouring parses the whole text and
+  holds a few hundred times its size while it does; so does plain text,
+  and a grammar the language server's registry marks as lexing
+  speculatively. Colouring one text stops after ten seconds, or the
+  parse timeout when that is shorter, and colours what it had lexed.
+  Without colour (`--no-color`, `NO_COLOR`) no text is lexed for it.
 - **Limits.** The output pane keeps up to 16 MB of output; past that the
   text is cut and shown as text, not read back. The run happens in the
   viewer, which waits for it as long as the command would take.
@@ -1042,7 +1054,8 @@ tables go; nothing else changes.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
-`--grammar`. The other dependencies: crossterm (terminal), ratatui
+`--grammar`, and `tabnas-lsp`, whose semantic tokens colour a pane's
+text. The other dependencies: crossterm (terminal), ratatui
 (drawing), notify (file watching), regex (search), unicode-width
 (layout), serde_json (JSON output), arboard (clipboard, optional).
 
@@ -1074,6 +1087,7 @@ the library is terminal-free and unit tested:
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |
 | `pane` | the panes: their roles and modes, their layout side by side or stacked, and the output written in memory |
 | `app` | tabs, panes, modes, the key map, the command line, watch scheduling, yank |
+| `highlight` | colour for a pane's text: tabnas-lsp's semantic tokens, made by a worker off the viewer's thread |
 | `render` | the screen as ratatui widgets, every width measured as the terminal places text |
 | `watch` | the notify file watcher |
 | `clip` | clipboard and OSC 52 |

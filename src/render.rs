@@ -21,10 +21,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui::{Frame, Terminal};
+use tabnas_lsp::TokenType;
 
 use crate::app::{panel_rows, App, Mode, PromptKind};
 use crate::doc::{Kind, Row};
 use crate::fmt;
+use crate::highlight::Run;
 use crate::load;
 use crate::pane::{Pane, PaneMode, Role};
 
@@ -993,6 +995,7 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
         return out;
     }
     let ascii = app.opts.ascii;
+    let painted = app.painted(pane);
     let tab = app.pane_tab(pane);
     // A tab with no text to show, one that never read (a program or a
     // file that could not be opened), shows why instead.
@@ -1042,6 +1045,16 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
                 format!("{:>w$}{} ", lineno, marker, w = gutter - 1),
                 num_style,
             );
+            let avail = width.saturating_sub(line.cols());
+            // The focused and the failing line keep their one style.
+            let runs = painted.as_ref().filter(|_| !is_focus && !is_error);
+            if let Some(runs) = runs.map(|p| p.line(n)) {
+                let mut body = coloured(text, runs, avail);
+                line.spans.append(&mut body.spans);
+                line.fit_cols(width, PLAIN);
+                out.push(line);
+                continue;
+            }
             let shown: String = text
                 .chars()
                 .map(|c| match c {
@@ -1050,7 +1063,7 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
                     c => c.to_string(),
                 })
                 .collect();
-            let (t, _) = clip(&shown, 0, width.saturating_sub(line.cols()));
+            let (t, _) = clip(&shown, 0, avail);
             let style = if is_focus {
                 REVERSED
             } else if is_error {
@@ -1067,6 +1080,119 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
         out.push(line);
     }
     out
+}
+
+/// A line of a pane's text with its runs coloured, shown as the plain
+/// view shows it: a tab as four spaces, another control character below
+/// a space as `·` and any other as `\u{fffd}`, and cut to `avail`
+/// columns with `…` as [`clip`] cuts. Each grapheme cluster takes the
+/// style of its first character, so a style never splits what the
+/// terminal draws as one. The line is read only until what shows is
+/// settled, so a long one costs a screenful.
+pub fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
+    let mut line = Line::default();
+    if avail == 0 {
+        return line;
+    }
+    // The text as shown, clean, and where each style starts in it, read a
+    // chunk at a time until the clusters that show, and whether the line
+    // is cut, no longer depend on what follows. Each chunk is twice the
+    // last, so a line that never fills the window, all zero-width marks,
+    // is measured a few times over rather than once a chunk.
+    let mut shown = String::new();
+    let mut marks: Vec<(usize, Style)> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    let mut next = runs.iter().peekable();
+    let mut chunk = avail.saturating_mul(2).saturating_add(64);
+    loop {
+        for (i, c) in chars.by_ref().take(chunk) {
+            while next.peek().is_some_and(|r| r.end <= i) {
+                next.next();
+            }
+            let here = match next.peek() {
+                Some(r) if r.start <= i => token_style(r.kind),
+                _ => PLAIN,
+            };
+            if marks.last().is_none_or(|&(_, style)| style != here) {
+                marks.push((shown.len(), here));
+            }
+            match c {
+                '\t' => shown.push_str("    "),
+                c if (c as u32) < 0x20 => shown.push('·'),
+                c if c.is_control() => shown.push('\u{fffd}'),
+                c => shown.push(c),
+            }
+        }
+        if chars.peek().is_none() || overflows(&shown, avail) {
+            break;
+        }
+        chunk = chunk.saturating_mul(2);
+    }
+    // Text left unread means the window overflowed.
+    let cut = chars.peek().is_some() || cols_upto(&shown, avail.saturating_add(1)) > avail;
+    if cut && avail == 1 {
+        line.put("…", PLAIN);
+        return line;
+    }
+    let width = if cut { avail - 1 } else { avail };
+    let (mut used, mut at, mut mark) = (0, 0, 0);
+    let mut style = PLAIN;
+    let mut run = String::new();
+    walk(&shown, |bytes, w| {
+        if used + w > width {
+            return ControlFlow::Break(());
+        }
+        while marks.get(mark + 1).is_some_and(|&(from, _)| from <= at) {
+            mark += 1;
+        }
+        let here = marks.get(mark).map_or(PLAIN, |&(_, style)| style);
+        if here != style && !run.is_empty() {
+            line.put(std::mem::take(&mut run), style);
+        }
+        style = here;
+        run.push_str(&shown[at..at + bytes]);
+        used += w;
+        at += bytes;
+        ControlFlow::Continue(())
+    });
+    line.put(run, style);
+    if cut {
+        line.put("…", PLAIN);
+    }
+    line
+}
+
+/// Whether clean `text` takes more than `avail` columns before its last
+/// cluster. Then what fits in `avail` columns is made of whole clusters,
+/// and the text is cut there, whatever follows the last one.
+fn overflows(text: &str, avail: usize) -> bool {
+    let mut used = 0;
+    let mut over = false;
+    walk(text, |_, w| {
+        // A cluster after those past the window: they are whole.
+        if used > avail {
+            over = true;
+            return ControlFlow::Break(());
+        }
+        used += w;
+        ControlFlow::Continue(())
+    });
+    over
+}
+
+/// How a token is coloured in a pane's text, as the tree colours values:
+/// strings green, numbers magenta, keywords (`true`, `null`, a language's
+/// own) yellow, keys and names blue, comments grey, punctuation plain.
+fn token_style(kind: TokenType) -> Style {
+    match kind {
+        TokenType::String => STRING,
+        TokenType::Number => NUMBER,
+        TokenType::Keyword => BOOL,
+        TokenType::Comment => GREY,
+        TokenType::Property | TokenType::Variable => KEY,
+        TokenType::Type | TokenType::Macro => Style::new().fg(Color::Cyan),
+        TokenType::Operator => PLAIN,
+    }
 }
 
 fn status_bar(app: &mut App, width: usize) -> Line<'static> {
@@ -1210,6 +1336,64 @@ mod tests {
         app
     }
 
+    /// Where `needle` first shows on screen: its column and row.
+    fn find(s: &Screen, needle: &str) -> (usize, usize) {
+        for y in 0..s.height {
+            let row = s.row(y);
+            if let Some(at) = row.find(needle) {
+                return (cols(&row[..at]), y);
+            }
+        }
+        panic!("{needle:?} is not on screen:\n{}", s.text());
+    }
+
+    /// A pane showing its text colours each token as its grammar lexed it
+    /// once the colours are in, the focused line aside, which keeps its
+    /// one style. The program's text is lexed by alchemy's grammar.
+    #[test]
+    fn a_panes_text_is_coloured_by_its_grammar() {
+        let mut a = app(
+            "{\n  \"name\": \"ada\",\n  \"age\": 36,\n  \"ok\": true\n}\n",
+            40,
+            10,
+        );
+        a.handle(Input::Key(Key::ch('s')));
+        a.settle_colours();
+        let s = screen(&mut a);
+        let fg = |needle: &str| {
+            let (x, y) = find(&s, needle);
+            s.style(x, y).fg
+        };
+        assert_eq!(fg("\"ada\""), Some(Color::Green), "{}", s.text());
+        assert_eq!(fg("36"), Some(Color::Magenta));
+        assert_eq!(fg("true"), Some(Color::Yellow));
+        assert_eq!(fg(","), Some(Color::Reset), "punctuation stays plain");
+        let (x, y) = find(&s, "{");
+        let focused = s.style(x, y);
+        assert!(
+            focused.add_modifier.contains(Modifier::REVERSED),
+            "{focused:?}"
+        );
+        assert_eq!(focused.fg, Some(Color::Reset));
+
+        use crate::alchemy::ProgramArg;
+        use crate::pane::{Role, Through};
+        let opts = Options {
+            panes: vec![Role::Output, Role::Program],
+            through: Through::Program {
+                arg: ProgramArg::Expr("def export [input] input\n; the whole input\n".into()),
+                render: None,
+            },
+            ..Options::default()
+        };
+        let mut a = App::new(opts, 90, 10);
+        a.open_source("t.json", "[1]".into(), Format::Json);
+        a.settle_colours();
+        let s = screen(&mut a);
+        let (x, y) = find(&s, "; the whole input");
+        assert_eq!(s.style(x, y).fg, Some(Color::DarkGray), "{}", s.text());
+    }
+
     #[test]
     fn clipping() {
         assert_eq!(clip("hello", 0, 10), ("hello".into(), false));
@@ -1342,6 +1526,123 @@ mod tests {
             text.contains(" bad.json"),
             "the title survives a long error: {text}"
         );
+    }
+
+    /// A coloured line shows what the plain view shows, control characters
+    /// and the cut included, and a line of a million characters keeps a
+    /// screenful of spans.
+    #[test]
+    fn a_coloured_line_shows_and_cuts_as_a_plain_one() {
+        let plain = |text: &str| -> String {
+            text.chars()
+                .map(|c| match c {
+                    '\t' => "    ".to_string(),
+                    c if (c as u32) < 0x20 => "·".to_string(),
+                    c => c.to_string(),
+                })
+                .collect()
+        };
+        let run = |start, end, kind| Run { start, end, kind };
+        let text = "a\tb\u{1}c\u{7f}d\u{85}e 日本 x";
+        let all = [run(0, text.len(), TokenType::String)];
+        for avail in 0..=24 {
+            let line = coloured(text, &all, avail);
+            assert_eq!(line.plain(), clip(&plain(text), 0, avail).0, "{avail}");
+        }
+
+        let line = coloured(
+            "\"k\": 12",
+            &[run(0, 3, TokenType::String), run(5, 7, TokenType::Number)],
+            20,
+        );
+        let spans: Vec<(&str, Style)> = line
+            .spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect();
+        assert_eq!(spans, [("\"k\"", STRING), (": ", PLAIN), ("12", NUMBER)]);
+
+        let item = "\"k\": 1, ";
+        let long = item.repeat(125_000);
+        let runs: Vec<Run> = (0..125_000)
+            .flat_map(|i| {
+                let at = i * item.len();
+                [
+                    run(at, at + 3, TokenType::String),
+                    run(at + 5, at + 6, TokenType::Number),
+                ]
+            })
+            .collect();
+        let line = coloured(&long, &runs, 40);
+        assert_eq!(line.plain(), clip(&long, 0, 40).0);
+        assert!(line.spans.len() <= 40, "{} spans", line.spans.len());
+    }
+
+    /// A style boundary inside a grapheme cluster, a combining mark lexed
+    /// apart from its base or an emoji sequence split at its joiners, does
+    /// not split the cluster: it takes its first character's style, and
+    /// takes the columns the plain view gives it.
+    #[test]
+    fn a_cluster_takes_the_style_of_its_first_character() {
+        let run = |start, end, kind| Run { start, end, kind };
+        let spans = |line: &Line| -> Vec<(String, Style)> {
+            line.spans
+                .iter()
+                .map(|s| (s.content.to_string(), s.style))
+                .collect()
+        };
+        let text = "e\u{301}x";
+        let runs = [
+            run(0, 1, TokenType::String),
+            run(1, 3, TokenType::Number),
+            run(3, 4, TokenType::Keyword),
+        ];
+        let line = coloured(text, &runs, 10);
+        assert_eq!(
+            spans(&line),
+            [("e\u{301}".to_string(), STRING), ("x".to_string(), BOOL)]
+        );
+
+        let family = "👨\u{200d}👩\u{200d}👧 ok";
+        let kinds = [TokenType::String, TokenType::Number];
+        let runs: Vec<Run> = family
+            .char_indices()
+            .take(5)
+            .enumerate()
+            .map(|(k, (i, c))| run(i, i + c.len_utf8(), kinds[k % 2]))
+            .collect();
+        for avail in 0..=8 {
+            let line = coloured(family, &runs, avail);
+            assert_eq!(line.plain(), clip(family, 0, avail).0, "{avail}");
+            assert!(line.cols() <= avail, "{avail}: {}", line.cols());
+        }
+        let line = coloured(family, &runs, 10);
+        assert_eq!(
+            spans(&line)[0],
+            ("👨\u{200d}👩\u{200d}👧".to_string(), STRING)
+        );
+        assert_eq!(line.cols(), cols(family));
+    }
+
+    /// A line that never fills the window, all marks of no width, is
+    /// measured a few times over, not once a chunk: coloured in a moment,
+    /// not the minutes a rescan per chunk took.
+    #[test]
+    fn a_line_of_marks_of_no_width_is_coloured_at_once() {
+        let marks = format!("e{}", "\u{301}".repeat(200_000));
+        let runs = [Run {
+            start: 0,
+            end: marks.len(),
+            kind: TokenType::String,
+        }];
+        let began = std::time::Instant::now();
+        let line = coloured(&marks, &runs, 80);
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            began.elapsed()
+        );
+        assert_eq!(line.plain(), clip(&marks, 0, 80).0);
     }
 
     #[test]

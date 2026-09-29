@@ -833,7 +833,7 @@ fn event_loop(mut app: App, mouse: bool) -> io::Result<()> {
             render::draw(frame, &mut app);
         })?;
         execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
-        let wait = if app.reload_pending() {
+        let wait = if app.reload_pending() || app.highlight_pending() {
             Duration::from_millis(40)
         } else {
             Duration::from_millis(500)

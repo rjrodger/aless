@@ -89,8 +89,9 @@ working here; `CLAUDE.md` imports it.
   (source positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,
   tabs, panes, watch scheduling), `pane` (the panes: roles, modes,
-  layout, the output written in memory), `render` (the screen as ratatui
-  widgets),
+  layout, the output written in memory), `highlight` (colour for a
+  pane's text through tabnas-lsp, made off the viewer's thread),
+  `render` (the screen as ratatui widgets),
   `watch` (notify wrapper), `clip` (clipboard and OSC 52).
 - **Behaviour is jless's unless the README says otherwise.** Keep the
   key map compatible: new bindings go on keys jless leaves free. A change

@@ -14,6 +14,7 @@ pub mod export;
 pub mod fmt;
 pub mod grammar;
 pub mod headless;
+pub mod highlight;
 pub mod load;
 pub mod pane;
 pub mod prov;

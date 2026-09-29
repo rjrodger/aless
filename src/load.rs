@@ -382,11 +382,42 @@ pub(crate) struct Deadline {
     /// the parse has only a flag to look at between its steps, not the
     /// clock. `None` when no thread waits, and the parse reads the clock.
     alarm: Option<Arc<AtomicBool>>,
+    /// Raised by whoever called the parse off, whatever the time: the
+    /// painter, when no pane shows the text any more.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Deadline {
-    /// Whether the time is up, as the parse finds it between two steps.
+    /// A deadline `timeout` from now, read from the clock, for a parse no
+    /// thread waits on; `None` for no limit, or one too far off to reach.
+    pub(crate) fn after(timeout: Option<Duration>) -> Option<Deadline> {
+        let limit = timeout?;
+        Some(Deadline {
+            at: Instant::now().checked_add(limit)?,
+            limit,
+            alarm: None,
+            cancel: None,
+        })
+    }
+
+    /// This deadline, passed as well once `cancel` is raised.
+    pub(crate) fn or_cancelled(self, cancel: Arc<AtomicBool>) -> Deadline {
+        Deadline {
+            cancel: Some(cancel),
+            ..self
+        }
+    }
+
+    /// Whether the time is up, or the parse was called off, as the parse
+    /// finds it between two steps.
     pub(crate) fn passed(&self) -> bool {
+        if self
+            .cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+        {
+            return true;
+        }
         match &self.alarm {
             Some(alarm) => alarm.load(Ordering::Relaxed),
             None => Instant::now() >= self.at,
@@ -1152,6 +1183,7 @@ pub(crate) fn on_parse_thread<T: Send>(
             at,
             limit,
             alarm: None,
+            cancel: None,
         })
     });
     let alarm = Arc::new(AtomicBool::new(false));
@@ -1963,6 +1995,7 @@ mod tests {
             at: Instant::now(),
             limit: Duration::from_millis(1),
             alarm: Some(Arc::new(AtomicBool::new(false))),
+            cancel: None,
         };
         for src in ["[1, 2, 3]", "[1, 2,"] {
             let e = parse_here(src, Format::Json, Some(silent())).unwrap_err();
@@ -1991,6 +2024,7 @@ mod tests {
             at: Instant::now(),
             limit: Duration::from_millis(1),
             alarm: None,
+            cancel: None,
         };
         let e = parse_here(&many_tables(50), Format::Toml, Some(passed)).unwrap_err();
         assert!(e.is_timeout(), "{}", e.message);

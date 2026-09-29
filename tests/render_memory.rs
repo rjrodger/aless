@@ -2,16 +2,18 @@
 //! measures in `render` walk grapheme clusters lazily and stop once they
 //! have their answer, so a string of millions of characters, well within
 //! the input limit, is measured and clipped without holding anything per
-//! character. A counting allocator reads the most memory each measure
+//! character; a coloured line of a pane's text reads only what shows. A counting allocator reads the most memory each measure
 //! holds at once beyond what was live when it began; this binary holds
 //! this one test, so nothing else allocates while it runs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
-use aless::render::{clip, cols, Cells};
+use aless::highlight::Run;
+use aless::render::{clip, coloured, cols, Cells};
 use ratatui::style::Style;
 use ratatui::text::Line;
+use tabnas_lsp::TokenType;
 
 struct Counting;
 
@@ -83,4 +85,19 @@ fn a_long_value_is_measured_and_clipped_in_a_screenful() {
         assert_eq!(line.cols(), 80);
         assert!(bytes < SCREENFUL, "fitting {unit:?}s held {bytes} bytes");
     }
+
+    // A minified line, a token every other character: its colours are
+    // made for what shows, not for every token.
+    let tokens = chars / 2;
+    let minified = "1,".repeat(tokens);
+    let runs: Vec<Run> = (0..tokens)
+        .map(|i| Run {
+            start: 2 * i,
+            end: 2 * i + 1,
+            kind: TokenType::Number,
+        })
+        .collect();
+    let (line, bytes) = held(|| coloured(&minified, &runs, 80));
+    assert_eq!(line.plain(), clip(&minified, 0, 80).0);
+    assert!(bytes < SCREENFUL, "colouring held {bytes} bytes");
 }

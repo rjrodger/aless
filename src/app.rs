@@ -2,7 +2,9 @@
 //! state — the terminal is driven from `main.rs`, which feeds [`Input`]s in
 //! and paints what [`crate::render`] draws from the state.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
@@ -10,6 +12,7 @@ use tabnas_alchemy::Program;
 
 use crate::doc::{Kind, NodeId};
 use crate::fmt;
+use crate::highlight::{self, Grammar, Painted, Painter};
 use crate::load::{self, Format, LoadError, Loaded};
 use crate::pane::{self, Arrangement, Pane, PaneArea, PaneMode, Role, Through, Workspace};
 use crate::search::{self, Direction};
@@ -305,6 +308,8 @@ pub struct App {
     /// as the command line gave it, as `--render json` would print. `<`
     /// and `>` change the tree's, not this.
     output_indent: usize,
+    /// Colours for the panes showing their text, made off this thread.
+    painter: Painter,
 }
 
 impl App {
@@ -331,6 +336,7 @@ impl App {
             output: None,
             program: None,
             output_indent: opts_indent,
+            painter: Painter::new(load::Limits::current().timeout),
         }
         .with_panes()
     }
@@ -502,6 +508,81 @@ impl App {
                 tab.clamp_source_scroll(height);
             }
         }
+        self.paint_panes();
+    }
+
+    // ----- colours -------------------------------------------------------------------
+
+    /// Ask for the colours of each pane showing its text, take in those
+    /// that have come, and forget those of tabs that are gone. A text no
+    /// pane shows any more is skipped when its turn comes. Without
+    /// colour (`--no-color`, `NO_COLOR`) nothing would show them, so none
+    /// are made: no text is parsed for them, and the loop never ticks for
+    /// them.
+    fn paint_panes(&mut self) {
+        if !self.opts.color {
+            return;
+        }
+        let mut painter = std::mem::take(&mut self.painter);
+        painter.collect();
+        let shown: Vec<(highlight::Key, Pane)> = self
+            .workspace
+            .panes
+            .iter()
+            .filter(|pane| pane.mode == PaneMode::Source)
+            .filter_map(|&pane| Some((self.paint_key(pane)?, pane)))
+            .collect();
+        // Named before they are asked for, so the worker never skips one.
+        painter.want(shown.iter().map(|&(key, _)| key));
+        for (key, pane) in shown {
+            if let Some(tab) = self.pane_tab_ref(pane) {
+                painter.ask(key, &tab.source);
+            }
+        }
+        let live: HashSet<u64> = self
+            .tabs
+            .iter()
+            .map(|t| t.id)
+            .chain(self.output.as_ref().map(|o| o.tab.id))
+            .chain(self.program.iter().flat_map(|p| [p.text.id, p.plan.id]))
+            .collect();
+        painter.retain(|id| live.contains(&id));
+        self.painter = painter;
+    }
+
+    /// Which colours `pane`'s text is drawn with: its tab, the tab's
+    /// generation, and the grammar that lexes it, alchemy's for the
+    /// program's text and the tab's format for any other. A directory has
+    /// none.
+    pub fn paint_key(&self, pane: Pane) -> Option<highlight::Key> {
+        let tab = self.pane_tab_ref(pane)?;
+        if tab.explorer.is_some() {
+            return None;
+        }
+        let grammar = match self.shown(pane) {
+            Shown::ProgramText => Grammar::Alchemy,
+            _ => Grammar::Format(tab.format),
+        };
+        Some((tab.id, tab.generation, grammar))
+    }
+
+    /// The colours of `pane`'s text, once they are in.
+    pub fn painted(&self, pane: Pane) -> Option<Arc<Painted>> {
+        self.painter.get(self.paint_key(pane)?)
+    }
+
+    /// Are colours on their way, so the terminal loop should tick soon?
+    pub fn highlight_pending(&self) -> bool {
+        self.painter.pending()
+    }
+
+    /// Ask for the colours the panes need, wait for them and take them
+    /// in, as the terminal loop's ticks would.
+    #[cfg(test)]
+    pub fn settle_colours(&mut self) {
+        self.prepare();
+        self.painter.settle(Duration::from_secs(30));
+        self.prepare();
     }
 
     // ----- panes ---------------------------------------------------------------------
@@ -3160,6 +3241,57 @@ mod tests {
         let tall = usize::from(app.pane_areas()[1].body.height);
         assert!(tall > short, "{tall} > {short}");
         assert_eq!(app.pane_tab(output).source_scroll, total - tall);
+    }
+
+    /// A pane showing its text is coloured once the colours come in. A
+    /// reload drops them until the new text's colours come, so no colour
+    /// lands on a token it was not made for.
+    #[test]
+    fn colours_follow_the_text() {
+        use tabnas_lsp::TokenType;
+        let p = write_temp("colours.json", "{\"a\": 1}\n");
+        let mut app = App::new(Options::default(), 80, 24);
+        app.open_path(&p, None);
+        keys(&mut app, "s");
+        app.settle_colours();
+        let input = Pane {
+            role: Role::Input,
+            mode: PaneMode::Source,
+        };
+        let kinds = |app: &App| -> Option<Vec<TokenType>> {
+            let painted = app.painted(input)?;
+            Some(painted.line(0).iter().map(|r| r.kind).collect())
+        };
+        assert!(kinds(&app).unwrap().contains(&TokenType::Number));
+        std::fs::write(&p, "{\"a\": \"one\"}\n").unwrap();
+        keys(&mut app, "r");
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
+        assert_eq!(kinds(&app), None, "no colours for the new text yet");
+        app.settle_colours();
+        let after = kinds(&app).unwrap();
+        assert!(!after.contains(&TokenType::Number), "{after:?}");
+        assert_eq!(after.iter().filter(|k| **k == TokenType::String).count(), 2);
+    }
+
+    /// Without colour no colours are made: nothing is asked of the
+    /// painter, so no text is parsed for them and nothing is pending.
+    #[test]
+    fn no_colours_are_made_without_colour() {
+        let opts = Options {
+            color: false,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", "{\"a\": 1}\n".into(), Format::Json);
+        keys(&mut app, "s");
+        app.prepare();
+        assert!(!app.highlight_pending(), "nothing is asked");
+        let input = Pane {
+            role: Role::Input,
+            mode: PaneMode::Source,
+        };
+        assert_eq!(app.workspace.focused(), input);
+        assert!(app.painted(input).is_none());
     }
 
     /// A click gives the focus to the pane under it, and to the row.
