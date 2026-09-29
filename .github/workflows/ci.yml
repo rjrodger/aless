@@ -63,10 +63,10 @@ jobs:
           test "$status" = 1
 
   msrv:
-    name: rust 1.86 (minimum supported)
+    name: rust 1.88 (minimum supported)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.86
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --all-targets

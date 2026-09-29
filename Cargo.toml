@@ -2,7 +2,7 @@
 name = "aless"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.86"
+rust-version = "1.88"
 authors = ["Richard Rodger <http://richardrodger.com>"]
 description = "A jless-style terminal viewer for every format the tabnas parsers read, with tabs and watch-and-reload that keeps your place."
 license = "MIT"
@@ -19,6 +19,9 @@ clipboard = ["dep:arboard"]
 
 [dependencies]
 crossterm = "0.29"
+# The drawing layer: widgets over a buffer, diffed onto the terminal
+# through crossterm (the same 0.29 the event loop uses).
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 notify = "8"
 regex = "1.13"
 unicode-width = "0.2"

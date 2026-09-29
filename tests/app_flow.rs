@@ -48,7 +48,7 @@ fn edit_reload_keeps_the_place_and_the_screen_row() {
     keys(&mut app, "ll"); // expand, then step into the first child
     assert_eq!(focused_path(&mut app), ".k19.v");
     let screen_row = app.tab().focus - app.tab().scroll;
-    let before = render::render(&mut app).text();
+    let before = render::screen(&mut app).text();
     assert!(
         before.contains("▽ k19: {"),
         "k19 is expanded, its child focused:\n{before}"
@@ -64,7 +64,7 @@ fn edit_reload_keeps_the_place_and_the_screen_row() {
     app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
     assert_eq!(focused_path(&mut app), ".k19.v");
     assert_eq!(app.tab().focus - app.tab().scroll, screen_row);
-    let after = render::render(&mut app).text();
+    let after = render::screen(&mut app).text();
     assert!(after.contains("v: 1900"), "{after}");
     assert!(after.contains("Reloaded"), "{after}");
     // The folds survived: k18 is still a collapsed preview.
@@ -96,7 +96,7 @@ fn edit_reload_keeps_the_place_and_the_screen_row() {
     app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
     assert!(app.tab().error.is_some());
     assert!(app.tab().doc.len() > 10);
-    let screen = render::render(&mut app).text();
+    let screen = render::screen(&mut app).text();
     assert!(screen.contains('!'), "{screen}");
     std::fs::write(&path, &removed).unwrap();
     app.handle(Input::FileChanged(path.clone()));
@@ -127,7 +127,7 @@ fn search_and_yank_through_the_key_map() {
     });
     assert_eq!(copied.as_deref(), Some(".nested.deep.value"));
     keys(&mut app, "s");
-    let screen = render::render(&mut app).text();
+    let screen = render::screen(&mut app).text();
     assert!(screen.contains("(source)"), "{screen}");
     assert!(screen.lines().any(|l| l.contains("value: 42")), "{screen}");
 }
