@@ -1450,6 +1450,32 @@ mod tests {
         assert!(text.contains("MOVING"));
     }
 
+    /// An overlay pans as far as its widest line's end as the screen
+    /// measures it. A halfwidth kana with its sound mark takes two cells,
+    /// where the string width counts one, so a pan limited by that count
+    /// stopped short and the line's tail could not be reached.
+    #[test]
+    fn an_overlay_pans_to_the_end_of_what_the_screen_shows() {
+        let mut a = app(&format!(r#"{{"k": "{}end"}}"#, "ﾊﾟ".repeat(30)), 40, 8);
+        for c in "jpv".chars() {
+            a.handle(Input::Key(Key::ch(c)));
+        }
+        assert_eq!(a.mode, Mode::Overlay);
+        for _ in 0..200 {
+            a.handle(Input::Key(Key::code(crate::app::KeyCode::Right)));
+        }
+        // Thirty kana, three letters and two quotes take 65 cells: 25
+        // past a 40-column screen.
+        assert_eq!(a.overlay.as_ref().unwrap().xoff, 25);
+        let s = screen(&mut a);
+        let row = s.row(1);
+        assert!(row.starts_with('…'), "{row:?}");
+        assert!(
+            row.trim_end().ends_with("ﾊﾟend\""),
+            "the tail is reached: {row:?}"
+        );
+    }
+
     /// Wide, joined and combining characters take the columns the terminal
     /// gives them, as ratatui's buffer places them: a value that fits is
     /// shown whole, one that does not ends in its ellipsis without

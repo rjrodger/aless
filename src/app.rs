@@ -10,7 +10,6 @@ use crate::fmt;
 use crate::load::{self, Format};
 use crate::search::{self, Direction};
 use crate::tab::{Reposition, Tab, View};
-use unicode_width::UnicodeWidthStr;
 
 // ----- input ---------------------------------------------------------------
 
@@ -134,15 +133,16 @@ impl Overlay {
         }
     }
 
-    /// The widest line, in columns.
+    /// The widest line, in the columns the screen gives it
+    /// ([`crate::render::cols`]), which is how far a pan can go.
     fn width(&self) -> usize {
         self.lines
             .iter()
             .map(|l| {
                 if self.ansi {
-                    load::strip_ansi(l).width()
+                    crate::render::cols(&load::strip_ansi(l))
                 } else {
-                    l.width()
+                    crate::render::cols(l)
                 }
             })
             .max()
