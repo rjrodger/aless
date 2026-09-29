@@ -837,6 +837,7 @@ aless --panes out --stacked orders.json                   # its JSON, one above 
   and a grammar the language server's registry marks as lexing
   speculatively. Colouring one text stops after ten seconds, or the
   parse timeout when that is shorter, and colours what it had lexed.
+  Without colour (`--no-color`, `NO_COLOR`) no text is lexed for it.
 - **Limits.** The output pane keeps up to 16 MB of output; past that the
   text is cut and shown as text, not read back. The run happens in the
   viewer, which waits for it as long as the command would take.

@@ -514,8 +514,14 @@ impl App {
     // ----- colours -------------------------------------------------------------------
 
     /// Ask for the colours of each pane showing its text, take in those
-    /// that have come, and forget those of tabs that are gone.
+    /// that have come, and forget those of tabs that are gone. Without
+    /// colour (`--no-color`, `NO_COLOR`) nothing would show them, so none
+    /// are made: no text is parsed for them, and the loop never ticks for
+    /// them.
     fn paint_panes(&mut self) {
+        if !self.opts.color {
+            return;
+        }
         let mut painter = std::mem::take(&mut self.painter);
         painter.collect();
         for &pane in &self.workspace.panes {
@@ -3258,6 +3264,27 @@ mod tests {
         let after = kinds(&app).unwrap();
         assert!(!after.contains(&TokenType::Number), "{after:?}");
         assert_eq!(after.iter().filter(|k| **k == TokenType::String).count(), 2);
+    }
+
+    /// Without colour no colours are made: nothing is asked of the
+    /// painter, so no text is parsed for them and nothing is pending.
+    #[test]
+    fn no_colours_are_made_without_colour() {
+        let opts = Options {
+            color: false,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", "{\"a\": 1}\n".into(), Format::Json);
+        keys(&mut app, "s");
+        app.prepare();
+        assert!(!app.highlight_pending(), "nothing is asked");
+        let input = Pane {
+            role: Role::Input,
+            mode: PaneMode::Source,
+        };
+        assert_eq!(app.workspace.focused(), input);
+        assert!(app.painted(input).is_none());
     }
 
     /// A click gives the focus to the pane under it, and to the row.
