@@ -3084,6 +3084,53 @@ mod tests {
         assert_eq!(app.pane_tab(output).title, "t.json → json");
     }
 
+    /// A pane showing its text stays on it when a shorter text replaces
+    /// it: scrolled past the new text's end, it shows the text's last
+    /// lines, the output's as the program's.
+    #[test]
+    fn a_shorter_text_leaves_the_pane_on_its_text() {
+        let long: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", format!("[{}]", long.join(", ")), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "sG");
+        let output = app.workspace.focused();
+        assert_eq!(
+            output,
+            Pane {
+                role: Role::Output,
+                mode: PaneMode::Source,
+            }
+        );
+        assert!(app.pane_tab(output).source_scroll > 100);
+        app.open_source("u.json", "[1]".into(), Format::Json);
+        app.prepare();
+        assert_eq!(app.pane_tab(output).source, "[\n  1\n]\n");
+        assert_eq!(app.pane_tab(output).source_scroll, 0);
+
+        let prog = write_temp(
+            "panes-scroll.alc",
+            &format!("def export [input] input\n{}", "; a comment\n".repeat(100)),
+        );
+        let through = Through::Program {
+            arg: ProgramArg::File(prog.clone()),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "G");
+        let program = app.workspace.focused();
+        assert_eq!(program, Pane::new(Role::Program));
+        assert!(app.pane_tab(program).source_scroll > 50);
+        std::fs::write(&prog, "def export [input] input\n").unwrap();
+        keys(&mut app, "r");
+        assert_eq!(app.pane_tab(program).source, "def export [input] input\n");
+        assert_eq!(app.pane_tab(program).source_scroll, 0);
+    }
+
     /// A click gives the focus to the pane under it, and to the row.
     #[test]
     fn a_click_focuses_the_pane_and_the_row() {

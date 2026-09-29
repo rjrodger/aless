@@ -743,6 +743,7 @@ impl Tab {
                     self.source = src;
                 }
                 self.generation += 1;
+                self.clamp_source_scroll(view.height);
             }
         }
         self.stamp = Stamp::of(&path);
@@ -827,6 +828,14 @@ impl Tab {
         let n = self.rows.len();
         self.scroll = self.scroll.min(n.saturating_sub(view.height));
         self.follow(view);
+        self.clamp_source_scroll(view.height);
+    }
+
+    /// Keep the text view on its text: scrolled past the end of a shorter
+    /// text, it shows the text's last `height` lines instead of nothing.
+    fn clamp_source_scroll(&mut self, height: usize) {
+        let total = load::lines(&self.source).len();
+        self.source_scroll = self.source_scroll.min(total.saturating_sub(height));
     }
 
     /// Parse the current source as another format (`:format yaml`). On
@@ -1316,6 +1325,26 @@ mod tests {
         t.reload(view);
         assert!(!t.gone && t.error.is_none());
         assert_eq!(t.doc.node(1).kind, Kind::Number(2.0));
+    }
+
+    /// A reload that shortens the text leaves the text view on it, showing
+    /// its last lines rather than the blank past its end, whether the new
+    /// text parses or not.
+    #[test]
+    fn a_shorter_reload_keeps_the_text_view_on_the_text() {
+        let long: Vec<String> = (0..100).map(|i| i.to_string()).collect();
+        let p = write_temp("shorter.json", &format!("[\n{}\n]\n", long.join(",\n")));
+        let view = View::new(10, 1);
+        let mut t = Tab::open(1, &p, None);
+        t.source_scroll = 92;
+        std::fs::write(&p, format!("[\n{}\n]\n", long[..20].join(",\n"))).unwrap();
+        t.reload(view);
+        assert!(t.error.is_none());
+        assert_eq!(t.source_scroll, 12, "the last ten of 22 lines");
+        std::fs::write(&p, "[\n1,\n").unwrap();
+        t.reload(view);
+        assert!(t.error.is_some());
+        assert_eq!(t.source_scroll, 0, "the broken text's two lines");
     }
 
     #[test]
