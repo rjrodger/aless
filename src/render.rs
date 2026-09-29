@@ -10,6 +10,7 @@
 //! mark.
 
 use std::borrow::Cow;
+use std::ops::ControlFlow;
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, CellWidth};
@@ -89,10 +90,13 @@ impl Cells for Line<'static> {
         let mut left = cols;
         let mut keep = Vec::new();
         for span in self.spans.drain(..) {
-            let w = self::cols(&span.content);
             if left == 0 {
                 keep.push(span);
-            } else if w <= left {
+                continue;
+            }
+            // Exact while the span ends before the cut.
+            let w = cols_upto(&clean(&span.content), left.saturating_add(1));
+            if w <= left {
                 left -= w;
             } else {
                 let text = skip_cols(&span.content, left);
@@ -107,12 +111,14 @@ impl Cells for Line<'static> {
         let mut used = 0;
         let mut keep = Vec::new();
         for span in self.spans.drain(..) {
-            let w = cols(&span.content);
-            if used + w <= width {
+            let room = width - used;
+            // Exact while the span fits the room left.
+            let w = cols_upto(&clean(&span.content), room.saturating_add(1));
+            if w <= room {
                 used += w;
                 keep.push(span);
             } else {
-                let (cut, cw) = take_cols(&span.content, width - used);
+                let (cut, cw) = take_cols(&span.content, room);
                 used += cw;
                 if !cut.is_empty() {
                     keep.push(Span::styled(cut, span.style));
@@ -151,58 +157,87 @@ fn clean(text: &str) -> Cow<'_, str> {
     }
 }
 
-/// The grapheme clusters of clean `text` with the cells each takes, as
-/// ratatui's buffer counts them (a zero-width cluster takes none, and the
-/// buffer draws it nowhere).
-fn graphemes(text: &str) -> Vec<(&str, usize)> {
+/// Walk the grapheme clusters of clean `text` in order, each with its
+/// length in bytes and the cells it takes as ratatui's buffer counts
+/// them (a zero-width cluster takes none, and the buffer draws it
+/// nowhere), until `each` breaks. Nothing is held per cluster, and each
+/// measure below stops once it has its answer, so a value of millions of
+/// characters is clipped holding no more than what the clip returns.
+fn walk(text: &str, mut each: impl FnMut(usize, usize) -> ControlFlow<()>) {
     let span = Span::raw(text);
     let mut at = 0;
-    span.styled_graphemes(PLAIN)
-        .map(|g| {
-            // Clean text has no control character for the iterator to
-            // drop, so the clusters tile the text in order.
-            let cluster = &text[at..at + g.symbol.len()];
-            debug_assert_eq!(cluster, g.symbol);
-            at += g.symbol.len();
-            (cluster, usize::from(g.symbol.cell_width()))
-        })
-        .collect()
+    for g in span.styled_graphemes(PLAIN) {
+        // Clean text has no control character for the iterator to drop,
+        // so the clusters tile the text in order.
+        debug_assert_eq!(&text[at..at + g.symbol.len()], g.symbol);
+        at += g.symbol.len();
+        if each(g.symbol.len(), usize::from(g.symbol.cell_width())).is_break() {
+            return;
+        }
+    }
 }
 
 /// The columns `text` takes on screen.
 pub fn cols(text: &str) -> usize {
-    graphemes(&clean(text)).iter().map(|(_, w)| w).sum()
+    cols_upto(&clean(text), usize::MAX)
+}
+
+/// The columns clean `text` takes, measured no further than `limit`:
+/// exact below it, and at least `limit` when the text reaches it.
+fn cols_upto(text: &str, limit: usize) -> usize {
+    let mut used = 0;
+    walk(text, |_, w| {
+        if used >= limit {
+            return ControlFlow::Break(());
+        }
+        used += w;
+        ControlFlow::Continue(())
+    });
+    used
+}
+
+/// How much of clean `text` fits in `width` columns: its length in
+/// bytes, and its width.
+fn fit(text: &str, width: usize) -> (usize, usize) {
+    let (mut len, mut used) = (0, 0);
+    walk(text, |bytes, w| {
+        if used + w > width {
+            return ControlFlow::Break(());
+        }
+        used += w;
+        len += bytes;
+        ControlFlow::Continue(())
+    });
+    (len, used)
+}
+
+/// Where clean `text` resumes once its first `cols` columns are skipped,
+/// in bytes; a cluster the cut would split goes whole.
+fn skip(text: &str, cols: usize) -> usize {
+    let (mut at, mut used) = (0, 0);
+    walk(text, |bytes, w| {
+        if used >= cols {
+            return ControlFlow::Break(());
+        }
+        used += w;
+        at += bytes;
+        ControlFlow::Continue(())
+    });
+    at
 }
 
 /// The leading part of `text` that fits in `width` columns, and its width.
 fn take_cols(text: &str, width: usize) -> (String, usize) {
     let text = clean(text);
-    let mut out = String::new();
-    let mut used = 0;
-    for (cluster, w) in graphemes(&text) {
-        if used + w > width {
-            break;
-        }
-        used += w;
-        out.push_str(cluster);
-    }
-    (out, used)
+    let (len, used) = fit(&text, width);
+    (text[..len].to_string(), used)
 }
 
 /// `text` with its first `cols` columns skipped; a cluster the cut would
 /// split goes whole.
 fn skip_cols(text: &str, cols: usize) -> String {
     let text = clean(text);
-    let mut used = 0;
-    let mut at = 0;
-    for (cluster, w) in graphemes(&text) {
-        if used >= cols {
-            break;
-        }
-        used += w;
-        at += cluster.len();
-    }
-    text[at..].to_string()
+    text[skip(&text, cols)..].to_string()
 }
 
 /// A line of text carrying ANSI SGR colour codes (an engine error report)
@@ -309,31 +344,40 @@ fn apply_sgr(mut style: Style, params: &str) -> Style {
 /// Fit `text` into `avail` columns, scrolled right by `xoff`: an ellipsis
 /// marks a cut at either end. Returns the text and whether it was cut on
 /// the right.
+///
+/// Each measure walks the text only as far as the answer needs: a
+/// screenful past the offset, or to the end for the tail.
 pub fn clip(text: &str, xoff: usize, avail: usize) -> (String, bool) {
-    let w = cols(text);
+    let text = clean(text);
     if avail == 0 {
-        return (String::new(), w > 0);
+        return (String::new(), cols_upto(&text, 1) > 0);
     }
-    if w <= avail && xoff == 0 {
-        return (text.to_string(), false);
+    if xoff == 0 && cols_upto(&text, avail.saturating_add(1)) <= avail {
+        return (text.into_owned(), false);
     }
     if avail == 1 {
         return ("…".to_string(), true);
     }
-    // The furthest useful offset shows the tail with a leading ellipsis.
-    let max_xoff = w.saturating_sub(avail - 1);
-    let xoff = xoff.min(max_xoff);
+    // The furthest useful offset shows the tail with a leading ellipsis:
+    // the width less `avail - 1`. Short of the end, the text reaches
+    // `xoff + avail - 1` columns only when `xoff` is within it.
+    let reach = xoff.saturating_add(avail - 1);
+    let seen = cols_upto(&text, reach);
+    let xoff = if seen >= reach {
+        xoff
+    } else {
+        seen.saturating_sub(avail - 1)
+    };
     if xoff == 0 {
-        let (head, _) = take_cols(text, avail - 1);
-        return (format!("{head}…"), true);
+        let (len, _) = fit(&text, avail - 1);
+        return (format!("{}…", &text[..len]), true);
     }
-    let rest = skip_cols(text, xoff);
-    let rest_w = cols(&rest);
-    if rest_w < avail {
+    let rest = &text[skip(&text, xoff)..];
+    if cols_upto(rest, avail) < avail {
         (format!("…{rest}"), false)
     } else {
-        let (mid, _) = take_cols(&rest, avail - 2);
-        (format!("…{mid}…"), true)
+        let (len, _) = fit(rest, avail - 2);
+        (format!("…{}…", &rest[..len]), true)
     }
 }
 
