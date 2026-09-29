@@ -33,6 +33,7 @@ dependencies = [
  "tabnas-jsonc",
  "tabnas-jsonic",
  "tabnas-jsonl",
+ "tabnas-lsp",
  "tabnas-markdown",
  "tabnas-render",
  "tabnas-toml",
@@ -1269,6 +1270,16 @@ dependencies = [
  "serde_json",
  "tabnas",
  "tabnas-json",
+]
+
+[[package]]
+name = "tabnas-lsp"
+version = "0.1.3"
+source = "git+https://github.com/tabnas/lsp#ab2646de5f06315f2c7cbc327d3b13830baef484"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tabnas",
 ]
 
 [[package]]

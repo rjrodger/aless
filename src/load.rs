@@ -385,6 +385,17 @@ pub(crate) struct Deadline {
 }
 
 impl Deadline {
+    /// A deadline `timeout` from now, read from the clock, for a parse no
+    /// thread waits on; `None` for no limit, or one too far off to reach.
+    pub(crate) fn after(timeout: Option<Duration>) -> Option<Deadline> {
+        let limit = timeout?;
+        Some(Deadline {
+            at: Instant::now().checked_add(limit)?,
+            limit,
+            alarm: None,
+        })
+    }
+
     /// Whether the time is up, as the parse finds it between two steps.
     pub(crate) fn passed(&self) -> bool {
         match &self.alarm {

@@ -56,6 +56,11 @@ tabnas-render = { git = "https://github.com/tabnas/render" }
 # The alchemy language, behind `--alchemy`: a program compiled onto the
 # transducer and the renderers, run over any document the grammars read.
 tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
+# Colour for a pane's text: the semantic tokens tabnas-lsp's language
+# server sends an editor, taken from the same lex a grammar makes. No
+# feature is on: aless supplies the parsers, and needs neither the
+# bundled grammars (`fleet`) nor the grammar-text loaders (`dialects`).
+tabnas-lsp = { git = "https://github.com/tabnas/lsp" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -142,6 +147,11 @@ tabnas = { git = "https://github.com/tabnas/parser" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 tabnas-render = { git = "https://github.com/tabnas/render" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
+
+# lsp's optional siblings are resolved only for the features a consumer
+# turns on, and aless turns on none: the engine is the one to supply.
+[patch."https://github.com/tabnas/lsp"]
+tabnas = { git = "https://github.com/tabnas/parser" }
 
 # The engine checks its rule stack against a shadow copy on every step
 # when debug assertions are on: an O(depth) check per step, which a deep
