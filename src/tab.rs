@@ -83,6 +83,10 @@ pub struct Tab {
     pub stamp: Option<Stamp>,
     pub error: Option<LoadError>,
     pub gone: bool,
+    /// Counts the changes to what the tab holds: each document it takes
+    /// ([`Tab::apply`], a reload, `:format`), each failed reload that
+    /// re-reads the source, each re-listing of a directory. What is built
+    /// from the tab (the output pane) is rebuilt when it moves.
     pub generation: u64,
     pub reload_due: Option<Instant>,
     pub search: Option<Search>,
@@ -738,10 +742,11 @@ impl Tab {
                 if let Ok(src) = std::fs::read_to_string(&path) {
                     self.source = src;
                 }
+                self.generation += 1;
+                self.clamp_source_scroll(view.height);
             }
         }
         self.stamp = Stamp::of(&path);
-        self.generation += 1;
         self.reload_due = None;
     }
 
@@ -809,6 +814,7 @@ impl Tab {
         self.has_doc = true;
         self.format = loaded.format;
         self.source = loaded.source;
+        self.generation += 1;
         self.rows_dirty = true;
         let rows = self.rows();
         let mut focus = row_of(rows, anchor).unwrap_or(0);
@@ -822,6 +828,16 @@ impl Tab {
         let n = self.rows.len();
         self.scroll = self.scroll.min(n.saturating_sub(view.height));
         self.follow(view);
+        self.clamp_source_scroll(view.height);
+    }
+
+    /// Keep the text view on its text, `height` rows tall: scrolled past
+    /// where its last line shows at the foot, after a shorter text or in a
+    /// taller pane, it shows the text's last `height` lines instead of
+    /// blank rows.
+    pub fn clamp_source_scroll(&mut self, height: usize) {
+        let total = load::line_count(&self.source);
+        self.source_scroll = self.source_scroll.min(total.saturating_sub(height));
     }
 
     /// Parse the current source as another format (`:format yaml`). On
@@ -1311,6 +1327,26 @@ mod tests {
         t.reload(view);
         assert!(!t.gone && t.error.is_none());
         assert_eq!(t.doc.node(1).kind, Kind::Number(2.0));
+    }
+
+    /// A reload that shortens the text leaves the text view on it, showing
+    /// its last lines rather than the blank past its end, whether the new
+    /// text parses or not.
+    #[test]
+    fn a_shorter_reload_keeps_the_text_view_on_the_text() {
+        let long: Vec<String> = (0..100).map(|i| i.to_string()).collect();
+        let p = write_temp("shorter.json", &format!("[\n{}\n]\n", long.join(",\n")));
+        let view = View::new(10, 1);
+        let mut t = Tab::open(1, &p, None);
+        t.source_scroll = 92;
+        std::fs::write(&p, format!("[\n{}\n]\n", long[..20].join(",\n"))).unwrap();
+        t.reload(view);
+        assert!(t.error.is_none());
+        assert_eq!(t.source_scroll, 12, "the last ten of 22 lines");
+        std::fs::write(&p, "[\n1,\n").unwrap();
+        t.reload(view);
+        assert!(t.error.is_some());
+        assert_eq!(t.source_scroll, 0, "the broken text's two lines");
     }
 
     #[test]

@@ -2,6 +2,8 @@
 //! application state. Terminal-free: [`draw`] renders into a ratatui
 //! `Frame`, whatever backend holds it. `main.rs` hands it the terminal's,
 //! and [`screen`] an in-memory one, so tests read what a user would see.
+//! The pane area holds the workspace's panes ([`crate::pane`]), each
+//! drawing the tab it shows as a tree or as text.
 //!
 //! Every width here is measured the way ratatui's buffer places text: by
 //! grapheme cluster, each taking the cells [`CellWidth`] gives it. A line
@@ -20,10 +22,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui::{Frame, Terminal};
 
-use crate::app::{App, Mode, PromptKind};
+use crate::app::{panel_rows, App, Mode, PromptKind};
 use crate::doc::{Kind, Row};
 use crate::fmt;
 use crate::load;
+use crate::pane::{Pane, PaneMode, Role};
 
 const PLAIN: Style = Style::new();
 const GREY: Style = Style::new().fg(Color::DarkGray);
@@ -432,10 +435,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> Option<Position> {
     if strip.height > 0 {
         frame.render_widget(Rows(vec![tab_strip(app, width)]), strip);
     }
-    match app.mode {
-        Mode::Overlay => frame.render_widget(Rows(overlay_lines(app, width, pane_h)), pane),
-        Mode::Source => frame.render_widget(Rows(source_lines(app, width, pane_h)), pane),
-        _ => draw_tree_pane(frame, app, width, pane_h, pane),
+    if app.mode == Mode::Overlay {
+        frame.render_widget(Rows(overlay_lines(app, width, pane_h)), pane);
+    } else {
+        draw_panes(frame, app, pane);
     }
     frame.render_widget(Rows(vec![status_bar(app, width)]), status);
     let (line, col) = prompt_line(app, width);
@@ -548,19 +551,84 @@ fn tab_strip(app: &App, width: usize) -> Line<'static> {
     line
 }
 
-/// The tree pane: the document's rows and, while a reload fails, the
-/// error panel under them; a tab that never loaded shows its report in
-/// the whole pane.
-fn draw_tree_pane(frame: &mut Frame, app: &mut App, width: usize, pane_h: usize, area: Rect) {
+/// Every pane in its place: with several, a title row each and a rule
+/// between those side by side; each body shows its tab as a tree or as
+/// text.
+fn draw_panes(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.tabs.is_empty() {
         return;
     }
+    let places = app.workspace.areas(area);
+    let focus = app.workspace.focus;
+    let rule = if app.opts.ascii { "|" } else { "│" };
+    for (i, (pane, place)) in app
+        .workspace
+        .panes
+        .clone()
+        .into_iter()
+        .zip(places)
+        .enumerate()
+    {
+        if let Some(r) = place.rule {
+            let lines = (0..r.height)
+                .map(|_| {
+                    let mut l = Line::default();
+                    l.put(rule, GREY);
+                    l
+                })
+                .collect();
+            frame.render_widget(Rows(lines), r);
+        }
+        if let Some(t) = place.title {
+            let line = pane_title(app, pane, i == focus, usize::from(t.width));
+            frame.render_widget(Rows(vec![line]), t);
+        }
+        let body = place.body;
+        let (width, height) = (usize::from(body.width), usize::from(body.height));
+        match pane.mode {
+            PaneMode::Source => {
+                let lines = source_lines(app, pane, width, height);
+                frame.render_widget(Rows(lines), body);
+            }
+            PaneMode::Structure => draw_tree_pane(frame, app, pane, body),
+        }
+    }
+}
+
+/// A pane's title row: its role, the title of what it shows, and how it
+/// shows it, reversed on the focused pane.
+fn pane_title(app: &App, pane: Pane, focused: bool, width: usize) -> Line<'static> {
+    let title = app
+        .pane_tab_ref(pane)
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    let how = match (pane.role, pane.mode) {
+        (Role::Program, PaneMode::Structure) => "plan",
+        (_, PaneMode::Structure) => "tree",
+        (_, PaneMode::Source) => "text",
+    };
+    let style = if focused {
+        BAR.bold()
+    } else {
+        REVERSED.fg(Color::DarkGray)
+    };
+    let mut line = Line::default();
+    line.put(format!(" {} · {title} · {how} ", pane.role.name()), style);
+    line.fit_cols(width, style);
+    line
+}
+
+/// The tree pane: the document's rows and, while a reload fails, the
+/// error panel under them; a tab that never loaded shows its report in
+/// the whole pane.
+fn draw_tree_pane(frame: &mut Frame, app: &mut App, pane: Pane, area: Rect) {
+    let (width, pane_h) = (usize::from(area.width), usize::from(area.height));
     let numbers = app.opts.numbers;
     let relative = app.opts.relative;
     let indent = app.opts.indent;
     let ascii = app.opts.ascii;
-    let panel = app.error_panel_rows();
-    let tab = app.tab();
+    let tab = app.pane_tab(pane);
+    let panel = panel_rows(tab, pane_h);
     if tab.shows_error_only() {
         let report = tab
             .error
@@ -919,13 +987,23 @@ fn pan(mut line: Line<'static>, xoff: usize, width: usize) -> Line<'static> {
     line
 }
 
-fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>> {
+fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<Line<'static>> {
     let mut out = Vec::with_capacity(pane_h);
     if app.tabs.is_empty() {
         return out;
     }
     let ascii = app.opts.ascii;
-    let tab = app.tab();
+    let tab = app.pane_tab(pane);
+    // A tab with no text to show, one that never read (a program or a
+    // file that could not be opened), shows why instead.
+    if tab.shows_error_only() && tab.source.is_empty() {
+        let report = tab
+            .error
+            .as_ref()
+            .map(|e| e.report.clone())
+            .unwrap_or_default();
+        return report_lines(&report, width, pane_h, "! shows the full report");
+    }
     let focus_line = tab.focused_line().map(|(l, _)| l as usize);
     let error_line = tab
         .error
@@ -998,7 +1076,7 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
         line.fit_cols(width, BAR);
         return line;
     }
-    let mode = app.mode;
+    let source = app.workspace.focused().mode == PaneMode::Source;
     let tab = app.tab();
     let node = tab.focused_node();
     let node_path = tab.doc.path(node);
@@ -1013,7 +1091,7 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
         }
     } else {
         let path = fmt::path_dot(&node_path);
-        if mode == Mode::Source {
+        if source {
             left.push_str("  (source)");
         } else {
             left.push(' ');
@@ -1090,7 +1168,10 @@ fn prompt_line(app: &mut App, width: usize) -> (Line<'static>, Option<usize>) {
             if let Some(m) = &app.message {
                 let (t, _) = clip(&m.text, 0, width);
                 line.put(t, if m.error { ERROR.bold() } else { PLAIN });
-            } else if let Some(s) = app.tab_ref().and_then(|t| t.search.as_ref()) {
+            } else if let Some(s) = app
+                .pane_tab_ref(app.workspace.focused())
+                .and_then(|t| t.search.as_ref())
+            {
                 if let Some(i) = s.current {
                     line.put(
                         format!(
@@ -1517,6 +1598,66 @@ mod tests {
         assert!(
             row.trim_end().ends_with("ﾊﾟend\""),
             "the tail is reached: {row:?}"
+        );
+    }
+
+    /// Panes side by side: a title row each, the focused one bold, a rule
+    /// between them, and each pane's own document; stacked, the titles
+    /// head each share of the height.
+    #[test]
+    fn panes_side_by_side_and_stacked() {
+        use crate::export::Renderer;
+        use crate::pane::Through;
+        let opts = Options {
+            panes: vec![Role::Output],
+            through: Through::Render(Renderer::Csv),
+            ..Options::default()
+        };
+        let mut a = App::new(opts, 61, 10);
+        a.open_source(
+            "t.json",
+            r#"[{"a": 1}, {"a": 2}]"#.into(),
+            crate::load::Format::Json,
+        );
+        let s = screen(&mut a);
+        let title = s.row(0);
+        assert!(title.starts_with(" input · t.json · tree "), "{title:?}");
+        assert!(
+            title.contains("│ output · t.json → csv · tree"),
+            "{title:?}"
+        );
+        for y in 0..8 {
+            assert_eq!(
+                s.row(y).chars().nth(30),
+                Some('│'),
+                "row {y}: {:?}",
+                s.row(y)
+            );
+        }
+        let focused = s.style(0, 0).add_modifier;
+        assert!(focused.contains(Modifier::REVERSED | Modifier::BOLD));
+        let other = s.style(40, 0).add_modifier;
+        assert!(other.contains(Modifier::REVERSED) && !other.contains(Modifier::BOLD));
+        // The input's tree, and the CSV read back as records.
+        assert!(s.row(1).starts_with("▼ ["), "{:?}", s.row(1));
+        assert!(
+            s.row(3).contains("a: 1") && s.row(3).contains("a: \"1\""),
+            "{}",
+            s.text()
+        );
+        a.run_command("arrange");
+        let s = screen(&mut a);
+        assert!(s.row(0).starts_with(" input · t.json · tree"));
+        assert!(
+            s.row(4).starts_with(" output · t.json → csv · tree"),
+            "{}",
+            s.text()
+        );
+        assert!(!s.text().contains('│'), "no rule when stacked");
+        assert!(
+            s.row(8).starts_with(" t.json"),
+            "the status bar: {}",
+            s.text()
         );
     }
 

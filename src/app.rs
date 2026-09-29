@@ -5,11 +5,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use ratatui::layout::Rect;
+use tabnas_alchemy::Program;
+
 use crate::doc::{Kind, NodeId};
 use crate::fmt;
-use crate::load::{self, Format};
+use crate::load::{self, Format, LoadError, Loaded};
+use crate::pane::{self, Arrangement, Pane, PaneArea, PaneMode, Role, Through, Workspace};
 use crate::search::{self, Direction};
-use crate::tab::{Reposition, Tab, View};
+use crate::tab::{Reposition, Stamp, Tab, View};
 
 // ----- input ---------------------------------------------------------------
 
@@ -72,8 +76,8 @@ pub enum Input {
     Resize(u16, u16),
     /// Mouse wheel, `down` rows (negative = up).
     Wheel(i32),
-    /// Left click on a screen row.
-    Click(u16),
+    /// Left click on a screen cell, column then row.
+    Click(u16, u16),
     FileChanged(PathBuf),
     Tick(Instant),
 }
@@ -90,10 +94,10 @@ pub enum PromptKind {
 pub enum Mode {
     Browse,
     Prompt(PromptKind),
-    /// The help text, the printed value of a `p` command, and so on.
+    /// The help text, the printed value of a `p` command, and so on. A
+    /// pane showing its text is not a mode of the app's but the pane's
+    /// ([`PaneMode::Source`]).
     Overlay,
-    /// The raw source text of the active tab.
-    Source,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -210,6 +214,14 @@ pub struct Options {
     pub color: bool,
     /// The explorer shows dot-files.
     pub show_hidden: bool,
+    /// Panes open at the start beside the input (`--panes`).
+    pub panes: Vec<Role>,
+    /// Several panes stacked rather than side by side (`--stacked`).
+    pub stacked: bool,
+    /// What the output pane writes the document through: `--render`,
+    /// `--alchemy` or `--alchemy-expr` given with `--panes`, JSON when
+    /// none is.
+    pub through: Through,
 }
 
 impl Default for Options {
@@ -225,8 +237,42 @@ impl Default for Options {
             depth: None,
             color: true,
             show_hidden: false,
+            panes: Vec::new(),
+            stacked: false,
+            through: Through::default(),
         }
     }
+}
+
+/// The output pane's document, and what it was computed from.
+struct OutputView {
+    tab: Tab,
+    /// The input tab's id and generation, and the program's generation.
+    from: (u64, u64, u64),
+}
+
+/// The program behind the output pane, as the program pane shows it.
+struct ProgramView {
+    /// The program's text, a line to a row.
+    text: Tab,
+    /// Its plan report, `--explain`'s JSON, as a tree; or why it has none.
+    plan: Tab,
+    /// The program the output pane runs; `None` when it did not compile.
+    compiled: Option<Program>,
+    /// Bumped each time the program is read again, so the output follows.
+    generation: u64,
+    /// The file as last read, and when a change seen since is due to be
+    /// read, as a watched tab's reload is.
+    stamp: Option<Stamp>,
+    due: Option<Instant>,
+}
+
+/// Which tab a pane shows, found before the tab is borrowed.
+enum Shown {
+    Input,
+    Output,
+    ProgramText,
+    ProgramPlan,
 }
 
 /// How long after a change notification the reload runs, so a burst of
@@ -251,10 +297,19 @@ pub struct App {
     next_id: u64,
     /// The last search line, so an empty `/` repeats it.
     last_search: Option<String>,
+    /// The panes on screen: one input pane unless others were asked for.
+    pub workspace: Workspace,
+    output: Option<OutputView>,
+    program: Option<ProgramView>,
+    /// The indentation the output pane's JSON is written with: `--indent`
+    /// as the command line gave it, as `--render json` would print. `<`
+    /// and `>` change the tree's, not this.
+    output_indent: usize,
 }
 
 impl App {
     pub fn new(opts: Options, width: u16, height: u16) -> App {
+        let opts_indent = opts.indent;
         App {
             tabs: Vec::new(),
             active: 0,
@@ -272,7 +327,23 @@ impl App {
             last_jump: None,
             next_id: 1,
             last_search: None,
+            workspace: Workspace::default(),
+            output: None,
+            program: None,
+            output_indent: opts_indent,
         }
+        .with_panes()
+    }
+
+    /// The panes `opts` asks for at the start.
+    fn with_panes(mut self) -> App {
+        if self.opts.stacked {
+            self.workspace.arrangement = Arrangement::Stacked;
+        }
+        for role in self.opts.panes.clone() {
+            self.workspace.open(role);
+        }
+        self
     }
 
     // ----- layout ----------------------------------------------------------------
@@ -296,55 +367,381 @@ impl App {
     /// though the panel is not drawn then: the tree keeps the height it
     /// will be shown at again, so the tab's scroll does not move.
     pub fn error_panel_rows(&self) -> usize {
-        let Some(tab) = self.tab_ref() else {
-            return 0;
-        };
-        let Some(err) = tab.error.as_ref() else {
-            return 0;
-        };
-        if !tab.has_doc || tab.explorer.is_some() {
-            return 0;
+        let pane = self.workspace.focused();
+        match self.pane_tab_ref(pane) {
+            Some(tab) => panel_rows(tab, self.body_height()),
+            None => 0,
         }
-        let pane = self.pane_height();
-        if pane < 8 {
-            return 0;
-        }
-        // The report and a separator line, at most half the pane.
-        (err.report.lines().count() + 1).min(pane / 2)
     }
 
-    /// Rows the tree itself gets.
+    /// Rows the tree itself gets in the focused pane.
     pub fn tree_height(&self) -> usize {
-        self.pane_height()
+        self.body_height()
             .saturating_sub(self.error_panel_rows())
             .max(1)
+    }
+
+    /// Each pane's place on screen: its title row when there are several,
+    /// its body, and the rule before it side by side.
+    pub fn pane_areas(&self) -> Vec<PaneArea> {
+        let cells = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
+        let area = Rect::new(
+            0,
+            cells(self.strip_rows()),
+            cells(self.width),
+            cells(self.pane_height()),
+        );
+        self.workspace.areas(area)
+    }
+
+    /// Rows the focused pane's body has.
+    fn body_height(&self) -> usize {
+        let areas = self.pane_areas();
+        let focus = self.workspace.focus.min(areas.len().saturating_sub(1));
+        areas
+            .get(focus)
+            .map(|a| usize::from(a.body.height))
+            .unwrap_or(0)
     }
 
     pub fn view(&self) -> View {
         View::new(self.tree_height(), self.opts.scrolloff)
     }
 
+    /// The view the pane with `role` shows its tab in: its body's height
+    /// less the error panel, and the scroll-off. A change to a tab
+    /// re-anchors it in the view of the pane that shows it, whichever
+    /// pane has the focus; the focused pane's view when none has `role`.
+    fn pane_view(&self, role: Role) -> View {
+        let Some(at) = self.workspace.position(role) else {
+            return self.view();
+        };
+        let pane = self.workspace.panes[at];
+        let height = self
+            .pane_areas()
+            .get(at)
+            .map_or(0, |a| usize::from(a.body.height));
+        let panel = self.pane_tab_ref(pane).map_or(0, |t| panel_rows(t, height));
+        View::new(height.saturating_sub(panel).max(1), self.opts.scrolloff)
+    }
+
+    /// The tab the focused pane shows: the active tab in the input pane,
+    /// the output or the program in theirs. The keys that move, fold,
+    /// search and copy work on it.
     pub fn tab(&mut self) -> &mut Tab {
+        let pane = self.workspace.focused();
+        self.pane_tab(pane)
+    }
+
+    /// The active input tab, whichever pane has the focus: the tab that
+    /// reloads, watches, closes, explores and changes format.
+    pub fn input(&mut self) -> &mut Tab {
         let i = self.active.min(self.tabs.len().saturating_sub(1));
         &mut self.tabs[i]
     }
 
+    /// The active input tab.
     pub fn tab_ref(&self) -> Option<&Tab> {
         self.tabs.get(self.active)
+    }
+
+    /// Which tab `pane` shows. An output or program pane whose document is
+    /// not built yet shows the input until [`App::prepare`] builds it.
+    fn shown(&self, pane: Pane) -> Shown {
+        match pane.role {
+            Role::Output if self.output.is_some() => Shown::Output,
+            Role::Program if self.program.is_some() => match pane.mode {
+                PaneMode::Source => Shown::ProgramText,
+                PaneMode::Structure => Shown::ProgramPlan,
+            },
+            _ => Shown::Input,
+        }
+    }
+
+    /// The tab `pane` shows.
+    pub fn pane_tab(&mut self, pane: Pane) -> &mut Tab {
+        match self.shown(pane) {
+            Shown::Output => &mut self.output.as_mut().expect("shown").tab,
+            Shown::ProgramText => &mut self.program.as_mut().expect("shown").text,
+            Shown::ProgramPlan => &mut self.program.as_mut().expect("shown").plan,
+            Shown::Input => self.input(),
+        }
+    }
+
+    /// The tab `pane` shows, to draw it.
+    pub fn pane_tab_ref(&self, pane: Pane) -> Option<&Tab> {
+        match self.shown(pane) {
+            Shown::Output => self.output.as_ref().map(|o| &o.tab),
+            Shown::ProgramText => self.program.as_ref().map(|p| &p.text),
+            Shown::ProgramPlan => self.program.as_ref().map(|p| &p.plan),
+            Shown::Input => self.tab_ref(),
+        }
     }
 
     pub fn count_text(&self) -> Option<String> {
         self.count.map(|c| c.to_string())
     }
 
-    /// Bring the active tab's rows and window up to date before a paint.
+    /// Bring every pane up to date before a paint: the output and the
+    /// program built for what they show, and each pane's rows and window
+    /// followed within its own height.
     pub fn prepare(&mut self) {
         if self.tabs.is_empty() {
             return;
         }
-        let view = self.view();
-        let tab = self.tab();
-        tab.follow(view);
+        self.refresh_panes();
+        let areas = self.pane_areas();
+        let scrolloff = self.opts.scrolloff;
+        for (pane, area) in self.workspace.panes.clone().into_iter().zip(areas) {
+            let height = usize::from(area.body.height);
+            let tab = self.pane_tab(pane);
+            let rows = height.saturating_sub(panel_rows(tab, height)).max(1);
+            tab.follow(View::new(rows, scrolloff));
+            // The text view fills its pane, which may have grown taller.
+            if pane.mode == PaneMode::Source {
+                tab.clamp_source_scroll(height);
+            }
+        }
+    }
+
+    // ----- panes ---------------------------------------------------------------------
+
+    /// Build what an open output or program pane shows, when it is missing
+    /// or what it was built from has changed.
+    fn refresh_panes(&mut self) {
+        let wants_program = self.workspace.position(Role::Program).is_some()
+            || (self.workspace.position(Role::Output).is_some()
+                && matches!(self.opts.through, Through::Program { .. }));
+        if wants_program && self.program.is_none() {
+            self.load_program();
+            if self.program.as_ref().is_some_and(|p| p.compiled.is_none()) {
+                self.say_program_failed();
+            }
+        }
+        if self.workspace.position(Role::Output).is_some() {
+            self.refresh_output();
+        }
+    }
+
+    /// Read and compile the program: its text for the program pane's
+    /// source, its plan report for its structure, and the compiled program
+    /// for the output pane. A program that cannot be read or compiled
+    /// shows why in both panes.
+    fn load_program(&mut self) {
+        let Through::Program { arg, .. } = self.opts.through.clone() else {
+            return;
+        };
+        let name = arg.name();
+        // A program that cannot be read has no text to show: its text tab
+        // holds why, as its plan does.
+        let (text, compiled, plan, unread) = match arg.read(load::Limits::current().max_size) {
+            Ok(text) => match crate::alchemy::compile(&text, &name) {
+                Ok(program) => {
+                    let json =
+                        serde_json::to_string_pretty(&program.explain_json()).unwrap_or_default();
+                    (text, Some(program), Ok(json), None)
+                }
+                Err(fail) => (
+                    text,
+                    None,
+                    Err(LoadError::tagged("alchemy", fail.to_string())),
+                    None,
+                ),
+            },
+            Err(e) => (String::new(), None, Err(e.clone()), Some(e)),
+        };
+        let generation = self.program.as_ref().map_or(0, |p| p.generation + 1);
+        let view = self.pane_view(Role::Program);
+        let old = self.program.take();
+        let text_tab = match unread {
+            Some(e) => self.error_tab(&name, String::new(), e),
+            None => match load::load_str(text.clone(), Format::Text) {
+                Ok(loaded) => self.reuse(old.as_ref().map(|p| p.text.clone()), &name, loaded, view),
+                Err(e) => self.error_tab(&name, text, e),
+            },
+        };
+        let plan_title = format!("{name} (plan)");
+        let plan_tab = match plan.and_then(|json| load::load_str(json, Format::Json)) {
+            Ok(loaded) => self.reuse(
+                old.as_ref().map(|p| p.plan.clone()),
+                &plan_title,
+                loaded,
+                view,
+            ),
+            Err(e) => self.error_tab(&plan_title, String::new(), e),
+        };
+        let path = arg.path().map(Path::to_path_buf);
+        if old.is_none() && self.opts.watch {
+            if let Some(p) = &path {
+                self.effects.push(Effect::Watch(p.clone()));
+            }
+        }
+        self.program = Some(ProgramView {
+            text: text_tab,
+            plan: plan_tab,
+            compiled,
+            generation,
+            stamp: path.as_deref().and_then(Stamp::of),
+            due: None,
+        });
+    }
+
+    /// Write the active tab through the renderer or the program, when the
+    /// output pane's document is missing or was built from another tab, an
+    /// older reading of this one, or another reading of the program. The
+    /// pane keeps its place across a rebuild, as a reload does.
+    fn refresh_output(&mut self) {
+        let program_generation = self.program.as_ref().map_or(0, |p| p.generation);
+        let (id, generation) = {
+            let t = self.input();
+            (t.id, t.generation)
+        };
+        let from = (id, generation, program_generation);
+        let through = self.opts.through.clone();
+        let arrow = if self.opts.ascii { "->" } else { "→" };
+        let title = {
+            let input = self.tab_ref().expect("a tab is open");
+            format!("{} {arrow} {}", input.title, through.label())
+        };
+        // The title follows `:set ascii` whether or not the output is
+        // written again.
+        if let Some(o) = self.output.as_mut().filter(|o| o.from == from) {
+            o.tab.title = title;
+            return;
+        }
+        let input = self.tab_ref().expect("a tab is open");
+        let result = if input.explorer.is_some() {
+            Err("a directory has no output: open a file in it".to_string())
+        } else if !input.has_doc {
+            Err(format!(
+                "{} did not parse, so it has no output",
+                input.title
+            ))
+        } else if let Some(why) = self.program_failure() {
+            Err(why)
+        } else {
+            let compiled = self.program.as_ref().and_then(|p| p.compiled.as_ref());
+            pane::render(
+                &input.title,
+                &input.source,
+                input.format,
+                &through,
+                compiled,
+                self.output_indent,
+                load::Limits::current().timeout,
+            )
+        };
+        let view = self.pane_view(Role::Output);
+        let old = self.output.take().map(|o| o.tab);
+        let tab = match result {
+            Ok(rendered) => {
+                let format = if rendered.cut {
+                    Format::Text
+                } else {
+                    rendered.format
+                };
+                if rendered.cut {
+                    self.error(format!(
+                        "The output passed {} MB and was cut: it shows as text",
+                        pane::MAX_OUTPUT_BYTES >> 20
+                    ));
+                }
+                match load::load_str(rendered.text.clone(), format) {
+                    Ok(loaded) => self.reuse(old, &title, loaded, view),
+                    Err(e) => self.error_tab(&title, rendered.text, e),
+                }
+            }
+            Err(message) => {
+                self.error_tab(&title, String::new(), LoadError::tagged("output", message))
+            }
+        };
+        self.output = Some(OutputView { tab, from });
+    }
+
+    /// Why the program behind the output did not load, when it did not:
+    /// what the program pane's plan shows in its place.
+    fn program_failure(&self) -> Option<String> {
+        let program = self.program.as_ref()?;
+        if program.compiled.is_some() || !matches!(self.opts.through, Through::Program { .. }) {
+            return None;
+        }
+        let why = program
+            .plan
+            .error
+            .as_ref()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        Some(format!("the program did not load: {why}"))
+    }
+
+    /// A pane's tab for `loaded`: the old one with the document replaced,
+    /// keeping its place, or a new one.
+    fn reuse(&mut self, old: Option<Tab>, title: &str, loaded: Loaded, view: View) -> Tab {
+        match old {
+            Some(mut tab) if tab.has_doc => {
+                tab.apply(loaded, view);
+                tab.title = title.to_string();
+                tab.error = None;
+                tab
+            }
+            _ => {
+                let id = self.next_id;
+                self.next_id += 1;
+                let mut tab = Tab::new(id, title.to_string(), None, loaded);
+                tab.line_mode = self.opts.line_mode;
+                if let Some(depth) = self.opts.depth {
+                    tab.expand_to_depth(depth, view);
+                }
+                tab
+            }
+        }
+    }
+
+    /// A pane's tab that shows why it has no document.
+    fn error_tab(&mut self, title: &str, source: String, err: LoadError) -> Tab {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut tab = Tab::new(
+            id,
+            title.to_string(),
+            None,
+            Loaded {
+                doc: crate::doc::Doc::from_lines(&[]),
+                format: Format::Text,
+                source,
+            },
+        );
+        tab.error = Some(err);
+        tab.has_doc = false;
+        tab
+    }
+
+    /// Open a pane for `role`: the output of the active tab, or the program
+    /// behind it, which needs a program to show.
+    pub fn open_pane(&mut self, role: Role) {
+        if role == Role::Program && !matches!(self.opts.through, Through::Program { .. }) {
+            self.error("No program: start aless with --panes and --alchemy FILE");
+            return;
+        }
+        self.workspace.open(role);
+        self.prepare();
+    }
+
+    /// Close the focused pane; the input pane stays.
+    pub fn close_pane(&mut self) {
+        let focus = self.workspace.focus;
+        if !self.workspace.close(focus) {
+            self.error("The input pane stays: q closes its tab");
+        }
+    }
+
+    /// `:vsplit` and `:split`: arrange the panes, opening the output beside
+    /// the input when it is alone.
+    fn split(&mut self, arrangement: Arrangement) {
+        self.workspace.arrangement = arrangement;
+        if self.workspace.panes.len() == 1 {
+            self.open_pane(Role::Output);
+        }
     }
 
     fn info(&mut self, text: impl Into<String>) {
@@ -364,7 +761,7 @@ impl App {
     // ----- opening -------------------------------------------------------------------
 
     fn adopt(&mut self, mut tab: Tab) {
-        let view = self.view();
+        let view = self.pane_view(Role::Input);
         if tab.explorer.is_none() {
             tab.line_mode = self.opts.line_mode;
             if let Some(d) = self.opts.depth {
@@ -478,31 +875,43 @@ impl App {
                 self.height = h as usize;
             }
             Input::Wheel(delta) => {
-                if self.mode == Mode::Browse && !self.tabs.is_empty() {
+                let source = self.workspace.focused().mode == PaneMode::Source;
+                if self.mode == Mode::Browse && !self.tabs.is_empty() && source {
+                    self.scroll_source(delta as isize);
+                } else if self.mode == Mode::Browse && !self.tabs.is_empty() {
                     let view = self.view();
                     self.tab().scroll_by(delta as isize, view);
-                } else if self.mode == Mode::Source {
-                    self.scroll_source(delta as isize);
                 } else if let Some(o) = self.overlay.as_mut() {
                     o.scroll = (o.scroll as isize + delta as isize).max(0) as usize;
                 }
             }
-            Input::Click(row) => self.click(row as usize),
+            Input::Click(col, row) => self.click(col, row),
             Input::FileChanged(path) => self.on_file_changed(&path),
             Input::Tick(now) => self.on_tick(now),
         }
         self.prepare();
     }
 
-    fn click(&mut self, row: usize) {
+    /// A click gives the focus to the pane under it and, on a row of a
+    /// tree, the focus to that row.
+    fn click(&mut self, col: u16, row: u16) {
         if self.mode != Mode::Browse || self.tabs.is_empty() {
             return;
         }
-        let strip = self.strip_rows();
-        if strip == 1 && row == 0 {
+        let at = ratatui::layout::Position::new(col, row);
+        let Some((i, area)) = self
+            .pane_areas()
+            .into_iter()
+            .enumerate()
+            .find(|(_, a)| a.body.contains(at) || a.title.is_some_and(|t| t.contains(at)))
+        else {
+            return;
+        };
+        self.workspace.focus = i;
+        if !area.body.contains(at) || self.workspace.focused().mode == PaneMode::Source {
             return;
         }
-        let pane_row = row.saturating_sub(strip);
+        let pane_row = usize::from(row - area.body.y);
         if pane_row >= self.tree_height() {
             return;
         }
@@ -517,10 +926,12 @@ impl App {
 
     pub fn handle_key(&mut self, key: Key) {
         match self.mode {
+            Mode::Browse if self.workspace.focused().mode == PaneMode::Source => {
+                self.source_key(key)
+            }
             Mode::Browse => self.browse_key(key),
             Mode::Prompt(kind) => self.prompt_key(kind, key),
             Mode::Overlay => self.overlay_key(key),
-            Mode::Source => self.source_key(key),
         }
     }
 
@@ -579,6 +990,10 @@ impl App {
         match (key.code, key.ctrl) {
             (KeyCode::Char('c'), true) => self.quit = true,
             (KeyCode::Char('z'), true) => self.effects.push(Effect::Suspend),
+            (KeyCode::Char('w'), true) => self.workspace.cycle(),
+            (KeyCode::Char('q'), false) if self.workspace.focused().role != Role::Input => {
+                self.close_pane()
+            }
             (KeyCode::Char('q'), false) => self.close_tab(),
             (KeyCode::Esc, _) => {}
             (KeyCode::F(1), _) => self.show_help(),
@@ -680,11 +1095,11 @@ impl App {
     /// After a fold change in an explorer tab, list what the expanded
     /// directories need.
     fn explorer_sync(&mut self) {
-        if self.tabs.is_empty() || self.tab().explorer.is_none() {
+        if self.tabs.is_empty() || self.input().explorer.is_none() {
             return;
         }
-        let view = self.view();
-        let tab = self.tab();
+        let view = self.pane_view(Role::Input);
+        let tab = self.input();
         tab.explorer_sync(view);
         let capped = tab.explorer.as_ref().is_some_and(|ex| ex.capped);
         if capped {
@@ -698,8 +1113,8 @@ impl App {
     /// `Enter` in the explorer: open a file in a new tab, toggle a
     /// directory.
     fn explorer_enter(&mut self) {
-        let view = self.view();
-        let tab = self.tab();
+        let view = self.pane_view(Role::Input);
+        let tab = self.input();
         let node = tab.focused_node();
         let path = tab.doc.path(node);
         let Some(ex) = tab.explorer.as_ref() else {
@@ -728,7 +1143,7 @@ impl App {
 
     /// `-` in the explorer: make the parent directory the root.
     fn explorer_parent(&mut self) {
-        let tab = self.tab();
+        let tab = self.input();
         let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
             return;
         };
@@ -743,8 +1158,8 @@ impl App {
 
     /// Re-root the active explorer, moving its watch to the new root.
     fn reroot_active(&mut self, dir: &Path) {
-        let view = self.view();
-        let tab = self.tab();
+        let view = self.pane_view(Role::Input);
+        let tab = self.input();
         let old = tab.path.clone();
         tab.reroot(dir, view);
         let new = tab.path.clone();
@@ -762,7 +1177,7 @@ impl App {
 
     /// `:cd DIR` in an explorer tab: re-root, relative to the current root.
     fn explorer_cd(&mut self, dir: &str) {
-        let tab = self.tab();
+        let tab = self.input();
         let Some(root) = tab.explorer.as_ref().map(|ex| ex.root.clone()) else {
             self.open_explorer(Path::new(dir));
             return;
@@ -1053,9 +1468,14 @@ impl App {
             None => (cmd, false),
         };
         match cmd {
-            // Document-only commands mean nothing for a directory tree.
-            "source" | "src" | "mode" | "format" | "kind" | "ft" | "filetype"
-                if self.tab().explorer.is_some() =>
+            // Document-only commands mean nothing for a directory tree: the
+            // view's for the focused pane's tab, `:format` for the input's,
+            // which it parses again.
+            "source" | "src" | "mode" if self.tab().explorer.is_some() => {
+                self.error(format!(":{cmd} applies to a document, not to the explorer"))
+            }
+            "format" | "kind" | "ft" | "filetype"
+                if self.tab_ref().is_some_and(|t| t.explorer.is_some()) =>
             {
                 self.error(format!(":{cmd} applies to a document, not to the explorer"))
             }
@@ -1088,10 +1508,13 @@ impl App {
             },
             "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
-                Some(f) => match self.tab().reformat(f, view) {
-                    Ok(()) => self.info(format!("Parsed as {f}")),
-                    Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
-                },
+                Some(f) => {
+                    let input_view = self.pane_view(Role::Input);
+                    match self.input().reformat(f, input_view) {
+                        Ok(()) => self.info(format!("Parsed as {f}")),
+                        Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
+                    }
+                }
                 None => self.error(format!(
                     "Unknown format: {rest} (one of {})",
                     Format::known_names().join(", ")
@@ -1141,6 +1564,24 @@ impl App {
                 _ => self.error("usage: :mode data|line"),
             },
             "yank" | "y" => self.yank(YankTarget::Pretty, false),
+            "vsplit" | "vs" | "vsp" => self.split(Arrangement::SideBySide),
+            "split" | "sp" => self.split(Arrangement::Stacked),
+            "arrange" => {
+                self.workspace.arrangement = self.workspace.arrangement.toggled();
+            }
+            "only" | "on" => {
+                self.workspace = Workspace {
+                    arrangement: self.workspace.arrangement,
+                    ..Workspace::default()
+                }
+            }
+            "pane" => match rest {
+                "close" => self.close_pane(),
+                name => match Role::from_name(name) {
+                    Some(Role::Input) | None => self.error("usage: :pane out|program|close"),
+                    Some(role) => self.open_pane(role),
+                },
+            },
             _ => self.error(format!("Unknown command: {cmd}")),
         }
     }
@@ -1173,7 +1614,7 @@ impl App {
                         _ => !self.opts.show_hidden,
                     };
                     self.opts.show_hidden = show;
-                    let view = self.view();
+                    let view = self.pane_view(Role::Input);
                     for t in &mut self.tabs {
                         t.set_show_hidden(show, view);
                     }
@@ -1273,7 +1714,7 @@ impl App {
     // ----- watching ------------------------------------------------------------------------
 
     fn toggle_watch(&mut self, want: Option<bool>) {
-        let tab = self.tab();
+        let tab = self.input();
         if !tab.watchable() {
             self.error("Nothing to watch: this tab has no file");
             return;
@@ -1296,8 +1737,12 @@ impl App {
     }
 
     fn reload_active(&mut self) {
-        let view = self.view();
-        let tab = self.tab();
+        if self.workspace.focused().role == Role::Program {
+            self.reload_program();
+            return;
+        }
+        let view = self.pane_view(Role::Input);
+        let tab = self.input();
         if !tab.watchable() {
             self.error("Nothing to reload: this tab has no file");
             return;
@@ -1328,10 +1773,79 @@ impl App {
                 tab.reload_due = Some(now + RELOAD_DEBOUNCE);
             }
         }
+        // Without watching the program is read again by `r` alone; a
+        // change seen through a directory another tab watches queues
+        // nothing, or the loop would tick for a reload that never runs.
+        let watched = self.opts.watch && self.program_path().is_some_and(|p| same_path(&p, path));
+        if watched {
+            if let Some(program) = self.program.as_mut() {
+                program.due = Some(now + RELOAD_DEBOUNCE);
+            }
+        }
+    }
+
+    /// The program's file, when there is one.
+    fn program_path(&self) -> Option<PathBuf> {
+        match &self.opts.through {
+            Through::Program { arg, .. } => arg.path().map(Path::to_path_buf),
+            Through::Render(_) => None,
+        }
+    }
+
+    /// Read the program again when a change to it is due, or when its file
+    /// changed and no notice came (a watcher that missed it).
+    fn reload_program_if_due(&mut self, now: Instant) {
+        if !self.opts.watch {
+            return;
+        }
+        let path = self.program_path();
+        let Some(program) = self.program.as_ref() else {
+            return;
+        };
+        let due = match program.due {
+            Some(t) => t <= now,
+            None => path.as_deref().and_then(Stamp::of) != program.stamp,
+        };
+        if due {
+            self.reload_program();
+        }
+    }
+
+    /// Read the program again, as `r` in the program pane or a change to
+    /// its file asks, and say how that went.
+    fn reload_program(&mut self) {
+        let Some(path) = self.program_path() else {
+            self.error("The program came from --alchemy-expr: it has no file to read again");
+            return;
+        };
+        self.load_program();
+        if self.program.as_ref().is_some_and(|p| p.compiled.is_none()) {
+            self.say_program_failed();
+        } else {
+            self.info(format!("Reloaded {}", path.display()));
+        }
+    }
+
+    /// Say on the status line that the program did not load, and where to
+    /// see why.
+    fn say_program_failed(&mut self) {
+        let Through::Program { arg, .. } = &self.opts.through else {
+            return;
+        };
+        let name = arg.name();
+        let whose = if self.workspace.position(Role::Program).is_some() {
+            "the program pane"
+        } else {
+            ":pane program"
+        };
+        self.error(format!(
+            "{name}: could not be read or compiled — {whose} shows why"
+        ));
     }
 
     pub fn on_tick(&mut self, now: Instant) {
-        let view = self.view();
+        self.reload_program_if_due(now);
+        let view = self.pane_view(Role::Input);
         for i in 0..self.tabs.len() {
             let tab = &mut self.tabs[i];
             if !tab.watch {
@@ -1351,6 +1865,7 @@ impl App {
     /// Is a reload pending, so the terminal loop should tick soon?
     pub fn reload_pending(&self) -> bool {
         self.tabs.iter().any(|t| t.watch && t.reload_due.is_some())
+            || self.program.as_ref().is_some_and(|p| p.due.is_some())
     }
 
     // ----- overlays --------------------------------------------------------------------------
@@ -1422,7 +1937,7 @@ impl App {
         if self.tabs.is_empty() {
             return;
         }
-        let h = self.pane_height();
+        let h = self.body_height();
         let tab = self.tab();
         // Centre the focused node's line, or the error line.
         let line = tab
@@ -1437,11 +1952,11 @@ impl App {
             .saturating_sub(1)
             .saturating_sub(h / 2)
             .min(total.saturating_sub(h));
-        self.mode = Mode::Source;
+        self.workspace.focused_mut().mode = PaneMode::Source;
     }
 
     fn scroll_source(&mut self, delta: isize) {
-        let h = self.pane_height();
+        let h = self.body_height();
         let tab = self.tab();
         let total = load::lines(&tab.source).len();
         let max = total.saturating_sub(h);
@@ -1449,7 +1964,7 @@ impl App {
     }
 
     fn source_key(&mut self, key: Key) {
-        let h = self.pane_height() as isize;
+        let h = self.body_height() as isize;
         let n = self.take_count() as isize;
         match (key.code, key.ctrl) {
             (KeyCode::Char('j'), false) | (KeyCode::Down, _) | (KeyCode::Char('e'), true) => {
@@ -1469,9 +1984,36 @@ impl App {
                 self.count = Some(cur * 10 + d.to_digit(10).unwrap() as usize);
             }
             (KeyCode::Char('c'), true) => self.quit = true,
-            _ => self.mode = Mode::Browse,
+            (KeyCode::Char('w'), true) => self.workspace.cycle(),
+            (KeyCode::Char('q'), false) if self.workspace.focused().role != Role::Input => {
+                self.close_pane()
+            }
+            // The command line and a reload leave the text on screen.
+            (KeyCode::Char(':'), false) => self.start_prompt(PromptKind::Command),
+            (KeyCode::Char('r'), false) => self.reload_active(),
+            // Any other key shows the tree again.
+            _ => self.workspace.focused_mut().mode = PaneMode::Structure,
         }
     }
+}
+
+/// Rows the error panel takes at the foot of a pane `height` rows tall
+/// showing `tab`: shown while the tab's file fails to parse but its last
+/// good document is still on screen (a broken save while watching). A tab
+/// that never loaded shows its report in the whole pane instead.
+///
+/// This holds while an overlay or the source view covers the pane, though
+/// the panel is not drawn then: the tree keeps the height it will be shown
+/// at again, so the tab's scroll does not move.
+pub fn panel_rows(tab: &Tab, height: usize) -> usize {
+    let Some(err) = tab.error.as_ref() else {
+        return 0;
+    };
+    if !tab.has_doc || tab.explorer.is_some() || height < 8 {
+        return 0;
+    }
+    // The report and a separator line, at most half the pane.
+    (err.report.lines().count() + 1).min(height / 2)
 }
 
 /// Do two paths name the same file? Canonical forms when both resolve,
@@ -1569,7 +2111,7 @@ TABS, FILES AND WATCHING
   :open PATH [FORMAT]   open a file (or a directory) in a new tab (:e is an alias)
   q / :q    close the tab (the last one closed quits)   :qa / :quit   quit
   W / :watch on|off   toggle reloading the tab when its file changes
-  r / :reload         reload now
+  r / :reload         reload now (in the program pane, the program)
   s / :source         show the raw source (the focused node's line centred)
   :format FORMAT      parse the tab's text as another format
   :depth N            fold everything below depth N
@@ -1577,6 +2119,19 @@ TABS, FILES AND WATCHING
   :set number | nonumber | relativenumber | norelativenumber | so=N | indent=N
   :N or :line N       go to row N
   F1 / :help          this help
+
+PANES  (aless --panes out[,program], or :vsplit)
+  C-w                 move the focus to the next pane; the keys work there
+  s                   show the focused pane's text, or its tree again; in the
+                      text, : and r work too, and any other key but the
+                      scrolling ones shows the tree
+  q                   close an output or program pane (the input pane stays)
+  :vsplit / :split    side by side / stacked, opening the output beside the input
+  :arrange            switch between side by side and stacked
+  :pane out|program|close   open the output or the program pane, or close one
+  :only               keep the input pane alone
+  The output is the document as --render or --alchemy writes it, read
+  back as a tree; it is written again when the tab reloads or changes.
 
   A watched tab reloads when its file changes and keeps your place: the
   focused node is found again by path, or by its nearest surviving
@@ -1592,6 +2147,7 @@ TABS, FILES AND WATCHING
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::ProgramArg;
 
     fn write_temp(name: &str, contents: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aless-app-tests-{}", std::process::id()));
@@ -1848,10 +2404,11 @@ mod tests {
     fn source_view_and_help() {
         let mut app = app_with("{\n\"a\": 1,\n\"b\": 2\n}\n");
         keys(&mut app, "jjs");
-        assert_eq!(app.mode, Mode::Source);
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
         keys(&mut app, "j");
-        assert_eq!(app.mode, Mode::Source);
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
         app.handle(Input::Key(Key::code(KeyCode::Esc)));
+        assert_eq!(app.workspace.focused().mode, PaneMode::Structure);
         assert_eq!(app.mode, Mode::Browse);
         app.handle(Input::Key(Key::code(KeyCode::F(1))));
         assert_eq!(app.mode, Mode::Overlay);
@@ -2113,12 +2670,512 @@ mod tests {
         assert!(place.1 > rows - app.pane_height(), "{place:?}");
         for (open, close) in [("!", "x"), ("s", "x")] {
             keys(&mut app, open);
-            assert_ne!(app.mode, Mode::Browse);
+            let covered =
+                app.mode != Mode::Browse || app.workspace.focused().mode == PaneMode::Source;
+            assert!(covered, "{open} covers the tree");
             crate::render::screen(&mut app);
             keys(&mut app, close);
             crate::render::screen(&mut app);
             assert_eq!((app.tab().focus, app.tab().scroll), place, "after {open}");
         }
+    }
+
+    fn ctrl(c: char) -> Input {
+        Input::Key(Key {
+            code: KeyCode::Char(c),
+            ctrl: true,
+            alt: false,
+        })
+    }
+
+    fn with_panes(panes: &[Role], through: Through) -> App {
+        let opts = Options {
+            panes: panes.to_vec(),
+            through,
+            ..Options::default()
+        };
+        App::new(opts, 100, 24)
+    }
+
+    /// The output pane shows the document as `--render` writes it, and
+    /// follows the input: a reload, another tab.
+    #[test]
+    fn the_output_pane_follows_the_input() {
+        let p = write_temp("panes.csv", "name,age\nada,36\n");
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_path(&p, None);
+        app.prepare();
+        let out = app.pane_tab(Pane::new(Role::Output));
+        assert_eq!(out.format, Format::Json);
+        assert!(out.source.contains("\"ada\""), "{}", out.source);
+        assert!(out.title.ends_with("→ json"), "{}", out.title);
+        std::fs::write(&p, "name,age\nlin,28\n").unwrap();
+        keys(&mut app, "r");
+        let out = app.pane_tab(Pane::new(Role::Output));
+        assert!(
+            out.source.contains("\"lin\""),
+            "a reload rebuilds it: {}",
+            out.source
+        );
+        app.open_source("u.json", "[1, 2]".into(), Format::Json);
+        app.prepare();
+        let out = app.pane_tab(Pane::new(Role::Output));
+        assert_eq!(out.source, "[\n  1,\n  2\n]\n", "the active tab's output");
+        // A directory has none, and says so.
+        app.open_explorer(p.parent().unwrap());
+        app.prepare();
+        let out = app.pane_tab(Pane::new(Role::Output));
+        assert!(!out.has_doc && out.error.is_some());
+    }
+
+    /// `:format` parses the input as another format, and the output
+    /// follows it.
+    #[test]
+    fn the_output_pane_follows_a_format_change() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.conf", "a = 1\n".into(), Format::Ini);
+        app.prepare();
+        let out = |app: &mut App| app.pane_tab(Pane::new(Role::Output)).source.clone();
+        assert_eq!(
+            out(&mut app),
+            "{\n  \"a\": \"1\"\n}\n",
+            "ini reads a string"
+        );
+        app.run_command("format toml");
+        app.prepare();
+        assert_eq!(out(&mut app), "{\n  \"a\": 1\n}\n", "toml reads a number");
+    }
+
+    /// C-w moves between panes, the keys move the focused pane's tree, s
+    /// switches it between its tree and its text, and q closes a pane but
+    /// never the input's.
+    #[test]
+    fn the_keys_work_on_the_focused_pane() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", r#"{"a": [1, 2], "b": 3}"#.into(), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused().role, Role::Output);
+        keys(&mut app, "j");
+        assert_eq!(app.tab().focus, 1, "the output's tree moves");
+        assert_eq!(app.input().focus, 0, "the input's stays");
+        keys(&mut app, "s");
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
+        assert_eq!(app.workspace.panes[0].mode, PaneMode::Structure);
+        keys(&mut app, "s");
+        assert_eq!(app.workspace.focused().mode, PaneMode::Structure);
+        app.handle(ctrl('w'));
+        assert_eq!(
+            app.workspace.focused().role,
+            Role::Input,
+            "round to the first"
+        );
+        app.handle(ctrl('w'));
+        keys(&mut app, "q");
+        assert_eq!(app.workspace.panes.len(), 1, "q closes the output pane");
+        assert!(!app.quit);
+        assert_eq!(app.tabs.len(), 1, "and no tab");
+    }
+
+    #[test]
+    fn the_pane_commands() {
+        let mut app = app_with("[1, 2]");
+        let roles = |app: &App| {
+            app.workspace
+                .panes
+                .iter()
+                .map(|p| p.role)
+                .collect::<Vec<_>>()
+        };
+        app.run_command("vsplit");
+        assert_eq!(roles(&app), [Role::Input, Role::Output]);
+        assert_eq!(app.workspace.arrangement, Arrangement::SideBySide);
+        app.run_command("arrange");
+        assert_eq!(app.workspace.arrangement, Arrangement::Stacked);
+        app.run_command("split");
+        assert_eq!(
+            roles(&app),
+            [Role::Input, Role::Output],
+            "a second split opens nothing"
+        );
+        app.run_command("pane program");
+        assert!(app.message.as_ref().unwrap().text.starts_with("No program"));
+        assert_eq!(roles(&app), [Role::Input, Role::Output]);
+        app.run_command("pane close");
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .starts_with("The input pane stays"));
+        app.handle(ctrl('w'));
+        app.run_command("pane close");
+        assert_eq!(roles(&app), [Role::Input]);
+        app.run_command("pane out");
+        assert_eq!(roles(&app), [Role::Input, Role::Output]);
+        app.run_command("only");
+        assert_eq!(roles(&app), [Role::Input]);
+        assert_eq!(
+            app.workspace.arrangement,
+            Arrangement::Stacked,
+            "the arrangement stays"
+        );
+        app.run_command("pane tree");
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .starts_with("usage: :pane"));
+    }
+
+    /// The program pane shows the program's text and its plan; a change to
+    /// the program's file is read again after the debounce, and the output
+    /// follows; a program that does not compile says why in both panes.
+    #[test]
+    fn the_program_pane_follows_its_file() {
+        let prog = write_temp("panes.alc", r#"def export [input] "one""#);
+        let through = Through::Program {
+            arg: ProgramArg::File(prog.clone()),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Output, Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        assert!(
+            app.effects.contains(&Effect::Watch(prog.clone())),
+            "{:?}",
+            app.effects
+        );
+        let output = Pane::new(Role::Output);
+        let plan = Pane {
+            role: Role::Program,
+            mode: PaneMode::Structure,
+        };
+        assert_eq!(app.pane_tab(output).source, "one");
+        assert!(app
+            .pane_tab(Pane::new(Role::Program))
+            .source
+            .contains("def export"));
+        let report = &app.pane_tab(plan).source;
+        assert!(report.contains("\"entry\": \"export\""), "{report}");
+        let later = || Instant::now() + RELOAD_DEBOUNCE * 2;
+        std::fs::write(&prog, r#"def export [input] "two""#).unwrap();
+        app.handle(Input::FileChanged(prog.clone()));
+        assert!(app.reload_pending());
+        app.handle(Input::Tick(later()));
+        assert_eq!(app.pane_tab(output).source, "two");
+        assert!(app.message.as_ref().unwrap().text.starts_with("Reloaded"));
+        std::fs::write(&prog, "def export [input] (nope input)").unwrap();
+        app.handle(Input::FileChanged(prog.clone()));
+        app.handle(Input::Tick(later()));
+        assert!(!app.pane_tab(output).has_doc);
+        let why = app.pane_tab(plan).error.clone().unwrap();
+        assert!(why.message.contains("unknown_name"), "{}", why.message);
+        assert!(
+            app.message.as_ref().unwrap().error,
+            "the status line says so"
+        );
+    }
+
+    /// Without watching, `r` in the program pane reads the program again
+    /// and the output follows; `:` and `r` leave the program's text on
+    /// screen. A program given as an expression has no file to read.
+    #[test]
+    fn r_in_the_program_pane_reads_the_program_again() {
+        let prog = write_temp("panes-r.alc", r#"def export [input] "one""#);
+        let through = Through::Program {
+            arg: ProgramArg::File(prog.clone()),
+            render: None,
+        };
+        let opts = Options {
+            panes: vec![Role::Output, Role::Program],
+            through,
+            watch: false,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 100, 24);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        let output = Pane::new(Role::Output);
+        assert_eq!(app.pane_tab(output).source, "one");
+        std::fs::write(&prog, r#"def export [input] "two""#).unwrap();
+        // A change seen through a directory another tab watches queues
+        // nothing: the loop does not tick for a reload that never runs.
+        app.handle(Input::FileChanged(prog.clone()));
+        assert!(!app.reload_pending(), "nothing is queued unwatched");
+        app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
+        assert_eq!(app.pane_tab(output).source, "one", "nothing watches it");
+        app.handle(ctrl('w'));
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused(), Pane::new(Role::Program));
+        keys(&mut app, "r");
+        assert_eq!(app.pane_tab(output).source, "two", "r reads it again");
+        assert!(app.message.as_ref().unwrap().text.starts_with("Reloaded"));
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
+        keys(&mut app, ":");
+        assert_eq!(app.mode, Mode::Prompt(PromptKind::Command));
+        app.handle(Input::Key(Key::code(KeyCode::Esc)));
+        assert_eq!(app.workspace.focused().mode, PaneMode::Source);
+        // A program that no longer reads says why in the output pane.
+        std::fs::remove_file(&prog).unwrap();
+        keys(&mut app, "r");
+        let message = app.message.clone().unwrap();
+        assert!(message.error, "{}", message.text);
+        assert!(
+            message.text.contains("the program pane shows why"),
+            "{}",
+            message.text
+        );
+        let why = app.pane_tab(output).error.clone().unwrap();
+        assert!(
+            why.message.contains("the program did not load"),
+            "{}",
+            why.message
+        );
+
+        let through = Through::Program {
+            arg: ProgramArg::Expr(r#"def export [input] "x""#.into()),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Output, Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        app.handle(ctrl('w'));
+        keys(&mut app, "r");
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("--alchemy-expr"));
+    }
+
+    /// The output is written with `--indent` as the command line gave it,
+    /// as `--render json` prints it: `<` and `>` change the tree's
+    /// indentation, not the output's. A pane's document opens folded to
+    /// `--depth`, as any new document does.
+    #[test]
+    fn the_output_keeps_the_indent_and_depth_it_was_given() {
+        let opts = Options {
+            panes: vec![Role::Output],
+            indent: 4,
+            depth: Some(1),
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 100, 24);
+        let doc = r#"{"a": {"b": 1}, "c": [1, 2]}"#;
+        app.open_source("t.json", doc.into(), Format::Json);
+        app.prepare();
+        let output = Pane::new(Role::Output);
+        assert!(
+            app.pane_tab(output)
+                .source
+                .starts_with("{\n    \"a\": {\n        \"b\""),
+            "{}",
+            app.pane_tab(output).source
+        );
+        let input_rows = app.input().row_count();
+        assert_eq!(input_rows, 3, "the input folded to depth 1");
+        assert_eq!(
+            app.pane_tab(output).row_count(),
+            input_rows,
+            "and the output"
+        );
+        keys(&mut app, ">");
+        app.open_source("u.json", "[2]".into(), Format::Json);
+        app.prepare();
+        assert_eq!(app.pane_tab(output).source, "[\n    2\n]\n");
+    }
+
+    /// A program that cannot be read says why from the first screen: on
+    /// the status line, and in its pane, on its text as on its plan.
+    #[test]
+    fn a_program_that_cannot_be_read_says_why() {
+        let missing = std::env::temp_dir().join(format!(
+            "aless-app-tests-{}-no-such-program.alc",
+            std::process::id()
+        ));
+        let through = Through::Program {
+            arg: ProgramArg::File(missing),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        let message = app.message.clone().unwrap();
+        assert!(message.error, "{}", message.text);
+        assert!(
+            message
+                .text
+                .contains("could not be read or compiled — the program pane shows why"),
+            "{}",
+            message.text
+        );
+        assert_eq!(app.workspace.panes[1].mode, PaneMode::Source);
+        let text = app.pane_tab(Pane::new(Role::Program));
+        assert!(text.shows_error_only(), "the text holds the failure");
+        let why = text.error.clone().unwrap().report;
+        let first = crate::load::strip_ansi(why.lines().next().unwrap_or_default());
+        let screen = crate::render::screen(&mut app).text();
+        let shown: String = first.chars().take(20).collect();
+        assert!(screen.contains(&shown), "{shown:?} not in:\n{screen}");
+    }
+
+    /// `:format` parses the input again, so it is refused for a directory
+    /// whichever pane has the focus.
+    #[test]
+    fn format_is_refused_for_a_directory_from_any_pane() {
+        let dir = write_temp("explored.json", "1");
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_explorer(dir.parent().unwrap());
+        app.prepare();
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused().role, Role::Output);
+        app.run_command("format text");
+        let message = app.message.clone().unwrap();
+        assert!(
+            message.text.starts_with(":format applies to a document"),
+            "{}",
+            message.text
+        );
+        assert!(app.input().explorer.is_some(), "the directory stays one");
+    }
+
+    /// A change to the input re-anchors it in the input pane's view,
+    /// whichever pane has the focus and however tall it is.
+    #[test]
+    fn the_input_is_reanchored_in_its_own_pane() {
+        let opts = Options {
+            panes: vec![Role::Output, Role::Program],
+            through: Through::Program {
+                arg: ProgramArg::Expr("def export [input] input".into()),
+                render: None,
+            },
+            stacked: true,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", "[1, 2, 3]".into(), Format::Json);
+        app.prepare();
+        let bodies: Vec<usize> = app
+            .pane_areas()
+            .iter()
+            .map(|a| usize::from(a.body.height))
+            .collect();
+        assert_ne!(bodies[0], bodies[2], "the stacked panes differ: {bodies:?}");
+        app.handle(ctrl('w'));
+        app.handle(ctrl('w'));
+        assert_eq!(app.workspace.focused().role, Role::Program);
+        assert_eq!(app.view().height, bodies[2]);
+        assert_eq!(app.pane_view(Role::Input).height, bodies[0]);
+    }
+
+    /// The output's title follows `:set ascii` at once.
+    #[test]
+    fn the_output_title_follows_the_ascii_option() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        let output = Pane::new(Role::Output);
+        assert_eq!(app.pane_tab(output).title, "t.json → json");
+        app.run_command("set ascii");
+        app.prepare();
+        assert_eq!(app.pane_tab(output).title, "t.json -> json");
+        app.run_command("set noascii");
+        app.prepare();
+        assert_eq!(app.pane_tab(output).title, "t.json → json");
+    }
+
+    /// A pane showing its text stays on it when a shorter text replaces
+    /// it: scrolled past the new text's end, it shows the text's last
+    /// lines, the output's as the program's.
+    #[test]
+    fn a_shorter_text_leaves_the_pane_on_its_text() {
+        let long: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", format!("[{}]", long.join(", ")), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "sG");
+        let output = app.workspace.focused();
+        assert_eq!(
+            output,
+            Pane {
+                role: Role::Output,
+                mode: PaneMode::Source,
+            }
+        );
+        assert!(app.pane_tab(output).source_scroll > 100);
+        app.open_source("u.json", "[1]".into(), Format::Json);
+        app.prepare();
+        assert_eq!(app.pane_tab(output).source, "[\n  1\n]\n");
+        assert_eq!(app.pane_tab(output).source_scroll, 0);
+
+        let prog = write_temp(
+            "panes-scroll.alc",
+            &format!("def export [input] input\n{}", "; a comment\n".repeat(100)),
+        );
+        let through = Through::Program {
+            arg: ProgramArg::File(prog.clone()),
+            render: None,
+        };
+        let mut app = with_panes(&[Role::Program], through);
+        app.open_source("t.json", "[1]".into(), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "G");
+        let program = app.workspace.focused();
+        assert_eq!(program, Pane::new(Role::Program));
+        assert!(app.pane_tab(program).source_scroll > 50);
+        std::fs::write(&prog, "def export [input] input\n").unwrap();
+        keys(&mut app, "r");
+        assert_eq!(app.pane_tab(program).source, "def export [input] input\n");
+        assert_eq!(app.pane_tab(program).source_scroll, 0);
+    }
+
+    /// A pane showing its text fills itself when it grows taller: scrolled
+    /// to the end of a stacked pane, then arranged side by side, it shows
+    /// earlier lines rather than blank rows under the last.
+    #[test]
+    fn a_taller_pane_fills_with_its_text() {
+        let long: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let opts = Options {
+            panes: vec![Role::Output],
+            stacked: true,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", format!("[{}]", long.join(", ")), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "sG");
+        let output = app.workspace.focused();
+        let total = crate::load::line_count(&app.pane_tab(output).source);
+        let short = usize::from(app.pane_areas()[1].body.height);
+        assert_eq!(app.pane_tab(output).source_scroll, total - short);
+        app.run_command("arrange");
+        app.prepare();
+        let tall = usize::from(app.pane_areas()[1].body.height);
+        assert!(tall > short, "{tall} > {short}");
+        assert_eq!(app.pane_tab(output).source_scroll, total - tall);
+    }
+
+    /// A click gives the focus to the pane under it, and to the row.
+    #[test]
+    fn a_click_focuses_the_pane_and_the_row() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.json", "[1, 2, 3]".into(), Format::Json);
+        app.prepare();
+        // The output pane's body starts at column 50 and row 1, under its
+        // title.
+        app.handle(Input::Click(60, 3));
+        assert_eq!(app.workspace.focused().role, Role::Output);
+        assert_eq!(app.tab().focus, 2);
+        app.handle(Input::Click(3, 0));
+        assert_eq!(app.workspace.focused().role, Role::Input, "a title focuses");
+        assert_eq!(app.tab().focus, 0, "and moves no row");
     }
 
     #[test]

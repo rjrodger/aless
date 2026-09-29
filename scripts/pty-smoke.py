@@ -306,6 +306,22 @@ def too_large_scenario(work):
     ])
 
 
+def panes_scenario(work):
+    """--panes out: the document beside its output, C-w and s in the
+    output pane, q closing it."""
+    data = os.path.join(work, "panes.csv")
+    with open(data, "w") as f:
+        f.write("name,age\nada,36\n")
+    return drive(["--panes", "out", "--render", "yaml", data], work, [
+        ("the input and its output side by side", "",
+         [" input · panes.csv · tree", " output · panes.csv → yaml · tree"], 3.0),
+        ("C-w and s show the output's text", "\x17s",
+         ['- "name": "ada"', "panes.csv → yaml  (source)"], 3.0),
+        ("q closes the output pane", "q", ["panes.csv ."], 3.0),
+        ("quit", "q", [], 1.0),
+    ])
+
+
 def piped_input_scenario(work):
     """`command | aless` in a terminal: the document comes from the pipe and
     the keys from the terminal, so the viewer starts."""
@@ -497,7 +513,7 @@ def main():
         print("ok   clean exit")
     last[0] = screen.text()
     for scenario in (explorer_scenario, errors_scenario, too_large_scenario,
-                     piped_input_scenario, no_terminal_scenario):
+                     panes_scenario, piped_input_scenario, no_terminal_scenario):
         if failures:
             break
         more, last_screen = scenario(work)

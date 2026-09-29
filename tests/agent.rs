@@ -2479,3 +2479,58 @@ fn yaml_records_through_the_inferred_table_are_the_native_csv() {
     );
     assert_eq!(inferred.stdout, native.stdout);
 }
+
+/// `--panes` opens the viewer, so without a terminal it refuses, writing
+/// nothing on standard output, and with an option that prints instead it
+/// says the two do not go together. `--render` and the program choose the
+/// output pane's content with it, so they are no refusal.
+#[test]
+fn panes_open_the_viewer_or_refuse() {
+    for (args, message) in [
+        (
+            vec!["--panes", "out", "tests/fixtures/nested.json"],
+            "--panes opens the viewer, which needs a terminal: without one, give --render or \
+             --alchemy without --panes",
+        ),
+        (
+            vec![
+                "--panes",
+                "out",
+                "--render",
+                "yaml",
+                "tests/fixtures/sample.csv",
+            ],
+            "--panes opens the viewer, which needs a terminal: without one, give --render or \
+             --alchemy without --panes",
+        ),
+        (
+            vec!["--panes", "out", "--json", "tests/fixtures/nested.json"],
+            "--panes opens the viewer, and --json is for output without one: give one",
+        ),
+        (
+            vec!["--panes", "tree", "tests/fixtures/nested.json"],
+            "--panes names out and program, not tree",
+        ),
+        (
+            vec!["--panes", "program", "tests/fixtures/nested.json"],
+            "--panes program shows a program: give it with --alchemy FILE or --alchemy-expr TEXT",
+        ),
+        (
+            vec!["--panes", " , ", "tests/fixtures/nested.json"],
+            "--panes names the panes to open beside the input: out, program, or out,program",
+        ),
+        (
+            // The input alone is still the viewer.
+            vec!["--panes", "in", "tests/fixtures/nested.json"],
+            "--panes opens the viewer, which needs a terminal: without one, give --render or \
+             --alchemy without --panes",
+        ),
+    ] {
+        let out = aless(&args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?} wrote to standard output");
+        let err = json(&out.stderr);
+        assert_eq!(err["error"]["kind"], "usage", "{args:?}");
+        assert_eq!(err["error"]["message"], message, "{args:?}");
+    }
+}

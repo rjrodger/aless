@@ -62,6 +62,8 @@ aless --kind jsonic notes.txt        # force a format
 aless --grammar hosts=hosts.abnf /etc/hosts   # a format of your own, from an ABNF grammar
 aless --no-watch big.json            # do not reload on change
 aless --mode line --line-numbers x.json
+aless --panes out --render yaml data.csv     # the document beside its YAML
+aless --panes out,program --alchemy export.alc api.json   # a program's output, and the program
 aless                                # explore the current directory; Enter opens a file
 aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (see examples/)
 ```
@@ -80,6 +82,8 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color`, `--no-mouse` | plain output; no mouse capture |
+| `--panes out[,program]` | open panes beside the input: `out`, the document as `--render` or `--alchemy` writes it, and `program`, the program ([Panes](#panes)) |
+| `--stacked` | stack the panes rather than place them side by side |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
 | `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none) |
 
@@ -93,7 +97,11 @@ options and the limits), or let its standard output be something other
 than a terminal (a pipe, a file, an agent's tool call), and it prints
 JSON instead of starting the viewer. It
 never waits for keys: when the viewer cannot start, aless says so at
-once, before reading any input, and exits with status 2.
+once, before reading any input, and exits with status 2. `--panes` is the
+one exception to the first rule: it opens the viewer, and `--render`,
+`--alchemy` and `--alchemy-expr` given with it choose what its output
+pane shows ([Panes](#panes)), so without a terminal it refuses with
+status 2 too.
 
 ```bash
 aless config.yaml | jq .spec                       # any format in, JSON out
@@ -763,13 +771,14 @@ Extensions on keys jless leaves free:
 |---|---|
 | `Tab` `Shift-Tab` | next / previous tab |
 | `W` | toggle watching on the tab |
-| `r` | reload the tab now |
-| `s` | show the raw source, scrolled to the focused node's line (`s` or `Esc` returns) |
+| `r` | reload the tab now; in the program pane, the program ([Panes](#panes)) |
+| `s` | show the focused pane's text: the raw source, scrolled to the focused node's line (`s` or `Esc` returns) |
+| `C-w` | move the focus to the next pane ([Panes](#panes)) |
 | `!` | show the tab's parse error report in full (`h` `l` pan a long line) |
 | `C-z` | suspend (Unix) |
 
-Mouse: the wheel scrolls, a click focuses a row (`--no-mouse` to leave the
-mouse to the terminal).
+Mouse: the wheel scrolls, a click focuses the pane under it and a row
+(`--no-mouse` to leave the mouse to the terminal).
 
 ### Commands
 
@@ -778,7 +787,48 @@ mouse to the terminal).
 `:format FORMAT` · `:mode data|line` · `:depth N` · `:expand` / `:collapse` ·
 `:N` / `:line N` · `:source` · `:error` · `:w[!] FILE` (writes the document as JSON) ·
 `:set number|nonumber|number!|relativenumber|norelativenumber|relativenumber!|so=N|indent=N|watch|nowatch|ascii` ·
+`:vsplit` / `:split` · `:arrange` · `:pane out|program|close` · `:only` ·
 `:help`.
+
+## Panes
+
+`--panes out` opens a second pane beside the document: the **output**,
+what `--render` or `--alchemy` would write for it, computed in memory and
+read back in its own format, so its tree sits beside the input's and `s`
+shows its text. With a program, `--panes out,program` adds a third pane,
+the **program**: its text, and with `s` its plan report (`--explain`'s
+JSON) as a tree.
+
+```bash
+aless --panes out --render yaml data.csv                  # CSV beside its YAML
+aless --panes out,program --alchemy export.alc api.json   # the program between them
+aless --panes out --stacked orders.json                   # its JSON, one above the other
+```
+
+- **What the output is.** With `--panes`, `--render`, `--alchemy` and
+  `--alchemy-expr` choose the output pane's content instead of printing
+  it; without any of them it is JSON. The other options for output
+  without a screen are refused with `--panes`, and so is a run without a
+  terminal.
+- **Keys.** `C-w` moves the focus to the next pane, and every key that
+  moves, folds, searches or copies works on the focused pane. `s`
+  switches the focused pane between its tree and its text. In the text,
+  the scrolling keys scroll, `:` and `r` work as ever, and any other key
+  shows the tree again. `q` closes an output or program pane; in the
+  input pane it closes the tab, as ever. The focused pane's title is
+  bold, and the status bar describes it.
+- **Commands.** `:vsplit` and `:split` arrange the panes side by side or
+  stacked, opening the output beside the input when it is alone.
+  `:arrange` switches between the two, `:pane out|program|close` opens or
+  closes one, and `:only` keeps the input pane alone.
+- **Following the input.** The output is written again when the active
+  tab changes, reloads or is parsed as another format, and when the
+  program's file changes, which is watched as a tab's file is. `r` in the
+  program pane reads the program again, watched or not. The output keeps
+  its place across the rebuild, as a reload does.
+- **Limits.** The output pane keeps up to 16 MB of output; past that the
+  text is cut and shown as text, not read back. The run happens in the
+  viewer, which waits for it as long as the command would take.
 
 ## File explorer
 
@@ -1022,7 +1072,8 @@ the library is terminal-free and unit tested:
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |
-| `app` | tabs, modes, the key map, the command line, watch scheduling, yank |
+| `pane` | the panes: their roles and modes, their layout side by side or stacked, and the output written in memory |
+| `app` | tabs, panes, modes, the key map, the command line, watch scheduling, yank |
 | `render` | the screen as ratatui widgets, every width measured as the terminal places text |
 | `watch` | the notify file watcher |
 | `clip` | clipboard and OSC 52 |
