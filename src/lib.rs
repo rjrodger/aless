@@ -15,6 +15,7 @@ pub mod fmt;
 pub mod grammar;
 pub mod headless;
 pub mod load;
+pub mod pane;
 pub mod prov;
 pub mod render;
 pub mod search;

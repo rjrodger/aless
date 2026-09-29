@@ -26,6 +26,7 @@ use aless::app::{App, Effect, Input, Key, KeyCode, Options};
 use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
+use aless::pane::{Role, Through};
 use aless::render;
 use aless::watch::FileWatcher;
 
@@ -43,7 +44,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     Any option in this section but --depth (the viewer has one too), or
     a standard output that is not a terminal, prints JSON instead of
     starting the viewer, and nothing waits for keys: `aless FILE | jq .`
-    is the document as JSON.
+    is the document as JSON. With --panes (below), --render and --alchemy
+    choose the viewer's output pane instead.
 
         --json              The document as JSON (the default), or the value
                             at the start that --path or --at gives
@@ -128,6 +130,14 @@ THE VIEWER (in a terminal):
         --ascii             Draw fold markers with ASCII characters
         --no-color          No colours (as does NO_COLOR)
         --no-mouse          Do not capture the mouse
+        --panes <out,program>
+                            Open panes beside the input: out, the document as
+                            --render or --alchemy writes it (JSON when neither
+                            is given; with --panes they choose this pane's
+                            output instead of printing), and program, the
+                            program. C-w moves between panes, s shows a pane's
+                            text or tree, :pane out|program|close
+        --stacked           Stack the panes rather than side by side
 
 BOTH:
     -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
@@ -173,6 +183,9 @@ struct Args {
     compact: bool,
     /// An option that only means something without a screen was given.
     headless: bool,
+    /// Those options, as given: `--panes` takes `--render` and the
+    /// program for its output pane and refuses the rest.
+    headless_given: Vec<String>,
     /// The largest input to read, in bytes; `None` for no limit.
     max_size: Option<u64>,
     /// The longest a parse may run; `None` for no limit.
@@ -211,6 +224,7 @@ fn parse_args() -> Result<Args, String> {
         limit: None,
         compact: false,
         headless: false,
+        headless_given: Vec::new(),
         max_size: aless::load::Limits::DEFAULT.max_size,
         timeout: aless::load::Limits::DEFAULT.timeout,
     };
@@ -242,6 +256,7 @@ fn parse_args() -> Result<Args, String> {
         };
         if HEADLESS_OPTIONS.contains(&name.as_str()) {
             args.headless = true;
+            args.headless_given.push(name.clone());
         }
         let mut op = None;
         match name.as_str() {
@@ -323,6 +338,25 @@ fn parse_args() -> Result<Args, String> {
             "--ascii" => args.opts.ascii = true,
             "--no-color" | "--no-colour" => args.opts.color = false,
             "--no-mouse" => args.mouse = false,
+            "--panes" => {
+                for part in value()?.split(',').filter(|p| !p.trim().is_empty()) {
+                    match Role::from_name(part) {
+                        // The input pane is always there.
+                        Some(Role::Input) => {}
+                        Some(role) if !args.opts.panes.contains(&role) => {
+                            args.opts.panes.push(role)
+                        }
+                        Some(_) => {}
+                        None => {
+                            return Err(format!(
+                                "--panes names out and program, not {}",
+                                part.trim()
+                            ))
+                        }
+                    }
+                }
+            }
+            "--stacked" => args.opts.stacked = true,
             other => return Err(format!("unknown option: {other} (see aless --help)")),
         }
         if let Some(v) = inline {
@@ -340,6 +374,45 @@ fn parse_args() -> Result<Args, String> {
                 _ => args.op = Some(op),
             }
         }
+    }
+    // With --panes the viewer opens, and --render and the program say what
+    // the output pane shows rather than what to print.
+    if !args.opts.panes.is_empty() {
+        let taken = ["--render", "--alchemy", "--alchemy-expr"];
+        if let Some(other) = args
+            .headless_given
+            .iter()
+            .find(|o| !taken.contains(&o.as_str()))
+        {
+            return Err(format!(
+                "--panes opens the viewer, and {other} is for output without one: give one"
+            ));
+        }
+        let render = match args.op.take() {
+            None => None,
+            Some(Op::Render(renderer)) => Some(renderer),
+            Some(other) => {
+                return Err(format!(
+                    "--panes opens the viewer, and {} prints without one: give one",
+                    other.flag()
+                ))
+            }
+        };
+        args.opts.through = match (args.program.take(), render) {
+            (Some(arg), render) => Through::Program { arg, render },
+            (None, Some(renderer)) => Through::Render(renderer),
+            (None, None) => Through::default(),
+        };
+        if args.opts.panes.contains(&Role::Program)
+            && !matches!(args.opts.through, Through::Program { .. })
+        {
+            return Err(
+                "--panes program shows a program: give it with --alchemy FILE or \
+                 --alchemy-expr TEXT"
+                    .into(),
+            );
+        }
+        args.headless = false;
     }
     // A program is what to print, with --render naming its renderer.
     if let Some(program) = args.program.take() {
@@ -445,6 +518,13 @@ fn main() {
         }
     };
     let headless = headless_wanted(args.headless);
+    if headless && !args.opts.panes.is_empty() {
+        refuse_usage(
+            "--panes opens the viewer, which needs a terminal: without one, give --render or \
+             --alchemy without --panes",
+            true,
+        );
+    }
     // Before any input is read, grammar files included: input that never
     // ends (a pipe left open, a FIFO) would otherwise keep a viewer that
     // cannot start waiting.
@@ -850,7 +930,7 @@ fn convert(ev: Event) -> Option<Input> {
         Event::Mouse(m) => match m.kind {
             MouseEventKind::ScrollDown => Some(Input::Wheel(3)),
             MouseEventKind::ScrollUp => Some(Input::Wheel(-3)),
-            MouseEventKind::Down(MouseButton::Left) => Some(Input::Click(m.row)),
+            MouseEventKind::Down(MouseButton::Left) => Some(Input::Click(m.column, m.row)),
             _ => None,
         },
         _ => None,

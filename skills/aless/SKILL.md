@@ -16,7 +16,9 @@ prints one JSON value on standard output and exits 0, or prints
    `--where`, `--check`, `--render` or `--alchemy`. aless also prints JSON whenever standard output
    is not a terminal, but an explicit option guarantees it. The viewer is
    never what you want. Without a terminal it refuses with exit status 2;
-   in a pseudo-terminal it would wait for keys.
+   in a pseudo-terminal it would wait for keys. Never pass `--panes`: it
+   opens the viewer, and `--render` or `--alchemy` given with it choose
+   the viewer's output pane instead of printing.
 2. **Name the file as an argument.** Standard input works, but it is
    parsed as JSON unless `-k FORMAT` says otherwise (`-k yaml`,
    `-k toml`, …).
