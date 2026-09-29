@@ -870,10 +870,12 @@ first names, and never more than 2000 directories in one explorer.
 An explorer tab watches like a file tab: a file added or removed shows up
 on the next tick, with the folds and the focus kept. A directory's
 modification time moves only as often as its file system's clock ticks,
-16 ms or so on NTFS and up to two seconds on FAT, so a directory read
-within two seconds of its last change is read again and compared on each
-tick for what is left of those two seconds, timed by this machine's own
-clock, and a change in the same tick still shows.
+16 ms or so on NTFS and up to two seconds on FAT, and the time is the
+file system's own, which on a network share is its server's and need not
+agree with this machine's. So for two seconds after a directory is read
+with a new time, timed by this machine's own clock whatever that time
+says, it is read again and compared on each tick, and a change in the
+same tick still shows.
 
 ## Parse errors
 

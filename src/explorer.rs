@@ -91,8 +91,8 @@ pub struct Listing {
     pub error: Option<String>,
     /// Until when, by this machine's own steady clock, the listing is read
     /// again and compared rather than taken at its time's word, with one
-    /// last reading once it has passed: `None` for a directory read long
-    /// enough after its last change, or read that last time.
+    /// last reading once it has passed: `None` once that last reading is
+    /// made, or for a directory without a time.
     pub racy_until: Option<Instant>,
 }
 
@@ -108,18 +108,17 @@ fn read_again(dir: &Path, old: &Listing) -> Listing {
     again
 }
 
-/// How long a directory whose time is `mtime`, read at `read_at` by the
-/// file system's clock, is to be read again from `now` on: what is left of
-/// [`RACY`] since its last change, or all of it when the change is dated
-/// ahead of the reading, by a skewed clock or a restored archive. Timed by
-/// the steady clock from the first reading on, so a date ahead ends the
-/// window as any other does, not when the clocks meet.
-fn racy_until(mtime: Option<SystemTime>, read_at: SystemTime, now: Instant) -> Option<Instant> {
-    let left = match read_at.duration_since(mtime?) {
-        Ok(age) => RACY.checked_sub(age).filter(|left| !left.is_zero())?,
-        Err(_) => RACY,
-    };
-    now.checked_add(left)
+/// Until when a directory whose time is `mtime`, read at `now`, is to be
+/// read again: [`RACY`] from this reading, whatever the time says. The
+/// tick of the file system's clock that gave the directory its time ends
+/// within [`RACY`] of any reading of that time, but the time cannot say
+/// how long ago that was: it is stamped by the file system's clock, which
+/// on a network share is its server's and may run behind this machine's
+/// or ahead of it, as a restored archive's dates do. Timed by the steady
+/// clock, so the window is as long for any date and ends as any other
+/// does, not when the clocks meet.
+fn racy_until(mtime: Option<SystemTime>, now: Instant) -> Option<Instant> {
+    mtime.and(now.checked_add(RACY))
 }
 
 #[derive(Clone, Debug)]
@@ -133,9 +132,9 @@ pub struct Explorer {
 }
 
 fn read_listing(dir: &Path) -> Listing {
-    let (read_at, now) = (SystemTime::now(), Instant::now());
+    let now = Instant::now();
     let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
-    let racy_until = racy_until(mtime, read_at, now);
+    let racy_until = racy_until(mtime, now);
     match std::fs::read_dir(dir) {
         Ok(read) => {
             let mut entries: Vec<Entry> = read
@@ -295,16 +294,17 @@ impl Explorer {
         }
     }
 
-    /// Has any listed directory changed on disk since it was read? Its
-    /// modification time answers for a directory read [`RACY`] or more
-    /// after its last change. One read sooner is read again and compared,
-    /// since a change within its file system's clock tick leaves the time
-    /// as it was. A reading that finds nothing new takes the old one's
-    /// place and keeps its window, timed by the steady clock from the
-    /// first reading, so the directory is read again for [`RACY`] at most
-    /// after its change is first seen, whatever its date. The first check
-    /// after the window reads it once more, since a change late in the
-    /// window may have come after the last reading in it, and closes it.
+    /// Has any listed directory changed on disk since it was read? A
+    /// change within its file system's clock tick leaves the directory's
+    /// time as it was, so for [`RACY`] after the reading that first finds
+    /// a time, by the steady clock, the directory is read again and
+    /// compared on each check (see [`racy_until`]); from then on its time
+    /// answers. A reading that finds nothing new takes the old one's place
+    /// and keeps its window, so the directory is read again for [`RACY`]
+    /// at most after its change is first seen, whatever its date. The
+    /// first check after the window reads it once more, since a change
+    /// late in the window may have come after the last reading in it, and
+    /// closes it.
     pub fn changed(&mut self) -> bool {
         for (dir, listing) in &mut self.listed {
             let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
@@ -543,10 +543,10 @@ mod tests {
     }
 
     /// A change within the tick of the file system's clock that gave the
-    /// directory its time leaves the time as it was. A listing read that
-    /// soon after a change is read again and compared, so the change is
-    /// seen all the same; one read after the window is taken at its
-    /// time's word, and not read again.
+    /// directory its time leaves the time as it was. A listing is read
+    /// again and compared for a window after the reading that finds its
+    /// time, so the change is seen all the same; after the window it is
+    /// taken at its time's word, and not read again.
     #[test]
     fn a_change_the_clock_does_not_show_is_still_seen() {
         let dir = tree("racy");
@@ -554,7 +554,7 @@ mod tests {
         let root = ex.root.clone();
         assert!(
             ex.listed[&root].racy_until.is_some(),
-            "read just after the tree was made"
+            "read again after its first reading"
         );
         assert!(!ex.changed(), "nothing new");
         std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
@@ -611,28 +611,47 @@ mod tests {
         assert_eq!(ex.listed[&root].racy_until, None, "closed stays closed");
     }
 
-    /// The window to read a directory again is what is left of [`RACY`]
-    /// since its change, none past it, and all of it, no more, for a
-    /// change dated ahead of the reading: timed by the steady clock, it
-    /// ends when it would for any change, not when the clocks meet.
+    /// The window to read a directory again is [`RACY`] from the reading,
+    /// by the steady clock, whatever the directory's date: a file system
+    /// whose clock is behind this machine's dates a change made just now
+    /// long ago, and one ahead of it dates it in the future.
     #[test]
     fn the_window_to_read_again_is_timed_here() {
-        let (read_at, now) = (SystemTime::now(), Instant::now());
-        let before = |secs: f64| Some(read_at - Duration::from_secs_f64(secs));
-        assert_eq!(racy_until(None, read_at, now), None, "no time, no window");
-        assert_eq!(racy_until(before(3.0), read_at, now), None, "long since");
-        assert_eq!(racy_until(before(2.0), read_at, now), None, "just past");
-        assert_eq!(
-            racy_until(before(0.5), read_at, now),
-            Some(now + Duration::from_millis(1500)),
-            "what is left"
-        );
-        let ahead = Some(read_at + Duration::from_secs(3600));
-        assert_eq!(
-            racy_until(ahead, read_at, now),
-            Some(now + RACY),
-            "dated an hour ahead, read again for two seconds"
-        );
+        let (at, now) = (SystemTime::now(), Instant::now());
+        let hour = Duration::from_secs(3600);
+        assert_eq!(racy_until(None, now), None, "no time, no window");
+        for (mtime, what) in [
+            (at - hour, "dated an hour behind"),
+            (at, "dated now"),
+            (at + hour, "dated an hour ahead"),
+        ] {
+            assert_eq!(racy_until(Some(mtime), now), Some(now + RACY), "{what}");
+        }
+    }
+
+    /// A directory dated an hour behind, as a network share whose server's
+    /// clock is behind this machine's dates a change made just now, is
+    /// read again for its window all the same: its date cannot say the
+    /// tick of that clock is over.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_dated_behind_is_read_again_all_the_same() {
+        let dir = tree("dated-behind");
+        let hour = SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour)
+            .unwrap();
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        assert!(ex.listed[&root].racy_until.is_some(), "read again");
+        std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
+        // As the share's coarse clock would leave it: the time it had.
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour)
+            .unwrap();
+        assert!(ex.changed(), "the change seen");
     }
 
     /// A directory dated an hour ahead is read again for two seconds, as
