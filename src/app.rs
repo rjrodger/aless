@@ -301,10 +301,15 @@ pub struct App {
     pub workspace: Workspace,
     output: Option<OutputView>,
     program: Option<ProgramView>,
+    /// The indentation the output pane's JSON is written with: `--indent`
+    /// as the command line gave it, as `--render json` would print. `<`
+    /// and `>` change the tree's, not this.
+    output_indent: usize,
 }
 
 impl App {
     pub fn new(opts: Options, width: u16, height: u16) -> App {
+        let opts_indent = opts.indent;
         App {
             tabs: Vec::new(),
             active: 0,
@@ -325,6 +330,7 @@ impl App {
             workspace: Workspace::default(),
             output: None,
             program: None,
+            output_indent: opts_indent,
         }
         .with_panes()
     }
@@ -585,6 +591,7 @@ impl App {
                 input.format,
                 &through,
                 compiled,
+                self.output_indent,
                 load::Limits::current().timeout,
             )
         };
@@ -646,6 +653,9 @@ impl App {
                 self.next_id += 1;
                 let mut tab = Tab::new(id, title.to_string(), None, loaded);
                 tab.line_mode = self.opts.line_mode;
+                if let Some(depth) = self.opts.depth {
+                    tab.expand_to_depth(depth, view);
+                }
                 tab
             }
         }
@@ -1719,7 +1729,11 @@ impl App {
                 tab.reload_due = Some(now + RELOAD_DEBOUNCE);
             }
         }
-        if self.program_path().is_some_and(|p| same_path(&p, path)) {
+        // Without watching the program is read again by `r` alone; a
+        // change seen through a directory another tab watches queues
+        // nothing, or the loop would tick for a reload that never runs.
+        let watched = self.opts.watch && self.program_path().is_some_and(|p| same_path(&p, path));
+        if watched {
             if let Some(program) = self.program.as_mut() {
                 program.due = Some(now + RELOAD_DEBOUNCE);
             }
@@ -2833,6 +2847,10 @@ mod tests {
         let output = Pane::new(Role::Output);
         assert_eq!(app.pane_tab(output).source, "one");
         std::fs::write(&prog, r#"def export [input] "two""#).unwrap();
+        // A change seen through a directory another tab watches queues
+        // nothing: the loop does not tick for a reload that never runs.
+        app.handle(Input::FileChanged(prog.clone()));
+        assert!(!app.reload_pending(), "nothing is queued unwatched");
         app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
         assert_eq!(app.pane_tab(output).source, "one", "nothing watches it");
         app.handle(ctrl('w'));
@@ -2879,6 +2897,43 @@ mod tests {
             .unwrap()
             .text
             .contains("--alchemy-expr"));
+    }
+
+    /// The output is written with `--indent` as the command line gave it,
+    /// as `--render json` prints it: `<` and `>` change the tree's
+    /// indentation, not the output's. A pane's document opens folded to
+    /// `--depth`, as any new document does.
+    #[test]
+    fn the_output_keeps_the_indent_and_depth_it_was_given() {
+        let opts = Options {
+            panes: vec![Role::Output],
+            indent: 4,
+            depth: Some(1),
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 100, 24);
+        let doc = r#"{"a": {"b": 1}, "c": [1, 2]}"#;
+        app.open_source("t.json", doc.into(), Format::Json);
+        app.prepare();
+        let output = Pane::new(Role::Output);
+        assert!(
+            app.pane_tab(output)
+                .source
+                .starts_with("{\n    \"a\": {\n        \"b\""),
+            "{}",
+            app.pane_tab(output).source
+        );
+        let input_rows = app.input().row_count();
+        assert_eq!(input_rows, 3, "the input folded to depth 1");
+        assert_eq!(
+            app.pane_tab(output).row_count(),
+            input_rows,
+            "and the output"
+        );
+        keys(&mut app, ">");
+        app.open_source("u.json", "[2]".into(), Format::Json);
+        app.prepare();
+        assert_eq!(app.pane_tab(output).source, "[\n    2\n]\n");
     }
 
     /// A click gives the focus to the pane under it, and to the row.

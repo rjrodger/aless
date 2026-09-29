@@ -318,14 +318,16 @@ pub struct Rendered {
 /// Write `source`, read as `format`, through `through`, into memory: the
 /// same run `--render` or `--alchemy` makes, with its plan for the format
 /// (line by line for JSON Lines and CSV), so what the pane shows is what
-/// the command would print. `program` is the compiled program a
-/// [`Through::Program`] runs. A failure is the message the pane shows.
+/// the command would print, JSON indented by `indent` as `--indent`
+/// gives it. `program` is the compiled program a [`Through::Program`]
+/// runs. A failure is the message the pane shows.
 pub fn render(
     name: &str,
     source: &str,
     format: Format,
     through: &Through,
     program: Option<&Program>,
+    indent: usize,
     timeout: Option<Duration>,
 ) -> Result<Rendered, String> {
     render_within(
@@ -334,18 +336,21 @@ pub fn render(
         format,
         through,
         program,
+        indent,
         timeout,
         MAX_OUTPUT_BYTES,
     )
 }
 
 /// [`render`] keeping at most `max` bytes of the output.
+#[allow(clippy::too_many_arguments)]
 fn render_within(
     name: &str,
     source: &str,
     format: Format,
     through: &Through,
     program: Option<&Program>,
+    indent: usize,
     timeout: Option<Duration>,
     max: usize,
 ) -> Result<Rendered, String> {
@@ -362,13 +367,13 @@ fn render_within(
         Through::Program { render, .. } => {
             let program = program.ok_or("the program did not compile")?;
             crate::alchemy::check_render(program, *render)?;
-            let out = match program.output() {
-                Output::Text => Format::Text,
-                Output::TableRows => match render {
-                    Some(Renderer::Json) => Format::Json,
-                    _ => Format::Csv,
-                },
-                Output::JsonEvents => Format::Json,
+            // A renderer given writes its own format; without one, a
+            // table is CSV and events are JSON, the program's defaults.
+            let out = match (program.output(), render) {
+                (Output::Text, _) => Format::Text,
+                (_, Some(r)) => format_of(*r),
+                (Output::TableRows, None) => Format::Csv,
+                (Output::JsonEvents, None) => Format::Json,
             };
             (
                 What::Program {
@@ -385,7 +390,7 @@ fn render_within(
         what,
         path: Vec::new(),
         compact: false,
-        indent: 2,
+        indent,
         timeout,
     };
     let kept = Arc::new(Mutex::new(Vec::new()));
@@ -567,7 +572,16 @@ mod tests {
     #[test]
     fn the_output_is_what_render_would_print() {
         let csv = "name,age\nada,36\n";
-        let json = render("t.csv", csv, Format::Csv, &Through::default(), None, None).unwrap();
+        let json = render(
+            "t.csv",
+            csv,
+            Format::Csv,
+            &Through::default(),
+            None,
+            2,
+            None,
+        )
+        .unwrap();
         assert_eq!(json.format, Format::Json);
         assert!(!json.cut);
         let value: serde_json::Value = serde_json::from_str(&json.text).unwrap();
@@ -578,6 +592,7 @@ mod tests {
             Format::Json,
             &Through::Render(Renderer::Csv),
             None,
+            2,
             None,
         )
         .unwrap();
@@ -591,6 +606,7 @@ mod tests {
             Format::Csv,
             &Through::Render(Renderer::Part("yaml")),
             None,
+            2,
             None,
         )
         .unwrap();
@@ -602,6 +618,7 @@ mod tests {
             Format::Text,
             &Through::default(),
             None,
+            2,
             None,
         )
         .unwrap_err();
@@ -616,7 +633,7 @@ mod tests {
             render: None,
         };
         let text = program(r#"def export [input] "hi""#);
-        let out = render("t.json", "1", Format::Json, &through, Some(&text), None).unwrap();
+        let out = render("t.json", "1", Format::Json, &through, Some(&text), 2, None).unwrap();
         assert_eq!((out.text.as_str(), out.format), ("hi", Format::Text));
         let events = program("def export [input] input");
         let out = render(
@@ -625,6 +642,7 @@ mod tests {
             Format::Json,
             &through,
             Some(&events),
+            2,
             None,
         )
         .unwrap();
@@ -633,15 +651,59 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&out.text).unwrap(),
             serde_json::json!([1, 2])
         );
-        let failed = render("t.json", "[1", Format::Json, &through, Some(&events), None);
+        let failed = render(
+            "t.json",
+            "[1",
+            Format::Json,
+            &through,
+            Some(&events),
+            2,
+            None,
+        );
         assert!(failed.is_err(), "{failed:?}");
+        // A renderer given writes its own format: a table rendered as
+        // JSON reads back as JSON. Events rendered as CSV the program's
+        // runtime refuses, and the pane shows why.
+        let table = program(
+            "def rows (record (entry :columns :infer) (entry :rows (path each-index)))\n\
+             def export [input] (table-from-json rows input)",
+        );
+        let with = |render| Through::Program {
+            arg: ProgramArg::Expr(String::new()),
+            render: Some(render),
+        };
+        let records = r#"[{"a": 1}, {"a": 2}]"#;
+        let out = render(
+            "t.json",
+            records,
+            Format::Json,
+            &with(Renderer::Json),
+            Some(&table),
+            2,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.format, Format::Json, "{}", out.text);
+        assert!(serde_json::from_str::<serde_json::Value>(&out.text).is_ok());
+        let refused = render(
+            "t.json",
+            records,
+            Format::Json,
+            &with(Renderer::Csv),
+            Some(&events),
+            2,
+            None,
+        )
+        .unwrap_err();
+        assert!(refused.contains("protocol_mismatch"), "{refused}");
     }
 
     #[test]
     fn the_output_is_cut_at_its_cap() {
         let long = format!("[{}]", vec!["\"xxxxxxxx\""; 100].join(","));
         let through = Through::default();
-        let out = render_within("big.json", &long, Format::Json, &through, None, None, 64).unwrap();
+        let out =
+            render_within("big.json", &long, Format::Json, &through, None, 2, None, 64).unwrap();
         assert!(out.cut);
         assert_eq!(out.text.len(), 64);
         let whole = render_within(
@@ -650,6 +712,7 @@ mod tests {
             Format::Json,
             &through,
             None,
+            2,
             None,
             1 << 20,
         );
