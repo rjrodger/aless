@@ -39,7 +39,7 @@ listed [below](#deviations-from-jless).
 
 ## Install
 
-Rust 1.86 or newer and git:
+Rust 1.88 or newer and git:
 
 ```bash
 cargo install --locked --git https://github.com/rjrodger/aless aless
@@ -957,11 +957,11 @@ under a second.
 ## Platforms
 
 Linux, macOS and Windows are all first-class: CI builds and tests on the
-three. Terminal handling is crossterm's; the Unicode fold markers need a
-font that has them (`--ascii` otherwise). On Windows use Windows Terminal
-or another VT-capable console; piping into aless on Windows requires a
-console to read keys from, so prefer a file argument there. `C-z`
-suspend is Unix-only.
+three. Terminal handling is crossterm's and drawing ratatui's; the Unicode
+fold markers need a font that has them (`--ascii` otherwise). On Windows
+use Windows Terminal or another VT-capable console; piping into aless on
+Windows requires a console to read keys from, so prefer a file argument
+there. `C-z` suspend is Unix-only.
 
 ## Deviations from jless
 
@@ -992,9 +992,9 @@ tables go; nothing else changes.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
-`--grammar`. The other dependencies: crossterm (terminal), notify (file
-watching), regex (search), unicode-width (layout), serde_json (JSON
-output), arboard (clipboard, optional).
+`--grammar`. The other dependencies: crossterm (terminal), ratatui
+(drawing), notify (file watching), regex (search), unicode-width
+(layout), serde_json (JSON output), arboard (clipboard, optional).
 
 ## Development
 
@@ -1023,7 +1023,7 @@ the library is terminal-free and unit tested:
 | `search` | jless-style search patterns |
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |
 | `app` | tabs, modes, the key map, the command line, watch scheduling, yank |
-| `render` | the screen as styled lines |
+| `render` | the screen as ratatui widgets, every width measured as the terminal places text |
 | `watch` | the notify file watcher |
 | `clip` | clipboard and OSC 52 |
 

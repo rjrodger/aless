@@ -18,9 +18,166 @@ import sys
 import tempfile
 import termios
 import time
+import codecs
+import unicodedata
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
+
+
+class Screen:
+    """Just enough of a terminal to read what aless draws.
+
+    aless writes only the cells that changed since the last frame, with a
+    cursor move before each run of them, so a word on screen need not be
+    contiguous in the byte stream. This applies the stream the way a
+    terminal does: cursor moves, erases, line feeds, and printable text,
+    a wide character taking two cells and a combining one joining the cell
+    before it. Every other escape sequence (colours, modes, OSC 52) is
+    skipped. `seen` holds the text of every screen drawn so far, so that a
+    check asks, as the stream search before it did, whether the text has
+    been on screen.
+    """
+
+    def __init__(self, rows, cols):
+        self.rows, self.cols = rows, cols
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.y = self.x = 0
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self.pending = ""
+        self.seen = []
+
+    def feed(self, data):
+        text = self.pending + self.decoder.decode(bytes(data))
+        self.pending = ""
+        i = 0
+        while i < len(text):
+            c = text[i]
+            if c == "\x1b":
+                end = self.escape(text, i)
+                if end is None:
+                    # The rest of the sequence is in the next chunk.
+                    self.pending = text[i:]
+                    break
+                i = end
+                continue
+            if c == "\r":
+                self.x = 0
+            elif c == "\n":
+                self.line_feed()
+            elif c == "\b":
+                self.x = max(0, self.x - 1)
+            elif c >= " ":
+                self.put(c)
+            i += 1
+        now = self.text()
+        if not self.seen or self.seen[-1] != now:
+            self.seen.append(now)
+
+    def escape(self, text, i):
+        """Apply the sequence at `text[i]`; the index past it, or None."""
+        if i + 1 >= len(text):
+            return None
+        kind = text[i + 1]
+        if kind == "[":
+            j = i + 2
+            while j < len(text) and not ("@" <= text[j] <= "~"):
+                j += 1
+            if j >= len(text):
+                return None
+            self.csi(text[i + 2:j], text[j])
+            return j + 1
+        if kind == "]":
+            # OSC, to BEL or ST: a title or the clipboard, never drawn.
+            j = i + 2
+            while j < len(text):
+                if text[j] == "\x07":
+                    return j + 1
+                if text[j] == "\x1b" and j + 1 < len(text) and text[j + 1] == "\\":
+                    return j + 2
+                j += 1
+            return None
+        return i + 2
+
+    def csi(self, params, final):
+        private = params.startswith("?")
+        nums = [int(p) if p.isdigit() else 0 for p in params.lstrip("?").split(";")]
+        n = nums[0] or 1
+        if private:
+            if final == "h" and 1049 in nums:
+                self.clear(0, 0, self.rows, self.cols)
+            return
+        if final in "Hf":
+            row = nums[0] or 1
+            col = nums[1] if len(nums) > 1 and nums[1] else 1
+            self.y, self.x = min(row, self.rows) - 1, min(col, self.cols) - 1
+        elif final == "A":
+            self.y = max(0, self.y - n)
+        elif final == "B":
+            self.y = min(self.rows - 1, self.y + n)
+        elif final == "C":
+            self.x = min(self.cols - 1, self.x + n)
+        elif final == "D":
+            self.x = max(0, self.x - n)
+        elif final == "G":
+            self.x = min(n, self.cols) - 1
+        elif final == "d":
+            self.y = min(n, self.rows) - 1
+        elif final == "J":
+            if nums[0] == 0:
+                self.clear(self.y, self.x, self.y + 1, self.cols)
+                self.clear(self.y + 1, 0, self.rows, self.cols)
+            elif nums[0] == 1:
+                self.clear(0, 0, self.y, self.cols)
+                self.clear(self.y, 0, self.y + 1, self.x + 1)
+            else:
+                self.clear(0, 0, self.rows, self.cols)
+        elif final == "K":
+            if nums[0] == 0:
+                self.clear(self.y, self.x, self.y + 1, self.cols)
+            elif nums[0] == 1:
+                self.clear(self.y, 0, self.y + 1, self.x + 1)
+            else:
+                self.clear(self.y, 0, self.y + 1, self.cols)
+        elif final == "X":
+            self.clear(self.y, self.x, self.y + 1, min(self.cols, self.x + n))
+
+    def clear(self, top, left, bottom, right):
+        for y in range(max(0, top), min(self.rows, bottom)):
+            for x in range(max(0, left), min(self.cols, right)):
+                self.grid[y][x] = " "
+
+    def line_feed(self):
+        if self.y + 1 < self.rows:
+            self.y += 1
+        else:
+            self.grid.pop(0)
+            self.grid.append([" "] * self.cols)
+
+    def put(self, c):
+        if unicodedata.combining(c) or c in "\u200d\ufe0f":
+            # Joins the character before it.
+            px = self.x - 1
+            while px > 0 and self.grid[self.y][px] == "":
+                px -= 1
+            if px >= 0:
+                self.grid[self.y][px] += c
+            return
+        width = 2 if unicodedata.east_asian_width(c) in "WF" else 1
+        if self.x + width > self.cols:
+            # Past the right margin, as a terminal wraps.
+            self.x = 0
+            self.line_feed()
+        self.grid[self.y][self.x] = c
+        if width == 2:
+            self.grid[self.y][self.x + 1] = ""
+        self.x += width
+
+    def text(self):
+        return "\n".join("".join(row).rstrip() for row in self.grid)
+
+    def history(self):
+        return "\n".join(self.seen)
 
 
 def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
@@ -42,7 +199,7 @@ def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
             os.close(r)
         os.execv(BIN, [BIN, "--no-mouse"] + args)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", size[0], size[1], 0, 0))
-    seen = bytearray()
+    screen = Screen(size[0], size[1])
     failures = []
 
     def read(timeout):
@@ -56,7 +213,7 @@ def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
                     return
                 if not chunk:
                     return
-                seen.extend(chunk)
+                screen.feed(chunk)
 
     read(1.5)
     for label, keys, needles, timeout in steps:
@@ -75,7 +232,7 @@ def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
         end = time.time() + timeout
         ok = False
         while time.time() < end:
-            text = seen.decode("utf-8", "replace")
+            text = screen.history()
             if all(n in text for n in needles):
                 ok = True
                 break
@@ -94,7 +251,7 @@ def drive(args, cwd, steps, size=(24, 100), stdin_text=None):
         failures.append("exit")
     else:
         print("ok   clean exit")
-    return failures, seen.decode("utf-8", "replace")
+    return failures, screen.text()
 
 
 def explorer_scenario(work):
@@ -248,8 +405,9 @@ def main():
         os.execv(BIN, [BIN, "--no-mouse", nested, yaml])
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 
-    seen = bytearray()
+    screen = Screen(24, 100)
     failures = []
+    last = [""]
 
     def read(timeout):
         end = time.time() + timeout
@@ -262,7 +420,7 @@ def main():
                     return
                 if not chunk:
                     return
-                seen.extend(chunk)
+                screen.feed(chunk)
 
     def send(text):
         try:
@@ -277,7 +435,7 @@ def main():
     def expect(label, *needles, timeout=3.0):
         end = time.time() + timeout
         while time.time() < end:
-            text = seen.decode("utf-8", "replace")
+            text = screen.history()
             if all(n in text for n in needles):
                 print(f"ok   {label}")
                 return True
@@ -337,18 +495,19 @@ def main():
         failures.append("exit")
     else:
         print("ok   clean exit")
+    last[0] = screen.text()
     for scenario in (explorer_scenario, errors_scenario, too_large_scenario,
                      piped_input_scenario, no_terminal_scenario):
         if failures:
             break
-        more, transcript = scenario(work)
+        more, last_screen = scenario(work)
         if more:
             failures.extend(more)
-            seen.extend(transcript.encode())
+            last[0] = last_screen
     shutil.rmtree(work, ignore_errors=True)
     if failures:
         print("\n--- last screen ---")
-        print(seen.decode("utf-8", "replace")[-3000:])
+        print(last[0])
         sys.exit(1)
     print("all green")
 

@@ -8,27 +8,25 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode as CtKey, KeyEventKind,
     KeyModifiers, MouseButton, MouseEventKind,
 };
-use crossterm::style::{
-    Attribute, Color as CtColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
-    SetForegroundColor,
-};
 use crossterm::terminal::{
-    self, BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate, EnterAlternateScreen,
+    self, BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
 use crossterm::{execute, queue};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 
 use aless::alchemy::ProgramArg;
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
 use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
-use aless::render::{self, Color, Screen, Style};
+use aless::render;
 use aless::watch::FileWatcher;
 
 const USAGE: &str = "\
@@ -727,21 +725,22 @@ fn event_loop(mut app: App, mouse: bool) -> io::Result<()> {
     });
     let mut watcher = FileWatcher::new(tx.clone());
 
-    let mut out = io::BufWriter::new(io::stdout());
-    let mut last_screen: Option<Screen> = None;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::BufWriter::new(io::stdout())))?;
     loop {
-        if apply_effects(&mut app, &mut watcher, &mut out, mouse)? {
+        if apply_effects(&mut app, &mut watcher, terminal.backend_mut(), mouse)? {
             // The screen was left and re-entered: nothing on it survives.
-            last_screen = None;
+            terminal.clear()?;
         }
         if app.quit {
             break;
         }
-        let screen = render::render(&mut app);
-        if last_screen.as_ref() != Some(&screen) {
-            paint(&mut out, &screen, app.opts.color)?;
-            last_screen = Some(screen);
-        }
+        // ratatui compares the frame with the last one and writes only the
+        // cells that changed; the terminal shows the update all at once.
+        queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+        terminal.draw(|frame| {
+            render::draw(frame, &mut app);
+        })?;
+        execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
         let wait = if app.reload_pending() {
             Duration::from_millis(40)
         } else {
@@ -856,66 +855,4 @@ fn convert(ev: Event) -> Option<Input> {
         },
         _ => None,
     }
-}
-
-fn ct_color(c: Color) -> CtColor {
-    match c {
-        Color::Default => CtColor::Reset,
-        Color::Black => CtColor::Black,
-        Color::Red => CtColor::Red,
-        Color::Green => CtColor::Green,
-        Color::Yellow => CtColor::Yellow,
-        Color::Blue => CtColor::Blue,
-        Color::Magenta => CtColor::Magenta,
-        Color::Cyan => CtColor::Cyan,
-        Color::White => CtColor::White,
-        Color::Grey => CtColor::DarkGrey,
-    }
-}
-
-fn paint(out: &mut impl Write, screen: &Screen, color: bool) -> io::Result<()> {
-    queue!(out, BeginSynchronizedUpdate, Hide)?;
-    for (y, line) in screen.lines.iter().enumerate() {
-        queue!(out, MoveTo(0, y as u16))?;
-        for span in &line.spans {
-            let s: Style = span.style;
-            queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
-            if color {
-                if s.fg != Color::Default {
-                    queue!(out, SetForegroundColor(ct_color(s.fg)))?;
-                }
-                if s.bg != Color::Default {
-                    queue!(out, SetBackgroundColor(ct_color(s.bg)))?;
-                }
-                if s.dim {
-                    queue!(out, SetAttribute(Attribute::Dim))?;
-                }
-                if s.underline {
-                    queue!(out, SetAttribute(Attribute::Underlined))?;
-                }
-            }
-            if s.bold {
-                queue!(out, SetAttribute(Attribute::Bold))?;
-            }
-            if s.reverse {
-                queue!(out, SetAttribute(Attribute::Reverse))?;
-            }
-            queue!(out, Print(&span.text))?;
-        }
-        queue!(
-            out,
-            SetAttribute(Attribute::Reset),
-            ResetColor,
-            Clear(ClearType::UntilNewLine)
-        )?;
-    }
-    for y in screen.lines.len()..screen.height {
-        queue!(out, MoveTo(0, y as u16), Clear(ClearType::UntilNewLine))?;
-    }
-    match screen.cursor {
-        Some((x, y)) => queue!(out, MoveTo(x, y), Show)?,
-        None => queue!(out, Hide)?,
-    }
-    queue!(out, EndSynchronizedUpdate)?;
-    out.flush()
 }

@@ -76,12 +76,28 @@ impl Write for Shared {
 
 /// The root of the tabnas-yaml checkout this build uses: the repository
 /// above its crate, as `cargo metadata` names the crate's manifest.
+///
+/// `cargo metadata` reads every package the lock names, the optional ones
+/// no feature here turns on among them (ratatui's `palette`, say), and a
+/// build downloads only what it compiles. So the read is offline first,
+/// and where the cache lacks one of those, it is repeated online to fetch
+/// it; `--locked` holds the lock as it is either way.
 fn yaml_checkout() -> PathBuf {
-    let out = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--offline"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("cargo metadata runs");
+    let metadata = |offline: bool| {
+        let mut cargo = Command::new(env!("CARGO"));
+        cargo.args(["metadata", "--format-version", "1", "--locked"]);
+        if offline {
+            cargo.arg("--offline");
+        }
+        cargo
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("cargo metadata runs")
+    };
+    let mut out = metadata(true);
+    if !out.status.success() {
+        out = metadata(false);
+    }
     assert!(
         out.status.success(),
         "cargo metadata: {}",

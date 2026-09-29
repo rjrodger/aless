@@ -312,7 +312,7 @@ pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
 /// A size the way `--max-size` is written: `64M`, `1G`, `512K`, or bytes.
 pub fn size_flag(bytes: u64) -> String {
     for (shift, unit) in [(30, "G"), (20, "M"), (10, "K")] {
-        if bytes >= 1 << shift && bytes % (1 << shift) == 0 {
+        if bytes >= 1 << shift && bytes.is_multiple_of(1 << shift) {
             return format!("{}{unit}", bytes >> shift);
         }
     }

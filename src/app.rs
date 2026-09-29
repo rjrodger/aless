@@ -10,7 +10,6 @@ use crate::fmt;
 use crate::load::{self, Format};
 use crate::search::{self, Direction};
 use crate::tab::{Reposition, Tab, View};
-use unicode_width::UnicodeWidthStr;
 
 // ----- input ---------------------------------------------------------------
 
@@ -134,15 +133,16 @@ impl Overlay {
         }
     }
 
-    /// The widest line, in columns.
+    /// The widest line, in the columns the screen gives it
+    /// ([`crate::render::cols`]), which is how far a pan can go.
     fn width(&self) -> usize {
         self.lines
             .iter()
             .map(|l| {
                 if self.ansi {
-                    load::strip_ansi(l).width()
+                    crate::render::cols(&load::strip_ansi(l))
                 } else {
-                    l.width()
+                    crate::render::cols(l)
                 }
             })
             .max()
@@ -2107,16 +2107,16 @@ mod tests {
         for _ in 0..app.opts.scrolloff + 4 {
             keys(&mut app, "k");
         }
-        crate::render::render(&mut app);
+        crate::render::screen(&mut app);
         let place = (app.tab().focus, app.tab().scroll);
         let rows = app.tab().rows().len();
         assert!(place.1 > rows - app.pane_height(), "{place:?}");
         for (open, close) in [("!", "x"), ("s", "x")] {
             keys(&mut app, open);
             assert_ne!(app.mode, Mode::Browse);
-            crate::render::render(&mut app);
+            crate::render::screen(&mut app);
             keys(&mut app, close);
-            crate::render::render(&mut app);
+            crate::render::screen(&mut app);
             assert_eq!((app.tab().focus, app.tab().scroll), place, "after {open}");
         }
     }
