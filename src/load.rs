@@ -1042,6 +1042,17 @@ pub fn lines(src: &str) -> Vec<&str> {
     out
 }
 
+/// How many lines [`lines`] splits `src` into, counted without collecting
+/// them.
+pub fn line_count(src: &str) -> usize {
+    let breaks = src.bytes().filter(|&b| b == b'\n').count();
+    if src.is_empty() || src.ends_with('\n') {
+        breaks
+    } else {
+        breaks + 1
+    }
+}
+
 thread_local! {
     /// How many guarded parses this thread is inside.
     static CATCHING: Cell<usize> = const { Cell::new(0) };
@@ -1801,6 +1812,19 @@ mod tests {
         assert_eq!(lines("a\r\nb\n\nc\n"), vec!["a", "b", "", "c"]);
         assert_eq!(lines(""), Vec::<&str>::new());
         assert_eq!(lines("x"), vec!["x"]);
+        for text in [
+            "",
+            "x",
+            "x\n",
+            "\n",
+            "\n\n",
+            "a\r\nb",
+            "a\r\nb\r\n",
+            "a\r",
+            "a\n\nb\n",
+        ] {
+            assert_eq!(line_count(text), lines(text).len(), "{text:?}");
+        }
         let d = parse("one\ntwo\n", Format::Text).unwrap();
         assert_eq!(d.len(), 3);
         assert_eq!(d.node(2).kind, Kind::Str("two".into()));

@@ -831,10 +831,12 @@ impl Tab {
         self.clamp_source_scroll(view.height);
     }
 
-    /// Keep the text view on its text: scrolled past the end of a shorter
-    /// text, it shows the text's last `height` lines instead of nothing.
-    fn clamp_source_scroll(&mut self, height: usize) {
-        let total = load::lines(&self.source).len();
+    /// Keep the text view on its text, `height` rows tall: scrolled past
+    /// where its last line shows at the foot, after a shorter text or in a
+    /// taller pane, it shows the text's last `height` lines instead of
+    /// blank rows.
+    pub fn clamp_source_scroll(&mut self, height: usize) {
+        let total = load::line_count(&self.source);
         self.source_scroll = self.source_scroll.min(total.saturating_sub(height));
     }
 

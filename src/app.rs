@@ -497,6 +497,10 @@ impl App {
             let tab = self.pane_tab(pane);
             let rows = height.saturating_sub(panel_rows(tab, height)).max(1);
             tab.follow(View::new(rows, scrolloff));
+            // The text view fills its pane, which may have grown taller.
+            if pane.mode == PaneMode::Source {
+                tab.clamp_source_scroll(height);
+            }
         }
     }
 
@@ -3129,6 +3133,33 @@ mod tests {
         keys(&mut app, "r");
         assert_eq!(app.pane_tab(program).source, "def export [input] input\n");
         assert_eq!(app.pane_tab(program).source_scroll, 0);
+    }
+
+    /// A pane showing its text fills itself when it grows taller: scrolled
+    /// to the end of a stacked pane, then arranged side by side, it shows
+    /// earlier lines rather than blank rows under the last.
+    #[test]
+    fn a_taller_pane_fills_with_its_text() {
+        let long: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let opts = Options {
+            panes: vec![Role::Output],
+            stacked: true,
+            ..Options::default()
+        };
+        let mut app = App::new(opts, 80, 24);
+        app.open_source("t.json", format!("[{}]", long.join(", ")), Format::Json);
+        app.prepare();
+        app.handle(ctrl('w'));
+        keys(&mut app, "sG");
+        let output = app.workspace.focused();
+        let total = crate::load::line_count(&app.pane_tab(output).source);
+        let short = usize::from(app.pane_areas()[1].body.height);
+        assert_eq!(app.pane_tab(output).source_scroll, total - short);
+        app.run_command("arrange");
+        app.prepare();
+        let tall = usize::from(app.pane_areas()[1].body.height);
+        assert!(tall > short, "{tall} > {short}");
+        assert_eq!(app.pane_tab(output).source_scroll, total - tall);
     }
 
     /// A click gives the focus to the pane under it, and to the row.
