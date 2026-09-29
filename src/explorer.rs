@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::doc::{Doc, Key, Kind, Node, NodeId, NO_NODE};
 use crate::load::Format;
@@ -16,6 +16,12 @@ use crate::load::Format;
 /// Directories listed at most, per explorer, so a deep expansion of a
 /// huge tree stays bounded.
 pub const MAX_LISTED: usize = 2000;
+
+/// How long after a directory's last change another change can leave its
+/// modification time as it was. A file system's clock ticks as coarsely
+/// as two seconds (FAT), a second (ext3, HFS+) or the system timer's
+/// 16 ms or so (NTFS), and two changes within one tick get one time.
+const RACY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -83,6 +89,36 @@ pub struct Listing {
     pub entries: Vec<Entry>,
     pub mtime: Option<SystemTime>,
     pub error: Option<String>,
+    /// Until when, by this machine's own steady clock, the listing is read
+    /// again and compared rather than taken at its time's word, with one
+    /// last reading once it has passed: `None` once that last reading is
+    /// made, or for a directory without a time.
+    pub racy_until: Option<Instant>,
+}
+
+/// Read `dir` again, as `old` listed it before. A reading whose time is
+/// the one `old` had keeps `old`'s window, which runs from the first
+/// reading of that change, so neither a check nor a refresh of the whole
+/// explorer renews it.
+fn read_again(dir: &Path, old: &Listing) -> Listing {
+    let mut again = read_listing(dir);
+    if again.mtime == old.mtime {
+        again.racy_until = old.racy_until;
+    }
+    again
+}
+
+/// Until when a directory whose time is `mtime`, read at `now`, is to be
+/// read again: [`RACY`] from this reading, whatever the time says. The
+/// tick of the file system's clock that gave the directory its time ends
+/// within [`RACY`] of any reading of that time, but the time cannot say
+/// how long ago that was: it is stamped by the file system's clock, which
+/// on a network share is its server's and may run behind this machine's
+/// or ahead of it, as a restored archive's dates do. Timed by the steady
+/// clock, so the window is as long for any date and ends as any other
+/// does, not when the clocks meet.
+fn racy_until(mtime: Option<SystemTime>, now: Instant) -> Option<Instant> {
+    mtime.and(now.checked_add(RACY))
 }
 
 #[derive(Clone, Debug)]
@@ -96,7 +132,9 @@ pub struct Explorer {
 }
 
 fn read_listing(dir: &Path) -> Listing {
+    let now = Instant::now();
     let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+    let racy_until = racy_until(mtime, now);
     match std::fs::read_dir(dir) {
         Ok(read) => {
             let mut entries: Vec<Entry> = read
@@ -141,12 +179,14 @@ fn read_listing(dir: &Path) -> Listing {
                 entries,
                 mtime,
                 error: None,
+                racy_until,
             }
         }
         Err(e) => Listing {
             entries: Vec::new(),
             mtime,
             error: Some(e.to_string()),
+            racy_until,
         },
     }
 }
@@ -246,19 +286,44 @@ impl Explorer {
         changed
     }
 
-    /// Re-read every listed directory.
+    /// Re-read every listed directory, each keeping its window for as long
+    /// as its time is what it was (see [`read_again`]).
     pub fn relist_all(&mut self) {
-        let dirs: Vec<PathBuf> = self.listed.keys().cloned().collect();
-        for dir in dirs {
-            self.listed.insert(dir.clone(), read_listing(&dir));
+        for (dir, listing) in &mut self.listed {
+            *listing = read_again(dir, listing);
         }
     }
 
-    /// Has any listed directory changed on disk since it was read?
-    pub fn changed(&self) -> bool {
-        self.listed.iter().any(|(dir, listing)| {
-            std::fs::metadata(dir).ok().and_then(|m| m.modified().ok()) != listing.mtime
-        })
+    /// Has any listed directory changed on disk since it was read? A
+    /// change within its file system's clock tick leaves the directory's
+    /// time as it was, so for [`RACY`] after the reading that first finds
+    /// a time, by the steady clock, the directory is read again and
+    /// compared on each check (see [`racy_until`]); from then on its time
+    /// answers. A reading that finds nothing new takes the old one's place
+    /// and keeps its window, so the directory is read again for [`RACY`]
+    /// at most after its change is first seen, whatever its date. The
+    /// first check after the window reads it once more, since a change
+    /// late in the window may have come after the last reading in it, and
+    /// closes it.
+    pub fn changed(&mut self) -> bool {
+        for (dir, listing) in &mut self.listed {
+            let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+            if mtime != listing.mtime {
+                return true;
+            }
+            if let Some(until) = listing.racy_until {
+                let again = read_again(dir, listing);
+                if again.entries != listing.entries || again.error != listing.error {
+                    return true;
+                }
+                *listing = again;
+                // Past the window, that was its last reading.
+                if listing.racy_until == Some(until) && Instant::now() >= until {
+                    listing.racy_until = None;
+                }
+            }
+        }
+        false
     }
 
     fn visible(&self, entry: &Entry) -> bool {
@@ -475,6 +540,144 @@ mod tests {
         let doc = ex.build();
         assert!(doc.resolve(&[Key::Name("new.csv".into())]).is_some());
         assert!(!ex.changed());
+    }
+
+    /// A change within the tick of the file system's clock that gave the
+    /// directory its time leaves the time as it was. A listing is read
+    /// again and compared for a window after the reading that finds its
+    /// time, so the change is seen all the same; after the window it is
+    /// taken at its time's word, and not read again.
+    #[test]
+    fn a_change_the_clock_does_not_show_is_still_seen() {
+        let dir = tree("racy");
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        assert!(
+            ex.listed[&root].racy_until.is_some(),
+            "read again after its first reading"
+        );
+        assert!(!ex.changed(), "nothing new");
+        std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
+        // As a coarse clock would leave it: the time the listing has.
+        let now = std::fs::metadata(&root).unwrap().modified().unwrap();
+        ex.listed.get_mut(&root).unwrap().mtime = Some(now);
+        assert!(ex.changed(), "read again and compared");
+        ex.relist_all();
+        // Read again and found as it was, it keeps its first window.
+        let window = ex.listed[&root].racy_until;
+        assert!(window.is_some());
+        assert!(!ex.changed());
+        assert_eq!(ex.listed[&root].racy_until, window, "the window kept");
+        // Past its window, one last reading closes it, and the directory is
+        // taken at its time's word from then on.
+        ex.listed.get_mut(&root).unwrap().racy_until = Some(Instant::now());
+        assert!(!ex.changed());
+        assert_eq!(ex.listed[&root].racy_until, None, "closed");
+    }
+
+    /// A change late in the window, after its last reading in it and within
+    /// the same tick of the clock, is still seen: the first check after the
+    /// window reads the directory once more before closing it.
+    #[test]
+    fn a_change_late_in_the_window_is_seen_by_its_last_reading() {
+        let dir = tree("late");
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        assert!(!ex.changed());
+        std::fs::write(dir.join("late.csv"), "a,b\n").unwrap();
+        // As a coarse clock would leave it, with the window just past.
+        let listing = ex.listed.get_mut(&root).unwrap();
+        listing.mtime = std::fs::metadata(&root).unwrap().modified().ok();
+        listing.racy_until = Some(Instant::now());
+        assert!(ex.changed(), "read once more after the window");
+    }
+
+    /// A refresh of the whole explorer, as a change anywhere in it brings,
+    /// keeps each window whose directory's time is as it was, and a closed
+    /// one closed: a directory is not read again for as long as another
+    /// keeps changing.
+    #[test]
+    fn a_refresh_keeps_each_window() {
+        let dir = tree("refresh-window");
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        let window = ex.listed[&root].racy_until;
+        assert!(window.is_some());
+        std::thread::sleep(Duration::from_millis(5));
+        ex.relist_all();
+        assert_eq!(ex.listed[&root].racy_until, window, "kept");
+        ex.listed.get_mut(&root).unwrap().racy_until = None;
+        ex.relist_all();
+        assert_eq!(ex.listed[&root].racy_until, None, "closed stays closed");
+    }
+
+    /// The window to read a directory again is [`RACY`] from the reading,
+    /// by the steady clock, whatever the directory's date: a file system
+    /// whose clock is behind this machine's dates a change made just now
+    /// long ago, and one ahead of it dates it in the future.
+    #[test]
+    fn the_window_to_read_again_is_timed_here() {
+        let (at, now) = (SystemTime::now(), Instant::now());
+        let hour = Duration::from_secs(3600);
+        assert_eq!(racy_until(None, now), None, "no time, no window");
+        for (mtime, what) in [
+            (at - hour, "dated an hour behind"),
+            (at, "dated now"),
+            (at + hour, "dated an hour ahead"),
+        ] {
+            assert_eq!(racy_until(Some(mtime), now), Some(now + RACY), "{what}");
+        }
+    }
+
+    /// A directory dated an hour behind, as a network share whose server's
+    /// clock is behind this machine's dates a change made just now, is
+    /// read again for its window all the same: its date cannot say the
+    /// tick of that clock is over.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_dated_behind_is_read_again_all_the_same() {
+        let dir = tree("dated-behind");
+        let hour = SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour)
+            .unwrap();
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        assert!(ex.listed[&root].racy_until.is_some(), "read again");
+        std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
+        // As the share's coarse clock would leave it: the time it had.
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour)
+            .unwrap();
+        assert!(ex.changed(), "the change seen");
+    }
+
+    /// A directory dated an hour ahead is read again for two seconds, as
+    /// any other just changed, and its window is kept, not renewed, by the
+    /// readings in it: not for the hour until the clocks meet.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_dated_ahead_is_read_again_only_for_its_window() {
+        let dir = tree("dated-ahead");
+        let hour = SystemTime::now() + Duration::from_secs(3600);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour)
+            .unwrap();
+        let mut ex = Explorer::open(&dir, false);
+        let root = ex.root.clone();
+        let until = ex.listed[&root].racy_until.expect("read again for now");
+        assert!(until <= Instant::now() + RACY, "for the window at most");
+        assert!(!ex.changed(), "nothing new");
+        assert_eq!(
+            ex.listed[&root].racy_until,
+            Some(until),
+            "kept, not renewed"
+        );
+        ex.relist_all();
+        assert_eq!(ex.listed[&root].racy_until, Some(until), "nor by a refresh");
     }
 
     #[cfg(unix)]
