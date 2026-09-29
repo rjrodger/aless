@@ -72,6 +72,13 @@ impl Grammar {
     }
 }
 
+/// The most colourings left running, called off or out of time and still
+/// making their parsers: with that many, a text shown waits in the queue
+/// until one ends, while the worker takes in newer texts and skips hidden
+/// ones. Each holds a thread with the parse stack and a grammar's install,
+/// so a run of slow grammars hidden in turn cannot pile them up.
+const MAX_LEFT: usize = 2;
+
 /// How long past a text's deadline the worker still waits for its
 /// colours: a parse stops itself at the deadline, and what it had lexed
 /// is still worth colouring once its spans are made.
@@ -181,6 +188,9 @@ pub struct Painter {
     asked: HashMap<u64, Key>,
     /// What the panes show, shared with the worker.
     shown: Arc<Mutex<Shown>>,
+    /// The colouring threads running, the one waited for and those left
+    /// behind, shared with the worker.
+    running: Arc<AtomicUsize>,
     /// How long one text's parse may take.
     timeout: Option<Duration>,
 }
@@ -337,8 +347,8 @@ impl Painter {
                 .name("aless-paint".into())
                 .stack_size(load::PARSE_STACK)
                 .spawn({
-                    let shown = self.shown.clone();
-                    move || work(queued, painted, shown)
+                    let (shown, running) = (self.shown.clone(), self.running.clone());
+                    move || work(queued, painted, shown, running)
                 });
             match spawned {
                 Ok(_) => self.worker = Some(Worker { jobs, done }),
@@ -364,9 +374,13 @@ impl Painter {
 /// newer text for the same tab has replaced and one no pane shows any
 /// more, and stopping one whose text leaves the panes while it is
 /// coloured. It ends when the painter is dropped.
-fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, shown: Arc<Mutex<Shown>>) {
+fn work(
+    jobs: Receiver<Job>,
+    done: Sender<(Key, Made)>,
+    shown: Arc<Mutex<Shown>>,
+    running: Arc<AtomicUsize>,
+) {
     let lock = || shown.lock().unwrap_or_else(PoisonError::into_inner);
-    let running = Arc::new(AtomicUsize::new(0));
     let mut queue: VecDeque<Job> = VecDeque::new();
     loop {
         if queue.is_empty() {
@@ -383,14 +397,26 @@ fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, shown: Arc<Mutex<Shown>>
             continue;
         }
         let stop = Arc::new(AtomicBool::new(false));
-        let in_view = {
+        let (in_view, busy) = {
             let mut shown = lock();
             let in_view = shown.keys.contains(&job.key);
-            if in_view {
+            let busy = running.load(Ordering::SeqCst) >= MAX_LEFT;
+            if in_view && !busy {
                 shown.running = Some((job.key, stop.clone()));
             }
-            in_view
+            (in_view, busy)
         };
+        if in_view && busy {
+            // Held until a thread left behind ends, taking in newer texts,
+            // which may replace it, meanwhile.
+            queue.push_front(job);
+            match jobs.recv_timeout(Duration::from_millis(20)) {
+                Ok(newer) => queue.push_back(newer),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+            continue;
+        }
         let key = job.key;
         let made = if in_view {
             // A deadline to stop it by, even for a painter made without one.
@@ -622,6 +648,33 @@ mod tests {
         painter.settle(Duration::from_secs(30));
         assert!(!painter.pending());
         assert!(!painter.has(key), "called off, not coloured");
+    }
+
+    /// With as many colourings left running as allowed, a shown text waits
+    /// in the queue for one to end rather than start another, while a
+    /// hidden one is skipped at once; once there is room, it is coloured.
+    #[test]
+    fn a_shown_text_waits_while_too_many_are_left_running() {
+        let json = Grammar::Format(Format::Json);
+        let (shown, hidden) = ((1, 0, json), (2, 0, json));
+        let mut painter = Painter::new(None);
+        painter.running.store(MAX_LEFT, Ordering::SeqCst);
+        painter.want([shown]);
+        painter.ask(hidden, "[1]");
+        painter.ask(shown, "[2]");
+        let until = Instant::now() + Duration::from_secs(30);
+        while painter.has(hidden) {
+            assert!(Instant::now() < until, "the hidden text was never skipped");
+            painter.collect();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        painter.collect();
+        assert!(painter.pending(), "the shown text waits");
+        assert!(painter.get(shown).is_none(), "and is not coloured yet");
+        painter.running.store(0, Ordering::SeqCst);
+        painter.settle(Duration::from_secs(30));
+        assert!(painter.get(shown).is_some(), "coloured once there is room");
     }
 
     /// Work no flag reaches, as making a large grammar's parser is, is left

@@ -1096,12 +1096,14 @@ pub fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
     }
     // The text as shown, clean, and where each style starts in it, read a
     // chunk at a time until the clusters that show, and whether the line
-    // is cut, no longer depend on what follows.
+    // is cut, no longer depend on what follows. Each chunk is twice the
+    // last, so a line that never fills the window, all zero-width marks,
+    // is measured a few times over rather than once a chunk.
     let mut shown = String::new();
     let mut marks: Vec<(usize, Style)> = Vec::new();
     let mut chars = text.char_indices().peekable();
     let mut next = runs.iter().peekable();
-    let chunk = avail.saturating_mul(2).saturating_add(64);
+    let mut chunk = avail.saturating_mul(2).saturating_add(64);
     loop {
         for (i, c) in chars.by_ref().take(chunk) {
             while next.peek().is_some_and(|r| r.end <= i) {
@@ -1124,6 +1126,7 @@ pub fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
         if chars.peek().is_none() || overflows(&shown, avail) {
             break;
         }
+        chunk = chunk.saturating_mul(2);
     }
     // Text left unread means the window overflowed.
     let cut = chars.peek().is_some() || cols_upto(&shown, avail.saturating_add(1)) > avail;
@@ -1619,6 +1622,27 @@ mod tests {
             ("👨\u{200d}👩\u{200d}👧".to_string(), STRING)
         );
         assert_eq!(line.cols(), cols(family));
+    }
+
+    /// A line that never fills the window, all marks of no width, is
+    /// measured a few times over, not once a chunk: coloured in a moment,
+    /// not the minutes a rescan per chunk took.
+    #[test]
+    fn a_line_of_marks_of_no_width_is_coloured_at_once() {
+        let marks = format!("e{}", "\u{301}".repeat(200_000));
+        let runs = [Run {
+            start: 0,
+            end: marks.len(),
+            kind: TokenType::String,
+        }];
+        let began = std::time::Instant::now();
+        let line = coloured(&marks, &runs, 80);
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            began.elapsed()
+        );
+        assert_eq!(line.plain(), clip(&marks, 0, 80).0);
     }
 
     #[test]
