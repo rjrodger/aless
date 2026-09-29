@@ -17,7 +17,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tabnas::Tabnas;
 use tabnas_lsp::{Entry, Registry, Span, TokenType};
@@ -72,10 +72,10 @@ impl Grammar {
     }
 }
 
-/// The most colourings that run at once: the one the worker waits for,
-/// and one it called off and left to finish making its parser, which no
-/// flag reaches.
-const MAX_RUNNING: usize = 2;
+/// How long past a text's deadline the worker still waits for its
+/// colours: a parse stops itself at the deadline, and what it had lexed
+/// is still worth colouring once its spans are made.
+const GRACE: Duration = Duration::from_secs(1);
 
 /// A text's colours, line by line as [`load::lines`] splits it: each
 /// line's runs, in order and not overlapping.
@@ -351,8 +351,8 @@ impl Painter {
     /// Wait up to `limit` for every text asked for, taking in its colours.
     #[cfg(test)]
     pub fn settle(&mut self, limit: Duration) {
-        let until = std::time::Instant::now() + limit;
-        while self.pending() && std::time::Instant::now() < until {
+        let until = Instant::now() + limit;
+        while self.pending() && Instant::now() < until {
             if !self.collect() {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -397,7 +397,7 @@ fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, shown: Arc<Mutex<Shown>>
             let timeout = job.timeout.or(Some(MAX_TIME));
             let (text, flag) = (job.text, stop.clone());
             let colour = move || paint_unless(key.2, &text, timeout, Some(flag));
-            let colours = apart(colour, &stop, &running);
+            let colours = apart(colour, &stop, timeout, &running);
             lock().running = None;
             match colours {
                 Some(painted) if !stop.load(Ordering::Relaxed) => Made::Colours(painted),
@@ -412,16 +412,21 @@ fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, shown: Arc<Mutex<Shown>>
     }
 }
 
-/// Run `colour` on a thread of its own and wait for it, unless `stop` is
-/// raised first: then leave it, `None`. The flag stops a parse at its next
-/// step, but making the parser, seconds for a large custom grammar, comes
-/// first and no flag reaches it, so the worker goes on to the next text
-/// while the thread finishes alone. `running` counts those threads; no
-/// more than [`MAX_RUNNING`] run at once. Without a thread to be had, the
+/// Run `colour` on a thread of its own and wait for it: its colours, or
+/// `Some(None)` for none. The wait ends early, and the thread is left to
+/// finish alone, when `stop` is raised (`None`), or once `limit` and
+/// [`GRACE`] have passed (`Some(None)`, as for a parse out of time). The
+/// flag and the deadline stop a parse at its next step, but making the
+/// parser comes first, seconds for a large custom grammar, and neither
+/// reaches it. So a text hidden or out of time never holds the worker, and
+/// the next text starts at once, whatever is left running; a thread left
+/// behind ends once its parser is made, its parse stopping at the first
+/// step. `running` counts the threads. Without a thread to be had, the
 /// work runs here.
 fn apart(
     colour: impl FnOnce() -> Option<Painted> + Send + 'static,
     stop: &AtomicBool,
+    limit: Option<Duration>,
     running: &Arc<AtomicUsize>,
 ) -> Option<Option<Painted>> {
     /// A thread's place in the count, given up however it ends.
@@ -431,15 +436,10 @@ fn apart(
             self.0.fetch_sub(1, Ordering::SeqCst);
         }
     }
-    while running.load(Ordering::SeqCst) >= MAX_RUNNING {
-        if stop.load(Ordering::Relaxed) {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
     if stop.load(Ordering::Relaxed) {
         return None;
     }
+    let until = limit.and_then(|limit| Instant::now().checked_add(limit.saturating_add(GRACE)));
     // The work is taken by whichever thread runs it: a spawn that fails
     // drops its closure unrun, and the work with it otherwise.
     let slot = Arc::new(Mutex::new(Some(colour)));
@@ -465,6 +465,11 @@ fn apart(
         match got.recv_timeout(Duration::from_millis(10)) {
             Ok(painted) => return Some(painted),
             Err(RecvTimeoutError::Timeout) if stop.load(Ordering::Relaxed) => return None,
+            Err(RecvTimeoutError::Timeout)
+                if until.is_some_and(|until| Instant::now() >= until) =>
+            {
+                return Some(None)
+            }
             Err(RecvTimeoutError::Timeout) => {}
             // The thread ended without colours: a panic outside the grammar.
             Err(RecvTimeoutError::Disconnected) => return Some(None),
@@ -608,9 +613,9 @@ mod tests {
         let mut painter = Painter::new(None);
         painter.want([key]);
         painter.ask(key, &text);
-        let until = std::time::Instant::now() + Duration::from_secs(30);
+        let until = Instant::now() + Duration::from_secs(30);
         while painter.shown.lock().unwrap().running.is_none() {
-            assert!(std::time::Instant::now() < until, "never started");
+            assert!(Instant::now() < until, "never started");
             std::thread::sleep(Duration::from_millis(1));
         }
         painter.want([]);
@@ -620,49 +625,71 @@ mod tests {
     }
 
     /// Work no flag reaches, as making a large grammar's parser is, is left
-    /// to finish on its own thread once called off, and the worker goes on;
-    /// the count of such threads falls as it ends.
+    /// to finish on its own thread once called off or out of time, and the
+    /// worker goes on: the next text starts at once, however many are left
+    /// running, and the count of them falls as they end.
     #[test]
-    fn work_called_off_is_left_to_finish_alone() {
-        let stop = Arc::new(AtomicBool::new(false));
+    fn work_called_off_or_out_of_time_is_left_to_finish_alone() {
         let running = Arc::new(AtomicUsize::new(0));
-        let (release, held) = mpsc::channel::<()>();
-        let raise = {
-            let (stop, release) = (stop.clone(), release.clone());
+        // Work that ends when released, as an install ends when done, and
+        // after twenty seconds should nothing release it.
+        let stuck = || {
+            let (release, held) = mpsc::channel::<()>();
+            let failsafe = release.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(20));
-                stop.store(true, Ordering::Relaxed);
-                // Should the wait not end, free it after all.
                 std::thread::sleep(Duration::from_secs(20));
-                let _ = release.send(());
-            })
-        };
-        let began = std::time::Instant::now();
-        let colours = apart(
-            move || {
+                let _ = failsafe.send(());
+            });
+            (release, move || {
                 let _ = held.recv();
                 None
-            },
-            &stop,
-            &running,
-        );
-        assert!(colours.is_none(), "called off");
-        assert!(began.elapsed() < Duration::from_secs(10), "not waited for");
-        assert_eq!(running.load(Ordering::SeqCst), 1, "left running");
-        release.send(()).unwrap();
-        let until = std::time::Instant::now() + Duration::from_secs(30);
+            })
+        };
+        let mut releases = Vec::new();
+        // Two texts hidden while their grammars install.
+        for _ in 0..2 {
+            let stop = Arc::new(AtomicBool::new(false));
+            let raise = {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(20));
+                    stop.store(true, Ordering::Relaxed);
+                })
+            };
+            let (release, work) = stuck();
+            let began = Instant::now();
+            assert!(apart(work, &stop, None, &running).is_none(), "called off");
+            assert!(began.elapsed() < Duration::from_secs(10), "not waited for");
+            raise.join().unwrap();
+            releases.push(release);
+        }
+        assert_eq!(running.load(Ordering::SeqCst), 2, "both left running");
+        // A text still shown whose install outlasts its limit.
+        let calm = AtomicBool::new(false);
+        let (release, work) = stuck();
+        let began = Instant::now();
+        let colours = apart(work, &calm, Some(Duration::from_millis(10)), &running);
+        assert_eq!(colours, Some(None), "given up as out of time");
+        assert!(began.elapsed() < GRACE + Duration::from_secs(5));
+        releases.push(release);
+        assert_eq!(running.load(Ordering::SeqCst), 3);
+        // The next text starts at once, whatever is left running.
+        let began = Instant::now();
+        let colours = apart(|| Some(Painted::default()), &calm, None, &running);
+        assert_eq!(colours, Some(Some(Painted::default())));
+        assert!(began.elapsed() < Duration::from_secs(5), "not held");
+        // Called off before it starts, it never starts.
+        let stop = AtomicBool::new(true);
+        let colours = apart(|| unreachable!("it started"), &stop, None, &running);
+        assert!(colours.is_none());
+        // Each thread left ends once its work does.
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        let until = Instant::now() + Duration::from_secs(30);
         while running.load(Ordering::SeqCst) > 0 {
-            assert!(std::time::Instant::now() < until, "it never ended");
+            assert!(Instant::now() < until, "they never ended");
             std::thread::sleep(Duration::from_millis(1));
         }
-        drop(raise);
-
-        // In time, its colours are waited for; called off before it starts,
-        // it never starts.
-        let calm = AtomicBool::new(false);
-        let colours = apart(|| Some(Painted::default()), &calm, &running);
-        assert_eq!(colours, Some(Some(Painted::default())));
-        let colours = apart(|| unreachable!("it started"), &stop, &running);
-        assert!(colours.is_none());
     }
 }
