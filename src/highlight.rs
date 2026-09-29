@@ -13,6 +13,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -117,12 +118,25 @@ impl Painted {
 /// tokens lexed by then are coloured. A text too long to colour, one
 /// without a grammar, and a grammar that panics colour nothing.
 pub fn paint(grammar: Grammar, text: &str, timeout: Option<Duration>) -> Option<Painted> {
+    paint_unless(grammar, text, timeout, None)
+}
+
+/// [`paint`], stopped as it would be at its deadline once `stop` is raised.
+fn paint_unless(
+    grammar: Grammar,
+    text: &str,
+    timeout: Option<Duration>,
+    stop: Option<Arc<AtomicBool>>,
+) -> Option<Painted> {
     if text.len() > MAX_BYTES || !grammar.colourable() {
         return None;
     }
     // The time starts before the parser is made, as the loader's does:
     // installing a custom grammar can itself take seconds.
-    let deadline = Deadline::after(timeout);
+    let deadline = match stop {
+        Some(stop) => Deadline::after(timeout).map(|d| d.or_cancelled(stop)),
+        None => Deadline::after(timeout),
+    };
     let mut parser = grammar.parser()?;
     let _stopped = load::guard(&mut parser, deadline, load::MAX_RULE_DEPTH, || {});
     // The loader parses a text without its byte-order mark, and so does
@@ -159,9 +173,8 @@ pub struct Painter {
     done: HashMap<u64, (Key, Option<Arc<Painted>>)>,
     /// The painting each tab waits for.
     asked: HashMap<u64, Key>,
-    /// The texts the panes show now, shared with the worker, which skips
-    /// a job for any other when its turn comes.
-    wanted: Arc<Mutex<HashSet<Key>>>,
+    /// What the panes show, shared with the worker.
+    shown: Arc<Mutex<Shown>>,
     /// How long one text's parse may take.
     timeout: Option<Duration>,
 }
@@ -171,11 +184,23 @@ struct Worker {
     done: Receiver<(Key, Made)>,
 }
 
+/// What the panes show, as the painter and its worker share it: the
+/// worker skips a job whose text is not among `keys` when its turn comes,
+/// and the painter calls off the one `running` once its text leaves them.
+#[derive(Default)]
+struct Shown {
+    /// The texts the panes show now.
+    keys: HashSet<Key>,
+    /// The text the worker is colouring, and the flag that stops it.
+    running: Option<(Key, Arc<AtomicBool>)>,
+}
+
 /// What the worker made of a job.
 enum Made {
     /// The text's colours: `None` for a text that is not coloured.
     Colours(Option<Painted>),
-    /// Nothing: no pane showed the text when its turn came.
+    /// Nothing: no pane showed the text when its turn came, or it was
+    /// called off once none did.
     Skipped,
 }
 
@@ -272,12 +297,18 @@ impl Painter {
     }
 
     /// Name the texts the panes show now, the ones whose colours are worth
-    /// making. A job for any other is skipped when its turn comes, so a tab
-    /// left or closed never holds up the one in view.
+    /// making. A job for any other is skipped when its turn comes, and the
+    /// one being coloured is called off, so a tab left or closed never
+    /// holds up the one in view.
     pub fn want(&mut self, keys: impl IntoIterator<Item = Key>) {
-        let mut wanted = self.wanted.lock().unwrap_or_else(PoisonError::into_inner);
-        wanted.clear();
-        wanted.extend(keys);
+        let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+        shown.keys.clear();
+        shown.keys.extend(keys);
+        if let Some((key, stop)) = &shown.running {
+            if !shown.keys.contains(key) {
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     /// Whether colours are on their way.
@@ -300,8 +331,8 @@ impl Painter {
                 .name("aless-paint".into())
                 .stack_size(load::PARSE_STACK)
                 .spawn({
-                    let wanted = self.wanted.clone();
-                    move || work(queued, painted, wanted)
+                    let shown = self.shown.clone();
+                    move || work(queued, painted, shown)
                 });
             match spawned {
                 Ok(_) => self.worker = Some(Worker { jobs, done }),
@@ -325,8 +356,10 @@ impl Painter {
 
 /// The worker: paint each text asked for, in order, skipping one that a
 /// newer text for the same tab has replaced and one no pane shows any
-/// more. It ends when the painter is dropped.
-fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, wanted: Arc<Mutex<HashSet<Key>>>) {
+/// more, and stopping one whose text leaves the panes while it is
+/// coloured. It ends when the painter is dropped.
+fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, shown: Arc<Mutex<Shown>>) {
+    let lock = || shown.lock().unwrap_or_else(PoisonError::into_inner);
     let mut queue: VecDeque<Job> = VecDeque::new();
     loop {
         if queue.is_empty() {
@@ -342,11 +375,25 @@ fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, wanted: Arc<Mutex<HashSe
         if queue.iter().any(|later| later.key.0 == job.key.0) {
             continue;
         }
-        let shown = wanted
-            .lock()
-            .map_or(true, |wanted| wanted.contains(&job.key));
-        let made = if shown {
-            Made::Colours(paint(job.key.2, &job.text, job.timeout))
+        let stop = Arc::new(AtomicBool::new(false));
+        let in_view = {
+            let mut shown = lock();
+            let in_view = shown.keys.contains(&job.key);
+            if in_view {
+                shown.running = Some((job.key, stop.clone()));
+            }
+            in_view
+        };
+        let made = if in_view {
+            // A deadline to stop it by, even for a painter made without one.
+            let timeout = job.timeout.or(Some(MAX_TIME));
+            let painted = paint_unless(job.key.2, &job.text, timeout, Some(stop.clone()));
+            lock().running = None;
+            if stop.load(Ordering::Relaxed) {
+                Made::Skipped
+            } else {
+                Made::Colours(painted)
+            }
         } else {
             Made::Skipped
         };
@@ -479,5 +526,27 @@ mod tests {
         painter.ask(left, "[1]");
         painter.settle(Duration::from_secs(30));
         assert!(painter.get(left).is_some(), "shown again, it is coloured");
+    }
+
+    /// A text that leaves the panes while it is coloured is called off:
+    /// its parse stops, and it is skipped rather than coloured in part.
+    #[test]
+    fn a_text_hidden_while_it_is_coloured_is_called_off() {
+        let key = (1, 0, Grammar::Format(Format::Json));
+        // Long enough that its parse is still running when it is hidden.
+        let text = format!("[{}]", vec!["1"; 200_000].join(","));
+        assert!(text.len() <= MAX_BYTES);
+        let mut painter = Painter::new(None);
+        painter.want([key]);
+        painter.ask(key, &text);
+        let until = std::time::Instant::now() + Duration::from_secs(30);
+        while painter.shown.lock().unwrap().running.is_none() {
+            assert!(std::time::Instant::now() < until, "never started");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        painter.want([]);
+        painter.settle(Duration::from_secs(30));
+        assert!(!painter.pending());
+        assert!(!painter.has(key), "called off, not coloured");
     }
 }
