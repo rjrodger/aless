@@ -11,10 +11,10 @@
 //! marks as lexing speculatively (its trace holds tokens the parse took
 //! back) is never coloured, and neither is plain text.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tabnas::Tabnas;
@@ -120,13 +120,11 @@ pub fn paint(grammar: Grammar, text: &str, timeout: Option<Duration>) -> Option<
     if text.len() > MAX_BYTES || !grammar.colourable() {
         return None;
     }
+    // The time starts before the parser is made, as the loader's does:
+    // installing a custom grammar can itself take seconds.
+    let deadline = Deadline::after(timeout);
     let mut parser = grammar.parser()?;
-    let _stopped = load::guard(
-        &mut parser,
-        Deadline::after(timeout),
-        load::MAX_RULE_DEPTH,
-        || {},
-    );
+    let _stopped = load::guard(&mut parser, deadline, load::MAX_RULE_DEPTH, || {});
     // The loader parses a text without its byte-order mark, and so does
     // this; the runs still count from the text's first byte.
     let (body, shift) = match text.strip_prefix('\u{feff}') {
@@ -161,13 +159,24 @@ pub struct Painter {
     done: HashMap<u64, (Key, Option<Arc<Painted>>)>,
     /// The painting each tab waits for.
     asked: HashMap<u64, Key>,
+    /// The texts the panes show now, shared with the worker, which skips
+    /// a job for any other when its turn comes.
+    wanted: Arc<Mutex<HashSet<Key>>>,
     /// How long one text's parse may take.
     timeout: Option<Duration>,
 }
 
 struct Worker {
     jobs: Sender<Job>,
-    done: Receiver<(Key, Option<Painted>)>,
+    done: Receiver<(Key, Made)>,
+}
+
+/// What the worker made of a job.
+enum Made {
+    /// The text's colours: `None` for a text that is not coloured.
+    Colours(Option<Painted>),
+    /// Nothing: no pane showed the text when its turn came.
+    Skipped,
 }
 
 struct Job {
@@ -238,10 +247,13 @@ impl Painter {
         let mut any = false;
         loop {
             match worker.done.try_recv() {
-                Ok((key, painted)) => {
+                Ok((key, made)) => {
                     if self.asked.get(&key.0) == Some(&key) {
                         self.asked.remove(&key.0);
-                        self.done.insert(key.0, (key, painted.map(Arc::new)));
+                        // A skipped text is asked for again if it shows.
+                        if let Made::Colours(painted) = made {
+                            self.done.insert(key.0, (key, painted.map(Arc::new)));
+                        }
                         any = true;
                     }
                 }
@@ -257,6 +269,15 @@ impl Painter {
             }
         }
         any
+    }
+
+    /// Name the texts the panes show now, the ones whose colours are worth
+    /// making. A job for any other is skipped when its turn comes, so a tab
+    /// left or closed never holds up the one in view.
+    pub fn want(&mut self, keys: impl IntoIterator<Item = Key>) {
+        let mut wanted = self.wanted.lock().unwrap_or_else(PoisonError::into_inner);
+        wanted.clear();
+        wanted.extend(keys);
     }
 
     /// Whether colours are on their way.
@@ -278,7 +299,10 @@ impl Painter {
             let spawned = std::thread::Builder::new()
                 .name("aless-paint".into())
                 .stack_size(load::PARSE_STACK)
-                .spawn(move || work(queued, painted));
+                .spawn({
+                    let wanted = self.wanted.clone();
+                    move || work(queued, painted, wanted)
+                });
             match spawned {
                 Ok(_) => self.worker = Some(Worker { jobs, done }),
                 Err(_) => self.failed = true,
@@ -300,9 +324,9 @@ impl Painter {
 }
 
 /// The worker: paint each text asked for, in order, skipping one that a
-/// newer text for the same tab has replaced. It ends when the painter is
-/// dropped.
-fn work(jobs: Receiver<Job>, done: Sender<(Key, Option<Painted>)>) {
+/// newer text for the same tab has replaced and one no pane shows any
+/// more. It ends when the painter is dropped.
+fn work(jobs: Receiver<Job>, done: Sender<(Key, Made)>, wanted: Arc<Mutex<HashSet<Key>>>) {
     let mut queue: VecDeque<Job> = VecDeque::new();
     loop {
         if queue.is_empty() {
@@ -318,8 +342,15 @@ fn work(jobs: Receiver<Job>, done: Sender<(Key, Option<Painted>)>) {
         if queue.iter().any(|later| later.key.0 == job.key.0) {
             continue;
         }
-        let painted = paint(job.key.2, &job.text, job.timeout);
-        if done.send((job.key, painted)).is_err() {
+        let shown = wanted
+            .lock()
+            .map_or(true, |wanted| wanted.contains(&job.key));
+        let made = if shown {
+            Made::Colours(paint(job.key.2, &job.text, job.timeout))
+        } else {
+            Made::Skipped
+        };
+        if done.send((job.key, made)).is_err() {
             return;
         }
     }
@@ -411,6 +442,7 @@ mod tests {
     fn the_painter_keeps_the_newest_text_of_each_tab() {
         let json = Grammar::Format(Format::Json);
         let mut painter = Painter::new(None);
+        painter.want([(1, 0, json), (1, 1, json)]);
         painter.ask((1, 0, json), "[1]");
         painter.ask((1, 1, json), "[\"x\"]");
         painter.ask((2, 0, Grammar::Format(Format::Text)), "plain");
@@ -426,5 +458,26 @@ mod tests {
         assert!(painter.get((2, 0, Grammar::Format(Format::Text))).is_none());
         painter.retain(|id| id != 1);
         assert!(painter.get((1, 1, json)).is_none(), "its tab is gone");
+    }
+
+    /// A job whose text no pane shows by its turn is skipped, so a tab left
+    /// or closed never holds up the one in view; shown again, the text is
+    /// asked for again and coloured.
+    #[test]
+    fn a_text_no_pane_shows_is_skipped() {
+        let json = Grammar::Format(Format::Json);
+        let (left, shown) = ((1, 0, json), (2, 0, json));
+        let mut painter = Painter::new(None);
+        painter.want([shown]);
+        painter.ask(left, "[1]");
+        painter.ask(shown, "[2]");
+        painter.settle(Duration::from_secs(30));
+        assert!(!painter.pending(), "the skipped job is not waited for");
+        assert!(painter.get(shown).is_some(), "the text in view is coloured");
+        assert!(!painter.has(left), "the other is not");
+        painter.want([left, shown]);
+        painter.ask(left, "[1]");
+        painter.settle(Duration::from_secs(30));
+        assert!(painter.get(left).is_some(), "shown again, it is coloured");
     }
 }

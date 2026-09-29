@@ -1085,48 +1085,96 @@ fn source_lines(app: &mut App, pane: Pane, width: usize, pane_h: usize) -> Vec<L
 /// A line of a pane's text with its runs coloured, shown as the plain
 /// view shows it: a tab as four spaces, another control character below
 /// a space as `·` and any other as `\u{fffd}`, and cut to `avail`
-/// columns with `…` as [`clip`] cuts. Only what shows is measured and
-/// styled.
-fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
-    // The text as shown, clean, and where each style starts in it.
-    let mut shown = String::with_capacity(text.len());
-    let mut marks: Vec<(usize, Style)> = Vec::new();
-    let mut next = runs.iter().peekable();
-    for (i, c) in text.char_indices() {
-        while next.peek().is_some_and(|r| r.end <= i) {
-            next.next();
-        }
-        let here = match next.peek() {
-            Some(r) if r.start <= i => token_style(r.kind),
-            _ => PLAIN,
-        };
-        if marks.last().is_none_or(|&(_, style)| style != here) {
-            marks.push((shown.len(), here));
-        }
-        match c {
-            '\t' => shown.push_str("    "),
-            c if (c as u32) < 0x20 => shown.push('·'),
-            c if c.is_control() => shown.push('\u{fffd}'),
-            c => shown.push(c),
-        }
-    }
+/// columns with `…` as [`clip`] cuts. Each grapheme cluster takes the
+/// style of its first character, so a style never splits what the
+/// terminal draws as one. The line is read only until what shows is
+/// settled, so a long one costs a screenful.
+pub fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
     let mut line = Line::default();
     if avail == 0 {
         return line;
     }
-    let cut = cols_upto(&shown, avail.saturating_add(1)) > avail;
-    let (len, _) = fit(&shown, if cut { avail - 1 } else { avail });
-    for (k, &(start, style)) in marks.iter().enumerate() {
-        if start >= len {
+    // The text as shown, clean, and where each style starts in it, read a
+    // chunk at a time until the clusters that show, and whether the line
+    // is cut, no longer depend on what follows.
+    let mut shown = String::new();
+    let mut marks: Vec<(usize, Style)> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    let mut next = runs.iter().peekable();
+    let chunk = avail.saturating_mul(2).saturating_add(64);
+    loop {
+        for (i, c) in chars.by_ref().take(chunk) {
+            while next.peek().is_some_and(|r| r.end <= i) {
+                next.next();
+            }
+            let here = match next.peek() {
+                Some(r) if r.start <= i => token_style(r.kind),
+                _ => PLAIN,
+            };
+            if marks.last().is_none_or(|&(_, style)| style != here) {
+                marks.push((shown.len(), here));
+            }
+            match c {
+                '\t' => shown.push_str("    "),
+                c if (c as u32) < 0x20 => shown.push('·'),
+                c if c.is_control() => shown.push('\u{fffd}'),
+                c => shown.push(c),
+            }
+        }
+        if chars.peek().is_none() || overflows(&shown, avail) {
             break;
         }
-        let end = marks.get(k + 1).map_or(len, |&(end, _)| end.min(len));
-        line.put(&shown[start..end], style);
     }
+    // Text left unread means the window overflowed.
+    let cut = chars.peek().is_some() || cols_upto(&shown, avail.saturating_add(1)) > avail;
+    if cut && avail == 1 {
+        line.put("…", PLAIN);
+        return line;
+    }
+    let width = if cut { avail - 1 } else { avail };
+    let (mut used, mut at, mut mark) = (0, 0, 0);
+    let mut style = PLAIN;
+    let mut run = String::new();
+    walk(&shown, |bytes, w| {
+        if used + w > width {
+            return ControlFlow::Break(());
+        }
+        while marks.get(mark + 1).is_some_and(|&(from, _)| from <= at) {
+            mark += 1;
+        }
+        let here = marks.get(mark).map_or(PLAIN, |&(_, style)| style);
+        if here != style && !run.is_empty() {
+            line.put(std::mem::take(&mut run), style);
+        }
+        style = here;
+        run.push_str(&shown[at..at + bytes]);
+        used += w;
+        at += bytes;
+        ControlFlow::Continue(())
+    });
+    line.put(run, style);
     if cut {
         line.put("…", PLAIN);
     }
     line
+}
+
+/// Whether clean `text` takes more than `avail` columns before its last
+/// cluster. Then what fits in `avail` columns is made of whole clusters,
+/// and the text is cut there, whatever follows the last one.
+fn overflows(text: &str, avail: usize) -> bool {
+    let mut used = 0;
+    let mut over = false;
+    walk(text, |_, w| {
+        // A cluster after those past the window: they are whole.
+        if used > avail {
+            over = true;
+            return ControlFlow::Break(());
+        }
+        used += w;
+        ControlFlow::Continue(())
+    });
+    over
 }
 
 /// How a token is coloured in a pane's text, as the tree colours values:
@@ -1525,6 +1573,52 @@ mod tests {
         let line = coloured(&long, &runs, 40);
         assert_eq!(line.plain(), clip(&long, 0, 40).0);
         assert!(line.spans.len() <= 40, "{} spans", line.spans.len());
+    }
+
+    /// A style boundary inside a grapheme cluster, a combining mark lexed
+    /// apart from its base or an emoji sequence split at its joiners, does
+    /// not split the cluster: it takes its first character's style, and
+    /// takes the columns the plain view gives it.
+    #[test]
+    fn a_cluster_takes_the_style_of_its_first_character() {
+        let run = |start, end, kind| Run { start, end, kind };
+        let spans = |line: &Line| -> Vec<(String, Style)> {
+            line.spans
+                .iter()
+                .map(|s| (s.content.to_string(), s.style))
+                .collect()
+        };
+        let text = "e\u{301}x";
+        let runs = [
+            run(0, 1, TokenType::String),
+            run(1, 3, TokenType::Number),
+            run(3, 4, TokenType::Keyword),
+        ];
+        let line = coloured(text, &runs, 10);
+        assert_eq!(
+            spans(&line),
+            [("e\u{301}".to_string(), STRING), ("x".to_string(), BOOL)]
+        );
+
+        let family = "👨\u{200d}👩\u{200d}👧 ok";
+        let kinds = [TokenType::String, TokenType::Number];
+        let runs: Vec<Run> = family
+            .char_indices()
+            .take(5)
+            .enumerate()
+            .map(|(k, (i, c))| run(i, i + c.len_utf8(), kinds[k % 2]))
+            .collect();
+        for avail in 0..=8 {
+            let line = coloured(family, &runs, avail);
+            assert_eq!(line.plain(), clip(family, 0, avail).0, "{avail}");
+            assert!(line.cols() <= avail, "{avail}: {}", line.cols());
+        }
+        let line = coloured(family, &runs, 10);
+        assert_eq!(
+            spans(&line)[0],
+            ("👨\u{200d}👩\u{200d}👧".to_string(), STRING)
+        );
+        assert_eq!(line.cols(), cols(family));
     }
 
     #[test]

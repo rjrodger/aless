@@ -514,7 +514,8 @@ impl App {
     // ----- colours -------------------------------------------------------------------
 
     /// Ask for the colours of each pane showing its text, take in those
-    /// that have come, and forget those of tabs that are gone. Without
+    /// that have come, and forget those of tabs that are gone. A text no
+    /// pane shows any more is skipped when its turn comes. Without
     /// colour (`--no-color`, `NO_COLOR`) nothing would show them, so none
     /// are made: no text is parsed for them, and the loop never ticks for
     /// them.
@@ -524,11 +525,17 @@ impl App {
         }
         let mut painter = std::mem::take(&mut self.painter);
         painter.collect();
-        for &pane in &self.workspace.panes {
-            if pane.mode != PaneMode::Source {
-                continue;
-            }
-            if let (Some(key), Some(tab)) = (self.paint_key(pane), self.pane_tab_ref(pane)) {
+        let shown: Vec<(highlight::Key, Pane)> = self
+            .workspace
+            .panes
+            .iter()
+            .filter(|pane| pane.mode == PaneMode::Source)
+            .filter_map(|&pane| Some((self.paint_key(pane)?, pane)))
+            .collect();
+        // Named before they are asked for, so the worker never skips one.
+        painter.want(shown.iter().map(|&(key, _)| key));
+        for (key, pane) in shown {
+            if let Some(tab) = self.pane_tab_ref(pane) {
                 painter.ask(key, &tab.source);
             }
         }
