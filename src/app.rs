@@ -2661,6 +2661,24 @@ mod tests {
         assert!(!out.has_doc && out.error.is_some());
     }
 
+    /// `:format` parses the input as another format, and the output
+    /// follows it.
+    #[test]
+    fn the_output_pane_follows_a_format_change() {
+        let mut app = with_panes(&[Role::Output], Through::default());
+        app.open_source("t.conf", "a = 1\n".into(), Format::Ini);
+        app.prepare();
+        let out = |app: &mut App| app.pane_tab(Pane::new(Role::Output)).source.clone();
+        assert_eq!(
+            out(&mut app),
+            "{\n  \"a\": \"1\"\n}\n",
+            "ini reads a string"
+        );
+        app.run_command("format toml");
+        app.prepare();
+        assert_eq!(out(&mut app), "{\n  \"a\": 1\n}\n", "toml reads a number");
+    }
+
     /// C-w moves between panes, the keys move the focused pane's tree, s
     /// switches it between its tree and its text, and q closes a pane but
     /// never the input's.

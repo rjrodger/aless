@@ -83,6 +83,10 @@ pub struct Tab {
     pub stamp: Option<Stamp>,
     pub error: Option<LoadError>,
     pub gone: bool,
+    /// Counts the changes to what the tab holds: each document it takes
+    /// ([`Tab::apply`], a reload, `:format`), each failed reload that
+    /// re-reads the source, each re-listing of a directory. What is built
+    /// from the tab (the output pane) is rebuilt when it moves.
     pub generation: u64,
     pub reload_due: Option<Instant>,
     pub search: Option<Search>,
@@ -738,10 +742,10 @@ impl Tab {
                 if let Ok(src) = std::fs::read_to_string(&path) {
                     self.source = src;
                 }
+                self.generation += 1;
             }
         }
         self.stamp = Stamp::of(&path);
-        self.generation += 1;
         self.reload_due = None;
     }
 
@@ -809,6 +813,7 @@ impl Tab {
         self.has_doc = true;
         self.format = loaded.format;
         self.source = loaded.source;
+        self.generation += 1;
         self.rows_dirty = true;
         let rows = self.rows();
         let mut focus = row_of(rows, anchor).unwrap_or(0);
