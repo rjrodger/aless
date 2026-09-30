@@ -45,8 +45,9 @@ Rust 1.88 or newer and git:
 cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
-The tabnas crates are not on crates.io yet, so `Cargo.toml` takes them
-straight from GitHub, pinned by `Cargo.lock` (see [Dependencies](#dependencies));
+`Cargo.toml` takes the tabnas crates straight from GitHub, pinned by
+`Cargo.lock` (see [Dependencies](#dependencies)), until every one of them
+is on crates.io (`tabnas-lsp` is not yet);
 `--locked` makes `cargo install` honour those pins instead of resolving
 each repository's current head.
 Build from a checkout with `cargo build --release`; the binary is
