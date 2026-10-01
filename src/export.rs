@@ -1,6 +1,7 @@
 //! `--render`: a document's records as CSV, or the document as JSON text,
 //! streamed through the tabnas transducer and renderers rather than built
-//! into the viewer's tree.
+//! into the viewer's tree; a format written by a render its crate
+//! carries runs through the same plumbing from [`crate::translate`].
 //!
 //! The viewer's path (`load`) reads an input whole, parses it whole and
 //! only then has a value to print. An export need not: the transducer
@@ -41,7 +42,6 @@
 //! under the deadline; a grammar that panics is caught at the same
 //! boundary the loader has.
 
-use std::collections::HashSet;
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -78,12 +78,20 @@ pub enum Renderer {
 }
 
 impl Renderer {
-    /// `--render`'s argument: a built-in, or a part the registry has.
+    /// `--render`'s argument: a part the registry has, by its id, which
+    /// names the built-ins too (`csv` and `json` are formats whose
+    /// manifests name aless's own renderers), so that the source decides
+    /// how its events reach the renderer; the built-in itself only where
+    /// no manifest names it.
     pub fn from_name(name: &str) -> Option<Renderer> {
-        match name.trim().to_ascii_lowercase().as_str() {
+        let name = name.trim().to_ascii_lowercase();
+        if let Some(id) = crate::translate::id_of(&name) {
+            return Some(Renderer::Part(id));
+        }
+        match name.as_str() {
             "csv" => Some(Renderer::Csv),
             "json" => Some(Renderer::Json),
-            other => crate::translate::id_of(other).map(Renderer::Part),
+            _ => None,
         }
     }
 
@@ -145,9 +153,9 @@ pub enum What {
     /// one, so the parse can be pruned under it as an export's is under
     /// the exported array (see [`crate::alchemy`]).
     Program { rows: Option<Selector> },
-    /// `--render` through a format's own render: a program over the
-    /// value at the path, pruned behind it as JSON's render is (see
-    /// [`crate::translate`]).
+    /// `--render` through a format's own render, or a program's output
+    /// through one: a program over the value at the path, pruned behind
+    /// it as JSON's render is (see [`crate::translate`]).
     Part,
 }
 
@@ -406,105 +414,6 @@ fn attempt<S: Sink + Send + 'static>(
             .map_err(|f| classify(job, *f, written, broken))
         }
         _ => Err(classify(job, *failed, written, broken)),
-    }
-}
-
-/// A tree's events: the contract a format's render takes
-/// ([`Renderer::Part`]). Each member is a key and then its value, each key
-/// once per object. A walked value keeps it by construction. A parse
-/// streamed as it proceeds may not: it hands on a member its grammar reads
-/// twice (JSON's `{"a":1,"a":2}`, whose value keeps the last), which a
-/// render would write twice, and YAML forbids a repeated key; and where a
-/// grammar builds a key the adapter cannot stream (a YAML key that is a
-/// mapping), it may stream a value where a key is due. The first is
-/// refused with `DUPLICATE_MEMBER`, the second with
-/// `STREAMABILITY_UNKNOWN`, which the run treats as a grammar refusing to
-/// stream: when nothing had been written it falls back once to the parsed
-/// value, as `--json` reads it. Each open object keeps the keys it has had,
-/// dropped when it closes, so the cost is a lookup per key and the keys of
-/// the objects open at once, which the parse holds in its tree already.
-pub struct UniqueMembers<S> {
-    open: Vec<Open>,
-    inner: S,
-}
-
-/// A container [`UniqueMembers`] has open.
-enum Open {
-    /// The keys the object has had, and whether a key is due next rather
-    /// than a value.
-    Object {
-        keys: HashSet<Box<str>>,
-        key_due: bool,
-    },
-    Array,
-}
-
-impl<S: Sink> UniqueMembers<S> {
-    pub fn new(inner: S) -> Self {
-        UniqueMembers {
-            open: Vec::new(),
-            inner,
-        }
-    }
-
-    /// The failure for events no tree has.
-    fn not_a_tree(what: &str) -> Fail {
-        Fail::new(
-            Code::StreamabilityUnknown,
-            format!(
-                "the parse streamed {what}, which a tree's events never hold, so the stream is \
-                 not the document's"
-            ),
-        )
-    }
-}
-
-impl<S: Sink> Sink for UniqueMembers<S> {
-    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
-        match &ev {
-            JsonEvent::Key(key) => match self.open.last_mut() {
-                Some(Open::Object { keys, key_due }) if *key_due => {
-                    if !keys.insert((*key).into()) {
-                        return Err(Fail::new(
-                            Code::DuplicateMember,
-                            format!(
-                                "member {key:?} appears twice in one object, and a render \
-                                 writes a tree, each key once"
-                            ),
-                        ));
-                    }
-                    *key_due = false;
-                }
-                _ => return Err(Self::not_a_tree("a key where a value is due")),
-            },
-            JsonEvent::ObjectEnd => match self.open.pop() {
-                Some(Open::Object { key_due: true, .. }) => {}
-                _ => return Err(Self::not_a_tree("an object's end where none is due")),
-            },
-            JsonEvent::ArrayEnd => match self.open.pop() {
-                Some(Open::Array) => {}
-                _ => return Err(Self::not_a_tree("an array's end where none is due")),
-            },
-            JsonEvent::End => {}
-            // A value: in an object, only once its key is in.
-            value => {
-                if let Some(Open::Object { key_due, .. }) = self.open.last_mut() {
-                    if *key_due {
-                        return Err(Self::not_a_tree("a value where a key is due"));
-                    }
-                    *key_due = true;
-                }
-                match value {
-                    JsonEvent::ObjectStart => self.open.push(Open::Object {
-                        keys: HashSet::new(),
-                        key_due: true,
-                    }),
-                    JsonEvent::ArrayStart => self.open.push(Open::Array),
-                    _ => {}
-                }
-            }
-        }
-        self.inner.event(ev)
     }
 }
 
@@ -1465,7 +1374,7 @@ fn scalar_value(ev: &JsonEvent<'_>) -> Value {
 /// a row of the other kind than the first. A scalar row is wrapped as
 /// `{"value": …}` so the table transducer's inferred schema has its one
 /// column.
-struct Rows<S> {
+pub(crate) struct Rows<S> {
     inner: S,
     /// Containers open in the re-rooted stream.
     depth: usize,
@@ -1482,7 +1391,7 @@ enum RowKind {
 }
 
 impl<S: Sink> Rows<S> {
-    fn new(inner: S) -> Rows<S> {
+    pub(crate) fn new(inner: S) -> Rows<S> {
         Rows {
             inner,
             depth: 0,
@@ -1725,57 +1634,15 @@ mod tests {
             assert_eq!(plan(f, true), Some(Plan::Materialize), "{f}");
         }
         assert_eq!(plan(Format::Text, true), None);
-        assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Csv));
-        assert_eq!(Renderer::from_name("json"), Some(Renderer::Json));
-        assert_eq!(Renderer::from_name("xml"), None);
-        // A format written by its own render, by its manifest's id.
+        // Every name is a part's, the built-ins' among them, since their
+        // manifests name aless's own renderers.
+        assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Part("csv")));
+        assert_eq!(Renderer::from_name("json"), Some(Renderer::Part("json")));
+        assert_eq!(Renderer::from_name("rss"), None);
         assert_eq!(Renderer::from_name(" YAML "), Some(Renderer::Part("yaml")));
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
-        assert_eq!(Renderer::from_name("toml"), None);
-    }
-
-    /// A tree's events pass the guard unchanged. A key repeated in one
-    /// object is `DUPLICATE_MEMBER`, where the same key in another object
-    /// is none, and events no tree has are `STREAMABILITY_UNKNOWN`, the
-    /// two refusals a run falls back from.
-    #[test]
-    fn unique_members_holds_a_stream_to_a_trees_events() {
-        let doc = r#"{"a":{"b":1,"a":2},"b":[{"a":3},{"a":4}],"c":[],"d":{}}"#;
-        let mut guard = UniqueMembers::new(Vec::new());
-        replay(&events(doc), &mut guard).unwrap();
-        assert_eq!(guard.inner, events(doc));
-        let mut guard = UniqueMembers::new(Vec::new());
-        let fail = replay(&streamed(r#"{"a":1,"b":{"a":2},"a":3}"#), &mut guard).unwrap_err();
-        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
-        assert!(fail.message.starts_with("member \"a\""), "{fail}");
-        use OwnedJsonEvent as E;
-        let key = |k: &str| E::Key(k.into());
-        for (bad, why) in [
-            (vec![E::ObjectStart, E::Null], "a value where a key is due"),
-            (
-                vec![E::ObjectStart, key("a"), key("b")],
-                "a key where a value is due",
-            ),
-            (vec![E::ArrayStart, key("a")], "a key where a value is due"),
-            (vec![key("a")], "a key where a value is due"),
-            (
-                vec![E::ObjectStart, key("a"), E::ObjectEnd],
-                "an object's end where none is due",
-            ),
-            (
-                vec![E::ArrayStart, E::ObjectEnd],
-                "an object's end where none is due",
-            ),
-            (
-                vec![E::ObjectStart, E::ArrayEnd],
-                "an array's end where none is due",
-            ),
-        ] {
-            let mut guard = UniqueMembers::new(Vec::new());
-            let fail = replay(&bad, &mut guard).unwrap_err();
-            assert_eq!(fail.code, Code::StreamabilityUnknown, "{bad:?}");
-            assert!(fail.message.contains(why), "{bad:?}: {fail}");
-        }
+        assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
+        assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
     }
 
     #[test]

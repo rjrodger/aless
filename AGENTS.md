@@ -85,9 +85,10 @@ working here; `CLAUDE.md` imports it.
   errors),
   `alchemy` (programs in the alchemy language: compiled, explained, and
   run over the input through `export`'s plumbing), `translate` (`--render
-  yaml`: the formats written by their own render, read from their
-  crates' manifests, each linked with a one-line program and run as a
-  program runs), `explorer` (directory
+  FORMAT` for any format whose crate carries a render: the registry
+  read from the crates' manifests, the composition `render ∘ adapt ∘
+  lift` the shapes decide, a program's output into a render, each
+  linked with a one-line main and run as a program runs), `explorer` (directory
   trees as documents, listed lazily), `prov`
   (source positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,

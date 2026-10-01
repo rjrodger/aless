@@ -129,16 +129,11 @@ pub fn is_placed(fail: &Fail) -> bool {
 }
 
 /// What `--render` may ask of a program: nothing of one that renders its
-/// own text, and no format written by its own render (`--render yaml`),
-/// which cannot take a program's output yet. The message is the usage
-/// error's.
+/// own text. A format's own render takes a program's table or JSON events
+/// through the composition `translate::compose_program` builds; a program
+/// that renders its own text takes none. The message is the usage error's.
 pub fn check_render(program: &Program, render: Option<Renderer>) -> Result<(), String> {
     match (program.output(), render) {
-        (_, Some(Renderer::Part(id))) => Err(format!(
-            "--render {id} writes a document through {id}'s own render, which cannot take a \
-             program's output yet: render the program's output as csv or json, or give \
-             --render {id} without --alchemy"
-        )),
         (Output::Text, Some(renderer)) => Err(format!(
             "--render {} was given, but the program renders its own text ({}): drop --render, \
              or export a table or JSON events for aless to render",
@@ -149,8 +144,8 @@ pub fn check_render(program: &Program, render: Option<Renderer>) -> Result<(), S
     }
 }
 
-/// alchemy's renderer for aless's; `None` for a part's, which
-/// [`check_render`] refuses for a program.
+/// alchemy's renderer for aless's built-in; `None` for a part's, whose
+/// program runs through the composition instead.
 fn renderer(render: Renderer) -> Option<tabnas_alchemy::Renderer> {
     match render {
         Renderer::Csv => Some(tabnas_alchemy::Renderer::Csv),

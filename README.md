@@ -113,7 +113,7 @@ aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 i
 aless --where --path .spec.replicas deploy.yaml    # the line a path is on
 aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
 aless --render csv --path .items orders.json       # the records as CSV, streamed
-aless --render yaml data.csv                       # any format written as YAML, streamed
+aless --render yaml data.csv                       # any format written as any other, streamed
 aless --alchemy export.alc response.json           # a program over the document, streamed
 ```
 
@@ -124,8 +124,8 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
 | `--where` | the start's entry |
 | `--check` | parse every input and report on each |
-| `--render csv\|json\|yaml` | the records at the start as CSV, the value there as JSON, or the value there as YAML through its own render, streamed as the input is read ([Exporting](#exporting), [Writing YAML](#writing-yaml)) |
-| `--alchemy FILE`, `--alchemy-expr TEXT` | run an alchemy program over the input and stream what it exports; `--render` names the renderer for a table or JSON events ([Programs](#programs)) |
+| `--render FORMAT` | the value at the start written as FORMAT, streamed as the input is read: `csv` (its records), `json`, or any format whose crate carries a render, `ini`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml` and `zon` today ([Exporting](#exporting), [Writing any format](#writing-any-format)) |
+| `--alchemy FILE`, `--alchemy-expr TEXT` | run an alchemy program over the input and stream what it exports; `--render` names the format a table or JSON events are written as ([Programs](#programs)) |
 | `--explain` | with `--alchemy`: the program's plan report as JSON, and no run |
 | `--path PATH` | start at PATH instead of the root |
 | `--at LINE[:COL]` | start at the node at that source position |
@@ -291,7 +291,11 @@ member both written as the empty string (so the two cannot be told apart:
 this default export is lossy there, as the profile is), a nested container
 written as compact JSON text in its cell, and a number as the source
 spelled it where the source provides its lexeme (the JSON family, YAML,
-ZON and JSON Lines). An empty array exports as nothing. `--render json`
+ZON and JSON Lines). An empty array exports as nothing. What the CSV
+does not keep is declared on standard error on a write that succeeds, as
+every format's render declares it ([Writing any
+format](#writing-any-format)); JSON declares no loss, so `--render json`
+writes nothing there. `--render json`
 takes `--compact` and `--indent` as `--json` does. Two things a stream
 cannot do, since the input is read once, front to back: `--at` is not
 accepted, and `[-1]` on an array (counting from the end) is a usage error,
@@ -359,31 +363,58 @@ otherwise the refusal is reported with `output: "partial"`. `--timeout`
 stops either kind at the deadline, with `output` saying whether records
 had already been written.
 
-### Writing YAML
+### Writing any format
 
-`--render yaml` writes the value at the start as one YAML 1.2 document,
-through the render tabnas-yaml carries: a library in the
+`--render FORMAT` writes the value at the start as that format, through
+the render the format's crate carries: a library in the
 [alchemy](https://github.com/tabnas/alchemy) language, which aless links
 with a one-line program and runs as it runs `--alchemy`, streamed as the
-input is read. Every format aless reads can be written this way, so it is
-a translation: CSV's records become a sequence of mappings, a JSON or
-TOML document a block of mappings and sequences. The input is read as
-`--render json` reads it: JSON Lines, CSV and TSV a record at a time,
-`--path` to start below the root, `--timeout` over the whole run.
+input is read. Every format aless reads can be written as every format
+that has a render, so it is a translation: CSV's records become a YAML
+sequence of mappings, a JSON document a TOML table, a Markdown table a
+CSV file. The input is read as `--render json` reads it: JSON Lines, CSV
+and TSV a record at a time, `--path` to start below the root, `--timeout`
+over the whole run. The formats with a render today are `csv`, `ini`,
+`json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`,
+`yaml` and `zon`; `--render` with any other name is a usage error that
+lists them.
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
-aless --render yaml --path .spec deploy.json    # the value at a path
-aless -k jsonl --render yaml < events.log       # stdin, a record at a time
+aless --render toml --path .spec deploy.json    # the value at a path, as TOML
+aless --render markdown --path .rows api.json   # records as a Markdown table
+aless --render csv table.md                     # a Markdown table's rows as CSV
+aless -k jsonl --render zon < events.log        # stdin, a record at a time
 ```
 
-The document is in block style and an always-quoted profile, as the CSV
-export is: every string and every key double-quoted with JSON's escapes,
-so that no string reads back as a boolean, a null, a number or a nested
-mapping; a number as the source spelled it where the source provides its
-lexeme, and `.inf`, `-.inf` or `.nan` where it is not finite; an empty
-container as `{}` or `[]`; a key longer than 1024 characters in the
-explicit `? key` form.
+**How a translation is put together** is the design in tabnas/transduce's
+[`docs/translation.md`](https://github.com/tabnas/transduce/blob/main/docs/translation.md),
+and the parts come from each format's own repository. A format's
+manifest, `tabnas.plugin.json`, says what it reads as (a tree, every
+format's events; or records first, through a lift, for a Markdown
+table), what its render writes from (a tree, or records), and what a
+written document does not keep. aless composes `render ∘ adapt ∘ lift`
+from them. When the target writes from a shape the source reads as, the
+source's events reach the render in that shape and nothing stands
+between: CSV to YAML runs YAML's render over CSV's events. Otherwise one
+of two adapters runs: a tree reaches a render that writes from records
+through the inferred table, the policy `--render csv` has (the root is an
+array and its elements are the rows, behind the same row check), and
+records reach a render that writes from a tree through `records` (one
+object per row, keyed by the column labels). JSON's and CSV's renders are
+alchemy's own, which aless runs natively: `--render json` and `--render
+csv` are what they always were, and a Markdown table reaches CSV through
+its lift.
+
+The output is in each format's always-quoted profile where the format
+has quoting, as the CSV export is: YAML's strings and keys double-quoted,
+TOML's keys quoted and its tables inline, ZON's field names in the
+`.@"name"` form, so that nothing reads back as another kind. A number is
+written as the source spelled it where the source provides its lexeme,
+and by its value otherwise; what a format cannot carry (a null in TOML, a
+root that is not an array in JSON Lines, a document with no table for
+Markdown) is a typed `INPUT_INVALID` that says so, before anything is
+written where the shape is decided before any.
 
 ```
 $ aless --render yaml tests/fixtures/sample.csv
@@ -395,44 +426,39 @@ $ aless --render yaml tests/fixtures/sample.csv
   "city": "helsinki"
 ```
 
-**What it does not keep** is declared rather than hidden. On a write that
-succeeds, standard output holds the document alone and standard error a
-JSON warning with the render's loss declaration; an error met while it
-was writing carries the same sentences as `loss`. They come from
-tabnas-yaml's manifest, whose `translate` object also names the render:
+**What a write does not keep** is declared rather than hidden. On a write
+that succeeds, standard output holds the document alone and standard
+error a JSON warning with the render's loss declaration, the adapter's
+sentences after it when one ran (named as `adapter`); an error met while
+it was writing carries the same sentences as `loss`. A format that
+declares no loss (JSON) writes nothing there. The sentences come from
+the format's manifest:
 
 ```
 {"warning": {"kind": "loss", "message": "the document was written as yaml, which does not keep everything a document can hold", "file": "tests/fixtures/sample.csv", "render": "yaml", "loss": ["Comments are not kept.", "Anchors and aliases are not kept: an alias is written as a copy of the value it names.", "Tags are not kept.", "Styles are not kept: every string and key is written double-quoted, and every collection in block style.", "A stream of several documents is written as one document, a sequence of them."]}}
 ```
 
-**A tree, each key once.** YAML forbids a repeated key, and the render
-writes what it is given, so the stream is checked on its way in. A member
-the parse streams twice (JSON's `{"a":1,"a":2}`, whose value keeps the
-last) is refused with `DUPLICATE_MEMBER`, and a stream no tree has (what
-the incremental YAML parse streams for a key that is itself a mapping,
-[tabnas/transduce#7](https://github.com/tabnas/transduce/issues/7)) with
-`STREAMABILITY_UNKNOWN`. Either way aless falls back once to the parsed
-value, as `--json` reads it, when nothing has been written; otherwise the
-refusal is reported with `output: "partial"`.
+**A tree, each key once.** A render that writes from a tree takes a
+tree's events, each key once per object, and writes what it is given, so
+the stream is checked on its way in (the transducer's `TreeContract`). A
+member the parse streams twice (JSON's `{"a":1,"a":2}`, whose value
+keeps the last) is refused with `DUPLICATE_MEMBER`, and a stream no tree
+has with `STREAMABILITY_UNKNOWN`. Either way aless falls back once to
+the parsed value, as `--json` reads it, when nothing has been written;
+otherwise the refusal is reported with `output: "partial"`.
 
-`--render` names a format aless can write: `csv`, `json`, or one whose
-crate carries its own render, `yaml`. A format aless reads and has no
-render for (`--render toml`) is a usage error that says so, and so is
-`--render yaml` with `--alchemy`: a format's own render cannot take a
-program's output yet, so a program's output is rendered as CSV or JSON.
-
-The output is YAML 1.2, which reads back as the same value in a reader
-that follows it. tabnas-yaml's own reader, which aless shows YAML with,
-misreads two shapes the render writes, recorded as
-[tabnas/yaml#86](https://github.com/tabnas/yaml/issues/86) (a quoted key
-after a block sequence is read into the sequence) and
-[tabnas/yaml#88](https://github.com/tabnas/yaml/issues/88) (a flow
-sequence first in an indented block sequence replaces it). The round
-trip over tabnas-yaml's fixtures, `tests/yaml_render.rs`, keeps the
-inputs they affect in a checked ledger.
+The output of each render reads back as the same value in a reader of
+its format; where a format's own reader misreads a shape its render
+writes, the format's repository records it. The round trip over
+tabnas-yaml's fixtures, `tests/yaml_render.rs`, keeps the inputs such a
+defect affects in a checked ledger, empty since the reader fixed the two
+the pilot found ([tabnas/yaml#86](https://github.com/tabnas/yaml/issues/86),
+[tabnas/yaml#88](https://github.com/tabnas/yaml/issues/88)): every input
+of its fixtures and of the YAML Test Suite comes back as the same value.
 
 `--render` on its own is the default export. Programs that select,
-project and reshape on the way through are the next section's.
+project and reshape on the way through are the next section's, and a
+program's output takes any of these formats too.
 
 ### Programs
 
@@ -443,8 +469,12 @@ command line. A program's `export` receives the document as a stream of
 JSON events and answers a text, a table or JSON events: aless writes a
 text as it is, renders a table as CSV (`--render json` for JSON records,
 one object per row keyed by the column labels) and JSON events as JSON
-(`--render csv` for a table of them). The JSON a program renders is
-compact, one document on one line. The program does the selecting, so
+(`--render csv` for a table of them), and `--render` with any format
+that has a render writes the program's output as that format, its output
+shape standing where the source's would ([Writing any
+format](#writing-any-format)): a table reaches YAML as a sequence of
+mappings, JSON events reach a Markdown table through the inferred table.
+The JSON a program renders is compact, one document on one line. The program does the selecting, so
 `--path` and `--at` are not accepted, and neither is any other output
 option; `--render` given for a program that renders its own text is a
 usage error, with `--explain` as without it, since `--render` is checked
@@ -467,6 +497,7 @@ same table and leaves the rendering to aless, so it is the one that takes
 ```bash
 aless --alchemy export.alc response.json                  # the table the program renders, as CSV
 aless --alchemy table.alc --render json response.json     # the same rows as JSON records
+aless --alchemy table.alc --render yaml response.json     # the same rows as a YAML sequence
 aless --alchemy-expr 'def export [input] input' data.yaml # the document, as JSON
 aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
 aless --alchemy export.alc --explain                      # the plan; no run

@@ -56,15 +56,18 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --where             The start's entry: its path and source position
         --check             Parse each FILE and report
                             {ok, files: [{file, format, ok, error}]}
-        --render <FORMAT>   csv, json or yaml: the records at the start (the
-                            elements of an array; JSON Lines and CSV row by
-                            row) as CSV, or the value there as JSON or YAML,
-                            streamed as it is read; yaml says what it does not
-                            keep in a {\"warning\": …} on standard error
+        --render <FORMAT>   The value at the start written as FORMAT, streamed
+                            as it is read: csv (the records: the elements of
+                            an array; JSON Lines and CSV row by row), json, or
+                            a format whose crate carries a render (ini, json5,
+                            jsonc, jsonic, jsonl, markdown, toml, xml, yaml,
+                            zon); what it does not keep is said in a
+                            {\"warning\": …} on standard error
         --alchemy <FILE>    Run the alchemy program in FILE over the input and
                             stream what it exports: its own text as it is, a
                             table as CSV (--render json: JSON records), JSON
-                            events as JSON (--render csv: a table)
+                            events as JSON (--render csv: a table), either as
+                            any format --render names
         --alchemy-expr <TEXT>
                             The same, with the program on the command line
         --explain           The program's plan report as JSON, and no run
@@ -84,7 +87,7 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
     \"message\", …}}, with the file, line, col, code and hint when the input
     did not parse, and {\"kind\": \"alchemy\", \"code\", \"file\", \"line\", \"col\"}
-    when the program did not; one met while --render yaml writes adds
+    when the program did not; one met while --render writes a format adds
     \"loss\", the sentences its warning gives on success. Exit status: 0
     success, 1 the input did not parse (--check: an input failed; --render,
     --alchemy: the input or its records will not do), 2 bad usage (a
@@ -105,6 +108,7 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     aless --render csv --path .items x.json the records under .items as CSV
     aless --render json big.yaml            the document as JSON, streamed
     aless --render yaml data.csv            the records as YAML, streamed
+    aless --render toml config.json         any format as any other
     aless --alchemy export.alc api.json     a program's output, streamed
     aless --alchemy export.alc --explain    what the program will do
     aless --grammar hosts=hosts.abnf --paths /etc/hosts   a format of your own

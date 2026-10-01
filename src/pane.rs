@@ -361,7 +361,15 @@ fn render_within(
     };
     let (what, out_format) = match through {
         Through::Render(Renderer::Part(id)) => {
-            (What::Part, Format::from_name(id).unwrap_or(Format::Text))
+            let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
+            let translation = translate::translation(translate::source_part(format), part)
+                .map_err(|fail| fail.to_string())?;
+            match translation {
+                translate::Translation::Native { renderer, .. } => {
+                    (What::Render(renderer), format_of(Renderer::Part(id)))
+                }
+                translate::Translation::Composed(_) => (What::Part, format_of(Renderer::Part(id))),
+            }
         }
         Through::Render(r) => (What::Render(*r), format_of(*r)),
         Through::Program { render, .. } => {
@@ -407,16 +415,40 @@ fn render_within(
         }
         _ => Input::Text(source),
     };
+    let composed_part = matches!(job.what, What::Part);
     let result = match through {
-        Through::Render(Renderer::Part(id)) => {
+        Through::Render(Renderer::Part(id)) if composed_part => {
             let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
-            let composed = translate::compose(part).map_err(|fail| fail.to_string())?;
+            let composed = translate::compose(translate::source_part(format), part)
+                .map_err(|fail| fail.to_string())?;
             translate::run(&job, &composed, input, out, Metrics::new())
         }
         Through::Render(_) => export::export(&job, input, out),
-        Through::Program { render, .. } => {
+        Through::Program { render, arg } => {
             let program = program.ok_or("the program did not compile")?;
-            crate::alchemy::run(&job, program, *render, input, out)
+            match render {
+                // A format's own render over the program's output: the
+                // program's text is read again to link it, as the pane
+                // compiled it from.
+                Some(Renderer::Part(id))
+                    if translate::part(id).is_some_and(|p| p.builtin().is_none()) =>
+                {
+                    let part = translate::part(id).expect("checked");
+                    let text = arg.read(None).map_err(|e| e.to_string())?;
+                    let composed = translate::compose_program(
+                        tabnas_alchemy::Source::new(&arg.name(), &text),
+                        program.output(),
+                        part,
+                    )
+                    .map_err(|fail| fail.to_string())?;
+                    translate::run(&job, &composed, input, out, Metrics::new())
+                }
+                Some(Renderer::Part(id)) => {
+                    let builtin = translate::part(id).and_then(|p| p.builtin());
+                    crate::alchemy::run(&job, program, builtin, input, out)
+                }
+                other => crate::alchemy::run(&job, program, *other, input, out),
+            }
         }
     };
     let cut = cut.load(Ordering::Relaxed);
