@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
-use tabnas_alchemy::Program;
 
+use crate::alchemy::Compiled;
 use crate::doc::{Kind, NodeId};
 use crate::fmt;
 use crate::highlight::{self, Grammar, Painted, Painter};
@@ -261,7 +261,7 @@ struct ProgramView {
     /// Its plan report, `--explain`'s JSON, as a tree; or why it has none.
     plan: Tab,
     /// The program the output pane runs; `None` when it did not compile.
-    compiled: Option<Program>,
+    compiled: Option<Compiled>,
     /// Bumped each time the program is read again, so the output follows.
     generation: u64,
     /// The file as last read, and when a change seen since is due to be
@@ -620,7 +620,8 @@ impl App {
                 Ok(program) => {
                     let json =
                         serde_json::to_string_pretty(&program.explain_json()).unwrap_or_default();
-                    (text, Some(program), Ok(json), None)
+                    let source = text.clone();
+                    (text, Some(Compiled { program, source }), Ok(json), None)
                 }
                 Err(fail) => (
                     text,

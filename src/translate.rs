@@ -514,6 +514,17 @@ impl Translation {
 const CSV_OPTIONS: &str = "(record (entry :delimiter \",\") (entry :newline \"\\r\\n\") \
                            (entry :header true) (entry :null-text \"\") (entry :missing \"\"))";
 
+/// The render a composed program calls for `target`, and the source it
+/// links when the render is a part's own: alchemy's `json`, its `csv`
+/// under the export's options, or the part's entry.
+fn render_of(target: &Part) -> (String, Option<Source<'_>>) {
+    match &target.render {
+        Render::Json => ("json".to_string(), None),
+        Render::Csv => (format!("csv {CSV_OPTIONS}"), None),
+        Render::Alc { file, text } => (target.render_entry(), Some(Source::new(file, text))),
+    }
+}
+
 /// How `--render ID` writes a source `source` describes (a tree when it
 /// has no part). The route the shapes decide ([`route`]) is run by aless's
 /// own renderer when it can run it as it is: JSON over a tree's events as
@@ -534,7 +545,7 @@ pub fn translation(source: Option<&Part>, target: &Part) -> Result<Translation, 
         "input",
     );
     let as_is = inner == "input";
-    let (render, file, text) = match &target.render {
+    match &target.render {
         Render::Json if as_is => {
             return Ok(Translation::Native {
                 renderer: Renderer::Json,
@@ -547,15 +558,14 @@ pub fn translation(source: Option<&Part>, target: &Part) -> Result<Translation, 
                 adapter: Some(Adapter::InferredTable),
             })
         }
-        Render::Json => ("json".to_string(), None, None),
-        Render::Csv => (format!("csv {CSV_OPTIONS}"), None, None),
-        Render::Alc { file, text } => (target.render_entry(), Some(file), Some(*text)),
-    };
+        _ => {}
+    }
+    let (render, render_source) = render_of(target);
     let main = format!("def export [input] ({render} {inner})");
     let main_name = main_name(target);
     let mut sources = Vec::new();
-    if let (Some(file), Some(text)) = (file, text) {
-        sources.push(Source::new(file, text));
+    if let Some(source) = render_source {
+        sources.push(source);
     }
     if let Some(l) = lift {
         sources.push(Source::new(&l.file, l.text));
@@ -590,23 +600,18 @@ pub fn compose(source: Option<&Part>, target: &Part) -> Result<Composition, Fail
     }
 }
 
-/// The program `--alchemy PROGRAM --render ID` runs: the user's program
-/// linked under [`PROGRAM_EXPORT`], its output shape standing where the
-/// source's would (JSON events a tree, a table records), and the target's
-/// render over it through the route the shapes decide. `output` is what
-/// the program compiled alone answers; a program that renders its own
-/// text is the caller's to refuse.
+/// The program `--alchemy PROGRAM --render ID` runs when the render is
+/// composed over the program's output ([`program_translation`]): the
+/// user's program linked under [`PROGRAM_EXPORT`], its output shape
+/// standing where the source's would (JSON events a tree, a table
+/// records), and the target's render over it through the route the shapes
+/// decide. `output` is what the program compiled alone answers; a program
+/// that renders its own text is the caller's to refuse.
 pub fn compose_program(
     program: Source<'_>,
     output: Output,
     target: &Part,
 ) -> Result<Composition, Fail> {
-    let Render::Alc { file, text } = &target.render else {
-        return Err(Fail::new(
-            tabnas_transduce::Code::DslTypeError,
-            format!("{} is written by aless's own renderer", target.id),
-        ));
-    };
     let reads = match output {
         Output::JsonEvents => [Shape::Tree],
         Output::TableRows => [Shape::Records],
@@ -623,13 +628,16 @@ pub fn compose_program(
         target.writes,
         &format!("({PROGRAM_EXPORT} input)"),
     );
-    let main = format!("def export [input] ({} {inner})", target.render_entry());
+    let (render, render_source) = render_of(target);
+    let main = format!("def export [input] ({render} {inner})");
     let main_name = main_name(target);
-    let program = compile_sources(&[
-        Source::new(file, text),
-        program.export_as(PROGRAM_EXPORT),
-        Source::new(&main_name, &main),
-    ])?;
+    let mut sources = Vec::new();
+    if let Some(source) = render_source {
+        sources.push(source);
+    }
+    sources.push(program.export_as(PROGRAM_EXPORT));
+    sources.push(Source::new(&main_name, &main));
+    let program = compile_sources(&sources)?;
     // The program's events are not the source's: the row check and the
     // tree contract stand in front of the source's events only, and the
     // program's output meets the transducer's own refusals.
@@ -639,6 +647,32 @@ pub fn compose_program(
         rows: false,
         adapter,
     })
+}
+
+/// How `--alchemy PROGRAM --render ID` writes the program's output, as
+/// [`translation`] decides it for a source: through one of aless's own
+/// renderers when the output reaches it as it is (JSON over the program's
+/// events; CSV over its table; and JSON over its table, whose rows the
+/// renderer writes as `records` does, named as that adapter), or through
+/// the render composed over the output ([`compose_program`]), CSV over
+/// the program's events through the inferred table among them. `output`
+/// is what the program compiled alone answers; a program that renders its
+/// own text is the caller's to refuse.
+pub fn program_translation(
+    program: Source<'_>,
+    output: Output,
+    target: &Part,
+) -> Result<Translation, Fail> {
+    let native = match (&target.render, output) {
+        (Render::Json, Output::JsonEvents) => Some((Renderer::Json, None)),
+        (Render::Json, Output::TableRows) => Some((Renderer::Json, Some(Adapter::Records))),
+        (Render::Csv, Output::TableRows) => Some((Renderer::Csv, None)),
+        _ => None,
+    };
+    match native {
+        Some((renderer, adapter)) => Ok(Translation::Native { renderer, adapter }),
+        None => compose_program(program, output, target).map(Translation::Composed),
+    }
 }
 
 /// The policies an adapter runs under: the inferred table keeps a repeated
@@ -959,6 +993,48 @@ mod tests {
         assert!(c.adapter.is_none());
         let c = compose_program(events, Output::JsonEvents, md).unwrap_or_else(|f| panic!("{f}"));
         assert_eq!(c.adapter, Some(Adapter::InferredTable));
+        // Through aless's own renderers when the output reaches them as it
+        // is (JSON over events; CSV over a table; JSON over a table, as
+        // records), composed otherwise: CSV over events goes through the
+        // inferred table, as --render csv reads a tree.
+        let json = part("json").unwrap();
+        let csv = part("csv").unwrap();
+        assert!(matches!(
+            program_translation(events, Output::JsonEvents, json),
+            Ok(Translation::Native {
+                renderer: Renderer::Json,
+                adapter: None
+            })
+        ));
+        assert!(matches!(
+            program_translation(events, Output::JsonEvents, part("json5").unwrap()),
+            Ok(Translation::Native {
+                renderer: Renderer::Json,
+                adapter: None
+            })
+        ));
+        assert!(matches!(
+            program_translation(table, Output::TableRows, json),
+            Ok(Translation::Native {
+                renderer: Renderer::Json,
+                adapter: Some(Adapter::Records)
+            })
+        ));
+        assert!(matches!(
+            program_translation(table, Output::TableRows, csv),
+            Ok(Translation::Native {
+                renderer: Renderer::Csv,
+                adapter: None
+            })
+        ));
+        let t =
+            program_translation(events, Output::JsonEvents, csv).unwrap_or_else(|f| panic!("{f}"));
+        let c = t.composed().expect("CSV over events is composed");
+        assert_eq!(c.adapter, Some(Adapter::InferredTable));
+        assert_eq!(c.program.output(), Output::Text);
+        assert_eq!(t.loss(csv).len(), csv.loss.len() + 2);
+        let t = program_translation(table, Output::TableRows, json).unwrap();
+        assert_eq!(t.loss(json), Adapter::Records.loss());
         let fail = compose_program(events, Output::Text, yaml).unwrap_err();
         assert!(fail.message.starts_with("render_of_text"), "{fail}");
         // A program that does not define export is refused by name.

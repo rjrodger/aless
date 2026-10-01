@@ -23,10 +23,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ratatui::layout::Rect;
-use tabnas_alchemy::{Output, Program};
+use tabnas_alchemy::Output;
 use tabnas_transduce::Metrics;
 
-use crate::alchemy::ProgramArg;
+use crate::alchemy::{Compiled, ProgramArg};
 use crate::export::{self, ExportError, Input, Job, Plan, Renderer, What};
 use crate::load::Format;
 use crate::translate;
@@ -320,13 +320,14 @@ pub struct Rendered {
 /// (line by line for JSON Lines and CSV), so what the pane shows is what
 /// the command would print, JSON indented by `indent` as `--indent`
 /// gives it. `program` is the compiled program a [`Through::Program`]
-/// runs. A failure is the message the pane shows.
+/// runs, with the text it was compiled from, which a format's render over
+/// its output links again. A failure is the message the pane shows.
 pub fn render(
     name: &str,
     source: &str,
     format: Format,
     through: &Through,
-    program: Option<&Program>,
+    program: Option<&Compiled>,
     indent: usize,
     timeout: Option<Duration>,
 ) -> Result<Rendered, String> {
@@ -349,7 +350,7 @@ fn render_within(
     source: &str,
     format: Format,
     through: &Through,
-    program: Option<&Program>,
+    program: Option<&Compiled>,
     indent: usize,
     timeout: Option<Duration>,
     max: usize,
@@ -373,7 +374,7 @@ fn render_within(
         }
         Through::Render(r) => (What::Render(*r), format_of(*r)),
         Through::Program { render, .. } => {
-            let program = program.ok_or("the program did not compile")?;
+            let program = &program.ok_or("the program did not compile")?.program;
             crate::alchemy::check_render(program, *render)?;
             // A renderer given writes its own format; without one, a
             // table is CSV and events are JSON, the program's defaults.
@@ -425,29 +426,29 @@ fn render_within(
         }
         Through::Render(_) => export::export(&job, input, out),
         Through::Program { render, arg } => {
-            let program = program.ok_or("the program did not compile")?;
+            let compiled = program.ok_or("the program did not compile")?;
             match render {
-                // A format's own render over the program's output: the
-                // program's text is read again to link it, as the pane
-                // compiled it from.
-                Some(Renderer::Part(id))
-                    if translate::part(id).is_some_and(|p| p.builtin().is_none()) =>
-                {
-                    let part = translate::part(id).expect("checked");
-                    let text = arg.read(None).map_err(|e| e.to_string())?;
-                    let composed = translate::compose_program(
-                        tabnas_alchemy::Source::new(&arg.name(), &text),
-                        program.output(),
+                // A format's render over the program's output, as --render
+                // chooses it for a source: the text the pane compiled is
+                // linked again, never a later reading of the file.
+                Some(Renderer::Part(id)) => {
+                    let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
+                    let translation = translate::program_translation(
+                        tabnas_alchemy::Source::new(&arg.name(), &compiled.source),
+                        compiled.program.output(),
                         part,
                     )
                     .map_err(|fail| fail.to_string())?;
-                    translate::run(&job, &composed, input, out, Metrics::new())
+                    match translation {
+                        translate::Translation::Composed(composed) => {
+                            translate::run(&job, &composed, input, out, Metrics::new())
+                        }
+                        translate::Translation::Native { renderer, .. } => {
+                            crate::alchemy::run(&job, &compiled.program, Some(renderer), input, out)
+                        }
+                    }
                 }
-                Some(Renderer::Part(id)) => {
-                    let builtin = translate::part(id).and_then(|p| p.builtin());
-                    crate::alchemy::run(&job, program, builtin, input, out)
-                }
-                other => crate::alchemy::run(&job, program, *other, input, out),
+                other => crate::alchemy::run(&job, &compiled.program, *other, input, out),
             }
         }
     };
@@ -659,7 +660,10 @@ mod tests {
 
     #[test]
     fn a_programs_output_reads_back_in_its_kind() {
-        let program = |text: &str| crate::alchemy::compile(text, "p.alc").unwrap();
+        let program = |text: &str| Compiled {
+            program: crate::alchemy::compile(text, "p.alc").unwrap(),
+            source: text.to_string(),
+        };
         let through = Through::Program {
             arg: ProgramArg::Expr(String::new()),
             render: None,
@@ -694,8 +698,8 @@ mod tests {
         );
         assert!(failed.is_err(), "{failed:?}");
         // A renderer given writes its own format: a table rendered as
-        // JSON reads back as JSON. Events rendered as CSV the program's
-        // runtime refuses, and the pane shows why.
+        // JSON reads back as JSON, and events rendered as CSV go through
+        // the inferred table, as --render csv reads a tree.
         let table = program(
             "def rows (record (entry :columns :infer) (entry :rows (path each-index)))\n\
              def export [input] (table-from-json rows input)",
@@ -709,7 +713,7 @@ mod tests {
             "t.json",
             records,
             Format::Json,
-            &with(Renderer::Json),
+            &with(Renderer::Part("json")),
             Some(&table),
             2,
             None,
@@ -717,17 +721,18 @@ mod tests {
         .unwrap();
         assert_eq!(out.format, Format::Json, "{}", out.text);
         assert!(serde_json::from_str::<serde_json::Value>(&out.text).is_ok());
-        let refused = render(
+        let out = render(
             "t.json",
             records,
             Format::Json,
-            &with(Renderer::Csv),
+            &with(Renderer::Part("csv")),
             Some(&events),
             2,
             None,
         )
-        .unwrap_err();
-        assert!(refused.contains("protocol_mismatch"), "{refused}");
+        .unwrap();
+        assert_eq!(out.format, Format::Csv, "{}", out.text);
+        assert_eq!(out.text, "\"a\"\r\n\"1\"\r\n\"2\"\r\n");
     }
 
     #[test]

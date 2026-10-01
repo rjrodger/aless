@@ -1986,30 +1986,6 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
         "{e}"
     );
     assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(21)));
-    // A renderer that does not fit what the program exports is the
-    // program's failure too, met once the input is open: `input` names it.
-    let out = aless(
-        &[
-            "--alchemy-expr",
-            "def export [input] input",
-            "--render",
-            "csv",
-            records,
-        ],
-        None,
-    );
-    assert_eq!(code(&out), 2);
-    let e = &json(&out.stderr)["error"];
-    assert_eq!(e["kind"], json!("alchemy"));
-    assert_eq!(e["code"], json!("DSL_TYPE_ERROR"));
-    assert!(
-        e["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("protocol_mismatch: "),
-        "{e}"
-    );
-    assert_eq!(e["input"], json!(records));
     // The rows before the metadata: the input's failure, in the
     // transducer's shape, before anything was written.
     let text = std::fs::read_to_string(records).unwrap();
@@ -2580,6 +2556,42 @@ fn render_composes_the_adapters_the_shapes_need() {
         String::from_utf8_lossy(&out.stdout).starts_with("{\"type\":\"document\""),
         "a tree format takes the Markdown tree as it is"
     );
+    // Below the root the lift does not run: --path selects a value of the
+    // document's tree, rows by their own shape, through the inferred
+    // table as csv reads a tree.
+    let out = aless(
+        &["-k", "markdown", "--render", "csv", "--path", ".children"],
+        Some(table),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .starts_with("\"type\",\"align\",\"children\"\r\n\"table\","),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(
+        json(&out.stderr)["warning"]["adapter"],
+        "the inferred table"
+    );
+    let out = aless(
+        &[
+            "-k",
+            "markdown",
+            "--render",
+            "json",
+            "--compact",
+            "--path",
+            ".children[0].children[1]",
+        ],
+        Some(table),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("{\"type\":\"tableRow\""),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     // A Markdown document with no table has no records: the lift says so.
     let out = aless(&["--render", "csv", "tests/fixtures/sample.md"], None);
     assert_eq!(code(&out), 1);
@@ -2675,6 +2687,49 @@ fn a_programs_output_is_written_as_any_format() {
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("[{\"Identifier\":123,"));
     assert_eq!(json(&out.stderr)["warning"]["render"], "json5");
+    // A table written as JSON is aless's own renderer over the rows, which
+    // writes them as `records` does: the adapter is named, with its loss,
+    // where JSON's own declaration has none.
+    let out = aless(
+        &[
+            "--alchemy",
+            "tests/fixtures/programs/table.alc",
+            "--render",
+            "json",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("[{\"Identifier\":123,"));
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["render"], "json");
+    assert_eq!(note["warning"]["adapter"], "records");
+    assert_eq!(note["warning"]["loss"].as_array().map(Vec::len), Some(1));
+    // Events written as CSV go through the inferred table, composed: the
+    // identity program writes what --render csv writes, byte for byte.
+    let composed = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "csv",
+            "tests/fixtures/records.yaml",
+        ],
+        None,
+    );
+    assert_eq!(
+        code(&composed),
+        0,
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let direct = aless(&["--render", "csv", "tests/fixtures/records.yaml"], None);
+    assert_eq!(composed.stdout, direct.stdout);
+    assert_eq!(
+        json(&composed.stderr)["warning"]["adapter"],
+        "the inferred table"
+    );
 }
 
 /// A YAML array of objects written as CSV through the inferred table (a

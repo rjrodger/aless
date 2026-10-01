@@ -99,6 +99,16 @@ pub fn compile(text: &str, file: &str) -> Result<Program, Fail> {
     tabnas_alchemy::compile(text, file)
 }
 
+/// A compiled program with the text it was compiled from, kept together:
+/// a host that links the program again (a format's render over its
+/// output, [`crate::translate::program_translation`]) links the text it
+/// compiled, never a later reading of the file, so the program that runs
+/// is the one whose output shape chose the composition.
+pub struct Compiled {
+    pub program: Program,
+    pub source: String,
+}
+
 /// Whether a failure's code is one the language raises (`DSL_PARSE_ERROR`,
 /// `DSL_TYPE_ERROR`, `STREAM_REUSED`, `STREAMABILITY_UNKNOWN`): from a
 /// compile, or from the program's sink at run time, the program is at

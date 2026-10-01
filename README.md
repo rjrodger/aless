@@ -374,7 +374,11 @@ that has a render, so it is a translation: CSV's records become a YAML
 sequence of mappings, a JSON document a TOML table, a Markdown table a
 CSV file. The input is read as `--render json` reads it: JSON Lines, CSV
 and TSV a record at a time, `--path` to start below the root, `--timeout`
-over the whole run. The formats with a render today are `csv`, `ini`,
+over the whole run. A format's lift reads a whole document, so it runs
+at the root only: below the root, `--path` selects a value of the
+document's tree, rows or a tree by its own shape (a Markdown file's
+table is its rows at the root, and `--path` into the file selects its
+nodes). The formats with a render today are `csv`, `ini`,
 `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`,
 `yaml` and `zon`; `--render` with any other name is a usage error that
 lists them.
@@ -473,7 +477,9 @@ one object per row keyed by the column labels) and JSON events as JSON
 that has a render writes the program's output as that format, its output
 shape standing where the source's would ([Writing any
 format](#writing-any-format)): a table reaches YAML as a sequence of
-mappings, JSON events reach a Markdown table through the inferred table.
+mappings, JSON events reach a Markdown table through the inferred table,
+and the loss warning names the adapter that stood between as it does for
+a source, `records` for a table written as JSON among them.
 The JSON a program renders is compact, one document on one line. The program does the selecting, so
 `--path` and `--at` are not accepted, and neither is any other output
 option; `--render` given for a program that renders its own text is a

@@ -440,9 +440,18 @@ fn translate(
         }
     };
     let (source, name, origin, format) = streamed_source(req)?;
+    // The source's parts stand at the root only: its lift reads a whole
+    // document, so a value below the root is a tree whatever the document
+    // was (a Markdown file's table is its rows at the root, and --path
+    // into the file selects nodes of its tree, rows by their own shape).
+    let source_part = if path.is_empty() {
+        translate::source_part(format)
+    } else {
+        None
+    };
     // The composition first: a part that does not compile is a failure
     // naming its file, said before the input is read.
-    let translation = translate::translation(translate::source_part(format), part)
+    let translation = translate::translation(source_part, part)
         .map_err(|fail| Failure::alchemy(part_file(part, &fail), &fail))?;
     let loss = translation.loss(part);
     let composition = match translation {
@@ -623,41 +632,44 @@ fn run_program(
             String::new(),
         ));
     }
-    // A format's own render over the program's output: the program linked
-    // under another name, the render over it, in one plan
-    // ([`translate::compose_program`]); a format written by one of aless's
-    // own renderers is that renderer, with the format's loss declaration.
-    let (part, composition, render) = match render {
+    // A format's render over the program's output, as --render chooses it
+    // for a source ([`translate::program_translation`]): one of aless's own
+    // renderers when the output reaches it as it is, with the adapter it
+    // runs natively named, or the render composed over the output, the
+    // program linked under another name, in one plan.
+    let (part, translation) = match render {
         Some(Renderer::Part(id)) => {
             let part = translate::part(id).expect("--render names a part the registry has");
-            match part.builtin() {
-                Some(builtin) => (Some(part), None, Some(builtin)),
-                None => {
-                    let composition = translate::compose_program(
-                        tabnas_alchemy::Source::new(&file, &text),
-                        compiled.output(),
-                        part,
-                    )
-                    .map_err(|fail| {
-                        let in_program = fail.file.as_deref() == Some(file.as_str());
-                        let mut f = Failure::alchemy(
-                            if in_program {
-                                &file
-                            } else {
-                                part_file(part, &fail)
-                            },
-                            &fail,
-                        );
-                        if !in_program {
-                            f.error.insert("program".into(), file.clone().into());
-                        }
-                        f
-                    })?;
-                    (Some(part), Some(composition), None)
+            let translation = translate::program_translation(
+                tabnas_alchemy::Source::new(&file, &text),
+                compiled.output(),
+                part,
+            )
+            .map_err(|fail| {
+                let in_program = fail.file.as_deref() == Some(file.as_str());
+                let mut f = Failure::alchemy(
+                    if in_program {
+                        &file
+                    } else {
+                        part_file(part, &fail)
+                    },
+                    &fail,
+                );
+                if !in_program {
+                    f.error.insert("program".into(), file.clone().into());
                 }
-            }
+                f
+            })?;
+            (Some(part), Some(translation))
         }
-        other => (None, None, other),
+        _ => (None, None),
+    };
+    let (composition, render, adapter) = match &translation {
+        Some(translate::Translation::Composed(c)) => (Some(c), None, c.adapter),
+        Some(translate::Translation::Native { renderer, adapter }) => {
+            (None, Some(*renderer), *adapter)
+        }
+        None => (None, render, None),
     };
     let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, true) else {
@@ -678,7 +690,7 @@ fn run_program(
         indent: req.indent,
         timeout: req.timeout,
     };
-    let run = |input: Input<'_>| match &composition {
+    let run = |input: Input<'_>| match composition {
         Some(composition) => translate::run(&job, composition, input, out, Metrics::new()),
         None => alchemy::run(&job, &compiled, render, input, out),
     };
@@ -686,21 +698,14 @@ fn run_program(
         Opened::Text(text) => run(Input::Text(&text)),
         Opened::Lines(reader) => run(Input::Lines(reader)),
     };
-    let loss = match (part, &composition) {
-        (Some(part), Some(c)) => c.loss(part),
-        (Some(part), None) => part.loss.clone(),
-        (None, _) => Vec::new(),
+    let loss = match (part, &translation) {
+        (Some(part), Some(t)) => t.loss(part),
+        _ => Vec::new(),
     };
     let failure = match result {
         Ok(()) | Err(ExportError::ReaderGone) => {
             let note = match part {
-                Some(part) => loss_note(
-                    part,
-                    &loss,
-                    composition.as_ref().and_then(|c| c.adapter),
-                    &name,
-                    req.compact,
-                ),
+                Some(part) => loss_note(part, &loss, adapter, &name, req.compact),
                 None => String::new(),
             };
             return Ok((String::new(), note));
