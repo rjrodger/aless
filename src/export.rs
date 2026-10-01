@@ -941,7 +941,9 @@ fn absolute(mut fail: Fail, base: &[Seg]) -> Fail {
 }
 
 /// A load error of aless's own with a position, named for the report:
-/// `[aless/<code>]: message` over `--> origin:line:col`.
+/// `[aless/<code>]: message` over `--> origin:line:col`, or
+/// `--> origin:line` for a position that names no column (a line-by-line
+/// read stopped at its deadline names only the line it was reading).
 fn positioned(
     job: &Job,
     code: &str,
@@ -951,10 +953,10 @@ fn positioned(
     col: u32,
 ) -> LoadError {
     let mut e = LoadError::tagged(code, message).with_hint(hint);
-    let origin = if line > 0 {
-        format!("{}:{line}:{col}", job.origin)
-    } else {
-        job.origin.clone()
+    let origin = match (line, col) {
+        (0, _) => job.origin.clone(),
+        (line, 0) => format!("{}:{line}", job.origin),
+        (line, col) => format!("{}:{line}:{col}", job.origin),
     };
     e = e.with_origin(&origin);
     e.line = line;
@@ -2781,6 +2783,23 @@ mod tests {
         // Time enough: the same inputs export.
         j.timeout = Some(Duration::from_secs(120));
         run_lines(&j, &lines).0.unwrap();
+    }
+
+    #[test]
+    fn a_position_without_a_column_names_the_line_alone() {
+        let j = job(Format::Jsonl, Renderer::Csv, ".");
+        let origin = |line, col| {
+            let e = positioned(&j, "timeout", "m".into(), "h", line, col);
+            (
+                e.line,
+                e.col,
+                e.plain_report().lines().nth(1).map(str::to_string),
+            )
+        };
+        let at = |text: &str| Some(format!("  --> {text}"));
+        assert_eq!(origin(3, 7), (3, 7, at("(stdin):3:7")));
+        assert_eq!(origin(3, 0), (3, 0, at("(stdin):3")));
+        assert_eq!(origin(0, 0), (0, 0, at("(stdin)")));
     }
 
     #[test]
