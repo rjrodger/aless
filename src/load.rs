@@ -1340,80 +1340,11 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
 }
 
 /// The text a format's parser reads: the source without its byte-order
-/// mark, and, for JSON5, with the CR of a string's line continuation
-/// across a CRLF dropped (see [`json5_dropped`]). Every line and column
-/// is where it is in the source.
-pub(crate) fn parser_text(src: &str, format: Format) -> std::borrow::Cow<'_, str> {
-    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
-    parser_body(src, format).0
-}
-
-/// [`parser_text`] of a text without its byte-order mark, with the bytes
-/// it left out of `body`, in order: for a caller whose positions are byte
-/// offsets (the highlighter's), which [`source_range`] maps back.
-pub(crate) fn parser_body(body: &str, format: Format) -> (std::borrow::Cow<'_, str>, Vec<usize>) {
-    let dropped = match format {
-        Format::Json5 => json5_dropped(body),
-        _ => Vec::new(),
-    };
-    if dropped.is_empty() {
-        return (std::borrow::Cow::Borrowed(body), dropped);
-    }
-    let mut out = String::with_capacity(body.len() - dropped.len());
-    let mut from = 0;
-    for &at in &dropped {
-        out.push_str(&body[from..at]);
-        from = at + 1;
-    }
-    out.push_str(&body[from..]);
-    (std::borrow::Cow::Owned(out), dropped)
-}
-
-/// A byte range of the text [`parser_body`] made, as a range of the text
-/// it was made from, `dropped` being the bytes it left out: each byte left
-/// out before the start moves the start on, and each before the end moves
-/// the end on, so a range that ends where a dropped byte stood stops short
-/// of it.
-pub(crate) fn source_range(dropped: &[usize], start: usize, end: usize) -> (usize, usize) {
-    let moved = |at: usize, strictly: bool| {
-        let mut at = at;
-        for &d in dropped {
-            if d < at || (!strictly && d == at) {
-                at += 1;
-            } else {
-                break;
-            }
-        }
-        at
-    };
-    (moved(start, false), moved(end, true))
-}
-
-/// JSON5 lets a string go on to the next line after a backslash. The
-/// crate's lexer reads a backslash and LF as that, but of a backslash and
-/// CRLF it takes the CR as the escape and finds the LF raw in the string,
-/// which it refuses as unprintable. Its `parse_with` removes every
-/// continuation before lexing, line break and all, which puts each later
-/// token a line early. Dropping only the CR leaves the line break where
-/// it is: in JSON5 a CR before an LF moves no position, so every token
-/// keeps its line and column. The CR goes only where the backslash before
-/// it is not itself escaped, an odd run of backslashes; outside a string
-/// the sequence is in a comment, which it does not change, or it is
-/// refused at the backslash either way. These are the offsets of the CRs
-/// dropped, in order.
-fn json5_dropped(src: &str) -> Vec<usize> {
-    let bytes = src.as_bytes();
-    src.match_indices("\\\r\n")
-        .filter(|(at, _)| {
-            let run = bytes[..=*at]
-                .iter()
-                .rev()
-                .take_while(|&&b| b == b'\\')
-                .count();
-            run % 2 == 1
-        })
-        .map(|(at, _)| at + 1)
-        .collect()
+/// mark. Every line and column is where it is in the source. (A JSON5
+/// string continued across a CRLF is the grammar's to read, and it does
+/// since tabnas/json5#82.)
+pub(crate) fn parser_text(src: &str) -> &str {
+    src.strip_prefix('\u{feff}').unwrap_or(src)
 }
 
 /// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
@@ -1528,12 +1459,12 @@ pub(crate) fn parse_until(
         let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         return Ok(Doc::from_lines(&lines(src)));
     }
-    let src = parser_text(src, format);
+    let src = parser_text(src);
     on_parse_thread(
         timeout,
         started,
         || {},
-        |deadline| parse_here(&src, format, deadline),
+        |deadline| parse_here(src, format, deadline),
     )
 }
 
@@ -2886,17 +2817,22 @@ mod tests {
         assert_eq!((two.line, two.col), (one.line, one.col));
         assert_eq!(one.line, 3);
         assert!(parse("['a\\\\\r\nb']", Format::Json5).is_err());
-        assert!(json5_dropped("['a\\\\\r\nb']").is_empty());
-        // A range of the prepared text, back on the source's bytes: one
-        // that ends where a dropped CR stood stops short of it.
-        let src = "['a\\\r\nb', 1]";
-        let (text, dropped) = parser_body(src, Format::Json5);
-        assert_eq!(dropped, [4]);
-        assert_eq!(&*text, "['a\\\nb', 1]");
-        assert_eq!(source_range(&dropped, 1, 4), (1, 4));
-        assert_eq!(source_range(&dropped, 5, 7), (6, 8));
-        assert_eq!(&src[6..8], "b'");
-        assert_eq!(json5_dropped("['a\\\\\\\r\nb']"), [6]);
+        // Three backslashes are an escaped one and a continuation.
+        let three = parse("['a\\\\\\\r\nb']", Format::Json5).unwrap();
+        assert_eq!(crate::fmt::to_json_compact(&three, 0), r#"["a\\b"]"#);
+    }
+
+    /// A quoted CSV field holds any character but its quote, the C0
+    /// controls included, as the CSV renderer writes them (tabnas/csv#82):
+    /// a TAB, an ASCII 30 and an ASCII 31 read back as written.
+    #[test]
+    fn csv_reads_control_characters_in_a_quoted_field() {
+        let src = "a,b,c\n\"x\ty\",\"\u{1e}\",\"\u{1f}z\"\n";
+        let doc = parse(src, Format::Csv).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            crate::fmt::to_json_compact(&doc, 0),
+            r#"[{"a":"x\ty","b":"\u001e","c":"\u001fz"}]"#
+        );
     }
 
     /// Every parser aless makes bounds how far a rule reaches back
@@ -2958,11 +2894,7 @@ mod tests {
             };
             let src = std::fs::read_to_string(&path).unwrap();
             let make = || make_parser(format).unwrap().unwrap();
-            both(
-                &make,
-                &parser_text(&src, format),
-                &path.display().to_string(),
-            );
+            both(&make, parser_text(&src), &path.display().to_string());
             read += 1;
         }
         let grammars = fixtures.join("grammars");

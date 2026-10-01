@@ -158,23 +158,12 @@ fn paint_unless(
         Some(body) => (body, '\u{feff}'.len_utf8()),
         None => (text, 0),
     };
-    // The parser reads the text the loader gives it (`load::parser_text`):
-    // a JSON5 string continued across a CRLF has its CR dropped, or it
-    // would refuse the rest. The spans count that text's bytes, and go back
-    // onto the text's own past the CRs dropped before them.
-    let (parsed, dropped) = match grammar {
-        Grammar::Format(format) => load::parser_body(body, format),
-        Grammar::Alchemy => (std::borrow::Cow::Borrowed(body), Vec::new()),
-    };
     let overrides = grammar
         .entry(Registry::bundled())
         .and_then(Entry::overrides);
     let _guard = CatchGuard::enter();
     catch_unwind(AssertUnwindSafe(|| {
-        let mut highlight = tabnas_lsp::highlight(parser, &parsed, overrides);
-        for span in &mut highlight.spans {
-            (span.start, span.end) = load::source_range(&dropped, span.start, span.end);
-        }
+        let highlight = tabnas_lsp::highlight(parser, body, overrides);
         Painted::from_spans(text, shift, &highlight.spans)
     }))
     .ok()
@@ -540,6 +529,32 @@ mod tests {
         let program = "; a note\ndef export [input] input\n";
         let p = paint(Grammar::Alchemy, program, None).unwrap();
         assert_eq!(kinds(&p, program, 0), [("; a note".into(), "comment")]);
+    }
+
+    /// TOML's strings, values and quoted keys alike, and alchemy's `:name`
+    /// keywords are coloured (tabnas/lsp#28): the TOML lexer reports a
+    /// string at its end, and the token after it hid it, and alchemy's
+    /// keyword token had no type at all.
+    #[test]
+    fn toml_strings_and_alchemy_keywords_are_coloured() {
+        let toml = "a = \"x\"\n\"q k\" = 'lit'\nb = [\"y\"]\n";
+        let p = paint(Grammar::Format(Format::Toml), toml, None).unwrap();
+        assert!(
+            kinds(&p, toml, 0).contains(&("\"x\"".into(), "string")),
+            "{:?}",
+            kinds(&p, toml, 0)
+        );
+        let second = kinds(&p, toml, 1);
+        assert!(second.contains(&("\"q k\"".into(), "string")), "{second:?}");
+        assert!(second.contains(&("'lit'".into(), "string")), "{second:?}");
+        assert!(kinds(&p, toml, 2).contains(&("\"y\"".into(), "string")));
+        let program = "def export [input] (match input case :none 1 case _ 2)\n";
+        let p = paint(Grammar::Alchemy, program, None).unwrap();
+        assert!(
+            kinds(&p, program, 0).contains(&(":none".into(), "keyword")),
+            "{:?}",
+            kinds(&p, program, 0)
+        );
     }
 
     #[test]

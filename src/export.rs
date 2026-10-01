@@ -588,10 +588,9 @@ fn run<S: Sink + Send + 'static>(
                     load::MAX_RULE_DEPTH,
                     move || notify.abort(),
                 );
-                // Without its byte-order mark, and as the loader prepares
-                // it for the format: the same lines and columns.
-                let text = load::parser_text(text, format);
-                let text = text.as_ref();
+                // Without its byte-order mark, as the loader reads it: the
+                // same lines and columns.
+                let text = load::parser_text(text);
                 match mode {
                     SourceMode::Materialize => {
                         materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)

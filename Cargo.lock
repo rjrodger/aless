@@ -1165,7 +1165,7 @@ dependencies = [
 [[package]]
 name = "tabnas-csv"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/csv#fea82abfb24e37f8a3af8391fc4d2180424600aa"
+source = "git+https://github.com/tabnas/csv#bbfa51afe8954facceecd7a42ed29665278edd7e"
 dependencies = [
  "indexmap",
  "serde",
@@ -1210,7 +1210,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/json#3870dfe092d0e4f22e233f6276d64f493afd2153"
+source = "git+https://github.com/tabnas/json#dcdfa82e7b2d863f0b490ec9c76909acd743b548"
 dependencies = [
  "regex",
  "serde_json",
@@ -1220,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json5"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/json5#568f72ff2987782072468ed174460e4c21dd7f63"
+source = "git+https://github.com/tabnas/json5#abbb6719eb31abd4bd03171971e4a2c0826caf74"
 dependencies = [
  "indexmap",
  "regex",
@@ -1242,7 +1242,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonic"
 version = "0.7.2"
-source = "git+https://github.com/tabnas/jsonic#fe1c73a77fdc4eee7ba702895c4f8be0e930a42f"
+source = "git+https://github.com/tabnas/jsonic#5e26e360cb5e43aa8f58152cd05b3139e97264d7"
 dependencies = [
  "indexmap",
  "regex",
@@ -1264,7 +1264,7 @@ dependencies = [
 [[package]]
 name = "tabnas-lsp"
 version = "0.1.3"
-source = "git+https://github.com/tabnas/lsp#9d1ee295b315d94a919737d2b40af358c68fc9b2"
+source = "git+https://github.com/tabnas/lsp#d91c87eeb009ce01d61858597c2a1765eb55ab8c"
 dependencies = [
  "serde",
  "serde_json",
@@ -1285,7 +1285,7 @@ dependencies = [
 [[package]]
 name = "tabnas-parser"
 version = "0.12.7"
-source = "git+https://github.com/tabnas/parser#595e9545e3b41d9511d471687d583a5018543361"
+source = "git+https://github.com/tabnas/parser#84636cf142a6c325078b134809020fde9d1f4a88"
 dependencies = [
  "indexmap",
  "regex",
@@ -1341,7 +1341,7 @@ dependencies = [
 [[package]]
 name = "tabnas-yaml"
 version = "0.5.15"
-source = "git+https://github.com/tabnas/yaml#666097d0e96a07471ae59750a32f6e65e927854e"
+source = "git+https://github.com/tabnas/yaml#6a76f59eb799b1529fa91491c8e25602e8bfd268"
 dependencies = [
  "indexmap",
  "regex",
