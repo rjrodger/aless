@@ -1031,14 +1031,15 @@ Parsing is the tabnas engine's, and it is a general rule engine rather
 than a hand-written JSON parser: on one machine (a cloud VM, release
 build) a 4.4 MB JSON document of records (315 thousand nodes) loads in
 about three and a half seconds, a 12 MB one in nine and a 60 MB one (4.2
-million nodes) in 46. Memory peaks at about 40 bytes per source byte
-while the parse runs (12 MB peaked at 0.42 GB, 60 MB at 2.1 GB); the
-steady state afterwards is much smaller. Each rule's history is kept
-three steps deep ([Custom grammars](#custom-grammars)), where the engine
-by default keeps every rule until its container closes: with the whole
-history, the same documents took 11 and 76 seconds and more than twice
-the memory, and a flat array of 1.5 million numbers took 2.8 GB where it
-now takes 0.33 GB.
+million nodes) in 45 (the median of three runs each). Memory peaks at
+about 40 bytes per source byte while the parse runs (12 MB peaked at
+0.42 GB, 60 MB at 2.1 GB); the steady state afterwards is much smaller.
+Each rule's history is kept three steps deep ([Custom
+grammars](#custom-grammars)), where the engine by default keeps every
+rule until its container closes: with the whole history, the same
+documents took 10 and 67 seconds and more than twice the memory, and a
+flat array of 1.5 million numbers took 2.8 GB where it now takes 0.33
+GB.
 
 Three limits keep a large, slow or hostile input from taking the machine
 down:
