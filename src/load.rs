@@ -5,11 +5,11 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tabnas::Tabnas;
@@ -204,6 +204,12 @@ pub struct LoadError {
 /// input, so this is some 2.7 GB, and under a minute of parsing.
 pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
 
+/// The most a program may write unless `--max-output` says otherwise: the
+/// transducer's `max_output_bytes`, set for every program aless runs, as a
+/// host that runs programs it did not write should (a program can write
+/// without end from a small input).
+pub const DEFAULT_MAX_OUTPUT: u64 = 1 << 30;
+
 /// Roughly how many bytes of memory a parse takes per byte of input,
 /// measured on JSON records in a release build: 12 MB peaked at 0.42 GB,
 /// 60 MB at 2.1 GB. With the engine's whole rule history kept, before
@@ -218,6 +224,10 @@ pub struct Limits {
     pub max_size: Option<u64>,
     /// Stop a parse that runs longer than this (`--timeout`).
     pub timeout: Option<Duration>,
+    /// When the time limit started running: the start of a run without a
+    /// screen, so that the time it spent reading its input counts too
+    /// ([`DeadlineReader`]); `None` for the start of the parse.
+    pub started: Option<Instant>,
 }
 
 impl Limits {
@@ -226,12 +236,14 @@ impl Limits {
     pub const DEFAULT: Limits = Limits {
         max_size: Some(DEFAULT_MAX_SIZE),
         timeout: None,
+        started: None,
     };
 
     /// No limit on either.
     pub const NONE: Limits = Limits {
         max_size: None,
         timeout: None,
+        started: None,
     };
 
     /// The limits [`set_limits`] last set for this process.
@@ -240,6 +252,7 @@ impl Limits {
         Limits {
             max_size: set(MAX_SIZE.load(Ordering::Relaxed)),
             timeout: set(TIMEOUT_MS.load(Ordering::Relaxed)).map(Duration::from_millis),
+            started: None,
         }
     }
 }
@@ -293,13 +306,32 @@ fn seconds(t: Duration) -> String {
     t.as_secs_f64().to_string()
 }
 
+/// The message and hint of a `timeout` for an input still being read at
+/// the deadline, as the loader and the exporter both word it.
+pub(crate) fn input_timed_out_words(limit: Duration) -> (String, String) {
+    let limit = seconds(limit);
+    (
+        format!("timeout: the input was still being read after {limit} s"),
+        format!(
+            "The input had not ended when --timeout {limit} passed: whatever writes it is \
+             slow, or waiting.\nPass a larger --timeout to wait for it, or --timeout 0 for no \
+             limit."
+        ),
+    )
+}
+
 /// A size as `--max-size` takes it: bytes, or with a `K`, `M` or `G`
 /// suffix counted in 1024s (`KB`, `MiB` and the like are the same), and 0
 /// for no limit.
 pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
+    parse_size_for("--max-size", text)
+}
+
+/// [`parse_size`] for the option `flag`, which its error names.
+pub fn parse_size_for(flag: &str, text: &str) -> Result<Option<u64>, String> {
     let t = text.trim();
     let digits = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
-    let bad = || format!("--max-size needs a size such as 64M, 1G or 0, not {text:?}");
+    let bad = || format!("{flag} needs a size such as 64M, 1G or 0, not {text:?}");
     let n: u64 = t[..digits].parse().map_err(|_| bad())?;
     let shift = match t[digits..].trim().to_ascii_lowercase().as_str() {
         "" | "b" => 0,
@@ -323,18 +355,177 @@ pub fn size_flag(bytes: u64) -> String {
 }
 
 /// Read all of `input`, but hold no more than `max` bytes of it: an input
-/// longer than that is refused as too large, and the rest is not read.
+/// longer than that is refused as too large, and the rest is not read. A
+/// read still waiting at its deadline ([`DeadlineReader`]) is a `timeout`.
 pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, LoadError> {
     let mut buf = Vec::new();
     let read = match max {
         Some(max) => input.take(max.saturating_add(1)).read_to_end(&mut buf),
         None => input.read_to_end(&mut buf),
     };
-    read.map_err(|e| LoadError::new(e.to_string()))?;
+    read.map_err(|e| match read_timed_out(&e) {
+        Some(limit) => LoadError::input_timed_out(limit),
+        None => LoadError::new(e.to_string()),
+    })?;
     match max {
         Some(max) if buf.len() as u64 > max => Err(LoadError::too_large(None, max)),
         _ => Ok(buf),
     }
+}
+
+/// Standard input, read on a thread of its own, so that no read outlasts
+/// `--timeout`: a writer that never writes, or never closes its end, would
+/// otherwise hold a run in a read for ever, where no deadline is looked
+/// at. The thread hands over what each read returns through a channel a
+/// few chunks deep, so it reads no further ahead of the run than that; at
+/// the deadline a read fails as [`io::ErrorKind::TimedOut`], which
+/// [`read_within`] reports as `timeout` and a streamed run as the run's
+/// (see `export`). The thread is left to the process's end when it is
+/// still waiting: nothing can call a read off.
+pub struct DeadlineReader {
+    chunks: mpsc::Receiver<io::Result<Vec<u8>>>,
+    chunk: Vec<u8>,
+    at: usize,
+    deadline: Instant,
+    limit: Duration,
+    ended: bool,
+}
+
+/// How many chunks the reading thread may be ahead of the run.
+const CHUNKS_AHEAD: usize = 4;
+
+/// The most one chunk holds.
+const CHUNK_BYTES: usize = 64 << 10;
+
+impl DeadlineReader {
+    /// Read `input` until `limit` after `started`; `None` when the time is
+    /// too far off to reach, or no thread can be had to read on.
+    pub fn new(
+        mut input: impl Read + Send + 'static,
+        started: Instant,
+        limit: Duration,
+    ) -> Option<DeadlineReader> {
+        let deadline = started.checked_add(limit)?;
+        let (send, chunks) = mpsc::sync_channel(CHUNKS_AHEAD);
+        std::thread::Builder::new()
+            .name("aless-input".into())
+            .spawn(move || loop {
+                let mut buf = vec![0; CHUNK_BYTES];
+                let read = match input.read(&mut buf) {
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Ok(buf)
+                    }
+                    Err(e) => Err(e),
+                };
+                // An empty chunk is the end; after it, or an error, or a
+                // reader that went away, there is nothing left to do.
+                let last = !matches!(&read, Ok(b) if !b.is_empty());
+                if send.send(read).is_err() || last {
+                    break;
+                }
+            })
+            .ok()?;
+        Some(DeadlineReader {
+            chunks,
+            chunk: Vec::new(),
+            at: 0,
+            deadline,
+            limit,
+            ended: false,
+        })
+    }
+}
+
+impl Read for DeadlineReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        while self.at == self.chunk.len() {
+            if self.ended {
+                return Ok(0);
+            }
+            let left = self.deadline.saturating_duration_since(Instant::now());
+            match self.chunks.recv_timeout(left) {
+                Ok(Ok(chunk)) if chunk.is_empty() => self.ended = true,
+                Ok(Ok(chunk)) => {
+                    self.chunk = chunk;
+                    self.at = 0;
+                }
+                Ok(Err(e)) => {
+                    self.ended = true;
+                    return Err(e);
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        ReadTimedOut(self.limit),
+                    ))
+                }
+                Err(RecvTimeoutError::Disconnected) => self.ended = true,
+            }
+        }
+        let n = buf.len().min(self.chunk.len() - self.at);
+        buf[..n].copy_from_slice(&self.chunk[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+/// The error of a [`DeadlineReader`] read that waited past its deadline:
+/// the time limit, for the report.
+#[derive(Debug)]
+struct ReadTimedOut(Duration);
+
+impl fmt::Display for ReadTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the input was still being read when --timeout {} passed",
+            seconds(self.0)
+        )
+    }
+}
+
+impl std::error::Error for ReadTimedOut {}
+
+/// A reader that hands over `first` and then waits for ever: a writer
+/// that sent that much and went quiet without closing its end. Its thread
+/// stays blocked until the test process ends.
+#[cfg(test)]
+pub(crate) fn quiet(first: &[u8]) -> impl Read + Send + 'static {
+    struct Quiet {
+        first: Vec<u8>,
+        wait: mpsc::Receiver<()>,
+        _held: mpsc::Sender<()>,
+    }
+    impl Read for Quiet {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.first.is_empty() {
+                // Never answered: the sender is held, and sends nothing.
+                let _ = self.wait.recv();
+                return Ok(0);
+            }
+            let n = buf.len().min(self.first.len());
+            buf[..n].copy_from_slice(&self.first[..n]);
+            self.first.drain(..n);
+            Ok(n)
+        }
+    }
+    let (held, wait) = mpsc::channel();
+    Quiet {
+        first: first.to_vec(),
+        wait,
+        _held: held,
+    }
+}
+
+/// The time limit a read waited past, when `e` is a [`DeadlineReader`]'s
+/// timeout.
+pub(crate) fn read_timed_out(e: &io::Error) -> Option<Duration> {
+    e.get_ref()?.downcast_ref::<ReadTimedOut>().map(|t| t.0)
 }
 
 /// How deep a parse's rule stack may grow before aless stops it: about
@@ -444,12 +635,16 @@ impl Deadline {
 /// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
 /// [`STOP_TIME`], else 0), and the source position the parse had reached,
 /// so a report can show how far it got when the engine's own error does
-/// not survive (the transducer's `ABORTED` carries no position).
+/// not survive (the transducer's `ABORTED` carries no position), or does
+/// not know (see [`Stop::place`]).
 #[derive(Debug)]
 pub(crate) struct Stop {
     why: AtomicU8,
     line: AtomicU64,
     col: AtomicU64,
+    /// The token the position is taken from: its offset, its name and its
+    /// text, for a report that shows it in its line.
+    token: Mutex<Option<(usize, String, String)>>,
 }
 
 impl Stop {
@@ -458,15 +653,39 @@ impl Stop {
             why: AtomicU8::new(0),
             line: AtomicU64::new(0),
             col: AtomicU64::new(0),
+            token: Mutex::new(None),
         })
     }
 
+    /// Record `why`, at the token the parse is about to read or, when it
+    /// holds none, the last one it read: between two steps the lookahead
+    /// is often empty, once a step has consumed what it matched.
     fn record(&self, why: u8, ctx: &tabnas::Context) {
-        if let Some(t0) = ctx.t0() {
-            self.line.store(t0.site.ri as u64, Ordering::Relaxed);
-            self.col.store(t0.site.ci as u64, Ordering::Relaxed);
+        if let Some(t) = ctx.t0().or_else(|| ctx.v1()) {
+            self.line.store(t.site.ri as u64, Ordering::Relaxed);
+            self.col.store(t.site.ci as u64, Ordering::Relaxed);
+            *self.token.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((t.site.pos, t.name.to_string(), t.src.to_string()));
         }
         self.why.store(why, Ordering::Relaxed);
+    }
+
+    /// Move `e`, the engine's `cancel` for a parse the guard stopped, to
+    /// the place the guard recorded. The engine puts it at the token about
+    /// to be read, and with none in hand at line 1, column 1, which says
+    /// nothing about how far the parse got.
+    fn place(&self, e: &mut tabnas::TabnasError) {
+        let token = self.token.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((pos, name, src)) = token.as_ref() {
+            let (line, col) = self.position();
+            e.pos = *pos;
+            e.row = line as usize;
+            e.col = col as usize;
+            e.len = src.chars().count();
+            e.src = src.clone();
+            e.token.name = name.clone();
+            e.token.src = src.clone();
+        }
     }
 
     /// Record `why` with no position: the parse was done when aless
@@ -536,6 +755,13 @@ impl LoadError {
     /// Whether the parse was stopped for running past its time limit.
     pub fn is_timeout(&self) -> bool {
         self.code == "timeout"
+    }
+
+    /// A `timeout` for an input still being read at the deadline:
+    /// standard input whose writer is slow, or waiting, or never closed it.
+    pub(crate) fn input_timed_out(limit: Duration) -> LoadError {
+        let (message, hint) = input_timed_out_words(limit);
+        LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
     /// An input over the size limit: `size` is its size when known (a
@@ -1259,6 +1485,17 @@ pub fn parse_within(
     format: Format,
     timeout: Option<Duration>,
 ) -> Result<Doc, LoadError> {
+    parse_until(src, format, timeout, None)
+}
+
+/// [`parse_within`], the time limit running from `started` when given
+/// (the run's start, see [`Limits::started`]) rather than from now.
+pub(crate) fn parse_until(
+    src: &str,
+    format: Format,
+    timeout: Option<Duration>,
+    started: Option<Instant>,
+) -> Result<Doc, LoadError> {
     if format == Format::Text {
         let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         return Ok(Doc::from_lines(&lines(src)));
@@ -1266,13 +1503,15 @@ pub fn parse_within(
     let src = parser_text(src, format);
     on_parse_thread(
         timeout,
+        started,
         || {},
         |deadline| parse_here(&src, format, deadline),
     )
 }
 
 /// Run `work`, a parse, on a thread with the stack a parse needs
-/// ([`PARSE_STACK`]), and hand it the deadline `timeout` sets. This thread
+/// ([`PARSE_STACK`]), and hand it the deadline `timeout` sets, counted
+/// from `started` when given, else from now. This thread
 /// only waits, so it keeps the time: once the deadline passes it raises
 /// the alarm the deadline's [`Deadline::passed`] reads, and calls
 /// `on_alarm`, for a parse that has a stop flag of its own to set (the
@@ -1280,12 +1519,13 @@ pub fn parse_within(
 /// a deadline that reads the clock, and `on_alarm` is never called.
 pub(crate) fn on_parse_thread<T: Send>(
     timeout: Option<Duration>,
+    started: Option<Instant>,
     on_alarm: impl FnOnce() + Send,
     work: impl FnOnce(Option<Deadline>) -> T + Send,
 ) -> T {
     // A time too far off to reach is no limit.
     let deadline = timeout.and_then(|limit| {
-        let at = Instant::now().checked_add(limit)?;
+        let at = started.unwrap_or_else(Instant::now).checked_add(limit)?;
         Some(Deadline {
             at,
             limit,
@@ -1364,6 +1604,19 @@ fn parse_capped(
     max_depth: usize,
 ) -> Result<Doc, LoadError> {
     let stopped = guard(&mut parser, deadline.clone(), max_depth, || {});
+    parse_guarded(parser, &stopped, src, format, deadline, max_depth)
+}
+
+/// [`parse_capped`] with the guard on the parser already: `stopped` is its
+/// record.
+fn parse_guarded(
+    mut parser: Tabnas,
+    stopped: &Stop,
+    src: &str,
+    format: Format,
+    deadline: Option<Deadline>,
+    max_depth: usize,
+) -> Result<Doc, LoadError> {
     // Under a grammar of plain text, a lone `*` is a word and a value.
     let sink = if format.is_custom() {
         prov::capture_words(&mut parser)
@@ -1411,6 +1664,7 @@ fn parse_capped(
         }
         Ok(Err(e)) if stop == STOP_DEPTH => {
             let mut e = *e;
+            stopped.place(&mut e);
             e.tag = "aless".to_string();
             e.code = "too_deep".to_string();
             (e.detail, e.hint) = too_deep_words(format, Deep::Rules(max_depth));
@@ -1418,6 +1672,7 @@ fn parse_capped(
         }
         Ok(Err(e)) if stop == STOP_TIME => {
             let mut e = *e;
+            stopped.place(&mut e);
             let limit = seconds(deadline.map_or(Duration::ZERO, |d| d.limit));
             e.tag = "aless".to_string();
             e.code = "timeout".to_string();
@@ -1620,7 +1875,7 @@ pub fn load_str_within(
     format: Format,
     limits: Limits,
 ) -> Result<Loaded, LoadError> {
-    let doc = parse_within(&source, format, limits.timeout)?;
+    let doc = parse_until(&source, format, limits.timeout, limits.started)?;
     Ok(Loaded {
         doc,
         format,
@@ -2005,6 +2260,7 @@ mod tests {
         Limits {
             max_size,
             timeout: None,
+            started: None,
         }
     }
 
@@ -2080,6 +2336,113 @@ mod tests {
         // A generous limit lets a small document through.
         let quick = parse_within(&many_tables(2), Format::Toml, Some(Duration::from_secs(60)));
         assert_eq!(quick.unwrap().len(), 1 + 1 + 2 * 3);
+    }
+
+    /// A JSON array of `n` small records, one a line.
+    fn records(n: usize) -> String {
+        let items: String = (0..n).map(|i| format!("{{\"n\": {i}}},\n")).collect();
+        format!("[\n{items}{{}}]\n")
+    }
+
+    /// Raise `up` between two steps that hold no token to read next (the
+    /// step before consumed what it matched), once the parse has read a
+    /// token on line `line`: where the engine's `cancel` has no place of
+    /// its own to give, and falls back to line 1, column 1. Put on the
+    /// parser after [`guard`], so that the guard sees `up` in the same
+    /// call.
+    fn between_steps_past(parser: &mut Tabnas, line: usize, up: Arc<AtomicBool>) {
+        let guarded = parser.config().parse.budget;
+        parser.parse_budget(1, move |ctx| {
+            if ctx.t.is_empty() && ctx.v1().is_some_and(|t| t.site.ri >= line) {
+                up.store(true, Ordering::Relaxed);
+            }
+            guarded.on_check.as_ref().is_none_or(|check| check(ctx))
+        });
+    }
+
+    /// A parse the deadline stops between two steps is reported where it
+    /// had got to, the last token it read, not at line 1, column 1; and the
+    /// guard's record, which the exporter reports from (the transducer's
+    /// `ABORTED` carries no position), is the same place (aless#15).
+    #[test]
+    fn a_timeout_between_steps_is_placed_at_the_last_token_read() {
+        let src = records(300);
+        let mut parser = make_parser(Format::Json).unwrap().unwrap();
+        let up = Arc::new(AtomicBool::new(false));
+        let deadline = Deadline::after(Some(Duration::from_secs(600)))
+            .unwrap()
+            .or_cancelled(up.clone());
+        let stopped = guard(&mut parser, Some(deadline.clone()), MAX_RULE_DEPTH, || {});
+        between_steps_past(&mut parser, 200, up);
+        let e = parse_guarded(
+            parser,
+            &stopped,
+            &src,
+            Format::Json,
+            Some(deadline),
+            MAX_RULE_DEPTH,
+        )
+        .unwrap_err();
+        assert!(e.is_timeout(), "{}", e.message);
+        assert!(
+            (200..=201).contains(&e.line) && e.col > 0,
+            "stopped at {}:{}",
+            e.line,
+            e.col
+        );
+        let line = e.source_line.as_deref().unwrap_or_default();
+        assert!(line.contains("\"n\": 19"), "{line:?}");
+        assert!(
+            e.plain_report().contains(&format!(":{}:{}", e.line, e.col)),
+            "{}",
+            e.plain_report()
+        );
+        assert_eq!(stopped.position(), (e.line, e.col));
+    }
+
+    /// Nesting past the cap is reported at the guard's place too, the
+    /// same as its record.
+    #[test]
+    fn too_deep_between_steps_is_placed_at_the_last_token_read() {
+        let src = format!("{}\n{}", "[\n".repeat(30), "]".repeat(30));
+        let mut parser = make_parser(Format::Json).unwrap().unwrap();
+        let stopped = guard(&mut parser, None, 40, || {});
+        let e = parse_guarded(parser, &stopped, &src, Format::Json, None, 40).unwrap_err();
+        assert_eq!(e.code, "too_deep", "{}", e.message);
+        assert!(e.line > 1, "stopped at {}:{}", e.line, e.col);
+        assert_eq!(stopped.position(), (e.line, e.col));
+    }
+
+    /// A read still waiting at its deadline fails as `timeout`, whether
+    /// the writer sent nothing or stopped part way, and an input that ends
+    /// is read whole (aless#16).
+    #[test]
+    fn a_read_past_its_deadline_is_a_timeout() {
+        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let whole = DeadlineReader::new(
+            std::io::Cursor::new(data.clone()),
+            Instant::now(),
+            Duration::from_secs(600),
+        )
+        .unwrap();
+        assert_eq!(read_within(whole, None).unwrap(), data);
+        for first in [&b""[..], b"[1, 2,"] {
+            let started = Instant::now();
+            let reader = DeadlineReader::new(quiet(first), started, Duration::from_millis(200));
+            let e = read_within(reader.unwrap(), Some(1 << 20)).unwrap_err();
+            let took = started.elapsed();
+            assert!(e.is_timeout(), "{}", e.message);
+            assert_eq!(
+                e.message,
+                "timeout: the input was still being read after 0.2 s"
+            );
+            assert!(e.hint.contains("--timeout 0 for no limit"), "{}", e.hint);
+            assert!(e.plain_report().starts_with("[aless/timeout]"));
+            assert!(
+                took >= Duration::from_millis(200) && took < Duration::from_secs(10),
+                "{took:?}"
+            );
+        }
     }
 
     #[test]

@@ -71,6 +71,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --alchemy-expr <TEXT>
                             The same, with the program on the command line
         --explain           The program's plan report as JSON, and no run
+        --max-output <SIZE> Stop a program that writes more than SIZE (default
+                            1G; K, M or G; 0 for no limit)
         --path <PATH>       Start at PATH, in the jq syntax every output uses
                             (.a.b[0].\"odd key\"); a.b[0], $.a.b[0] and JSON
                             Pointer (/a/b/0) work too
@@ -95,9 +97,12 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     viewer, 3 an input (or an --alchemy program file) could not be read,
     or the output not written, 4 --path or --at names nothing,
     5 an input (or a --grammar or --alchemy program file) is over --max-size
-    (--render, --alchemy: over a limit of the transducer's),
-    6 a parse (or a --grammar compile) ran past --timeout (--render,
-    --alchemy: the whole run, the program's work included).
+    (--render, --alchemy: over a limit of the transducer's, a program's
+    output over --max-output among them),
+    6 a parse (or a --grammar compile) ran past --timeout, or the input was
+    still being read when it passed (--render, --alchemy: the whole run,
+    the program's work included). A stream that fails stops at the end of
+    a record: a CSV row, a value in the root JSON array or object, a line.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
@@ -160,7 +165,8 @@ BOTH:
                             of memory per byte of input. A --grammar FILE too
         --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
                             longer than this (2.5, 90s, 2m; default none): a
-                            large input can take minutes
+                            large input can take minutes. Without a screen it
+                            runs from the start, reading standard input too
     -h, --help              This help
     -V, --version           Version
 ";
@@ -196,6 +202,8 @@ struct Args {
     max_size: Option<u64>,
     /// The longest a parse may run; `None` for no limit.
     timeout: Option<std::time::Duration>,
+    /// The most a program may write, in bytes; `None` for no limit.
+    max_output: Option<u64>,
 }
 
 /// Options that ask for output rather than the viewer.
@@ -213,6 +221,7 @@ const HEADLESS_OPTIONS: &[&str] = &[
     "--at",
     "--limit",
     "--compact",
+    "--max-output",
 ];
 
 fn parse_args() -> Result<Args, String> {
@@ -234,6 +243,7 @@ fn parse_args() -> Result<Args, String> {
         panes: false,
         max_size: aless::load::Limits::DEFAULT.max_size,
         timeout: aless::load::Limits::DEFAULT.timeout,
+        max_output: Some(aless::load::DEFAULT_MAX_OUTPUT),
     };
     let mut it = std::env::args_os().skip(1);
     let mut only_files = false;
@@ -328,6 +338,9 @@ fn parse_args() -> Result<Args, String> {
             "--limit" => args.limit = Some(number(value()?)?),
             "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
             "--timeout" => args.timeout = aless::load::parse_timeout(&value()?)?,
+            "--max-output" => {
+                args.max_output = aless::load::parse_size_for("--max-output", &value()?)?
+            }
             "--compact" => args.compact = true,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
@@ -556,6 +569,7 @@ fn main() {
     let limits = aless::load::Limits {
         max_size: args.max_size,
         timeout: args.timeout,
+        started: None,
     };
     if let Err(e) = grammar::register_all(grammars, limits) {
         let (text, status) = headless::grammar_failure(&e, args.compact);
@@ -727,9 +741,24 @@ fn print_headless(args: Args) -> i32 {
     req.indent = args.opts.indent;
     req.max_size = args.max_size;
     req.timeout = args.timeout;
+    req.max_output = args.max_output;
+    // The deadline runs from here, and covers reading the input: standard
+    // input is read on a thread of its own, so that a writer that sends
+    // nothing, or never closes it, cannot hold the run past --timeout.
+    let started = Instant::now();
+    req.started = Some(started);
     let mut input = io::stdin();
+    // Only a run that reads standard input reads it: named files leave it
+    // to whoever else has it.
+    let reads_stdin = req.files.is_empty() || req.files.iter().any(|f| f.as_os_str() == "-");
+    let mut timed = args
+        .timeout
+        .filter(|_| reads_stdin && !input.is_terminal())
+        .and_then(|limit| aless::load::DeadlineReader::new(io::stdin(), started, limit));
     let stdin: headless::Stdin = if input.is_terminal() {
         None
+    } else if let Some(timed) = timed.as_mut() {
+        Some(timed)
     } else {
         Some(&mut input)
     };

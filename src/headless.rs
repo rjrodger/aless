@@ -13,14 +13,14 @@
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use tabnas_transduce::{Code, Fail, JsonEvent, Metrics};
 
 use crate::alchemy::{self, ProgramArg};
 use crate::doc::{Doc, Key, Kind, NodeId};
-use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer, What};
+use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Records, Renderer, What};
 use crate::fmt;
 use crate::grammar::GrammarError;
 use crate::load::{self, Format, Limits, LoadError, Loaded};
@@ -162,6 +162,13 @@ pub struct Request {
     pub max_size: Option<u64>,
     /// Stop a parse that runs longer than this; `None` for no limit.
     pub timeout: Option<Duration>,
+    /// Stop a program that writes more than this many bytes; `None` for
+    /// no limit.
+    pub max_output: Option<u64>,
+    /// When the run started, for a time limit that covers reading its
+    /// input too (see [`load::Limits::started`]); `None` to count from the
+    /// start of the parse.
+    pub started: Option<Instant>,
 }
 
 impl Request {
@@ -177,6 +184,8 @@ impl Request {
             indent: 2,
             max_size: Limits::DEFAULT.max_size,
             timeout: Limits::DEFAULT.timeout,
+            max_output: Some(load::DEFAULT_MAX_OUTPUT),
+            started: None,
         }
     }
 
@@ -184,6 +193,7 @@ impl Request {
         Limits {
             max_size: self.max_size,
             timeout: self.timeout,
+            started: self.started,
         }
     }
 }
@@ -379,6 +389,8 @@ fn export(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
+        started: req.started,
+        max_output: None,
     };
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
         Opened::Text(text) => export::export(&job, Input::Text(&text), out),
@@ -482,13 +494,28 @@ fn translate(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
+        started: req.started,
+        max_output: None,
     };
     let metrics = Metrics::new();
+    let records = part.records();
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => translate::run(&job, &composition, Input::Text(&text), out, metrics),
-        Opened::Lines(reader) => {
-            translate::run(&job, &composition, Input::Lines(reader), out, metrics)
-        }
+        Opened::Text(text) => translate::run(
+            &job,
+            &composition,
+            records,
+            Input::Text(&text),
+            out,
+            metrics,
+        ),
+        Opened::Lines(reader) => translate::run(
+            &job,
+            &composition,
+            records,
+            Input::Lines(reader),
+            out,
+            metrics,
+        ),
     };
     let failure = match result {
         Ok(()) | Err(ExportError::ReaderGone) => {
@@ -689,9 +716,14 @@ fn run_program(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
+        started: req.started,
+        max_output: req.max_output,
     };
     let run = |input: Input<'_>| match composition {
-        Some(composition) => translate::run(&job, composition, input, out, Metrics::new()),
+        Some(composition) => {
+            let records = part.map_or(Records::Any, Part::records);
+            translate::run(&job, composition, records, input, out, Metrics::new())
+        }
         None => alchemy::run(&job, &compiled, render, input, out),
     };
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
@@ -812,7 +844,17 @@ fn open_input<'a>(
             };
             if plan == Plan::Lines {
                 let mut reader = io::BufReader::new(read);
-                let empty = reader.fill_buf().map(<[u8]>::is_empty).unwrap_or(false);
+                let empty = match reader.fill_buf() {
+                    Ok(bytes) => bytes.is_empty(),
+                    // Nothing came before the deadline, not even an end.
+                    Err(e) => match load::read_timed_out(&e) {
+                        Some(limit) => {
+                            let e = LoadError::input_timed_out(limit).with_origin("(stdin)");
+                            return Err(too_large(&e, None));
+                        }
+                        None => false,
+                    },
+                };
                 if implicit && empty {
                     return Err(Failure::usage(
                         "no input: standard input is empty; name a FILE, or pipe a document into aless",
@@ -1672,6 +1714,19 @@ impl Failure {
             let k = if k == "row" { "line".to_string() } else { k };
             error.insert(k, v);
         }
+        // The one limit of the transducer's that an option sets.
+        if fail
+            .limit
+            .as_ref()
+            .is_some_and(|l| l.name == "max_output_bytes")
+        {
+            error.insert(
+                "hint".into(),
+                "Pass --max-output with a larger size to let the program write more, or \
+                 --max-output 0 for no limit."
+                    .into(),
+            );
+        }
         Failure { status, error }
     }
 }
@@ -2277,6 +2332,104 @@ mod tests {
         // No limit: the same request succeeds.
         r.timeout = None;
         assert_eq!(with_stdin(&r, "[[item]]\nid = 1\n").status, status::OK);
+    }
+
+    /// `--timeout` ends a run whose standard input never sends a byte, or
+    /// stops sending and never closes, in every mode, at the deadline that
+    /// runs from the run's start (aless#16).
+    #[test]
+    fn a_run_on_quiet_stdin_stops_at_its_deadline() {
+        let program = ProgramArg::Expr("def export [input] input".into());
+        let modes = [
+            (Op::Json, None),
+            (Op::Paths, Some(Format::Yaml)),
+            (Op::Render(Renderer::Json), None),
+            (Op::Render(Renderer::Csv), Some(Format::Jsonl)),
+            (Op::Render(Renderer::Csv), Some(Format::Csv)),
+            (
+                Op::Alchemy {
+                    program,
+                    render: None,
+                    explain: false,
+                },
+                Some(Format::Jsonl),
+            ),
+        ];
+        for (op, kind) in modes {
+            for first in [&b""[..], b"{\"a\": 1}\n"] {
+                let mut r = req(op.clone());
+                r.kind = kind;
+                r.timeout = Some(Duration::from_millis(300));
+                let started = Instant::now();
+                r.started = Some(started);
+                let quiet = load::quiet(first);
+                let mut input =
+                    load::DeadlineReader::new(quiet, started, Duration::from_millis(300)).unwrap();
+                let out = run(&r, Some(&mut input));
+                let took = started.elapsed();
+                let what = format!("{:?} {kind:?} after {} bytes", r.op, first.len());
+                assert_eq!(out.status, status::TIMEOUT, "{what}: {}", out.stderr);
+                let e = &json_of(&out.stderr)["error"];
+                assert_eq!(e["kind"], json!("timeout"), "{what}");
+                assert_eq!(
+                    e["message"],
+                    json!("timeout: the input was still being read after 0.3 s"),
+                    "{what}"
+                );
+                assert_eq!(e["seconds"], json!(0.3), "{what}");
+                assert!(took < Duration::from_secs(10), "{what}: {took:?}");
+            }
+        }
+    }
+
+    /// A program that writes without end from a small input is stopped at
+    /// `--max-output` (by default [`load::DEFAULT_MAX_OUTPUT`]), as the
+    /// transducer's `RESOURCE_LIMIT_EXCEEDED` naming `max_output_bytes`,
+    /// with status 5; a render, whose output follows its input, is not
+    /// held to it (aless#18).
+    #[test]
+    fn a_programs_output_is_bounded() {
+        let mut doubling = String::from("def a0 \"0123456789\"\n");
+        for i in 1..=40 {
+            doubling.push_str(&format!("def a{i} (concat a{} a{})\n", i - 1, i - 1));
+        }
+        doubling.push_str("def export [input] (concat a40 (json input))\n");
+        let program = |text: &str| Op::Alchemy {
+            program: ProgramArg::Expr(text.into()),
+            render: None,
+            explain: false,
+        };
+        assert_eq!(
+            req(Op::Json).max_output,
+            Some(load::DEFAULT_MAX_OUTPUT),
+            "bounded unless asked otherwise"
+        );
+        let mut r = req(program(&doubling));
+        r.max_output = Some(4096);
+        let out = with_stdin(&r, "{\"a\": 1}");
+        assert_eq!(out.status, status::TOO_LARGE, "{}", out.stderr);
+        let e = &json_of(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"));
+        assert_eq!(e["code"], json!("RESOURCE_LIMIT_EXCEEDED"));
+        assert_eq!(
+            e["limit"],
+            json!({"name": "max_output_bytes", "value": 4096})
+        );
+        assert!(
+            e["hint"].as_str().unwrap().contains("--max-output 0"),
+            "{e}"
+        );
+        assert!(out.stdout.len() <= 4096, "{}", out.stdout.len());
+        // A program within the bound runs as ever.
+        let echo = req(program("def export [input] input"));
+        assert_eq!(with_stdin(&echo, "[1, 2]").stdout, "[1,2]\n");
+        // A render is not a program's output.
+        let mut render = req(Op::Render(Renderer::Json));
+        render.max_output = Some(4);
+        render.compact = true;
+        let out = with_stdin(&render, "[1, 2, 3, 4, 5]");
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "[1,2,3,4,5]\n");
     }
 
     #[test]
@@ -2940,6 +3093,7 @@ mod tests {
         let limits = Limits {
             max_size: Some(8),
             timeout: None,
+            started: None,
         };
         let e = grammar::register(def, limits).unwrap_err();
         let (text, status) = grammar_failure(&e, true);
@@ -2973,6 +3127,7 @@ mod tests {
         let limits = Limits {
             max_size: None,
             timeout: Some(std::time::Duration::from_millis(1)),
+            started: None,
         };
         let e = grammar::register(def, limits).unwrap_err();
         let (text, status) = grammar_failure(&e, true);
