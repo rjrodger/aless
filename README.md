@@ -477,9 +477,12 @@ one object per row keyed by the column labels) and JSON events as JSON
 that has a render writes the program's output as that format, its output
 shape standing where the source's would ([Writing any
 format](#writing-any-format)): a table reaches YAML as a sequence of
-mappings, JSON events reach a Markdown table through the inferred table,
-and the loss warning names the adapter that stood between as it does for
-a source, `records` for a table written as JSON among them.
+mappings, JSON events reach a Markdown table through the inferred table
+under the row policy `--render csv` has (a scalar row is one cell named
+`value`; an array row, a mixture of rows or a root that is not an array
+is refused with the reason), and the loss warning names the adapter that
+stood between as it does for a source, `records` for a table written as
+JSON among them.
 The JSON a program renders is compact, one document on one line. The program does the selecting, so
 `--path` and `--at` are not accepted, and neither is any other output
 option; `--render` given for a program that renders its own text is a

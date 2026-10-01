@@ -2730,6 +2730,51 @@ fn a_programs_output_is_written_as_any_format() {
         json(&composed.stderr)["warning"]["adapter"],
         "the inferred table"
     );
+    // A program's events reach a records render under the inferred
+    // table's row policy, as a source's do: a scalar row is one cell named
+    // value, and a mixture of rows, an array row and a root that is not an
+    // array are refused with the reason before anything is written.
+    let identity = [
+        "--alchemy-expr",
+        "def export [input] input",
+        "--render",
+        "markdown",
+    ];
+    let scalars = aless(&identity, Some("[1,2]"));
+    assert_eq!(
+        code(&scalars),
+        0,
+        "{}",
+        String::from_utf8_lossy(&scalars.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&scalars.stdout),
+        "| value |\n| --- |\n| 1 |\n| 2 |\n"
+    );
+    let direct = aless(&["--render", "markdown"], Some("[1,2]"));
+    assert_eq!(scalars.stdout, direct.stdout);
+    for (input, reason) in [
+        ("[{\"a\":1},2]", "but the first row was an object"),
+        ("[1,{\"a\":1}]", "but the first row was a scalar"),
+        ("[[1],[2]]", "is an array; a row is an object"),
+        ("{\"a\":1}", "is an object, not an array of records"),
+    ] {
+        let out = aless(&identity, Some(input));
+        assert_eq!(
+            code(&out),
+            1,
+            "{input}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "{input}");
+        let error = &json(&out.stderr)["error"];
+        assert_eq!(error["code"], "INPUT_INVALID", "{input}: {error}");
+        assert!(
+            error["message"].as_str().unwrap().contains(reason),
+            "{input}: {error}"
+        );
+        assert_eq!(error["output"], "none", "{input}");
+    }
 }
 
 /// A YAML array of objects written as CSV through the inferred table (a

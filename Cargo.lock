@@ -1140,7 +1140,7 @@ dependencies = [
 [[package]]
 name = "tabnas-alchemy"
 version = "0.1.1"
-source = "git+https://github.com/tabnas/alchemy#0f250c566ea8d9869ca3655e91f0248e25fdb8af"
+source = "git+https://github.com/tabnas/alchemy#4b1074ecddfc6be18e26b493c05252a9b4a1538b"
 dependencies = [
  "indexmap",
  "serde_json",

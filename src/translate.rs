@@ -514,6 +514,16 @@ impl Translation {
 const CSV_OPTIONS: &str = "(record (entry :delimiter \",\") (entry :newline \"\\r\\n\") \
                            (entry :header true) (entry :null-text \"\") (entry :missing \"\"))";
 
+/// The inferred table's row policy, applied in the plan to a program's
+/// events where the host's row check ([`Rows`]) stands in front of a
+/// source's: the root is an array whose elements are the rows, an object
+/// row passes as it is, a scalar row becomes an object of one member,
+/// `value`, and an array row, a mixture of rows or a root that is not an
+/// array is refused with the reason, before anything is written. Linked
+/// under this name, which its refusals carry.
+const INFERRED_ROWS_FILE: &str = "aless/inferred-rows.alc";
+const INFERRED_ROWS: &str = include_str!("inferred-rows.alc");
+
 /// The render a composed program calls for `target`, and the source it
 /// links when the render is a part's own: alchemy's `json`, its `csv`
 /// under the export's options, or the part's entry.
@@ -622,12 +632,18 @@ pub fn compose_program(
             ))
         }
     };
-    let (inner, adapter) = route(
-        &reads,
-        None,
-        target.writes,
-        &format!("({PROGRAM_EXPORT} input)"),
-    );
+    let output = format!("({PROGRAM_EXPORT} input)");
+    let (inner, adapter) = route(&reads, None, target.writes, &output);
+    // The inferred table takes a program's events through the row policy
+    // the host's check applies to a source's, in the plan, since no sink
+    // of the host's stands between two stages of one.
+    let (inner, policy) = match adapter {
+        Some(Adapter::InferredTable) => (
+            Adapter::InferredTable.apply(&format!("(inferred-rows {output})")),
+            Some(Source::new(INFERRED_ROWS_FILE, INFERRED_ROWS)),
+        ),
+        _ => (inner, None),
+    };
     let (render, render_source) = render_of(target);
     let main = format!("def export [input] ({render} {inner})");
     let main_name = main_name(target);
@@ -635,12 +651,16 @@ pub fn compose_program(
     if let Some(source) = render_source {
         sources.push(source);
     }
+    if let Some(source) = policy {
+        sources.push(source);
+    }
     sources.push(program.export_as(PROGRAM_EXPORT));
     sources.push(Source::new(&main_name, &main));
     let program = compile_sources(&sources)?;
-    // The program's events are not the source's: the row check and the
-    // tree contract stand in front of the source's events only, and the
-    // program's output meets the transducer's own refusals.
+    // The program's events are not the source's: the tree contract stands
+    // in front of the source's events only, the row policy is in the plan
+    // (`inferred-rows`), and the rest of the program's output meets the
+    // transducer's own refusals.
     Ok(Composition {
         program: with_policies(program, adapter)?,
         tree: false,
