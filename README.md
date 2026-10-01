@@ -86,7 +86,7 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--panes out[,program]` | open panes beside the input: `out`, the document as `--render` or `--alchemy` writes it, and `program`, the program ([Panes](#panes)) |
 | `--stacked` | stack the panes rather than place them side by side |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none); without a screen it runs from the start, reading standard input included |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none); on standard input, without a screen, it runs from the start, so waiting on the input counts |
 
 `NO_COLOR` in the environment also disables colour.
 
@@ -135,7 +135,7 @@ aless --alchemy export.alc response.json           # a program over the document
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
 | `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none); the time runs from the start, reading standard input included |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none); on standard input the time runs from the start, so waiting on the input counts |
 | `--max-output SIZE` | stop an `--alchemy` program that writes more than SIZE (default `1G`; `0` for no limit) |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
@@ -231,11 +231,12 @@ its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. The time runs from the start of the run, so
-waiting on standard input counts: an input still being read when it
+saying how long it took. On standard input the time runs from the start
+of the run, so waiting on it counts: an input still being read when it
 passes (a writer that is slow, or sends nothing, or never closes its
 end) fails as `timeout` too, with `line` and `col` `null` and a message
-saying the input was still being read. A `usage` error has only `kind` and `message`,
+saying the input was still being read. On a file it runs from the start
+of the parse, so each file `--check` reads gets the whole of it. A `usage` error has only `kind` and `message`,
 except for a `--grammar` that does not compile, which adds the `grammar`
 name and, when it came from a file, the `file`. A grammar file that
 cannot be read is an `io` error, one over `--max-size` a `too_large`

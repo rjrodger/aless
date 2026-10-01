@@ -196,6 +196,20 @@ impl Request {
             started: self.started,
         }
     }
+
+    /// The limits for reading and parsing `source`. On standard input the
+    /// time runs from the start of the run, so that waiting on it counts;
+    /// on a file, from the start of its parse, as it always has, so that
+    /// each of the files `--check` reads gets the whole of it.
+    fn limits_for(&self, source: &Source) -> Limits {
+        Limits {
+            started: match source {
+                Source::Stdin => self.started,
+                Source::File(_) => None,
+            },
+            ..self.limits()
+        }
+    }
 }
 
 /// What a run prints, and the status to exit with.
@@ -389,7 +403,7 @@ fn export(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
-        started: req.started,
+        started: req.limits_for(&source).started,
         max_output: None,
     };
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
@@ -494,7 +508,7 @@ fn translate(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
-        started: req.started,
+        started: req.limits_for(&source).started,
         max_output: None,
     };
     let metrics = Metrics::new();
@@ -716,7 +730,7 @@ fn run_program(
         compact: req.compact,
         indent: req.indent,
         timeout: req.timeout,
-        started: req.started,
+        started: req.limits_for(&source).started,
         max_output: req.max_output,
     };
     let run = |input: Input<'_>| match composition {
@@ -990,7 +1004,7 @@ fn load(
                 )));
             }
             let format = req.kind.unwrap_or_else(|| Format::detect(path));
-            let loaded = load::load_path_within(path, req.kind, req.limits())
+            let loaded = load::load_path_within(path, req.kind, req.limits_for(source))
                 .map_err(|e| Failure::load(&name, format, &e).limited(file_size(path), req))?;
             Ok((name, loaded))
         }
@@ -2380,6 +2394,21 @@ mod tests {
                 assert!(took < Duration::from_secs(10), "{what}: {took:?}");
             }
         }
+    }
+
+    /// The time limit on standard input runs from the start of the run,
+    /// so that waiting on it counts; on a file it runs from the start of
+    /// its parse, so that every file `--check` reads gets the whole of it.
+    #[test]
+    fn only_standard_input_is_timed_from_the_start_of_the_run() {
+        let mut r = req(Op::Check);
+        r.timeout = Some(Duration::from_secs(5));
+        let started = Instant::now();
+        r.started = Some(started);
+        assert_eq!(r.limits_for(&Source::Stdin).started, Some(started));
+        let file = Source::File(PathBuf::from("a.json"));
+        assert_eq!(r.limits_for(&file).started, None);
+        assert_eq!(r.limits_for(&file).timeout, r.timeout);
     }
 
     /// A program that writes without end from a small input is stopped at

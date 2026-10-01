@@ -165,8 +165,8 @@ BOTH:
                             of memory per byte of input. A --grammar FILE too
         --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
                             longer than this (2.5, 90s, 2m; default none): a
-                            large input can take minutes. Without a screen it
-                            runs from the start, reading standard input too
+                            large input can take minutes. On standard input it
+                            runs from the start, so waiting on the input counts
     -h, --help              This help
     -V, --version           Version
 ";
