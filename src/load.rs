@@ -201,12 +201,15 @@ pub struct LoadError {
 
 /// The largest input aless reads unless `--max-size` says otherwise. A
 /// parse takes about [`MEMORY_PER_BYTE`] bytes of memory per byte of
-/// input, so this is some 5 GB, and a minute or so of parsing.
+/// input, so this is some 2.7 GB, and under a minute of parsing.
 pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
 
 /// Roughly how many bytes of memory a parse takes per byte of input,
-/// measured on JSON: 13 MB peaked at 1.0 GB, 66 MB at 5.1 GB.
-pub const MEMORY_PER_BYTE: u64 = 80;
+/// measured on JSON records in a release build: 12 MB peaked at 0.42 GB,
+/// 60 MB at 2.1 GB. With the engine's whole rule history kept, before
+/// [`RULE_HISTORY`] bounded it, it was twice that: 13 MB peaked at 1.0 GB,
+/// 66 MB at 5.1 GB.
+pub const MEMORY_PER_BYTE: u64 = 40;
 
 /// What a load may cost: how much input it reads, and how long it parses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -359,6 +362,19 @@ pub const MAX_RULE_DEPTH: usize = 3_000;
 /// compiler's shape, an object and its `kids` array per level, which its
 /// rule stack does not count in the same units.
 pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
+
+/// How many predecessor snapshots a rule reaches through `prev` in every
+/// document aless parses: the engine's `options.rule.history`, set on
+/// every parser [`make_parser`] makes, a custom grammar's included.
+/// Unbounded, the engine's default, every rule replaced or pushed stays
+/// reachable from the current one until its container closes, so a
+/// parse's memory grows with the document's length, not its nesting:
+/// `--render` over 23 MB of JSON records peaked at 1.6 GB, where three
+/// steps take 0.3 GB, and the run is faster. The deepest walk any grammar of
+/// the fleet reads is three hops (tabnas/parser
+/// `doc/rule-history-bound.md`), and the parsed value is the same under
+/// every bound; what a bound changes is only what a grammar can reach.
+pub const RULE_HISTORY: usize = 3;
 
 /// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
 /// margin, whatever the calling thread has (a Windows main thread has
@@ -1027,11 +1043,16 @@ pub struct Loaded {
 /// should that fail (it was installed once when the grammar was
 /// registered, so it does not), the error is a `grammar` one.
 pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
-    Ok(Some(match format {
+    let mut parser = match format {
         Format::Json => tabnas_json::make(),
         Format::Jsonl => tabnas_jsonl::make(),
         Format::Jsonic => tabnas_jsonic::make(),
-        Format::Jsonc => tabnas_jsonc::make(),
+        // A trailing comma before `}` or `]` is accepted, as the editors
+        // that read JSONC (VS Code's settings among them) accept it; the
+        // crate's default refuses it.
+        Format::Jsonc => tabnas_jsonc::make_with(
+            tabnas_jsonc::JsoncOptions::new().with_allow_trailing_comma(true),
+        ),
         Format::Json5 => tabnas_json5::make(),
         Format::Yaml => tabnas_yaml::make(),
         Format::Toml => tabnas_toml::make(),
@@ -1057,7 +1078,88 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
                 Ok(Err(e)) | Err(e) => return Err(grammar_failed(format, &e)),
             }
         }
-    }))
+    };
+    // A grammar that bounds its own history keeps its bound; none of the
+    // built-in ones does, and a grammar from the command line cannot.
+    parser.options.rule.history.get_or_insert(RULE_HISTORY);
+    Ok(Some(parser))
+}
+
+/// The text a format's parser reads: the source without its byte-order
+/// mark, and, for JSON5, with the CR of a string's line continuation
+/// across a CRLF dropped (see [`json5_dropped`]). Every line and column
+/// is where it is in the source.
+pub(crate) fn parser_text(src: &str, format: Format) -> std::borrow::Cow<'_, str> {
+    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    parser_body(src, format).0
+}
+
+/// [`parser_text`] of a text without its byte-order mark, with the bytes
+/// it left out of `body`, in order: for a caller whose positions are byte
+/// offsets (the highlighter's), which [`source_range`] maps back.
+pub(crate) fn parser_body(body: &str, format: Format) -> (std::borrow::Cow<'_, str>, Vec<usize>) {
+    let dropped = match format {
+        Format::Json5 => json5_dropped(body),
+        _ => Vec::new(),
+    };
+    if dropped.is_empty() {
+        return (std::borrow::Cow::Borrowed(body), dropped);
+    }
+    let mut out = String::with_capacity(body.len() - dropped.len());
+    let mut from = 0;
+    for &at in &dropped {
+        out.push_str(&body[from..at]);
+        from = at + 1;
+    }
+    out.push_str(&body[from..]);
+    (std::borrow::Cow::Owned(out), dropped)
+}
+
+/// A byte range of the text [`parser_body`] made, as a range of the text
+/// it was made from, `dropped` being the bytes it left out: each byte left
+/// out before the start moves the start on, and each before the end moves
+/// the end on, so a range that ends where a dropped byte stood stops short
+/// of it.
+pub(crate) fn source_range(dropped: &[usize], start: usize, end: usize) -> (usize, usize) {
+    let moved = |at: usize, strictly: bool| {
+        let mut at = at;
+        for &d in dropped {
+            if d < at || (!strictly && d == at) {
+                at += 1;
+            } else {
+                break;
+            }
+        }
+        at
+    };
+    (moved(start, false), moved(end, true))
+}
+
+/// JSON5 lets a string go on to the next line after a backslash. The
+/// crate's lexer reads a backslash and LF as that, but of a backslash and
+/// CRLF it takes the CR as the escape and finds the LF raw in the string,
+/// which it refuses as unprintable. Its `parse_with` removes every
+/// continuation before lexing, line break and all, which puts each later
+/// token a line early. Dropping only the CR leaves the line break where
+/// it is: in JSON5 a CR before an LF moves no position, so every token
+/// keeps its line and column. The CR goes only where the backslash before
+/// it is not itself escaped, an odd run of backslashes; outside a string
+/// the sequence is in a comment, which it does not change, or it is
+/// refused at the backslash either way. These are the offsets of the CRs
+/// dropped, in order.
+fn json5_dropped(src: &str) -> Vec<usize> {
+    let bytes = src.as_bytes();
+    src.match_indices("\\\r\n")
+        .filter(|(at, _)| {
+            let run = bytes[..=*at]
+                .iter()
+                .rev()
+                .take_while(|&&b| b == b'\\')
+                .count();
+            run % 2 == 1
+        })
+        .map(|(at, _)| at + 1)
+        .collect()
 }
 
 /// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
@@ -1157,11 +1259,16 @@ pub fn parse_within(
     format: Format,
     timeout: Option<Duration>,
 ) -> Result<Doc, LoadError> {
-    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
     if format == Format::Text {
+        let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         return Ok(Doc::from_lines(&lines(src)));
     }
-    on_parse_thread(timeout, || {}, |deadline| parse_here(src, format, deadline))
+    let src = parser_text(src, format);
+    on_parse_thread(
+        timeout,
+        || {},
+        |deadline| parse_here(&src, format, deadline),
+    )
 }
 
 /// Run `work`, a parse, on a thread with the stack a parse needs
@@ -2327,6 +2434,157 @@ mod tests {
             assert!(plain.contains(&format!("/{code}]:")), "{plain}");
             assert!(!plain.contains("probably a bug"), "{plain}");
         }
+    }
+
+    /// A JSON5 string continued across a CRLF reads as it does across an
+    /// LF (#30), and every node keeps the line and column it has with LF
+    /// endings, as does an error after the continuation. A raw CRLF after
+    /// an escaped backslash is no continuation, and is still refused.
+    #[test]
+    fn json5_continues_a_string_across_crlf() {
+        let lf = "{\n  a: 'x\\\n  y',\n  b: [1, \"p\\\nq\"], // c \\\n  c: 3\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let one = parse(lf, Format::Json5).unwrap();
+        let two = parse(&crlf, Format::Json5).unwrap_or_else(|e| panic!("{e}"));
+        let json = |d: &Doc| crate::fmt::to_json_compact(d, 0);
+        assert_eq!(json(&two), r#"{"a":"x  y","b":[1,"pq"],"c":3}"#);
+        assert_eq!(json(&two), json(&one));
+        let at = |d: &Doc| d.nodes.iter().map(|n| (n.line, n.col)).collect::<Vec<_>>();
+        assert_eq!(at(&two), at(&one));
+        let lf = "['a\\\nb',\n  @]";
+        let one = parse(lf, Format::Json5).unwrap_err();
+        let two = parse(&lf.replace('\n', "\r\n"), Format::Json5).unwrap_err();
+        assert_eq!((two.line, two.col), (one.line, one.col));
+        assert_eq!(one.line, 3);
+        assert!(parse("['a\\\\\r\nb']", Format::Json5).is_err());
+        assert!(json5_dropped("['a\\\\\r\nb']").is_empty());
+        // A range of the prepared text, back on the source's bytes: one
+        // that ends where a dropped CR stood stops short of it.
+        let src = "['a\\\r\nb', 1]";
+        let (text, dropped) = parser_body(src, Format::Json5);
+        assert_eq!(dropped, [4]);
+        assert_eq!(&*text, "['a\\\nb', 1]");
+        assert_eq!(source_range(&dropped, 1, 4), (1, 4));
+        assert_eq!(source_range(&dropped, 5, 7), (6, 8));
+        assert_eq!(&src[6..8], "b'");
+        assert_eq!(json5_dropped("['a\\\\\\\r\nb']"), [6]);
+    }
+
+    /// Every parser aless makes bounds how far a rule reaches back
+    /// (#27), a custom grammar's included, and the bound changes no
+    /// value: every fixture, every grammar fixture's sample and a longer
+    /// document of each format parse to the same value, or fail the same
+    /// way, bounded and not.
+    #[test]
+    fn the_rule_history_bound_changes_no_value() {
+        let both = |make: &dyn Fn() -> Tabnas, src: &str, what: &str| {
+            let bounded = make();
+            assert_eq!(bounded.options.rule.history, Some(RULE_HISTORY), "{what}");
+            let mut unbounded = make();
+            unbounded.options.rule.history = None;
+            let run = |p: Tabnas| p.parse(src).map(|v| v.to_json()).map_err(|e| e.to_string());
+            assert_eq!(run(bounded), run(unbounded), "{what}");
+        };
+        for format in Format::ALL.iter().copied().filter(|f| *f != Format::Text) {
+            let make = || make_parser(format).unwrap().unwrap();
+            // A sequence well past the bound, nested once.
+            let items = |item: &dyn Fn(usize) -> String, sep: &str| {
+                (0..40).map(item).collect::<Vec<_>>().join(sep)
+            };
+            let long = match format {
+                Format::Json | Format::Jsonc | Format::Json5 | Format::Jsonic => format!(
+                    "[{}]",
+                    items(
+                        &|i| format!("{{\"k{i}\": [{i}, \"v{i}\", {{\"n\": {i}}}]}}"),
+                        ", "
+                    )
+                ),
+                Format::Jsonl => items(&|i| format!("{{\"k\": {i}, \"v\": [1, 2]}}"), "\n"),
+                Format::Yaml => items(&|i| format!("- k: {i}\n  v: [1, 2]\n  w: x{i}"), "\n"),
+                Format::Toml => items(&|i| format!("[t{i}]\nk = {i}\nv = [1, 2]"), "\n"),
+                Format::Ini => items(&|i| format!("[s{i}]\nk = {i}\nv = x{i}"), "\n"),
+                Format::Csv => format!("a,b\n{}", items(&|i| format!("{i},x{i}"), "\n")),
+                Format::Tsv => format!("a\tb\n{}", items(&|i| format!("{i}\tx{i}"), "\n")),
+                Format::Xml => format!(
+                    "<r>{}</r>",
+                    items(&|i| format!("<i n=\"{i}\">x{i}</i>"), "")
+                ),
+                Format::Zon => format!(".{{ {} }}", items(&|i| format!(".k{i} = {i}"), ", ")),
+                Format::Markdown => items(&|i| format!("- item {i}\n\npara {i}"), "\n\n"),
+                Format::Feed => format!(
+                    "<rss version=\"2.0\"><channel><title>t</title>{}</channel></rss>",
+                    items(&|i| format!("<item><title>i{i}</title></item>"), "")
+                ),
+                _ => continue,
+            };
+            both(&make, &long, &format!("{format}: a long document"));
+        }
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut read = 0;
+        for entry in std::fs::read_dir(&fixtures).unwrap() {
+            let path = entry.unwrap().path();
+            let format = match Format::detect_known(&path) {
+                Some(Format::Text) | None => continue,
+                Some(format) => format,
+            };
+            let src = std::fs::read_to_string(&path).unwrap();
+            let make = || make_parser(format).unwrap().unwrap();
+            both(
+                &make,
+                &parser_text(&src, format),
+                &path.display().to_string(),
+            );
+            read += 1;
+        }
+        let grammars = fixtures.join("grammars");
+        for entry in std::fs::read_dir(&grammars).unwrap() {
+            let path = entry.unwrap().path();
+            let sample = path.with_extension("sample");
+            if path.extension().and_then(|e| e.to_str()) != Some("abnf") || !sample.exists() {
+                continue;
+            }
+            let compiled = grammar::compile(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let make = || {
+                let mut parser = compiled.parser().unwrap();
+                parser.options.rule.history.get_or_insert(RULE_HISTORY);
+                parser
+            };
+            let src = std::fs::read_to_string(&sample).unwrap();
+            both(&make, &src, &path.display().to_string());
+            read += 1;
+        }
+        assert!(read >= 20, "{read} fixtures read");
+        // A grammar from the command line takes the bound from
+        // `make_parser` too.
+        let def = grammar::Definition::parse(
+            "--grammar-expr",
+            &format!("impl-kv-h={}", grammar::tests::KV),
+        )
+        .unwrap();
+        let custom = Format::Custom(grammar::register(def, Limits::NONE).unwrap());
+        let parser = make_parser(custom).unwrap().unwrap();
+        assert_eq!(parser.options.rule.history, Some(RULE_HISTORY));
+    }
+
+    /// JSONC takes a trailing comma before `}` or `]`, as the editors that
+    /// read it do (#31), with the positions it always had; an elision is
+    /// still no value.
+    #[test]
+    fn jsonc_accepts_a_trailing_comma() {
+        let json = |src: &str| {
+            let doc = parse(src, Format::Jsonc).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            crate::fmt::to_json_compact(&doc, 0)
+        };
+        assert_eq!(json("{\"a\": 1,}"), r#"{"a":1}"#);
+        assert_eq!(json("[1, [2,],]"), "[1,[2]]");
+        assert_eq!(
+            json("{\n  // c\n  \"a\": [1,],\n  /* x */\n}"),
+            r#"{"a":[1]}"#
+        );
+        let doc = parse("{\n  \"a\": 1,\n  \"b\": 2,\n}", Format::Jsonc).unwrap();
+        let b = doc.resolve(&[Key::Name("b".into())]).unwrap() as usize;
+        assert_eq!((doc.nodes[b].line, doc.nodes[b].col), (3, 3));
+        assert!(parse("[1,,2]", Format::Jsonc).is_err());
     }
 
     #[test]

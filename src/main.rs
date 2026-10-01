@@ -156,7 +156,7 @@ BOTH:
         --grammar-expr <NAME=ABNF>
                             The same, with the grammar text on the command line
         --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
-                            or G; 0 for no limit): a parse takes about 80 bytes
+                            or G; 0 for no limit): a parse takes about 40 bytes
                             of memory per byte of input. A --grammar FILE too
         --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
                             longer than this (2.5, 90s, 2m; default none): a

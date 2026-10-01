@@ -308,8 +308,8 @@ pipe `--json` into jq.
 - Unknown extensions are read as plain text: an array of lines. Use `-k`
   to name the format, or `--grammar` to give the format one.
 - Big files are costly. aless reads and parses the whole input before it
-  prints anything, using about 80 bytes of memory per byte of input: 13 MB
-  takes about 1 GB and some seconds. Inputs over `--max-size` (default
+  prints anything, using about 40 bytes of memory per byte of input: 12 MB
+  takes about 0.4 GB and some seconds. Inputs over `--max-size` (default
   64M) fail with exit 5, and the `hint` says what size would read them.
   Raise the limit only if the machine has the memory; `--path` and
   `--depth` shrink the output, not the parse.
@@ -319,7 +319,7 @@ pipe `--json` into jq.
   YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC. A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
-  depth of one line, at about 9 KB of memory and 80 µs a line.
+  depth of one line, at about 2 KB of memory and 60 µs a line.
 - `--render` streams: JSON Lines, CSV and TSV are read a record at a
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);

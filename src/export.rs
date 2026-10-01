@@ -380,10 +380,17 @@ fn attempt<S: Sink + Send + 'static>(
         Ok(()) => return Ok(()),
         Err(failed) => failed,
     };
+    // A program's own `STREAMABILITY_UNKNOWN`, its sink's, is the
+    // program's, as `classify` reports it, and the whole value would meet
+    // the same program again: only the source's refusal falls back. A
+    // repeated member is the stream's whoever meets it first, and the
+    // whole value, which keeps one, has none.
+    let programs = failed.from_sink && matches!(job.what, What::Program { .. } | What::Part);
     let refused = failed.verdict.is_none()
         && match &failed.why {
             Outcome::Failed(f) => {
-                matches!(f.code, Code::StreamabilityUnknown | Code::DuplicateMember)
+                (f.code == Code::StreamabilityUnknown && !programs)
+                    || f.code == Code::DuplicateMember
                     // The rows sink refused a root that is not an array at
                     // its first event. For a grammar that may wrap the root
                     // in a list after streaming it (jsonic's implicit list,
@@ -561,7 +568,10 @@ fn run<S: Sink + Send + 'static>(
                     load::MAX_RULE_DEPTH,
                     move || notify.abort(),
                 );
-                let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+                // Without its byte-order mark, and as the loader prepares
+                // it for the format: the same lines and columns.
+                let text = load::parser_text(text, format);
+                let text = text.as_ref();
                 match mode {
                     SourceMode::Materialize => {
                         materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
@@ -2095,6 +2105,60 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(out.starts_with("{\"a\":\"xxx"), "{}", &out[..20]);
+    }
+
+    /// A program's own refusal to stream, raised by its sink before
+    /// anything was written, is the program's, as [`classify`] reports
+    /// it: the whole value would meet the same program and the same
+    /// refusal, so the run is not made a second time over it. The chain
+    /// is built once. (A refusal of the source's, above, still falls
+    /// back.)
+    #[test]
+    fn a_programs_own_refusal_does_not_run_it_again_over_the_whole_value() {
+        struct Refuses;
+        impl Sink for Refuses {
+            fn event(&mut self, _ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                Err(Fail::new(
+                    Code::StreamabilityUnknown,
+                    "the program's step cannot stream this",
+                ))
+            }
+        }
+        for what in [What::Program { rows: None }, What::Part] {
+            let mut j = job(Format::Json, Renderer::Json, ".");
+            j.what = what.clone();
+            let builds = std::sync::atomic::AtomicUsize::new(0);
+            let r = run_program(
+                &j,
+                Input::Text("[1, 2, 3]"),
+                Box::new(Shared::default()),
+                |_out, _abort| {
+                    builds.fetch_add(1, Ordering::Relaxed);
+                    Ok(Box::new(Refuses))
+                },
+            );
+            match r.unwrap_err() {
+                ExportError::Program(f) => {
+                    assert_eq!(f.code, Code::StreamabilityUnknown, "{what:?}")
+                }
+                other => panic!("{what:?}: {other:?}"),
+            }
+            assert_eq!(builds.load(Ordering::Relaxed), 1, "{what:?}: chains built");
+        }
+    }
+
+    /// A JSON5 string continued across a CRLF is exported as across an LF
+    /// (#30): the export reads the text the loader reads.
+    #[test]
+    fn json5_exports_a_continuation_across_crlf() {
+        let j = job(Format::Json5, Renderer::Json, ".");
+        let lf = "['a\\\nb', {k: 'c\\\nd'}]\n";
+        let (r, one) = run_text(&j, lf);
+        r.unwrap();
+        let (r, two) = run_text(&j, &lf.replace('\n', "\r\n"));
+        r.unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(two, one);
+        assert!(one.contains(r#""ab""#) && one.contains(r#""cd""#), "{one}");
     }
 
     #[test]

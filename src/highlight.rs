@@ -158,12 +158,23 @@ fn paint_unless(
         Some(body) => (body, '\u{feff}'.len_utf8()),
         None => (text, 0),
     };
+    // The parser reads the text the loader gives it (`load::parser_text`):
+    // a JSON5 string continued across a CRLF has its CR dropped, or it
+    // would refuse the rest. The spans count that text's bytes, and go back
+    // onto the text's own past the CRs dropped before them.
+    let (parsed, dropped) = match grammar {
+        Grammar::Format(format) => load::parser_body(body, format),
+        Grammar::Alchemy => (std::borrow::Cow::Borrowed(body), Vec::new()),
+    };
     let overrides = grammar
         .entry(Registry::bundled())
         .and_then(Entry::overrides);
     let _guard = CatchGuard::enter();
     catch_unwind(AssertUnwindSafe(|| {
-        let highlight = tabnas_lsp::highlight(parser, body, overrides);
+        let mut highlight = tabnas_lsp::highlight(parser, &parsed, overrides);
+        for span in &mut highlight.spans {
+            (span.start, span.end) = load::source_range(&dropped, span.start, span.end);
+        }
         Painted::from_spans(text, shift, &highlight.spans)
     }))
     .ok()
@@ -544,6 +555,21 @@ mod tests {
         for (n, line) in crate::load::lines(text).iter().enumerate() {
             assert!(p.line(n).iter().all(|r| r.end <= line.len() + 1));
         }
+    }
+
+    /// A JSON5 string continued across a CRLF is coloured as across an LF:
+    /// the parser reads it as the loader does, and the runs are those of
+    /// the LF text, line for line, none taking a line's CR.
+    #[test]
+    fn json5_colours_a_continuation_across_crlf() {
+        let lf = "{\n  a: 'x\\\n  y',\n  b: [1, \"p\\\nq\"],\n  c: true\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let one = paint(Grammar::Format(Format::Json5), lf, None).unwrap();
+        let two = paint(Grammar::Format(Format::Json5), &crlf, None).unwrap();
+        for n in 0..crate::load::lines(lf).len() {
+            assert_eq!(kinds(&two, &crlf, n), kinds(&one, lf, n), "line {n}");
+        }
+        assert!(kinds(&two, &crlf, 5).contains(&("true".into(), "keyword")));
     }
 
     #[test]
