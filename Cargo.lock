@@ -1305,7 +1305,7 @@ dependencies = [
 [[package]]
 name = "tabnas-toml"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/toml#f53dfd6bb88067ae94eb4a131996c613a9606be8"
+source = "git+https://github.com/tabnas/toml#9ea924ebf9413e3816621db6a067892bf427414c"
 dependencies = [
  "indexmap",
  "regex",
