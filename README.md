@@ -609,7 +609,7 @@ text, one line per row, so every file is viewable.
 | json | json, geojson, har, jsonld, webmanifest | tabnas-json |
 | jsonl | jsonl, ndjson | tabnas-jsonl |
 | jsonic | jsonic | tabnas-jsonic |
-| jsonc | jsonc | tabnas-jsonc |
+| jsonc | jsonc (trailing commas accepted, as editors accept them) | tabnas-jsonc |
 | json5 | json5 | tabnas-json5 |
 | yaml | yaml, yml | tabnas-yaml |
 | toml | toml | tabnas-toml |
