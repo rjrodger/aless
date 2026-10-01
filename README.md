@@ -249,7 +249,7 @@ grammars](#custom-grammars)).
 **Large inputs.** An input is read whole, and parsed whole, before
 anything is printed: the tabnas grammars parse complete documents, so
 there is no streaming, and the first byte of output comes when the parse
-ends. That costs memory, about 80 bytes per byte of input, and time (see
+ends. That costs memory, about 40 bytes per byte of input, and time (see
 [Performance](#performance)), which is why inputs over `--max-size` are
 refused, before a file is read or as soon as standard input passes the
 limit, and why `--timeout` exists: at around a megabyte a second, a
@@ -757,11 +757,16 @@ re-enters its rule in one frame, so a file of any length costs the depth
 of one line, and only the grammar's own recursion nests. Past the cap the
 parse fails as `too_deep`, naming the open rules. Nesting is measured on
 the value the grammar built as well, once the parse is done: over 1,000
-levels is `too_deep` too, with no `line`. A parse takes about 9 KB of
-memory a line and some 80 µs (300,000 lines of `hosts`: 25 to 45 s and
-2.7 GB in a release build, the spread being how busy the machine was;
-86,000 lines: 5 s, 0.8 GB), so `--timeout` and `--max-size` matter as
-for any format.
+levels is `too_deep` too, with no `line`. A parse takes about 2 KB of
+memory a line and some 60 µs (300,000 lines of `hosts`: 18 s and 0.5 GB
+in a release build; 86,000 lines: 5 s and 0.16 GB), so `--timeout` and
+`--max-size` matter as for any format. That is with the engine's rule
+history bounded, as it is for every parse aless runs: a rule reaches
+back through `prev` three rules at most (`options.rule.history` set to
+3), which is the deepest walk any grammar of the tabnas fleet makes, and
+the value is the one the whole history gives. With the whole history
+kept, every line's rules stayed reachable until the parse ended, and the
+same 300,000 lines took 2.7 GB.
 
 **Source positions** come from the token alignment every format has
 ([Source positions](#source-positions)): a value that is one token's
@@ -1023,12 +1028,17 @@ terminal.
 ## Performance
 
 Parsing is the tabnas engine's, and it is a general rule engine rather
-than a hand-written JSON parser: on one machine a 5 MB JSON document
-(240 thousand nodes) loads in about two seconds and a 47 MB one (2.4
-million nodes) in about 35 seconds; on a slower one, 13 MB took 10
-seconds and 66 MB 68 seconds. Memory peaks at about 80 bytes per source
-byte while the parse runs (13 MB peaked at 1.0 GB, 66 MB at 5.1 GB); the
-steady state afterwards is much smaller.
+than a hand-written JSON parser: on one machine (a cloud VM, release
+build) a 4.4 MB JSON document of records (315 thousand nodes) loads in
+about three and a half seconds, a 12 MB one in nine and a 60 MB one (4.2
+million nodes) in 46. Memory peaks at about 40 bytes per source byte
+while the parse runs (12 MB peaked at 0.42 GB, 60 MB at 2.1 GB); the
+steady state afterwards is much smaller. Each rule's history is kept
+three steps deep ([Custom grammars](#custom-grammars)), where the engine
+by default keeps every rule until its container closes: with the whole
+history, the same documents took 11 and 76 seconds and more than twice
+the memory, and a flat array of 1.5 million numbers took 2.8 GB where it
+now takes 0.33 GB.
 
 Three limits keep a large, slow or hostile input from taking the machine
 down:

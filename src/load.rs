@@ -201,12 +201,15 @@ pub struct LoadError {
 
 /// The largest input aless reads unless `--max-size` says otherwise. A
 /// parse takes about [`MEMORY_PER_BYTE`] bytes of memory per byte of
-/// input, so this is some 5 GB, and a minute or so of parsing.
+/// input, so this is some 2.7 GB, and under a minute of parsing.
 pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
 
 /// Roughly how many bytes of memory a parse takes per byte of input,
-/// measured on JSON: 13 MB peaked at 1.0 GB, 66 MB at 5.1 GB.
-pub const MEMORY_PER_BYTE: u64 = 80;
+/// measured on JSON records in a release build: 12 MB peaked at 0.42 GB,
+/// 60 MB at 2.1 GB. With the engine's whole rule history kept, before
+/// [`RULE_HISTORY`] bounded it, it was twice that: 13 MB peaked at 1.0 GB,
+/// 66 MB at 5.1 GB.
+pub const MEMORY_PER_BYTE: u64 = 40;
 
 /// What a load may cost: how much input it reads, and how long it parses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,7 +369,8 @@ pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
 /// Unbounded, the engine's default, every rule replaced or pushed stays
 /// reachable from the current one until its container closes, so a
 /// parse's memory grows with the document's length, not its nesting:
-/// 2.7 GB for a 25 MB file of records. The deepest walk any grammar of
+/// `--render` over 23 MB of JSON records peaked at 1.6 GB, where three
+/// steps take 0.3 GB, and the run is faster. The deepest walk any grammar of
 /// the fleet reads is three hops (tabnas/parser
 /// `doc/rule-history-bound.md`), and the parsed value is the same under
 /// every bound; what a bound changes is only what a grammar can reach.
