@@ -23,17 +23,20 @@ working here; `CLAUDE.md` imports it.
   targets, and CI tests all three; from Linux, `cargo check --target
   x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin` (after
   `rustup target add`) catch platform-specific compile errors early.
-- **Dependencies come from GitHub, pinned by `Cargo.lock`.** The tabnas
-  crates are not yet published, so `Cargo.toml` names each repository
-  with `git = …`, and a `[patch."<repo>"]` table per grammar repository
-  redirects the sibling `path = "../../parser/rs"` dependencies those
-  manifests carry. `cargo update -p tabnas` (or any grammar) moves a pin
-  to that repository's current default branch. When the crates reach
-  crates.io: replace `git` with a version requirement and delete the
-  patch tables; nothing else changes. Do not vendor or copy tabnas code
-  into this repository.
+- **Dependencies come from GitHub, pinned by `Cargo.lock`.** `Cargo.toml`
+  names each tabnas repository with `git = …`, and a `[patch."<repo>"]`
+  table per grammar repository redirects the sibling
+  `path = "../../parser/rs"` dependencies those manifests carry. The
+  engine's package is `tabnas-parser` (its library keeps the name
+  `tabnas`), so the dependency line reads
+  `tabnas = { package = "tabnas-parser", git = … }` and every patch table
+  names `tabnas-parser`. `cargo update -p tabnas-parser` (or any grammar)
+  moves a pin to that repository's current default branch. Every crate but
+  `tabnas-lsp` is on crates.io; once it is too: replace `git` with a
+  version requirement and delete the patch tables; nothing else changes.
+  Do not vendor or copy tabnas code into this repository.
 - **The dev profile turns the engine's debug assertions off**
-  (`[profile.dev.package.tabnas]` in `Cargo.toml`). With them on, the
+  (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,
   an O(depth) check per step that a deep rule stack pays on every one of
   them: while tabnas-bnf spelled a repetition as a rule calling itself
@@ -82,9 +85,10 @@ working here; `CLAUDE.md` imports it.
   errors),
   `alchemy` (programs in the alchemy language: compiled, explained, and
   run over the input through `export`'s plumbing), `translate` (`--render
-  yaml`: the formats written by their own render, read from their
-  crates' manifests, each linked with a one-line program and run as a
-  program runs), `explorer` (directory
+  FORMAT` for any format whose crate carries a render: the registry
+  read from the crates' manifests, the composition `render ∘ adapt ∘
+  lift` the shapes decide, a program's output into a render, each
+  linked with a one-line main and run as a program runs), `explorer` (directory
   trees as documents, listed lazily), `prov`
   (source positions by token alignment), `search`, `tab` (view state,
   navigation, reload re-anchoring), `app` (modes, key map, commands,

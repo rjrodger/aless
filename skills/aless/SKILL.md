@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as YAML, runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -92,36 +92,46 @@ text in its cell. Every field is quoted, records end in CRLF, and a header
 row comes first. Use `--paths --depth 2` first to find the array to
 export. Standard output is CSV bytes, not JSON, when the status is 0.
 
-Write any of those formats as YAML, streamed the same way:
+Write any of those formats as any format that has a render, streamed the
+same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
+`markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`
+or `csv`:
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
-aless --render yaml --path .spec deploy.json    # the value at a path
+aless --render toml --path .spec deploy.json    # the value at a path, as TOML
+aless --render markdown --path .rows api.json   # records as a Markdown table
+aless --render csv table.md                     # a Markdown table's rows as CSV
 ```
 
-The output is one YAML 1.2 document in block style, every string and key
-double-quoted (so none reads back as a boolean, null, number or nested
-mapping), numbers as the source spelled them, `.inf` and `.nan` for the
-non-finite ones. On success standard output holds the YAML alone, and
-standard error holds `{"warning": {"kind": "loss", "message", "file",
-"render", "loss"}}`, where `loss` lists what a YAML document written this
-way does not keep (comments, anchors and aliases, tags, styles, several
-documents): exit status 0 is success whatever standard error holds. A
-member the input repeats (`{"a":1,"a":2}`) is written once, with the last
-value as `--json` reads it, when nothing had been written yet; otherwise
-the run fails with `DUPLICATE_MEMBER` and `output: "partial"`. `--render`
-takes `csv`, `json` or `yaml`; another format is a usage error, and so is
-`--render yaml` with `--alchemy`. aless reading the YAML back misreads a
-quoted key after a block sequence (tabnas/yaml#86) and a flow sequence
-first in an indented block sequence (tabnas/yaml#88); other YAML 1.2
-readers read it as written.
+Each format is written in its always-quoted profile (every YAML string
+and key double-quoted, every TOML key quoted and every table inline, ZON
+field names as `.@"name"`), so nothing reads back as another kind;
+numbers as the source spelled them, `.inf` and `.nan` where a format
+spells them. A source whose shape the target cannot carry (a null in
+TOML, a root that is not an array in JSON Lines, no table in Markdown)
+fails typed with `INPUT_INVALID` and a message that says why. On success
+standard output holds the document alone, and standard error holds
+`{"warning": {"kind": "loss", "message", "file", "render", "loss"}}`,
+where `loss` lists what a document written this way does not keep
+(YAML: comments, anchors and aliases, tags, styles, several documents;
+CSV: types and the null/missing difference) and `adapter` names the
+inferred table or `records` when one ran between the shapes; JSON
+declares no loss and prints nothing. Exit status 0 is success whatever
+standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
+written once, with the last value as `--json` reads it, when nothing had
+been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
+`output: "partial"`. `--render` with a format that has no render (`rss`)
+is a usage error that lists the ones that do.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
 the way through, in bounded memory. A program's `export` takes the
 document as JSON events and answers a text (written as it is), a table
 (CSV, or JSON records with `--render json`) or JSON events (JSON, or a
-table with `--render csv`). The program does the selecting, so no
+table with `--render csv`); `--render` with any format that has a render
+writes the program's table or events as that format (`--render yaml`
+writes a table as a sequence of mappings). The program does the selecting, so no
 `--path`, `--at` or other output option goes with it. `--explain` prints
 the program's plan as JSON (its chain, protocols, what it retains and
 under which limit) and reads no input: run it first on a program you did

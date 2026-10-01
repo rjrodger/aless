@@ -475,7 +475,18 @@ fn render_csv_exports_the_records_at_a_path() {
         None,
     );
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(out.stderr.is_empty());
+    // CSV declares what it does not keep, the inferred table's sentences
+    // after its own, as every format's render does.
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["kind"], "loss");
+    assert_eq!(note["warning"]["render"], "csv");
+    assert_eq!(note["warning"]["adapter"], "the inferred table");
+    assert!(
+        note["warning"]["loss"]
+            .as_array()
+            .is_some_and(|l| l.len() >= 6),
+        "{note}"
+    );
     assert_eq!(
         out.stdout,
         b"\"id\",\"person\",\"account\"\r\n\"123\",\"{\"\"name\"\":\"\"Alice\"\"}\",\"{\"\"balance\"\":50.25}\"\r\n\"456\",\"{\"\"name\"\":\"\"Bob\"\"}\",\"{\"\"balance\"\":72}\"\r\n"
@@ -673,7 +684,7 @@ fn render_failures_have_the_transduce_shape_and_status() {
     for args in [
         &["--render", "csv", "--json", "tests/fixtures/nested.json"][..],
         &["--render", "csv", "--at", "3", "tests/fixtures/nested.json"],
-        &["--render", "xml", "tests/fixtures/nested.json"],
+        &["--render", "rss", "tests/fixtures/nested.json"],
         &["--render", "csv", "tests/fixtures/lines.txt"],
         &[
             "--render",
@@ -710,7 +721,8 @@ fn render_failures_have_the_transduce_shape_and_status() {
     child.stdout.take().unwrap().read_exact(&mut first).unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(out.stderr.is_empty());
+    // Standard error holds CSV's loss declaration and nothing else.
+    assert_eq!(json(&out.stderr)["warning"]["kind"], "loss");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1974,30 +1986,6 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
         "{e}"
     );
     assert_eq!((e["line"].clone(), e["col"].clone()), (json!(1), json!(21)));
-    // A renderer that does not fit what the program exports is the
-    // program's failure too, met once the input is open: `input` names it.
-    let out = aless(
-        &[
-            "--alchemy-expr",
-            "def export [input] input",
-            "--render",
-            "csv",
-            records,
-        ],
-        None,
-    );
-    assert_eq!(code(&out), 2);
-    let e = &json(&out.stderr)["error"];
-    assert_eq!(e["kind"], json!("alchemy"));
-    assert_eq!(e["code"], json!("DSL_TYPE_ERROR"));
-    assert!(
-        e["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("protocol_mismatch: "),
-        "{e}"
-    );
-    assert_eq!(e["input"], json!(records));
     // The rows before the metadata: the input's failure, in the
     // transducer's shape, before anything was written.
     let text = std::fs::read_to_string(records).unwrap();
@@ -2413,25 +2401,26 @@ fn render_yaml_holds_a_stream_to_a_trees_events() {
 fn render_refuses_what_it_cannot_write() {
     for (args, message) in [
         (
-            vec!["--render", "toml", "tests/fixtures/sample.toml"],
-            "--render toml: aless reads toml but has no render for it; --render writes csv, json \
-             or yaml",
+            vec!["--render", "rss", "tests/fixtures/sample.rss"],
+            "--render rss: aless reads feed but has no render for it; --render writes csv, ini, \
+             json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "docx", "tests/fixtures/nested.json"],
-            "--render writes csv, json or yaml, not docx",
+            "--render writes csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, \
+             yaml or zon, not docx",
         ),
         (
             vec![
-                "--alchemy-expr",
-                "def export [input] input",
+                "--alchemy",
+                "tests/fixtures/programs/export.alc",
                 "--render",
                 "yaml",
-                "tests/fixtures/nested.json",
+                "tests/fixtures/records.json",
             ],
-            "--render yaml writes a document through yaml's own render, which cannot take a \
-             program's output yet: render the program's output as csv or json, or give --render \
-             yaml without --alchemy",
+            "--render yaml was given, but the program renders its own text \
+             (tests/fixtures/programs/export.alc): drop --render, or export a table or JSON \
+             events for aless to render",
         ),
         (
             vec!["--render", "yaml", "tests/fixtures/lines.txt"],
@@ -2445,6 +2434,346 @@ fn render_refuses_what_it_cannot_write() {
         let error = &json(&out.stderr)["error"];
         assert_eq!(error["kind"], "usage", "{args:?}");
         assert_eq!(error["message"], message, "{args:?}");
+    }
+}
+
+/// Every format with a render writes its own sample and reads it back as
+/// the same value, with the loss declaration beside it: the translation
+/// is a round trip through each format's always-quoted profile.
+#[test]
+fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
+    for (id, file) in [
+        ("toml", "tests/fixtures/sample.toml"),
+        ("ini", "tests/fixtures/sample.ini"),
+        ("zon", "tests/fixtures/sample.zon"),
+        ("xml", "tests/fixtures/sample.xml"),
+        ("jsonl", "tests/fixtures/sample.jsonl"),
+        ("yaml", "tests/fixtures/sample.yaml"),
+        ("json5", "tests/fixtures/sample.json5"),
+        ("jsonc", "tests/fixtures/sample.jsonc"),
+        ("jsonic", "tests/fixtures/sample.jsonic"),
+        ("json", "tests/fixtures/sample.json"),
+        ("csv", "tests/fixtures/sample.csv"),
+    ] {
+        let written = aless(&["--render", id, file], None);
+        assert_eq!(
+            code(&written),
+            0,
+            "{id}: {}",
+            String::from_utf8_lossy(&written.stderr)
+        );
+        assert!(written.stdout.ends_with(b"\n"), "{id}");
+        if id == "json" {
+            assert!(written.stderr.is_empty(), "json declares no loss");
+        } else {
+            let note = json(&written.stderr);
+            assert_eq!(note["warning"]["kind"], "loss", "{id}");
+            assert_eq!(note["warning"]["render"], id, "{id}");
+            assert_eq!(note["warning"]["file"], file, "{id}");
+        }
+        let text = String::from_utf8(written.stdout).unwrap();
+        let back = aless(&["-k", id, "--json", "--compact", "-"], Some(&text));
+        assert_eq!(
+            code(&back),
+            0,
+            "{id}: {}",
+            String::from_utf8_lossy(&back.stderr)
+        );
+        let original = aless(&["--json", "--compact", file], None);
+        assert_eq!(
+            String::from_utf8_lossy(&back.stdout),
+            String::from_utf8_lossy(&original.stdout),
+            "{id}: {text}"
+        );
+    }
+}
+
+/// A tree reaches a render that writes from records through the inferred
+/// table, behind the row check `--render csv` has; a Markdown table's rows
+/// reach a render that writes from a tree, or CSV, through its lift; and a
+/// tree reaches a render of another tree format as it is.
+#[test]
+fn render_composes_the_adapters_the_shapes_need() {
+    // Records to a Markdown table: the inferred table, its loss declared.
+    let out = aless(
+        &[
+            "--render",
+            "markdown",
+            "--path",
+            ".response.payload.deep.records",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "| id | person | account |\n| --- | --- | --- |\n| 123 | {\"name\":\"Alice\"} | \
+         {\"balance\":50.25} |\n| 456 | {\"name\":\"Bob\"} | {\"balance\":72} |\n"
+    );
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["adapter"], "the inferred table");
+    // A root that is not an array is the row check's refusal, as csv's.
+    let out = aless(
+        &["--render", "markdown", "tests/fixtures/sample.json"],
+        None,
+    );
+    assert_eq!(code(&out), 1);
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["code"], "INPUT_INVALID");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("not an array of records"),
+        "{error}"
+    );
+    // A Markdown table lifts to records: as CSV through its lift, as a
+    // table again, and as JSON its tree as it is.
+    let table = "| Name | Age |\n| --- | ---: |\n| Ada | 36 |\n| Bob *b* | 42 |\n";
+    let out = aless(&["-k", "markdown", "--render", "csv"], Some(table));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "\"Name\",\"Age\"\r\n\"Ada\",\"36\"\r\n\"Bob b\",\"42\"\r\n"
+    );
+    assert!(
+        json(&out.stderr)["warning"]["adapter"].is_null(),
+        "no adapter: the lift"
+    );
+    let out = aless(&["-k", "markdown", "--render", "markdown"], Some(table));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "| Name | Age |\n| --- | --- |\n| Ada | 36 |\n| Bob b | 42 |\n"
+    );
+    let out = aless(
+        &["-k", "markdown", "--render", "json", "--compact"],
+        Some(table),
+    );
+    assert_eq!(code(&out), 0);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("{\"type\":\"document\""),
+        "a tree format takes the Markdown tree as it is"
+    );
+    // Below the root the lift does not run: --path selects a value of the
+    // document's tree, rows by their own shape, through the inferred
+    // table as csv reads a tree.
+    let out = aless(
+        &["-k", "markdown", "--render", "csv", "--path", ".children"],
+        Some(table),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .starts_with("\"type\",\"align\",\"children\"\r\n\"table\","),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(
+        json(&out.stderr)["warning"]["adapter"],
+        "the inferred table"
+    );
+    let out = aless(
+        &[
+            "-k",
+            "markdown",
+            "--render",
+            "json",
+            "--compact",
+            "--path",
+            ".children[0].children[1]",
+        ],
+        Some(table),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("{\"type\":\"tableRow\""),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // A Markdown document with no table has no records: the lift says so.
+    let out = aless(&["--render", "csv", "tests/fixtures/sample.md"], None);
+    assert_eq!(code(&out), 1);
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["code"], "INPUT_INVALID");
+    assert_eq!(error["kind"], "transduce");
+    // A format's typed refusal of what it cannot carry.
+    let out = aless(&["--render", "toml", "tests/fixtures/sample.csv"], None);
+    assert_eq!(code(&out), 1);
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["code"], "INPUT_INVALID");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("TOML's root is a table"),
+        "{error}"
+    );
+    assert_eq!(error["output"], "none");
+    assert!(error["loss"].as_array().is_some(), "{error}");
+}
+
+/// A program's output takes any format with a render: JSON events reach a
+/// tree's render as they are, so the identity program writes what
+/// `--render yaml` writes, byte for byte; a table reaches it through
+/// `records`, as a sequence of mappings, and a records render as it is.
+#[test]
+fn a_programs_output_is_written_as_any_format() {
+    let composed = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "yaml",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(
+        code(&composed),
+        0,
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let direct = aless(&["--render", "yaml", "tests/fixtures/nested.json"], None);
+    assert_eq!(composed.stdout, direct.stdout);
+    assert_eq!(json(&composed.stderr)["warning"]["render"], "yaml");
+    let out = aless(
+        &[
+            "--alchemy",
+            "tests/fixtures/programs/table.alc",
+            "--render",
+            "yaml",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "- \"Identifier\": 123\n  \"Full name\": \"Alice\"\n  \"Balance\": 50.25\n\
+         - \"Identifier\": 456\n  \"Full name\": \"Bob\"\n  \"Balance\": 72\n"
+    );
+    assert_eq!(json(&out.stderr)["warning"]["adapter"], "records");
+    let out = aless(
+        &[
+            "--alchemy",
+            "tests/fixtures/programs/table.alc",
+            "--render",
+            "markdown",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "| Identifier | Full name | Balance |\n| --- | --- | --- |\n| 123 | Alice | 50.25 |\n\
+         | 456 | Bob | 72 |\n"
+    );
+    // A format written by aless's own renderer: the renderer, and the
+    // format's loss declaration.
+    let out = aless(
+        &[
+            "--alchemy",
+            "tests/fixtures/programs/table.alc",
+            "--render",
+            "json5",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("[{\"Identifier\":123,"));
+    assert_eq!(json(&out.stderr)["warning"]["render"], "json5");
+    // A table written as JSON is aless's own renderer over the rows, which
+    // writes them as `records` does: the adapter is named, with its loss,
+    // where JSON's own declaration has none.
+    let out = aless(
+        &[
+            "--alchemy",
+            "tests/fixtures/programs/table.alc",
+            "--render",
+            "json",
+            "tests/fixtures/records.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("[{\"Identifier\":123,"));
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["render"], "json");
+    assert_eq!(note["warning"]["adapter"], "records");
+    assert_eq!(note["warning"]["loss"].as_array().map(Vec::len), Some(1));
+    // Events written as CSV go through the inferred table, composed: the
+    // identity program writes what --render csv writes, byte for byte.
+    let composed = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "csv",
+            "tests/fixtures/records.yaml",
+        ],
+        None,
+    );
+    assert_eq!(
+        code(&composed),
+        0,
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let direct = aless(&["--render", "csv", "tests/fixtures/records.yaml"], None);
+    assert_eq!(composed.stdout, direct.stdout);
+    assert_eq!(
+        json(&composed.stderr)["warning"]["adapter"],
+        "the inferred table"
+    );
+    // A program's events reach a records render under the inferred
+    // table's row policy, as a source's do: a scalar row is one cell named
+    // value, and a mixture of rows, an array row and a root that is not an
+    // array are refused with the reason before anything is written.
+    let identity = [
+        "--alchemy-expr",
+        "def export [input] input",
+        "--render",
+        "markdown",
+    ];
+    let scalars = aless(&identity, Some("[1,2]"));
+    assert_eq!(
+        code(&scalars),
+        0,
+        "{}",
+        String::from_utf8_lossy(&scalars.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&scalars.stdout),
+        "| value |\n| --- |\n| 1 |\n| 2 |\n"
+    );
+    let direct = aless(&["--render", "markdown"], Some("[1,2]"));
+    assert_eq!(scalars.stdout, direct.stdout);
+    for (input, reason) in [
+        ("[{\"a\":1},2]", "but the first row was an object"),
+        ("[1,{\"a\":1}]", "but the first row was a scalar"),
+        ("[[1],[2]]", "is an array; a row is an object"),
+        ("{\"a\":1}", "is an object, not an array of records"),
+    ] {
+        let out = aless(&identity, Some(input));
+        assert_eq!(
+            code(&out),
+            1,
+            "{input}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "{input}");
+        let error = &json(&out.stderr)["error"];
+        assert_eq!(error["code"], "INPUT_INVALID", "{input}: {error}");
+        assert!(
+            error["message"].as_str().unwrap().contains(reason),
+            "{input}: {error}"
+        );
+        assert_eq!(error["output"], "none", "{input}");
     }
 }
 

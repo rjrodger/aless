@@ -30,34 +30,13 @@ use tabnas_transduce::Metrics;
 /// that records the defect, named as this test names an input:
 /// `spec/<file>.tsv:<line>`, or the YAML Test Suite case's id.
 ///
-/// - tabnas/yaml#86: a quoted key at the start of a line after a block
-///   sequence is read into the sequence (`"a":\n  - 1\n"b": 2` reads as
-///   `{"a":[1,{"b":2}]}`), or the parse fails.
-/// - tabnas/yaml#88: a flow sequence first in an indented block sequence
-///   replaces it (`-\n  - []` reads as `[[]]`), or the parse fails.
-const READER_DEFECT: &[(&str, u32)] = &[
-    ("spec/anchors-aliases.tsv:4", 86),
-    ("spec/block-sequences.tsv:10", 86),
-    ("spec/flow-collections.tsv:24", 86),
-    ("spec/indentation.tsv:7", 86),
-    ("spec/line-endings.tsv:9", 86),
-    ("spec/real-world.tsv:3", 86),
-    ("spec/suite-basic.tsv:17", 86),
-    ("spec/suite-realworld.tsv:3", 86),
-    ("spec/suite-structure.tsv:16", 86),
-    ("57H4", 86),
-    ("7BUB", 86),
-    ("7ZZ5", 88),
-    ("AZ63", 86),
-    ("DC7X", 86),
-    ("J9HZ", 86),
-    ("PBJ2", 86),
-    ("R52L", 86),
-    ("RLU9", 86),
-    ("S9E8", 86),
-    ("UDR7", 86),
-    ("UGM3", 86),
-];
+/// Empty since the pinned reader fixed the two defects the pilot found
+/// (tabnas/yaml#86, a quoted key at the start of a line after a block
+/// sequence read into the sequence; tabnas/yaml#88, a flow sequence
+/// first in an indented block sequence replacing it): every input comes
+/// back the same. The ledger stays, so that a reader defect a later pin
+/// brings is recorded here rather than hidden.
+const READER_DEFECT: &[(&str, u32)] = &[];
 
 /// A writer into a shared buffer.
 #[derive(Clone, Default)]
@@ -227,7 +206,7 @@ fn read(text: &str) -> Option<String> {
 }
 
 /// `text` written as `--render yaml` writes it.
-fn render(program: &tabnas_alchemy::Program, text: &str) -> Result<String, String> {
+fn render(program: &translate::Composition, text: &str) -> Result<String, String> {
     let job = Job {
         name: "fixture.yaml".into(),
         origin: "fixture.yaml".into(),
@@ -267,7 +246,7 @@ fn every_yaml_fixture_written_as_yaml_reads_back_as_the_same_value() {
             .iter()
             .map(|chunk| {
                 scope.spawn(move || {
-                    let program = translate::compose(yaml).unwrap_or_else(|f| panic!("{f}"));
+                    let program = translate::compose(Some(yaml), yaml).unwrap_or_else(|f| panic!("{f}"));
                     let (mut same, mut unread) = (0, 0);
                     let mut differ: Vec<String> = Vec::new();
                     for (name, text) in chunk.iter() {

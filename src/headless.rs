@@ -82,8 +82,9 @@ pub enum Op {
     Where,
     /// Whether each input parses.
     Check,
-    /// The records at the start as CSV, or the value there as JSON text,
-    /// streamed (see [`crate::export`]).
+    /// The records at the start as CSV, the value there as JSON text, or
+    /// the value there as any format a crate ships a render for, streamed
+    /// (see [`crate::export`] and [`crate::translate`]).
     Render(Renderer),
     /// An alchemy program's output over the input, streamed, or with
     /// `explain` its plan report instead (see [`crate::alchemy`]).
@@ -253,8 +254,10 @@ pub fn run_to(req: &Request, mut stdin: Stdin<'_>, out: Stdout) -> Output {
             program,
             render,
             explain,
-        } => run_program(req, program, *render, *explain, &mut stdin, out)
-            .map(|stdout| (stdout, status::OK)),
+        } => run_program(req, program, *render, *explain, &mut stdin, out).map(|(stdout, loss)| {
+            note = loss;
+            (stdout, status::OK)
+        }),
         _ => single(req, &mut stdin),
     };
     match result {
@@ -411,12 +414,14 @@ fn export(
     })
 }
 
-/// `--render ID` for a format written by its own render (`--render
-/// yaml`): the render linked with a one-line program
+/// `--render ID` for a format a crate ships a render for: the render
+/// composed with the source's lift and the adapter the shapes need
 /// ([`translate::compose`]) and run over the value at the start, as a
-/// program runs ([`translate::run`]). A write that succeeds returns the
-/// render's loss declaration for standard error ([`loss_note`]); a failure
-/// met while it ran carries the same sentences as `loss`.
+/// program runs ([`translate::run`]); or, for a format written by one of
+/// aless's own renderers (`--render json5`), that renderer. A write that
+/// succeeds returns the loss declaration for standard error
+/// ([`loss_note`]); a failure met while it ran carries the same sentences
+/// as `loss`.
 fn translate(
     req: &Request,
     id: &str,
@@ -434,10 +439,34 @@ fn translate(
             ))
         }
     };
-    // The render first: one that does not compile is a failure naming its
-    // file, said before the input is read.
-    let program = translate::compose(part).map_err(|fail| Failure::alchemy(&part.file, &fail))?;
     let (source, name, origin, format) = streamed_source(req)?;
+    // The source's parts stand at the root only: its lift reads a whole
+    // document, so a value below the root is a tree whatever the document
+    // was (a Markdown file's table is its rows at the root, and --path
+    // into the file selects nodes of its tree, rows by their own shape).
+    let source_part = if path.is_empty() {
+        translate::source_part(format)
+    } else {
+        None
+    };
+    // The composition first: a part that does not compile is a failure
+    // naming its file, said before the input is read.
+    let translation = translate::translation(source_part, part)
+        .map_err(|fail| Failure::alchemy(part_file(part, &fail), &fail))?;
+    let loss = translation.loss(part);
+    let composition = match translation {
+        translate::Translation::Composed(composition) => composition,
+        // One of aless's own renderers over the events as they are.
+        translate::Translation::Native { renderer, adapter } => {
+            return match export(req, renderer, stdin, out) {
+                Ok(()) => Ok(loss_note(part, &loss, adapter, &name, req.compact)),
+                Err(mut f) => {
+                    f.error.insert("loss".into(), json!(loss));
+                    Err(f)
+                }
+            };
+        }
+    };
     let Some(plan) = export::plan(format, path.is_empty()) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no values to write as {id}: name its format with \
@@ -456,14 +485,51 @@ fn translate(
     };
     let metrics = Metrics::new();
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => translate::run(&job, &program, Input::Text(&text), out, metrics),
-        Opened::Lines(reader) => translate::run(&job, &program, Input::Lines(reader), out, metrics),
+        Opened::Text(text) => translate::run(&job, &composition, Input::Text(&text), out, metrics),
+        Opened::Lines(reader) => {
+            translate::run(&job, &composition, Input::Lines(reader), out, metrics)
+        }
     };
     let failure = match result {
-        Ok(()) | Err(ExportError::ReaderGone) => return Ok(loss_note(part, &name, req.compact)),
+        Ok(()) | Err(ExportError::ReaderGone) => {
+            return Ok(loss_note(
+                part,
+                &loss,
+                composition.adapter,
+                &name,
+                req.compact,
+            ))
+        }
         Err(e) => e,
     };
-    let mut f = match failure {
+    let mut f = translation_failure(req, &name, format, part, failure)?;
+    f.error.insert("loss".into(), json!(loss));
+    Err(f)
+}
+
+/// The file a compile failure of a composition is placed in: the one the
+/// failure names when it names one (a lift's, a render's, the program's),
+/// else the render's.
+fn part_file<'a>(part: &'a Part, fail: &'a tabnas_transduce::Fail) -> &'a str {
+    match (&fail.file, &part.render) {
+        (Some(file), _) => file,
+        (None, translate::Render::Alc { file, .. }) => file,
+        (None, _) => &part.id,
+    }
+}
+
+/// A failure met while a translation ran, as the error object: a usage
+/// error, a path that named nothing, aless's own limits, the render's or
+/// the lift's own failure placed in its file with the input named beside
+/// it, or the input's.
+fn translation_failure(
+    req: &Request,
+    name: &str,
+    format: Format,
+    part: &Part,
+    failure: ExportError,
+) -> Result<Failure, Failure> {
+    Ok(match failure {
         ExportError::Usage(m) => return Err(Failure::usage(m)),
         ExportError::NotFound { message, nearest } => {
             let path = match &req.start {
@@ -471,57 +537,63 @@ fn translate(
                 _ => ".".to_string(),
             };
             return Err(Failure::not_found_streamed(
-                &name, format, &path, message, &nearest,
+                name, format, &path, message, &nearest,
             ));
         }
         ExportError::Load { error, partial } => {
-            let mut f = Failure::load(&name, format, &error).limited(None, req);
+            let mut f = Failure::load(name, format, &error).limited(None, req);
             f.error.insert(
                 "output".into(),
                 if partial { "partial" } else { "none" }.into(),
             );
             f
         }
-        // A failure of the render's own, with a code of the language's or
-        // a position in its text, is placed in the render, the input named
+        // A failure of a part's own, with a code of the language's or a
+        // position in its text, is placed in the part, the input named
         // beside it, as a program's is.
         ExportError::Program(fail) if alchemy::is_placed(&fail) => {
-            let mut f = Failure::alchemy(&part.file, &fail);
+            let mut f = Failure::alchemy(part_file(part, &fail), &fail);
             f.error.insert("input".into(), name.into());
             f
         }
         ExportError::Program(fail) | ExportError::Transduce(fail) => {
-            Failure::transduce(&name, format, &fail)
+            Failure::transduce(name, format, &fail)
         }
         ExportError::ReaderGone => unreachable!("handled above"),
-    };
-    f.error.insert("loss".into(), json!(part.loss));
-    Err(f)
+    })
 }
 
-/// What a write through a format's own render leaves on standard error
-/// when it succeeds: `{"warning": {"kind": "loss", "message", "file",
-/// "render", "loss"}}`, the render's loss declaration, whose sentences say
-/// what a document written that way does not keep. Nothing, for a render
-/// that declares no loss.
-fn loss_note(part: &Part, file: &str, compact: bool) -> String {
-    if part.loss.is_empty() {
+/// What a write through a format's render leaves on standard error when
+/// it succeeds: `{"warning": {"kind": "loss", "message", "file",
+/// "render", "loss"}}`, the loss declaration, whose sentences say what a
+/// document written that way does not keep, the adapter's among them when
+/// one ran, named as `adapter`. Nothing, for a write that declares no
+/// loss.
+fn loss_note(
+    part: &Part,
+    loss: &[String],
+    adapter: Option<translate::Adapter>,
+    file: &str,
+    compact: bool,
+) -> String {
+    if loss.is_empty() {
         return String::new();
     }
-    render(
-        &json!({ "warning": {
-            "kind": "loss",
-            "message": format!(
-                "the document was written as {}, which does not keep everything a document \
-                 can hold",
-                part.id
-            ),
-            "file": file,
-            "render": part.id,
-            "loss": part.loss,
-        }}),
-        compact,
-    )
+    let mut warning = json!({
+        "kind": "loss",
+        "message": format!(
+            "the document was written as {}, which does not keep everything a document \
+             can hold",
+            part.id
+        ),
+        "file": file,
+        "render": part.id,
+        "loss": loss,
+    });
+    if let Some(adapter) = adapter {
+        warning["adapter"] = json!(adapter.name());
+    }
+    render(&json!({ "warning": warning }), compact)
 }
 
 /// `--alchemy`: the program compiled, then the input streamed through it
@@ -534,7 +606,7 @@ fn run_program(
     explain: bool,
     stdin: &mut Stdin<'_>,
     out: Stdout,
-) -> Result<String, Failure> {
+) -> Result<(String, String), Failure> {
     // The program first: one that does not compile is the command's
     // mistake, whatever the input holds, and is said so before the input
     // is read.
@@ -555,8 +627,50 @@ fn run_program(
                 "--explain reports the program's plan and reads no input: give no FILE",
             ));
         }
-        return Ok(self::render(&compiled.explain_json(), req.compact));
+        return Ok((
+            self::render(&compiled.explain_json(), req.compact),
+            String::new(),
+        ));
     }
+    // A format's render over the program's output, as --render chooses it
+    // for a source ([`translate::program_translation`]): one of aless's own
+    // renderers when the output reaches it as it is, with the adapter it
+    // runs natively named, or the render composed over the output, the
+    // program linked under another name, in one plan.
+    let (part, translation) = match render {
+        Some(Renderer::Part(id)) => {
+            let part = translate::part(id).expect("--render names a part the registry has");
+            let translation = translate::program_translation(
+                tabnas_alchemy::Source::new(&file, &text),
+                compiled.output(),
+                part,
+            )
+            .map_err(|fail| {
+                let in_program = fail.file.as_deref() == Some(file.as_str());
+                let mut f = Failure::alchemy(
+                    if in_program {
+                        &file
+                    } else {
+                        part_file(part, &fail)
+                    },
+                    &fail,
+                );
+                if !in_program {
+                    f.error.insert("program".into(), file.clone().into());
+                }
+                f
+            })?;
+            (Some(part), Some(translation))
+        }
+        _ => (None, None),
+    };
+    let (composition, render, adapter) = match &translation {
+        Some(translate::Translation::Composed(c)) => (Some(c), None, c.adapter),
+        Some(translate::Translation::Native { renderer, adapter }) => {
+            (None, Some(*renderer), *adapter)
+        }
+        None => (None, render, None),
+    };
     let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, true) else {
         return Err(Failure::usage(format!(
@@ -576,15 +690,29 @@ fn run_program(
         indent: req.indent,
         timeout: req.timeout,
     };
+    let run = |input: Input<'_>| match composition {
+        Some(composition) => translate::run(&job, composition, input, out, Metrics::new()),
+        None => alchemy::run(&job, &compiled, render, input, out),
+    };
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => alchemy::run(&job, &compiled, render, Input::Text(&text), out),
-        Opened::Lines(reader) => alchemy::run(&job, &compiled, render, Input::Lines(reader), out),
+        Opened::Text(text) => run(Input::Text(&text)),
+        Opened::Lines(reader) => run(Input::Lines(reader)),
+    };
+    let loss = match (part, &translation) {
+        (Some(part), Some(t)) => t.loss(part),
+        _ => Vec::new(),
     };
     let failure = match result {
-        Ok(()) | Err(ExportError::ReaderGone) => return Ok(String::new()),
+        Ok(()) | Err(ExportError::ReaderGone) => {
+            let note = match part {
+                Some(part) => loss_note(part, &loss, adapter, &name, req.compact),
+                None => String::new(),
+            };
+            return Ok((String::new(), note));
+        }
         Err(e) => e,
     };
-    Err(match failure {
+    let mut failed = match failure {
         ExportError::Usage(m) => Failure::usage(m),
         // aless's own limits, the deadline among them: a timeout raised in
         // the program's work on an item carries no position (`export`
@@ -618,7 +746,11 @@ fn run_program(
         }
         ExportError::NotFound { message, .. } => Failure::usage(message),
         ExportError::ReaderGone => unreachable!("handled above"),
-    })
+    };
+    if part.is_some() {
+        failed.error.insert("loss".into(), json!(loss));
+    }
+    Err(failed)
 }
 
 /// The one input of a streamed run (`--render`, `--alchemy`): where it

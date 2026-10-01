@@ -28,11 +28,13 @@ unicode-width = "0.2"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
-# The tabnas engine and grammars are not yet published for Rust, so they
-# are taken straight from GitHub; Cargo.lock pins the commit of each one.
-# When they reach crates.io these become plain version requirements and
-# the [patch] tables below go away.
-tabnas = { git = "https://github.com/tabnas/parser" }
+# The tabnas engine and grammars are taken straight from GitHub, pinned by
+# Cargo.lock to a commit each. All of them but tabnas-lsp are on crates.io
+# now; once tabnas-lsp is too, these become plain version requirements and
+# the [patch] tables below go away. The engine's package is tabnas-parser
+# (its library keeps the name `tabnas`), so the tables below name that
+# package.
+tabnas = { package = "tabnas-parser", git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 tabnas-jsonl = { git = "https://github.com/tabnas/jsonl" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
@@ -66,84 +68,85 @@ tabnas-lsp = { git = "https://github.com/tabnas/lsp" }
 libc = "0.2"
 
 # Each grammar crate names its siblings by relative path
-# (`tabnas = { path = "../../parser/rs" }`), the tabnas sibling-checkout
-# development model. Inside a git checkout cargo reads such a dependency as
+# (`tabnas = { package = "tabnas-parser", path = "../../parser/rs" }`), the
+# tabnas sibling-checkout development model. Inside a git checkout cargo
+# reads such a dependency as
 # "the package of that name in this same git source", which does not
 # exist, so these tables supply each sibling from its own repository. One
 # table per grammar repository, listing the siblings its manifest names.
 [patch."https://github.com/tabnas/json"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 [patch."https://github.com/tabnas/jsonl"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 
 [patch."https://github.com/tabnas/jsonic"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 
 [patch."https://github.com/tabnas/jsonc"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/json5"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/yaml"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/toml"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/ini"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 tabnas-hoover = { git = "https://github.com/tabnas/hoover" }
 
 [patch."https://github.com/tabnas/hoover"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 [patch."https://github.com/tabnas/csv"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/xml"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/zon"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 
 [patch."https://github.com/tabnas/markdown"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 [patch."https://github.com/tabnas/feed"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
 tabnas-xml = { git = "https://github.com/tabnas/xml" }
 
 [patch."https://github.com/tabnas/abnf"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-bnf = { git = "https://github.com/tabnas/bnf" }
 
 [patch."https://github.com/tabnas/bnf"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 [patch."https://github.com/tabnas/transduce"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 tabnas-csv = { git = "https://github.com/tabnas/csv" }
 
 [patch."https://github.com/tabnas/render"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 
 [patch."https://github.com/tabnas/alchemy"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 tabnas-render = { git = "https://github.com/tabnas/render" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
@@ -151,7 +154,7 @@ tabnas-json = { git = "https://github.com/tabnas/json" }
 # lsp's optional siblings are resolved only for the features a consumer
 # turns on, and aless turns on none: the engine is the one to supply.
 [patch."https://github.com/tabnas/lsp"]
-tabnas = { git = "https://github.com/tabnas/parser" }
+tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 # The engine checks its rule stack against a shadow copy on every step
 # when debug assertions are on: an O(depth) check per step, which a deep
@@ -162,7 +165,7 @@ tabnas = { git = "https://github.com/tabnas/parser" }
 # self-test, not aless's, so the dev profile (and `cargo test`, which
 # inherits it) turns it off for that package alone; nothing else about
 # the build changes.
-[profile.dev.package.tabnas]
+[profile.dev.package.tabnas-parser]
 debug-assertions = false
 
 [profile.release]

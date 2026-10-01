@@ -1,0 +1,60 @@
+; The inferred table's row policy over a program's events, as the host's
+; row check applies it to a source's: the root is an array whose elements
+; are the rows; an object row passes as it is; a scalar row becomes an
+; object of one member, value; an array row, a row of another kind than
+; the first, and a root that is not an array are refused with the reason.
+; The state is [stack kind]: stack one marker per open container, so its
+; count is the depth (0 before the root, 1 between rows); kind the first
+; row's, :none before one, :object or :scalar, and :done once the root
+; has closed. Nothing grows with the rows.
+def inferred-rows-root [stack kind event]
+  match kind
+    case :done (fail "the program's output holds a second root value, which a tree's events never do")
+    case _
+      match event
+        case array-start (transition [(push :root stack) kind] [event])
+        case object-start (fail "the program's output is an object, not an array of records: the rows a table takes are the elements of an array")
+        case (scalar v) (fail "the program's output is a scalar, not an array of records: the rows a table takes are the elements of an array")
+        case _ (fail "the program's output begins with an event no tree's events begin with")
+
+def inferred-rows-row [stack kind event]
+  match event
+    case array-end (transition [(pop stack) :done] [event])
+    case object-start
+      match kind
+        case :scalar (fail "a row of the program's output is an object, but the first row was a scalar; every row is an object with the columns as its members, or every row is a scalar")
+        case _ (transition [(push :row stack) :object] [event])
+    case (scalar v)
+      match kind
+        case :object (fail "a row of the program's output is a scalar, but the first row was an object; every row is an object with the columns as its members, or every row is a scalar")
+        case _ (transition [stack :scalar] [object-start (key "value") event object-end])
+    case array-start (fail "a row of the program's output is an array; a row is an object (its members are the columns) or a scalar (one column, value)")
+    case _ (fail "the program's output holds an event out of place between rows, which a tree's events never do")
+
+def inferred-rows-inside [stack kind event]
+  match event
+    case object-start (transition [(push :in stack) kind] [event])
+    case array-start (transition [(push :in stack) kind] [event])
+    case object-end (transition [(pop stack) kind] [event])
+    case array-end (transition [(pop stack) kind] [event])
+    case _ (transition [stack kind] [event])
+
+def inferred-rows-step [s event]
+  match s
+    case [stack kind]
+      match (count stack)
+        case 0 (inferred-rows-root stack kind event)
+        case 1 (inferred-rows-row stack kind event)
+        case _ (inferred-rows-inside stack kind event)
+
+def inferred-rows-finish [s]
+  match s
+    case [stack kind]
+      match (count stack)
+        case 0 []
+        case _ (fail "the program's output ended inside a container, which a tree's events never do")
+
+; The policy: a program's events in, a tree's events out, rows as the
+; inferred table takes them.
+def inferred-rows [output]
+  scan-emit [[] :none] inferred-rows-step inferred-rows-finish (events output)
