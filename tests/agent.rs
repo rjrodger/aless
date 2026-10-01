@@ -41,12 +41,12 @@ fn aless(args: &[&str], stdin: Option<&str>) -> Output {
         .spawn()
         .expect("aless starts");
     if let Some(text) = stdin {
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(text.as_bytes())
-            .unwrap();
+        let written = child.stdin.take().unwrap().write_all(text.as_bytes());
+        // aless may stop reading before the end: an input over --max-size,
+        // or a --timeout that passes while it is still being read.
+        if let Err(e) = written {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
     }
     child.wait_with_output().expect("aless finishes")
 }
@@ -369,6 +369,100 @@ fn a_parse_past_timeout_is_stopped_with_status_6() {
     );
     assert_eq!(String::from_utf8_lossy(&quick.stdout), "{\"a\":1}\n");
     assert_eq!(code(&aless(&["--timeout", "soon", "x.json"], None)), 2);
+}
+
+/// `--timeout` ends a run whose standard input is open and silent, as a
+/// pipe from a writer that never writes is, in every mode: the deadline
+/// runs from the start and covers reading the input (aless#16).
+#[test]
+fn a_silent_stdin_is_stopped_at_the_timeout_with_status_6() {
+    let modes: [&[&str]; 4] = [
+        &["--json"],
+        &["-k", "jsonl", "--render", "csv"],
+        &["--render", "json"],
+        &["-k", "jsonl", "--alchemy-expr", "def export [input] input"],
+    ];
+    for mode in modes {
+        let started = std::time::Instant::now();
+        let mut child = Command::new(BIN)
+            .args(mode)
+            .args(["--timeout", "1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("aless starts");
+        // The writer's end stays open, and nothing is written to it.
+        let held = child.stdin.take();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if started.elapsed() > std::time::Duration::from_secs(30) {
+                let _ = child.kill();
+                panic!("{mode:?}: still waiting on standard input after 30 s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        drop(held);
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(6),
+            "{mode:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"), "{mode:?}");
+        assert_eq!(e["seconds"], json!(1.0), "{mode:?}");
+        assert!(out.stdout.is_empty(), "{mode:?}");
+    }
+    // A named file is read, and standard input left alone, open and
+    // silent though it is.
+    let mut child = Command::new(BIN)
+        .args(["--timeout", "1", "--compact", "tests/fixtures/sample.json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("aless starts");
+    let held = child.stdin.take();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    drop(held);
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// `--max-output` bounds what a program writes, with status 5 and the
+/// transducer's limit named (aless#18).
+#[test]
+fn a_programs_output_is_held_to_max_output() {
+    let mut doubling = String::from("def a0 \"0123456789\"\n");
+    for i in 1..=40 {
+        doubling.push_str(&format!("def a{i} (concat a{} a{})\n", i - 1, i - 1));
+    }
+    doubling.push_str("def export [input] (concat a40 (json input))\n");
+    let out = aless(
+        &["--alchemy-expr", &doubling, "--max-output", "64K"],
+        Some("{\"a\": 1}"),
+    );
+    assert_eq!(code(&out), 5, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("RESOURCE_LIMIT_EXCEEDED"));
+    assert_eq!(e["limit"]["name"], json!("max_output_bytes"));
+    assert_eq!(e["limit"]["value"], json!(65536));
+    assert!(out.stdout.len() <= 65536, "{}", out.stdout.len());
+    let bad = aless(&["--max-output", "lots", "x.json"], None);
+    assert_eq!(code(&bad), 2);
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("--max-output needs a size"),
+        "{}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
 }
 
 #[test]

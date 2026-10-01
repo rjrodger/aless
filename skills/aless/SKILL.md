@@ -243,8 +243,8 @@ Exit statuses, and the `error.kind` that goes with each:
 | 2 | `usage`, `alchemy` | bad option or path syntax, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or no terminal for the viewer |
 | 3 | `io`, `transduce` | the file, or an `--alchemy` program file, could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
-| 5 | `too_large`, `transduce` | the input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size` (default 64M); with `--render` or `--alchemy`, over a limit of the transducer's |
-| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none); with `--render` or `--alchemy`, the whole run |
+| 5 | `too_large`, `transduce` | the input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size` (default 64M); with `--render` or `--alchemy`, over a limit of the transducer's, a program's output over `--max-output` (default 1G) among them |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none), or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached. When that node is an object it also carries `keys`, its
@@ -255,7 +255,13 @@ A `transduce` error comes from `--render`: `code` is the transducer's
 carries `message`, `file`, `format`, then `path`, `limit` (`{name,
 value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
-cannot take it back), else `"none"`. `INPUT_INVALID` with a message that
+cannot take it back), else `"none"`. What was written ends at the end of
+a record (a CSV row, a value directly inside the root JSON array or
+object, a JSON Lines line): a record half written when the failure came
+is dropped, unless it is longer than 16 MB, which is written as it comes
+(a JSON one to the end of one of its own values). A program's own text is
+written an item at a time; another format's render (`--render yaml`) may
+stop inside a record. `INPUT_INVALID` with a message that
 names `--path` means the value is not an array of records: point `--path`
 at one. `DUPLICATE_MEMBER` means a key on the exported path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
@@ -290,7 +296,10 @@ with `output: "partial"`), are the input's: a `transduce` error, or
 covers the parse and the program together, so a program slow on one item
 stops at it, with `line` and `col` null (a timeout raised in the
 program's work on an item has no input position; one raised in the parse
-shows how far the parse got).
+shows how far the parse got). A program that writes more than
+`--max-output` (default 1G, `0` for none) stops with a `transduce` error,
+`RESOURCE_LIMIT_EXCEEDED` with `limit.name` `max_output_bytes`, status 5,
+and a `hint` naming the option.
 
 ## Paths
 

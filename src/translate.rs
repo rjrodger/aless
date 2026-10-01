@@ -62,7 +62,7 @@ use serde_json::Value;
 use tabnas_alchemy::{compile_sources, Output, Program, Source};
 use tabnas_transduce::{Duplicates, Fail, Limits, Metrics, Sink, TreeContract};
 
-use crate::export::{self, ExportError, Input, Job, Renderer, Rows};
+use crate::export::{self, ExportError, Input, Job, Records, Renderer, Rows};
 use crate::load::Format;
 
 /// A shape a format reads as or writes from: the manifest's `reads` and
@@ -132,6 +132,19 @@ pub struct Part {
 }
 
 impl Part {
+    /// Where the records of what the render writes end, for a run that
+    /// fails part way ([`Records`]): alchemy's CSV and JSON write records
+    /// the pipe can see, and JSON Lines a record a line; another format's
+    /// render writes text of its own shape.
+    pub fn records(&self) -> Records {
+        match self.render {
+            Render::Csv => Records::Csv,
+            Render::Json => Records::Json,
+            Render::Alc { .. } if self.id == "jsonl" => Records::Lines,
+            Render::Alc { .. } => Records::Any,
+        }
+    }
+
     /// The render's entry point.
     pub fn render_entry(&self) -> String {
         format!("{}-render", self.id)
@@ -713,12 +726,18 @@ fn with_policies(program: Program, adapter: Option<Adapter>) -> Result<Program, 
 pub fn run(
     job: &Job,
     composition: &Composition,
+    records: Records,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
 ) -> Result<(), ExportError> {
-    let limits = Limits::default();
-    export::run_program(job, input, out, |pipe, abort| {
+    // A program's output is bounded where the job says (`--max-output`);
+    // a render's follows its input.
+    let limits = Limits {
+        max_output_bytes: job.max_output,
+        ..Limits::default()
+    };
+    export::run_program(job, input, out, records, |pipe, abort| {
         let sink = composition
             .program
             .with_abort(abort)
@@ -1088,12 +1107,15 @@ mod tests {
                 compact: false,
                 indent: 2,
                 timeout: None,
+                started: None,
+                max_output: None,
             };
             let metrics = Metrics::new();
             let reader: Box<dyn BufRead + Send> = Box::new(std::io::Cursor::new(csv.into_bytes()));
             run(
                 &job,
                 &composition,
+                Records::Any,
                 Input::Lines(reader),
                 Box::new(std::io::sink()),
                 metrics.clone(),

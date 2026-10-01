@@ -401,6 +401,9 @@ fn render_within(
         compact: false,
         indent,
         timeout,
+        started: None,
+        // The pane keeps what fits and says it cut the rest.
+        max_output: None,
     };
     let kept = Arc::new(Mutex::new(Vec::new()));
     let cut = Arc::new(AtomicBool::new(false));
@@ -422,7 +425,7 @@ fn render_within(
             let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
             let composed = translate::compose(translate::source_part(format), part)
                 .map_err(|fail| fail.to_string())?;
-            translate::run(&job, &composed, input, out, Metrics::new())
+            translate::run(&job, &composed, part.records(), input, out, Metrics::new())
         }
         Through::Render(_) => export::export(&job, input, out),
         Through::Program { render, arg } => {
@@ -440,9 +443,14 @@ fn render_within(
                     )
                     .map_err(|fail| fail.to_string())?;
                     match translation {
-                        translate::Translation::Composed(composed) => {
-                            translate::run(&job, &composed, input, out, Metrics::new())
-                        }
+                        translate::Translation::Composed(composed) => translate::run(
+                            &job,
+                            &composed,
+                            part.records(),
+                            input,
+                            out,
+                            Metrics::new(),
+                        ),
                         translate::Translation::Native { renderer, .. } => {
                             crate::alchemy::run(&job, &compiled.program, Some(renderer), input, out)
                         }

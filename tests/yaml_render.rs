@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use aless::export::{Input, Job, What};
+use aless::export::{Input, Job, Records, What};
 use aless::load::Format;
 use aless::translate;
 use serde_json::Value;
@@ -216,11 +216,14 @@ fn render(program: &translate::Composition, text: &str) -> Result<String, String
         compact: false,
         indent: 2,
         timeout: None,
+        started: None,
+        max_output: None,
     };
     let out = Shared::default();
     translate::run(
         &job,
         program,
+        Records::Any,
         Input::Text(text),
         Box::new(out.clone()),
         Metrics::new(),

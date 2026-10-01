@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use tabnas_alchemy::{Output, Program};
 use tabnas_transduce::{Code, Fail, Limits, Metrics};
 
-use crate::export::{self, ExportError, Input, Job, Renderer};
+use crate::export::{self, ExportError, Input, Job, Records, Renderer};
 use crate::load::{self, LoadError};
 
 /// The name diagnostics give a program from `--alchemy-expr`, which has
@@ -168,8 +168,9 @@ fn renderer(render: Renderer) -> Option<tabnas_alchemy::Renderer> {
 /// chooses the renderer for a table or JSON events (the program's default
 /// when `None`). The document reaches the program's sink the way an export
 /// reaches its renderer ([`export::run_program`]), with the transducer's
-/// default limits and the program's abort flag handed to it, which the
-/// deadline's alarm raises in every mode, so `--timeout` stops a long
+/// default limits, the job's bound on what the program writes
+/// (`max_output_bytes`), and the program's abort flag handed to it, which
+/// the deadline's alarm raises in every mode, so `--timeout` stops a long
 /// computation on one item as it stops a parse. A failure the program's
 /// sink raised comes back as [`ExportError::Program`], the source's as
 /// [`ExportError::Transduce`]; [`is_placed`] says which of the former
@@ -181,8 +182,21 @@ pub fn run(
     input: Input<'_>,
     out: Box<dyn Write + Send>,
 ) -> Result<(), ExportError> {
-    let limits = Limits::default();
-    export::run_program(job, input, out, |pipe, abort| {
+    let limits = Limits {
+        max_output_bytes: job.max_output,
+        ..Limits::default()
+    };
+    // A table is CSV unless --render json says JSON records, and JSON
+    // events JSON unless --render csv says a table; a program's own text
+    // is written an item at a time.
+    let records = match (program.output(), render) {
+        (Output::Text, _) => Records::Any,
+        (Output::TableRows, Some(Renderer::Json)) => Records::Json,
+        (Output::TableRows, _) => Records::Csv,
+        (Output::JsonEvents, Some(Renderer::Csv)) => Records::Csv,
+        (Output::JsonEvents, _) => Records::Json,
+    };
+    export::run_program(job, input, out, records, |pipe, abort| {
         // A sink that cannot be built (a renderer that does not fit what
         // the program exports) is the program's side's failure too.
         program
