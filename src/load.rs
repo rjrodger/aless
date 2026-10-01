@@ -376,14 +376,18 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 /// Standard input, read on a thread of its own, so that no read outlasts
 /// `--timeout`: a writer that never writes, or never closes its end, would
 /// otherwise hold a run in a read for ever, where no deadline is looked
-/// at. The thread hands over what each read returns through a channel a
-/// few chunks deep, so it reads no further ahead of the run than that; at
-/// the deadline a read fails as [`io::ErrorKind::TimedOut`], which
+/// at. The thread starts with the first read, so a run that never reads
+/// standard input (`--explain`, a named file) leaves it to whoever else
+/// holds it. It hands over what each read returns through a channel a few
+/// chunks deep, so it reads no further ahead of the run than that; at the
+/// deadline a read fails as [`io::ErrorKind::TimedOut`], which
 /// [`read_within`] reports as `timeout` and a streamed run as the run's
 /// (see `export`). The thread is left to the process's end when it is
 /// still waiting: nothing can call a read off.
 pub struct DeadlineReader {
-    chunks: mpsc::Receiver<io::Result<Vec<u8>>>,
+    /// The input, until the first read starts the thread that reads it.
+    input: Option<Box<dyn Read + Send>>,
+    chunks: Option<mpsc::Receiver<io::Result<Vec<u8>>>>,
     chunk: Vec<u8>,
     at: usize,
     deadline: Instant,
@@ -398,14 +402,31 @@ const CHUNKS_AHEAD: usize = 4;
 const CHUNK_BYTES: usize = 64 << 10;
 
 impl DeadlineReader {
-    /// Read `input` until `limit` after `started`; `None` when the time is
-    /// too far off to reach, or no thread can be had to read on.
+    /// Read `input` until `limit` after `started`; `None` when that time is
+    /// too far off to reach, which is no limit.
     pub fn new(
-        mut input: impl Read + Send + 'static,
+        input: impl Read + Send + 'static,
         started: Instant,
         limit: Duration,
     ) -> Option<DeadlineReader> {
-        let deadline = started.checked_add(limit)?;
+        Some(DeadlineReader {
+            input: Some(Box::new(input)),
+            chunks: None,
+            chunk: Vec::new(),
+            at: 0,
+            deadline: started.checked_add(limit)?,
+            limit,
+            ended: false,
+        })
+    }
+
+    /// Start the thread that reads the input, once. A thread that cannot
+    /// be had fails the read, rather than leave the run to read on this
+    /// one with no deadline at all.
+    fn start(&mut self) -> io::Result<()> {
+        let Some(mut input) = self.input.take() else {
+            return Ok(());
+        };
         let (send, chunks) = mpsc::sync_channel(CHUNKS_AHEAD);
         std::thread::Builder::new()
             .name("aless-input".into())
@@ -426,15 +447,14 @@ impl DeadlineReader {
                     break;
                 }
             })
-            .ok()?;
-        Some(DeadlineReader {
-            chunks,
-            chunk: Vec::new(),
-            at: 0,
-            deadline,
-            limit,
-            ended: false,
-        })
+            .map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("no thread could be started to read the input within --timeout: {e}"),
+                )
+            })?;
+        self.chunks = Some(chunks);
+        Ok(())
     }
 }
 
@@ -443,12 +463,24 @@ impl Read for DeadlineReader {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.start()?;
+        let Some(chunks) = &self.chunks else {
+            unreachable!("started above");
+        };
         while self.at == self.chunk.len() {
             if self.ended {
                 return Ok(0);
             }
-            let left = self.deadline.saturating_duration_since(Instant::now());
-            match self.chunks.recv_timeout(left) {
+            // Past the deadline nothing more is taken, though chunks may be
+            // waiting: a writer fast enough would keep one waiting for ever.
+            let now = Instant::now();
+            if now >= self.deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    ReadTimedOut(self.limit),
+                ));
+            }
+            match chunks.recv_timeout(self.deadline - now) {
                 Ok(Ok(chunk)) if chunk.is_empty() => self.ended = true,
                 Ok(Ok(chunk)) => {
                     self.chunk = chunk;
@@ -458,12 +490,8 @@ impl Read for DeadlineReader {
                     self.ended = true;
                     return Err(e);
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        ReadTimedOut(self.limit),
-                    ))
-                }
+                // Looked at again above: the deadline has passed.
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => self.ended = true,
             }
         }
@@ -2443,6 +2471,44 @@ mod tests {
                 "{took:?}"
             );
         }
+    }
+
+    /// Past the deadline nothing more is taken, however fast the writer:
+    /// an input without end is a timeout, not a read for ever.
+    #[test]
+    fn an_endless_input_is_a_timeout_too() {
+        let started = Instant::now();
+        let endless =
+            DeadlineReader::new(std::io::repeat(b'x'), started, Duration::from_millis(200));
+        let e = read_within(endless.unwrap(), None).unwrap_err();
+        assert!(e.is_timeout(), "{}", e.message);
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// The input is not touched until the run reads it: a run that never
+    /// does (`--explain`, a named file) leaves it to whoever else has it.
+    #[test]
+    fn a_deadline_reader_reads_nothing_before_it_is_read() {
+        struct Watched(Arc<AtomicBool>);
+        impl Read for Watched {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                self.0.store(true, Ordering::Relaxed);
+                Ok(0)
+            }
+        }
+        let touched = Arc::new(AtomicBool::new(false));
+        let watched = Watched(touched.clone());
+        let mut reader =
+            DeadlineReader::new(watched, Instant::now(), Duration::from_secs(600)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!touched.load(Ordering::Relaxed), "read before the run read");
+        let mut buf = [0u8; 8];
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
+        assert!(touched.load(Ordering::Relaxed));
     }
 
     #[test]

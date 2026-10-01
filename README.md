@@ -326,9 +326,11 @@ the result had been written before the failure, else `"none"`. A stream
 cannot take bytes back, so what was written stays, and it ends at the end
 of a record: a CSV row, a value directly inside the root JSON array or
 object, a line of JSON Lines. A record half written when the failure came
-is dropped, not written in part. A program's own text is written an item
-at a time, each item whole; another format's render (`--render yaml`)
-writes as it goes, and may stop inside one. The status follows the code, as the table
+is dropped, not written in part. A record longer than 16 MB is not held
+back whole: a JSON one is written up to the end of one of its own values,
+a CSV one as it comes, and a failure can cut it. A program's own text is
+written an item at a time, each item whole; another format's render
+(`--render yaml`) writes as it goes, and may stop inside one. The status follows the code, as the table
 above says. aless's own limits report as they do for a parse, plus that
 `output` field: nesting past its cap is a `parse` error with the code
 `too_deep`, a run past `--timeout` a `timeout` error (the deadline covers

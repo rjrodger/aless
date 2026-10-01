@@ -1059,9 +1059,11 @@ pub enum Records {
     Lines,
 }
 
-/// The most the pipe holds back: a record longer than this is written as
-/// it comes, so that a root object of one huge member, say, is not held
-/// whole.
+/// The most the pipe holds back. A record longer than this is not held
+/// whole, so that a root object of one huge member, say, does not sit in
+/// memory: it is written up to the end of one of its own values where it
+/// has them (a JSON record's), else as it comes, and a failure can then
+/// cut it.
 const HOLD_MAX: usize = 16 << 20;
 
 /// The writer under the renderer's `WriteOut`: counts what reached the
@@ -1084,6 +1086,11 @@ struct Pipe {
     escaped: bool,
     /// JSON containers open.
     depth: usize,
+    /// Where in `held` the last value one level inside a JSON record ends:
+    /// the cut for a record too long to hold.
+    inner_end: usize,
+    /// [`HOLD_MAX`], which a test lowers.
+    hold_max: usize,
 }
 
 impl Pipe {
@@ -1103,6 +1110,8 @@ impl Pipe {
             quoted: false,
             escaped: false,
             depth: 0,
+            inner_end: 0,
+            hold_max: HOLD_MAX,
         }
     }
 
@@ -1165,6 +1174,7 @@ impl Pipe {
                         }
                     }
                     b',' if self.depth == 1 => end = i,
+                    b',' if self.depth == 2 => self.inner_end = i,
                     _ => {}
                 },
             }
@@ -1182,14 +1192,17 @@ impl Write for Pipe {
         }
         self.held.extend_from_slice(buf);
         let end = match self.last_end() {
-            // A record too long to hold is written as it comes.
-            0 if self.held.len() > HOLD_MAX => self.held.len(),
+            // A record too long to hold: up to the end of one of its own
+            // values, where it has had one, else what there is.
+            0 if self.held.len() > self.hold_max && self.inner_end > 0 => self.inner_end,
+            0 if self.held.len() > self.hold_max => self.held.len(),
             end => end,
         };
         if end > 0 {
             let rest = self.held.split_off(end);
             let whole = std::mem::replace(&mut self.held, rest);
             self.seen -= end;
+            self.inner_end = self.inner_end.saturating_sub(end);
             self.send(&whole)?;
         }
         Ok(buf.len())
@@ -1200,6 +1213,7 @@ impl Write for Pipe {
     fn flush(&mut self) -> io::Result<()> {
         let held = std::mem::take(&mut self.held);
         self.seen = 0;
+        self.inner_end = 0;
         self.send(&held)?;
         let r = self.inner.lock().unwrap_or_else(|e| e.into_inner()).flush();
         self.note(r)
@@ -1831,6 +1845,37 @@ mod tests {
                     pipe.flush().unwrap();
                     assert_eq!(out.text(), text[..upto], "{records:?} flushed at {upto}");
                 }
+            }
+        }
+    }
+
+    /// A record too long to hold is written up to the end of one of its
+    /// own values where it has them (JSON), else as it comes (CSV), so the
+    /// pipe never holds much more than its limit.
+    #[test]
+    fn a_record_too_long_to_hold_is_written_as_it_comes() {
+        let json = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]";
+        let csv = "x,\"0123456789abcdefghijklmnop";
+        for (records, text) in [(Records::Json, json), (Records::Csv, csv)] {
+            let out = Shared::default();
+            let inner: Box<dyn Write + Send> = Box::new(out.clone());
+            let w = Arc::new(AtomicU64::new(0));
+            let b = Arc::new(AtomicBool::new(false));
+            let mut pipe = Pipe::new(Arc::new(Mutex::new(inner)), &w, &b, records);
+            pipe.hold_max = 8;
+            for chunk in text.as_bytes().chunks(3) {
+                pipe.write_all(chunk).unwrap();
+            }
+            let written = out.text();
+            assert!(text.starts_with(&written), "{records:?}: {written:?}");
+            assert!(written.len() > 8, "{records:?}: something was let go");
+            assert!(
+                text.len() - written.len() <= 8 + 3,
+                "{records:?}: {written:?}"
+            );
+            if records == Records::Json {
+                // Up to an element's end: the comma after it is still held.
+                assert!(text[written.len()..].starts_with(','), "{written:?}");
             }
         }
     }

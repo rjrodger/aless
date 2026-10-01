@@ -748,12 +748,10 @@ fn print_headless(args: Args) -> i32 {
     let started = Instant::now();
     req.started = Some(started);
     let mut input = io::stdin();
-    // Only a run that reads standard input reads it: named files leave it
-    // to whoever else has it.
-    let reads_stdin = req.files.is_empty() || req.files.iter().any(|f| f.as_os_str() == "-");
+    // Read on a thread of its own once the run reads it, and never before.
     let mut timed = args
         .timeout
-        .filter(|_| reads_stdin && !input.is_terminal())
+        .filter(|_| !input.is_terminal())
         .and_then(|limit| aless::load::DeadlineReader::new(io::stdin(), started, limit));
     let stdin: headless::Stdin = if input.is_terminal() {
         None
