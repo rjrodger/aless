@@ -1582,9 +1582,13 @@ fn parse_guarded(
     deadline: Option<Deadline>,
     max_depth: usize,
 ) -> Result<Doc, LoadError> {
-    // Under a grammar of plain text, a lone `*` is a word and a value.
+    // Under a grammar of plain text, a lone `*` is a word and a value; a
+    // document of records keyed by a header row (CSV, TSV) is aligned by
+    // column, which its separators and line ends carry.
     let sink = if format.is_custom() {
         prov::capture_words(&mut parser)
+    } else if format.keyed_by_header() {
+        prov::capture_cells(&mut parser)
     } else {
         prov::capture(&mut parser)
     };
