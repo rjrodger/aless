@@ -70,22 +70,20 @@ verification.
 | [tabnas/css#56](https://github.com/tabnas/css/pull/56) | Go: string lexing off, as TypeScript has it; 65 stray-quote rows in `test/spec/quotes.tsv`, run by all three runtimes. | The Go css fix ruled into css#53, which merged without it. Afterwards parser's `DIVERGENCE.md`, `go/options.go` and `go/empty_chars_test.go` should stop citing css as a live empty-`Chars` site. |
 | [tabnas/toml#89](https://github.com/tabnas/toml/pull/89) | Go: a redefined key raises `toml_key_conflict`, as TypeScript and Rust do; shared `key-conflict.tsv`; Go rejects 280 of 509 invalid corpus documents (was 261). | Two decisions in the PR: TypeScript accepts four TOML-invalid documents, which Go now follows; and the position of a conflict (TypeScript 1:1, Go and Rust at the key) is registered with TypeScript moving. |
 
-## Pushed without a PR yet: the Go engine at v0.12.8
+## The Go engine at v0.12.8: the last twelve
 
-Twelve repositories have the branch `claude/deps-go-engine-v0.12.8` on
-their remote, made by the same script as the merged ones: the parser
-requirement in every `go.mod` that names it moved to v0.12.8, `go mod
-tidy` changed nothing else, and `go build`, `go vet` and `GOWORK=off go
-test ./...` passed against the published module. No PR was opened before
-the session stopped, and some need the fix the maintainer made by hand
-for json, proto and semver:
+The same move as the merged twenty. The parser requirement in every
+`go.mod` that names it moved to v0.12.8, `go mod tidy` changed nothing
+else, and `go build`, `go vet` and `GOWORK=off go test ./...` passed
+against the published module. Each is open, on the branch
+`claude/deps-go-engine-v0.12.8`:
 
-| Repository | Before a PR |
+| PR | Beyond the go.mod move |
 |---|---|
-| abnf | Raise `@tabnas/parser` in `ts/package.json` `peerDependencies` from `>=0.12.7` to `>=0.12.8`. Its AGENTS.md (line 864) says the two move together. |
-| ebnf, gbnf | Peer floor is `>=0.12.7`: raise it to `>=0.12.8`, as for abnf; confirm in each AGENTS.md. |
-| support | Has `ts/test/enginepin.test.js` and a tracked `ts/package-lock.json`: regenerate the lock so `@tabnas/parser` is 0.12.8, as json's f699544 did. |
-| c, chess, css, debug, directive, expr, multisource, path | Peer floor is `>=0`; nothing more. Open the PR in the merged ones' shape (title "deps(go): the engine at its latest release, v0.12.8"). |
+| [abnf#105](https://github.com/tabnas/abnf/pull/105) | Peer floor `>=0.12.7` raised to `>=0.12.8`; AGENTS.md line 864 says the two move together. |
+| [ebnf#52](https://github.com/tabnas/ebnf/pull/52), [gbnf#55](https://github.com/tabnas/gbnf/pull/55) | Peer floor raised to `>=0.12.8`, as for abnf and as the maintainer did on proto and semver. |
+| [support#44](https://github.com/tabnas/support/pull/44) | `ts/package-lock.json`'s `@tabnas/parser` entry moved to 0.12.8 (`npm update --package-lock-only`), as `enginepin.test.js` requires; `npm test` 187 of 187. |
+| [c#58](https://github.com/tabnas/c/pull/58), [chess#45](https://github.com/tabnas/chess/pull/45), [css#57](https://github.com/tabnas/css/pull/57), [debug#70](https://github.com/tabnas/debug/pull/70), [directive#65](https://github.com/tabnas/directive/pull/65), [expr#79](https://github.com/tabnas/expr/pull/79), [multisource#69](https://github.com/tabnas/multisource/pull/69), [path#60](https://github.com/tabnas/path/pull/60) | Nothing: the peer range is `>=0`. |
 
 ## Not started
 
