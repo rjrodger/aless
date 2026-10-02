@@ -270,7 +270,10 @@ error under `--render` (a stream cannot count from the end); on an object
 it is the key `-1`. A `--render` run stopped by `--timeout` or by nesting
 reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`;
 a record-at-a-time read (JSON Lines, CSV, TSV) stopped by `--timeout`
-names the line the record it was reading starts on, with `col` null.
+names the line the record it was reading starts on, with `col` null,
+unless the deadline passed while standard input was still being read,
+a writer slow or silent: then `line` and `col` are both null, as for
+any input still being read when the time ran out.
 An error met while `--render yaml` was writing (a `transduce`,
 `too_deep` or `timeout` error) also carries `loss`, the sentences its
 warning gives on success.
