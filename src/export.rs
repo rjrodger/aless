@@ -264,6 +264,17 @@ fn limits() -> Limits {
 
 /// Run an export: `input` in, rendered text out through `out`.
 pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result<(), ExportError> {
+    export_staged(job, input, out, stage_max(job.format))
+}
+
+/// [`export`] over a stage of `stage_max` bytes (what [`stage_max`] gives
+/// the format, or what a test sets).
+fn export_staged(
+    job: &Job,
+    input: Input<'_>,
+    out: Box<dyn Write + Send>,
+    stage_max: usize,
+) -> Result<(), ExportError> {
     let renderer = match &job.what {
         What::Render(Renderer::Part(_)) | What::Part | What::Program { .. } => {
             return Err(ExportError::Usage(
@@ -276,12 +287,16 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
     let broken = Arc::new(AtomicBool::new(false));
     // Shared, so that a second chain of sinks (the fallback) can write to
     // the same output without the first chain having to hand it back.
-    let out = Arc::new(Mutex::new(out));
+    let stage = Stage::new(out, &written, &broken, stage_max);
     let records = match renderer {
         Renderer::Csv => Records::Csv,
         _ => Records::Json,
     };
-    let pipe = || WriteOut::new(Pipe::new(out.clone(), &written, &broken, records));
+    // The renderer hands every fragment down as it comes, with no budget
+    // of its own: the pipe is what holds a record back until it ends, and
+    // the stage what holds whole records for the output, so a failure
+    // drops no whole record from a buffer above them.
+    let pipe = || WriteOut::new(Pipe::new(stage.clone(), records)).with_budget(0);
     match renderer {
         Renderer::Part(_) => unreachable!("refused above"),
         Renderer::Json => {
@@ -289,7 +304,7 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
                 indent: (!job.compact).then_some(job.indent),
                 trailing_newline: true,
             };
-            attempt(job, input, &written, &broken, |_| {
+            attempt(job, input, &written, &broken, &stage, |_| {
                 Ok(Scope::new(
                     job.path.clone(),
                     JsonRenderer::new(pipe(), options.clone()),
@@ -305,7 +320,7 @@ pub fn export(job: &Job, input: Input<'_>, out: Box<dyn Write + Send>) -> Result
                 missing: MissingText::Text("".into()),
                 ..CsvOptions::default()
             };
-            attempt(job, input, &written, &broken, |_| {
+            attempt(job, input, &written, &broken, &stage, |_| {
                 let csv = CsvRenderer::new(pipe(), options.clone())
                     .map_err(|f| ExportError::Transduce(Box::new(f)))?;
                 // The rows are the elements of the array the scope re-roots
@@ -351,10 +366,9 @@ pub fn run_program(
 ) -> Result<(), ExportError> {
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
-    let out = Arc::new(Mutex::new(out));
-    attempt(job, input, &written, &broken, |abort| {
-        let pipe: Box<dyn Write + Send> =
-            Box::new(Pipe::new(out.clone(), &written, &broken, records));
+    let stage = Stage::new(out, &written, &broken, stage_max(job.format));
+    attempt(job, input, &written, &broken, &stage, |abort| {
+        let pipe: Box<dyn Write + Send> = Box::new(Pipe::new(stage.clone(), records));
         // A scope at the root passes every event through and never stops
         // the run: the program does the selecting. A part's scope re-roots
         // the stream at `--path`, as an export's does.
@@ -365,12 +379,16 @@ pub fn run_program(
 /// Run the export through a fresh chain of sinks from `chain`, and once
 /// more through the whole-value path when the incremental stream was
 /// refused part-way before anything reached the output (see the module
-/// doc); a refusal after output was written is reported as it is.
+/// doc); a refusal after output was written is reported as it is. The
+/// whole records a failed run had ready are written before it is
+/// reported, or dropped when the run is tried again, whose output starts
+/// over.
 fn attempt<S: Sink + Send + 'static>(
     job: &Job,
     input: Input<'_>,
     written: &AtomicU64,
     broken: &AtomicBool,
+    stage: &Stage,
     chain: impl Fn(AbortFlag) -> Result<Scope<S>, ExportError>,
 ) -> Result<(), ExportError> {
     let mode = mode_for(job);
@@ -424,6 +442,9 @@ fn attempt<S: Sink + Send + 'static>(
                 && mode != SourceMode::Materialize
                 && written.load(Ordering::Relaxed) == 0 =>
         {
+            // The stream's start, whole records though they are, is
+            // dropped for the whole value's, which writes them again.
+            stage.discard();
             let abort = AbortFlag::new();
             let program = AbortFlag::new();
             run(
@@ -434,9 +455,15 @@ fn attempt<S: Sink + Send + 'static>(
                 abort,
                 program,
             )
-            .map_err(|f| classify(job, *f, written, broken))
+            .map_err(|f| {
+                stage.commit();
+                classify(job, *f, written, broken)
+            })
         }
-        _ => Err(classify(job, *failed, written, broken)),
+        _ => {
+            stage.commit();
+            Err(classify(job, *failed, written, broken))
+        }
     }
 }
 
@@ -842,9 +869,10 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
         }
         None => {}
     }
-    // What reached the output is what the pipe wrote: a stage above it may
-    // have handed over bytes the pipe holds back, a record not yet whole,
-    // which a failure drops.
+    // What reached the output is what the stage committed, the whole
+    // records the pipe passed it and, by now, every one a failed run had
+    // ready; the renderer above them may have handed over more, a record
+    // not yet whole, which the pipe holds back and a failure drops.
     let position = |fail: &Fail| -> (u32, u32) {
         let at = |n: Option<u64>| n.and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
         (at(fail.row), at(fail.column))
@@ -1067,15 +1095,131 @@ pub enum Records {
 /// cut it.
 const HOLD_MAX: usize = 16 << 20;
 
-/// The writer under the renderer's `WriteOut`: counts what reached the
-/// output, so a failure can say whether output is partial, notices a
-/// reader that went away, which is not a failure, and writes whole
-/// records ([`Records`]). What it holds when the run fails is dropped with
-/// it: only the run's end, the renderer's one flush, writes it.
-struct Pipe {
-    inner: Arc<Mutex<Box<dyn Write + Send>>>,
+/// How much of the whole records the stage holds for the output before
+/// it writes them: a failure late in a long run drops none of them, and
+/// a run whose output is shorter than this can still be tried again from
+/// the whole value, since nothing of it has left.
+const STAGE_MAX: usize = 32 << 10;
+
+/// The stage's bound for `format`. A jsonic or YAML source can refuse
+/// the stream after it has streamed the first value whole (an implicit
+/// list that wraps it, a second document), and the whole-value run then
+/// writes that value again, so for those two the stage holds as much as
+/// the pipe holds of one record ([`HOLD_MAX`]) before anything leaves;
+/// every other source's refusals come before its first record ends, and
+/// its output leaves as [`STAGE_MAX`] of it is ready.
+fn stage_max(format: Format) -> usize {
+    match format {
+        Format::Jsonic | Format::Yaml => HOLD_MAX,
+        _ => STAGE_MAX,
+    }
+}
+
+/// Where whole records wait for the output. The pipe passes it every
+/// record the moment it is whole; it writes them when [`STAGE_MAX`] of
+/// them wait, when the run ends (the renderer's one flush), and after a
+/// failure that is final, before the failure is reported, so a failure
+/// leaves every record that was whole on the output; it drops them when
+/// the run is tried again from the whole value, whose output starts over
+/// ([`attempt`]), which can only happen while nothing has been written.
+/// It counts what it wrote, so a failure can say whether output is
+/// partial, and notices a reader that went away, which is not a failure.
+struct Stage {
+    out: Arc<Mutex<Box<dyn Write + Send>>>,
     written: Arc<AtomicU64>,
     broken: Arc<AtomicBool>,
+    /// Whole records not yet written.
+    ready: Mutex<Vec<u8>>,
+    /// [`stage_max`] for the run's format; a test lowers it.
+    stage_max: usize,
+}
+
+impl Stage {
+    fn new(
+        out: Box<dyn Write + Send>,
+        written: &Arc<AtomicU64>,
+        broken: &Arc<AtomicBool>,
+        stage_max: usize,
+    ) -> Arc<Stage> {
+        Arc::new(Stage {
+            out: Arc::new(Mutex::new(out)),
+            written: written.clone(),
+            broken: broken.clone(),
+            ready: Mutex::new(Vec::new()),
+            stage_max,
+        })
+    }
+
+    fn note(&self, r: io::Result<()>) -> io::Result<()> {
+        if let Err(e) = &r {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                self.broken.store(true, Ordering::Relaxed);
+            }
+        }
+        r
+    }
+
+    /// Write `bytes` to the output, counting them.
+    fn send(&self, bytes: &[u8]) -> io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let r = self
+            .out
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .write_all(bytes);
+        self.note(r)?;
+        self.written
+            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Take in `bytes`, whole records, and write what waits once enough
+    /// does.
+    fn stage(&self, bytes: &[u8]) -> io::Result<()> {
+        let mut ready = self.ready.lock().unwrap_or_else(|e| e.into_inner());
+        ready.extend_from_slice(bytes);
+        if ready.len() < self.stage_max {
+            return Ok(());
+        }
+        let bytes = std::mem::take(&mut *ready);
+        drop(ready);
+        self.send(&bytes)
+    }
+
+    /// Write what waits, and flush the output, so that it is out before
+    /// the run's failure is reported. A failure here, with the run
+    /// already over, is not the run's: a reader that went away is noted,
+    /// and the run's failure is reported whatever happened to its last
+    /// records.
+    fn commit(&self) {
+        let _ = self.flush();
+    }
+
+    /// Drop what waits: the run is tried again from the start.
+    fn discard(&self) {
+        self.ready.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// The run's end: write what waits, and flush the output.
+    fn flush(&self) -> io::Result<()> {
+        let bytes = std::mem::take(&mut *self.ready.lock().unwrap_or_else(|e| e.into_inner()));
+        self.send(&bytes)?;
+        let r = self.out.lock().unwrap_or_else(|e| e.into_inner()).flush();
+        self.note(r)
+    }
+}
+
+/// The writer under the renderer's `WriteOut`: passes whole records
+/// ([`Records`]) to the [`Stage`] the moment they are whole, and holds
+/// back what follows the last one. The renderer above it keeps no buffer
+/// of its own (a budget of zero), so nothing whole waits above the pipe;
+/// what the pipe holds, the record being written, is dropped with it when
+/// the run fails, and only the run's end, the renderer's one flush,
+/// writes it.
+struct Pipe {
+    stage: Arc<Stage>,
     records: Records,
     /// What follows the last record's end.
     held: Vec<u8>,
@@ -1095,16 +1239,9 @@ struct Pipe {
 }
 
 impl Pipe {
-    fn new(
-        inner: Arc<Mutex<Box<dyn Write + Send>>>,
-        written: &Arc<AtomicU64>,
-        broken: &Arc<AtomicBool>,
-        records: Records,
-    ) -> Pipe {
+    fn new(stage: Arc<Stage>, records: Records) -> Pipe {
         Pipe {
-            inner,
-            written: written.clone(),
-            broken: broken.clone(),
+            stage,
             records,
             held: Vec::new(),
             seen: 0,
@@ -1116,29 +1253,9 @@ impl Pipe {
         }
     }
 
-    fn note(&self, r: io::Result<()>) -> io::Result<()> {
-        if let Err(e) = &r {
-            if e.kind() == io::ErrorKind::BrokenPipe {
-                self.broken.store(true, Ordering::Relaxed);
-            }
-        }
-        r
-    }
-
-    /// Write `bytes` to the output, counting them.
+    /// Pass `bytes`, whole records, to the stage.
     fn send(&self, bytes: &[u8]) -> io::Result<()> {
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        let r = self
-            .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .write_all(bytes);
-        self.note(r)?;
-        self.written
-            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
-        Ok(())
+        self.stage.stage(bytes)
     }
 
     /// Look at what `held` gained, and return where its last whole record
@@ -1168,9 +1285,12 @@ impl Pipe {
                 Records::Json => match b {
                     b'"' => self.quoted = true,
                     b'[' | b'{' => self.depth += 1,
+                    // A container directly inside the root is whole at its
+                    // close; a scalar there (a number may go on) is whole
+                    // at the comma after it, or at the root's close.
                     b']' | b'}' => {
                         self.depth = self.depth.saturating_sub(1);
-                        if self.depth == 0 {
+                        if self.depth <= 1 {
                             end = i + 1;
                         }
                     }
@@ -1216,8 +1336,7 @@ impl Write for Pipe {
         self.seen = 0;
         self.inner_end = 0;
         self.send(&held)?;
-        let r = self.inner.lock().unwrap_or_else(|e| e.into_inner()).flush();
-        self.note(r)
+        self.stage.flush()
     }
 }
 
@@ -1746,6 +1865,18 @@ mod tests {
         }
     }
 
+    /// A stage that writes every whole record the moment it has it, so a
+    /// test of the pipe's record boundaries reads them on the output.
+    fn unstaged(out: &Shared, written: &Arc<AtomicU64>, broken: &Arc<AtomicBool>) -> Arc<Stage> {
+        Arc::new(Stage {
+            out: Arc::new(Mutex::new(Box::new(out.clone()))),
+            written: written.clone(),
+            broken: broken.clone(),
+            ready: Mutex::new(Vec::new()),
+            stage_max: 0,
+        })
+    }
+
     fn job(format: Format, renderer: Renderer, path: &str) -> Job {
         Job {
             name: "-".into(),
@@ -1778,12 +1909,13 @@ mod tests {
     /// filled, reaches the output a whole record at a time: fed `text` up
     /// to any point, the pipe has written up to the last record's end it
     /// could see there, and the run's end, its flush, writes the rest
-    /// (aless#17). A JSON element is seen to end at the comma after it.
+    /// (aless#17). A JSON container is seen to end at its close, a scalar
+    /// at the comma after it.
     #[test]
     fn the_pipe_writes_whole_records() {
         let csv = "a,\"b\nc\",\"d\"\"e\"\r\n1,2,3\r\n4,\"5,6\",7\r\n8,9";
-        let json = "[\n  {\"a\": \"x,]}\\\"\"},\n  [1, 2],\n  {\"b\": {}}\n]\n";
-        let object = "{\"a\": [1, 2], \"b\": \"c,d\"}";
+        let json = "[\n  {\"a\": \"x,]}\\\"\"},\n  [1, 2],\n  3,\n  {\"b\": {}}\n]\n";
+        let object = "{\"a\": [1, 2], \"b\": \"c,d\", \"c\": 5}";
         let lines = "{\"a\":1}\n{\"a\":2}\n{\"a\"";
         let after = |text: &str, part: &str| text.find(part).unwrap() + part.len();
         // (where a record ends, how far the pipe must have read to know)
@@ -1799,19 +1931,27 @@ mod tests {
                     at(after(csv, "7\r\n")),
                 ],
             ),
+            // A container inside the root is whole at its close, a scalar
+            // at the comma after it (a number may go on).
             (
                 Records::Json,
                 json,
                 vec![
-                    comma(after(json, "\"\"}")),
-                    comma(after(json, "[1, 2]")),
+                    at(after(json, "\"\"}")),
+                    at(after(json, "[1, 2]")),
+                    comma(after(json, "3")),
+                    at(after(json, "{}}")),
                     at(after(json, "{}}\n]")),
                 ],
             ),
             (
                 Records::Json,
                 object,
-                vec![comma(after(object, "[1, 2]")), at(object.len())],
+                vec![
+                    at(after(object, "[1, 2]")),
+                    comma(after(object, "\"c,d\"")),
+                    at(object.len()),
+                ],
             ),
             (
                 Records::Lines,
@@ -1823,11 +1963,9 @@ mod tests {
             for piece in [1, 2, 3, 7, 64] {
                 for upto in 0..=text.len() {
                     let out = Shared::default();
-                    let inner: Box<dyn Write + Send> = Box::new(out.clone());
                     let written = Arc::new(AtomicU64::new(0));
                     let broken = Arc::new(AtomicBool::new(false));
-                    let mut pipe =
-                        Pipe::new(Arc::new(Mutex::new(inner)), &written, &broken, records);
+                    let mut pipe = Pipe::new(unstaged(&out, &written, &broken), records);
                     for chunk in text.as_bytes()[..upto].chunks(piece) {
                         assert_eq!(pipe.write(chunk).unwrap(), chunk.len());
                     }
@@ -1855,14 +1993,13 @@ mod tests {
     /// pipe never holds much more than its limit.
     #[test]
     fn a_record_too_long_to_hold_is_written_as_it_comes() {
-        let json = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]";
+        let json = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], \"b\": 1";
         let csv = "x,\"0123456789abcdefghijklmnop";
         for (records, text) in [(Records::Json, json), (Records::Csv, csv)] {
             let out = Shared::default();
-            let inner: Box<dyn Write + Send> = Box::new(out.clone());
             let w = Arc::new(AtomicU64::new(0));
             let b = Arc::new(AtomicBool::new(false));
-            let mut pipe = Pipe::new(Arc::new(Mutex::new(inner)), &w, &b, records);
+            let mut pipe = Pipe::new(unstaged(&out, &w, &b), records);
             pipe.hold_max = 8;
             for chunk in text.as_bytes().chunks(3) {
                 pipe.write_all(chunk).unwrap();
@@ -1875,8 +2012,9 @@ mod tests {
                 "{records:?}: {written:?}"
             );
             if records == Records::Json {
-                // Up to an element's end: the comma after it is still held.
-                assert!(text[written.len()..].starts_with(','), "{written:?}");
+                // Up to a value's end, the member's own at its close: the
+                // comma after it is still held.
+                assert_eq!(&text[written.len()..], ", \"b\": 1", "{written:?}");
             }
         }
     }
@@ -2257,15 +2395,26 @@ mod tests {
     #[test]
     fn failures_are_sorted_by_what_they_mean() {
         // The input did not parse: the transducer's code, with the position.
+        // The first member was whole when the failure came, so it is on
+        // the output, and the output is partial.
         let j = job(Format::Json, Renderer::Json, ".");
-        match run_text(&j, "{\"a\": 1,\n \"b\": }").0.unwrap_err() {
+        let (r, out) = run_text(&j, "{\"a\": 1,\n \"b\": }");
+        match r.unwrap_err() {
             ExportError::Transduce(f) => {
                 assert_eq!(f.code, Code::InputInvalid);
                 assert_eq!((f.row, f.column), (Some(2), Some(7)));
-                assert!(!f.committed_output);
+                assert!(f.committed_output);
             }
             other => panic!("{other:?}"),
         }
+        assert_eq!(out, "{\"a\":1");
+        // Nothing whole yet: nothing is written, and the output is none.
+        let (r, out) = run_text(&j, "{\"a\": }");
+        match r.unwrap_err() {
+            ExportError::Transduce(f) => assert!(!f.committed_output),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(out, "");
         // A path that names nothing.
         let j = job(Format::Json, Renderer::Csv, ".rows");
         match run_text(&j, r#"{"items": []}"#).0.unwrap_err() {
@@ -2286,32 +2435,33 @@ mod tests {
         let (r, out) = run_text(&j, r#"{"-1": [1]}"#);
         r.unwrap();
         assert_eq!(out, "[1]\n", "on an object, the key");
-        // A repeated key on the path, after the first was taken.
+        // A repeated key on the path, after the first was taken: the
+        // first's rows were whole when the refusal came, so they are on
+        // the output, and the output is partial.
         let j = job(Format::Json, Renderer::Csv, ".rows");
         let (r, out) = run_text(&j, r#"{"rows": [{"v": 1}], "rows": [{"v": 2}]}"#);
         match r.unwrap_err() {
             ExportError::Transduce(f) => {
                 assert_eq!(f.code, Code::DuplicateMember);
                 assert_eq!(f.path.as_deref(), Some("."));
-                assert!(!f.committed_output, "held back by the renderer");
+                assert!(f.committed_output);
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(out, "");
+        assert_eq!(out, "\"v\"\r\n\"1\"\r\n");
         // A row failure's path is made absolute. The header and a row
-        // had been rendered, but the renderer flushes at the end only, so
-        // nothing left it: the output is none, and stays a whole table or
-        // nothing.
+        // were whole when the failure came, so they are on the output,
+        // and the output is partial: whole rows, never part of one.
         let j = job(Format::Json, Renderer::Csv, ".a.b");
         let (r, out) = run_text(&j, r#"{"a": {"b": [{"x": 1}, [2]]}}"#);
         match r.unwrap_err() {
             ExportError::Transduce(f) => {
                 assert_eq!(f.path.as_deref(), Some(".a.b[1]"));
-                assert!(!f.committed_output);
+                assert!(f.committed_output);
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(out, "");
+        assert_eq!(out, "\"x\"\r\n\"1\"\r\n");
         assert_eq!(
             absolute(
                 Fail::input("x").at_path("column \"a\", row 1"),
@@ -2421,29 +2571,70 @@ mod tests {
                 other => panic!("{format}: {other:?}"),
             }
         }
-        // Once output has left, a refusal stays a refusal, and says so: the
-        // first member is whole, and written, before the second ends.
-        let long = "x".repeat(2 * tabnas_render::DEFAULT_BUDGET);
+        // A jsonic source can refuse the stream only once it has streamed
+        // the first value whole, so the stage holds that value, however
+        // long, until the pipe's own bound, and nothing has left when the
+        // refusal comes: the whole value is written instead.
+        let long = "x".repeat(2 * STAGE_MAX);
         let j = job(Format::Jsonic, Renderer::Json, ".");
-        let (r, out) = run_text(&j, &format!("{{a:'{long}', b:'{long}'}}\n{{c:2}}\n"));
+        for text in [
+            format!("{{a:'{long}', b:'{long}'}}\n{{c:2}}\n"),
+            format!("{{a:'{long}'}}\n{{b:2}}\n"),
+        ] {
+            let (r, out) = run_text(&j, &text);
+            r.unwrap();
+            assert_eq!(out, whole(&text, Format::Jsonic));
+        }
+        // Once output has left, a refusal stays a refusal, and says so. A
+        // JSON source's output leaves as the stage fills, and a repeated
+        // key on the path is met after the first's value left whole.
+        let rows: String = (0..6_000)
+            .map(|i| format!("{{\"v\": {i}}},"))
+            .collect::<String>()
+            .trim_end_matches(',')
+            .to_string();
+        let j = job(Format::Json, Renderer::Json, ".rows");
+        let (r, out) = run_text(&j, &format!("{{\"rows\": [{rows}], \"rows\": [1]}}"));
         match r.unwrap_err() {
             ExportError::Transduce(f) => {
-                assert_eq!(f.code, Code::StreamabilityUnknown);
+                assert_eq!(f.code, Code::DuplicateMember);
                 assert!(f.committed_output);
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(
-            out,
-            format!("{{\"a\":\"{long}\""),
-            "the record that was whole"
+        assert!(out.len() > STAGE_MAX, "{}", out.len());
+        assert!(out.starts_with("[{\"v\":0},{\"v\":1},"), "{:?}", &out[..40]);
+        assert!(
+            out.ends_with("{\"v\":5999}]"),
+            "the first value, whole: {:?}",
+            &out[out.len() - 20..]
         );
-        // A record still being written when the refusal came was held back,
-        // so nothing had left, and the whole value is written instead.
-        let one = format!("{{a:'{long}'}}\n{{b:2}}\n");
-        let (r, out) = run_text(&j, &one);
+    }
+
+    /// Once output has left, a source's refusal to stream is a failure,
+    /// the input's, with the output partial and whole records on it: a
+    /// jsonic first value longer than the stage holds (a test's stage of
+    /// 64 bytes; the format's holds 16 MB, so this takes a value longer
+    /// than that) is written before the grammar wraps it in a list.
+    #[test]
+    fn a_stream_refused_after_output_left_is_a_failure_with_the_output_partial() {
+        let j = job(Format::Jsonic, Renderer::Json, ".");
+        let long = "x".repeat(200);
+        let text = format!("{{a:'{long}'}}\n{{b:2}}\n");
+        let out = Shared::default();
+        let r = export_staged(&j, Input::Text(&text), Box::new(out.clone()), 64);
+        match r.unwrap_err() {
+            ExportError::Transduce(f) => {
+                assert_eq!(f.code, Code::StreamabilityUnknown, "{}", f.message);
+                assert!(f.committed_output);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(out.text(), format!("{{\"a\":\"{long}\"}}"));
+        // The format's own stage holds the value, and the run falls back.
+        let (r, out) = run_text(&j, &text);
         r.unwrap();
-        assert_eq!(out, whole(&one, Format::Jsonic));
+        assert_eq!(out, whole(&text, Format::Jsonic));
     }
 
     /// A program's own refusal to stream, raised by its sink before

@@ -102,7 +102,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     6 a parse (or a --grammar compile) ran past --timeout, or the input was
     still being read when it passed (--render, --alchemy: the whole run,
     the program's work included). A stream that fails stops at the end of
-    a record: a CSV row, a value in the root JSON array or object, a line.
+    a record, a CSV row, a value in the root JSON array or object, a line,
+    and every record whole by then is written before the error is reported.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml

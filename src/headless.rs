@@ -2639,7 +2639,10 @@ mod tests {
         });
         let out = with_stdin(&failing, RECORDS);
         assert_eq!(out.status, status::PARSE, "{}", out.stderr);
-        assert_eq!(out.stdout, "");
+        assert_eq!(
+            out.stdout, "ok",
+            "the first item, whole, before the failure"
+        );
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("transduce"));
         assert_eq!(e["code"], json!("INPUT_INVALID"));
@@ -2648,7 +2651,7 @@ mod tests {
         assert_eq!(e["format"], json!(null));
         assert_eq!((e["line"].clone(), e["col"].clone()), (json!(3), json!(14)));
         assert_eq!(e["input"], json!("-"));
-        assert_eq!(e["output"], json!("none"));
+        assert_eq!(e["output"], json!("partial"));
         // A line-delimited format from standard input is read a record at
         // a time, so the size limit does not apply to it.
         let mut lines = req(echo());
@@ -2681,13 +2684,16 @@ mod tests {
         let doc = r#"{"meta": {"fields": [{"title": "Id", "path": ["id"]}, {"title": "Name", "path": ["name"]}]}, "records": [{"id": 1, "name": "a"}, {"id": 2}]}"#;
         let out = with_stdin(&r, doc);
         assert_eq!(out.status, status::PARSE, "{}", out.stderr);
-        assert_eq!(out.stdout, "");
+        assert_eq!(
+            out.stdout, "\"Id\",\"Name\"\r\n\"1\",\"a\"\r\n",
+            "the header and the whole row before the failure"
+        );
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("transduce"));
         assert_eq!(e["code"], json!("MISSING_VALUE"));
         assert_eq!(e["file"], json!("-"));
         assert_eq!(e["format"], json!("json"));
-        assert_eq!(e["output"], json!("none"));
+        assert_eq!(e["output"], json!("partial"));
         assert!(e.get("input").is_none(), "{e}");
         assert!(e.get("line").is_none() && e.get("col").is_none(), "{e}");
         // As JSON records the same rows render, a missing value left out.
@@ -2746,10 +2752,12 @@ mod tests {
     /// `STREAMABILITY_UNKNOWN` is a code of both sides: the program's (the
     /// checker's, the evaluator's `recursion`) and the source's (a verified
     /// grammar that refuses to stream a document part-way). Once output has
-    /// left, the source's refusal cannot fall back, and it is the input's
+    /// left, a source's refusal cannot fall back, and it is the input's
     /// failure, in the transducer's shape with status 1, never the
     /// program's; the code alone does not tell them apart, where the
-    /// failure came from does.
+    /// failure came from does (`export`'s tests show that refusal over a
+    /// small stage; here the stage holds the value and the refusal falls
+    /// back).
     #[test]
     fn a_grammars_refusal_to_stream_under_a_program_is_the_inputs() {
         let mut r = req(Op::Alchemy {
@@ -2759,22 +2767,15 @@ mod tests {
         });
         r.kind = Some(Format::Jsonic);
         // A jsonic top-level implicit list whose first element is a
-        // container: the first value is streamed as the root, and written
-        // (the string is longer than the writer holds back), before the
-        // grammar wraps it in a list.
+        // container: the first value is streamed as the root before the
+        // grammar wraps it in a list. A jsonic value is held whole, however
+        // long (up to the pipe's own bound), so nothing has left when the
+        // refusal comes, and it falls back to the whole value, as under
+        // --render (aless#17: the writer's buffer used to decide this).
         let long = "x".repeat(2 * tabnas_render::DEFAULT_BUDGET);
         let out = with_stdin(&r, &format!("{{a:'{long}'}}\n{{b:2}}\n"));
-        assert_eq!(out.status, status::PARSE, "{}", out.stderr);
-        assert!(out.stdout.starts_with("{\"a\":\"xxx"), "output had left");
-        let e = &json_of(&out.stderr)["error"];
-        assert_eq!(e["kind"], json!("transduce"));
-        assert_eq!(e["code"], json!("STREAMABILITY_UNKNOWN"));
-        assert_eq!(e["file"], json!("-"));
-        assert_eq!(e["format"], json!("jsonic"));
-        assert_eq!(e["output"], json!("partial"));
-        assert!(e.get("input").is_none(), "{e}");
-        // Before anything has left, the same refusal falls back to the
-        // whole value, as under --render.
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, format!("[{{\"a\":\"{long}\"}},{{\"b\":2}}]\n"));
         let out = with_stdin(&r, "{a:1}\n{b:2}\n");
         assert_eq!(out.status, status::OK, "{}", out.stderr);
         assert_eq!(out.stdout, "[{\"a\":1},{\"b\":2}]\n");
@@ -2887,14 +2888,17 @@ mod tests {
         // The input did not parse: the transducer's code, and the position.
         let out = with_stdin(&r, "[{\"a\": 1},\n {\"b\": }]");
         assert_eq!(out.status, status::PARSE);
-        assert_eq!(out.stdout, "");
+        assert_eq!(
+            out.stdout, "\"a\"\r\n\"1\"\r\n",
+            "the whole row before the failure"
+        );
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("transduce"));
         assert_eq!(e["file"], json!("-"));
         assert_eq!(e["format"], json!("json"));
         assert_eq!(e["code"], json!("INPUT_INVALID"));
         assert_eq!((e["line"].clone(), e["col"].clone()), (json!(2), json!(8)));
-        assert_eq!(e["output"], json!("none"));
+        assert_eq!(e["output"], json!("partial"));
         assert!(
             e.get("row").is_none(),
             "the transducer's row is aless's line"

@@ -257,13 +257,16 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. What was written ends at the end of
 a record (a CSV row, a value directly inside the root JSON array or
-object, a JSON Lines line): a record half written when the failure came
-is dropped, unless it is longer than 16 MB, which is written as it comes
-(a JSON one to the end of one of its own values). A program's own text is
-written an item at a time; another format's render (`--render yaml`) may
-stop inside a record. `INPUT_INVALID` with a message that
-names `--path` means the value is not an array of records: point `--path`
-at one. `DUPLICATE_MEMBER` means a key on the exported path is repeated
+object, a JSON Lines line): every record whole when the failure came is
+on standard output before the error is reported, none held back in a
+buffer; a record half written is dropped, unless it is longer than 16 MB,
+which is written as it comes (a JSON one to the end of one of its own
+values). A program's own text is written an item at a time, and a `json`
+or `csv` render in the program a record at a time; another format's
+render (`--render yaml`) may stop inside a record. `INPUT_INVALID` with a
+message that names `--path` means the value is not an array of records:
+point `--path` at one. `DUPLICATE_MEMBER` means a key on the exported
+path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
 refuses rather than export a different one. `[-1]` on an array is a usage
 error under `--render` (a stream cannot count from the end); on an object
