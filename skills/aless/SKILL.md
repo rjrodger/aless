@@ -257,7 +257,8 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. What was written ends at the end of
 a record (a CSV row, a value directly inside the root JSON array or
-object, a JSON Lines line): every record whole when the failure came is
+object, a bare number there ending at the comma after it, a JSON Lines
+line): every record whole when the failure came is
 on standard output before the error is reported, none held back in a
 buffer; a record half written is dropped, unless it is longer than 16 MB,
 which is written as it comes (a JSON one to the end of one of its own

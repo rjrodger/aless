@@ -325,7 +325,8 @@ $ aless --render csv --path .response.payload.deep.records response.json
 the result had been written before the failure, else `"none"`. A stream
 cannot take bytes back, so what was written stays, and it ends at the end
 of a record: a CSV row, a value directly inside the root JSON array or
-object, a line of JSON Lines. Every record whole when the failure came is
+object (a bare number there, which may go on, ends at the comma after
+it), a line of JSON Lines. Every record whole when the failure came is
 on standard output before the error is reported, none held back in a
 buffer; a record half written is dropped, not written in part. A record
 longer than 16 MB is not held back whole: a JSON one is written up to the

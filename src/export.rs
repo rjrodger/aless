@@ -1231,6 +1231,14 @@ struct Pipe {
     escaped: bool,
     /// JSON containers open.
     depth: usize,
+    /// The JSON root is an object: a string directly inside it is a key
+    /// until the colon, then a value.
+    root_object: bool,
+    /// Directly inside a JSON object root, past the member's colon.
+    after_colon: bool,
+    /// The letters of a bare word directly inside the JSON root, so far:
+    /// `true`, `false` or `null` ends a record where it ends.
+    word: Vec<u8>,
     /// Where in `held` the last value one level inside a JSON record ends:
     /// the cut for a record too long to hold.
     inner_end: usize,
@@ -1248,6 +1256,9 @@ impl Pipe {
             quoted: false,
             escaped: false,
             depth: 0,
+            root_object: false,
+            after_colon: false,
+            word: Vec::new(),
             inner_end: 0,
             hold_max: HOLD_MAX,
         }
@@ -1279,29 +1290,66 @@ impl Pipe {
                 Records::Json if self.quoted => match b {
                     _ if self.escaped => self.escaped = false,
                     b'\\' => self.escaped = true,
-                    b'"' => self.quoted = false,
+                    // A string directly inside the root is whole at its
+                    // close, unless it is a member's key.
+                    b'"' => {
+                        self.quoted = false;
+                        if self.depth == 1 && self.value_here() {
+                            end = i + 1;
+                            self.after_colon = false;
+                        }
+                    }
                     _ => {}
                 },
+                // A value directly inside the root is whole where it ends:
+                // a container at its close, a string at its closing quote,
+                // `true`, `false` and `null` at their last letter; a number
+                // may go on, so it is whole at the comma after it, or at
+                // the root's close.
                 Records::Json => match b {
                     b'"' => self.quoted = true,
-                    b'[' | b'{' => self.depth += 1,
-                    // A container directly inside the root is whole at its
-                    // close; a scalar there (a number may go on) is whole
-                    // at the comma after it, or at the root's close.
+                    b'[' | b'{' => {
+                        if self.depth == 0 {
+                            self.root_object = b == b'{';
+                        }
+                        self.depth += 1;
+                    }
                     b']' | b'}' => {
                         self.depth = self.depth.saturating_sub(1);
                         if self.depth <= 1 {
                             end = i + 1;
+                            self.after_colon = false;
                         }
                     }
-                    b',' if self.depth == 1 => end = i,
+                    b':' if self.depth == 1 => self.after_colon = true,
+                    b',' if self.depth == 1 => {
+                        end = i;
+                        self.after_colon = false;
+                    }
                     b',' if self.depth == 2 => self.inner_end = i,
+                    b'a'..=b'z' if self.depth == 1 => {
+                        self.word.push(b);
+                        if matches!(self.word.as_slice(), b"true" | b"false" | b"null") {
+                            end = i + 1;
+                            self.after_colon = false;
+                        }
+                    }
                     _ => {}
                 },
+            }
+            if !b.is_ascii_lowercase() {
+                self.word.clear();
             }
         }
         self.seen = self.held.len();
         end
+    }
+
+    /// Directly inside the JSON root, is a scalar here a value? In an
+    /// array every one is; in an object a string before the colon is the
+    /// member's key.
+    fn value_here(&self) -> bool {
+        !self.root_object || self.after_colon
     }
 }
 
@@ -1909,13 +1957,13 @@ mod tests {
     /// filled, reaches the output a whole record at a time: fed `text` up
     /// to any point, the pipe has written up to the last record's end it
     /// could see there, and the run's end, its flush, writes the rest
-    /// (aless#17). A JSON container is seen to end at its close, a scalar
-    /// at the comma after it.
+    /// (aless#17). A JSON value is seen to end where it ends, a number at
+    /// the comma after it.
     #[test]
     fn the_pipe_writes_whole_records() {
         let csv = "a,\"b\nc\",\"d\"\"e\"\r\n1,2,3\r\n4,\"5,6\",7\r\n8,9";
-        let json = "[\n  {\"a\": \"x,]}\\\"\"},\n  [1, 2],\n  3,\n  {\"b\": {}}\n]\n";
-        let object = "{\"a\": [1, 2], \"b\": \"c,d\", \"c\": 5}";
+        let json = "[\n  {\"a\": \"x,]}\\\"\"},\n  [1, 2],\n  3,\n  \"s,]\",\n  true,\n  null,\n  {\"b\": {}}\n]\n";
+        let object = "{\"a\": [1, 2], \"b\": \"c,d\", \"c\": 5, \"d\": false}";
         let lines = "{\"a\":1}\n{\"a\":2}\n{\"a\"";
         let after = |text: &str, part: &str| text.find(part).unwrap() + part.len();
         // (where a record ends, how far the pipe must have read to know)
@@ -1931,8 +1979,9 @@ mod tests {
                     at(after(csv, "7\r\n")),
                 ],
             ),
-            // A container inside the root is whole at its close, a scalar
-            // at the comma after it (a number may go on).
+            // A value inside the root is whole where it ends: a container
+            // at its close, a string at its quote, a literal at its last
+            // letter; a number may go on, so at the comma after it.
             (
                 Records::Json,
                 json,
@@ -1940,16 +1989,23 @@ mod tests {
                     at(after(json, "\"\"}")),
                     at(after(json, "[1, 2]")),
                     comma(after(json, "3")),
+                    at(after(json, "\"s,]\"")),
+                    at(after(json, "true")),
+                    at(after(json, "null")),
                     at(after(json, "{}}")),
                     at(after(json, "{}}\n]")),
                 ],
             ),
+            // In an object root a string before the colon is a key, and
+            // ends no record.
             (
                 Records::Json,
                 object,
                 vec![
                     at(after(object, "[1, 2]")),
-                    comma(after(object, "\"c,d\"")),
+                    at(after(object, "\"c,d\"")),
+                    comma(after(object, "5")),
+                    at(after(object, "false")),
                     at(object.len()),
                 ],
             ),

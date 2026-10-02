@@ -637,6 +637,17 @@ fn whole_records_reach_standard_output_before_the_error() {
         );
         assert_eq!(e["output"], json!("partial"), "{mode:?}");
     }
+    // A scalar record is whole where it ends, a string at its closing
+    // quote: the second string is on the output though nothing followed
+    // it. A bare number may go on, and is whole at the comma after it.
+    let json_compact = ["-k", "jsonl", "--render", "json", "--compact"];
+    let out = aless(&json_compact, Some("\"x\"\n\"y\"\n\"unterminated\n"));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.stdout, b"[\"x\",\"y\"");
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("partial"));
+    let out = aless(&json_compact, Some("1\n2\n\"unterminated\n"));
+    assert_eq!(code(&out), 1);
+    assert_eq!(out.stdout, b"[1");
 }
 
 /// A writer that goes quiet part way, past `--timeout`: the records it
@@ -685,14 +696,16 @@ fn a_slow_stdin_leaves_whole_records_at_the_timeout() {
     }
 }
 
-/// The four ways two whole JSON Lines records reach standard output, and
-/// what they are there: the plain renders, and a program's table (its
-/// columns inferred from the first row) and JSON events.
-fn record_modes() -> [(&'static [&'static str], &'static str); 4] {
+/// The five ways two whole JSON Lines records reach standard output, and
+/// what they are there: the plain renders, a program's table (its
+/// columns inferred from the first row) and JSON events, and a composed
+/// render.
+fn record_modes() -> [(&'static [&'static str], &'static str); 5] {
     const TABLE: &str = "def export [input] (table-from-json \
         (record (entry :columns :infer) (entry :rows (path each-index))) input)";
     const CSV: &str = "\"a\",\"b\"\r\n\"1\",\"x\"\r\n\"2\",\"y\"\r\n";
     const JSON: &str = "[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"}";
+    const LINES: &str = "{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n";
     [
         (&["-k", "jsonl", "--render", "csv"], CSV),
         (&["-k", "jsonl", "--render", "json", "--compact"], JSON),
@@ -704,6 +717,8 @@ fn record_modes() -> [(&'static [&'static str], &'static str); 4] {
             &["-k", "jsonl", "--alchemy-expr", "def export [input] input"],
             JSON,
         ),
+        // A composed render (another format's, run as a program).
+        (&["-k", "jsonl", "--render", "jsonl"], LINES),
     ]
 }
 
@@ -2954,11 +2969,23 @@ fn a_programs_output_is_written_as_any_format() {
     );
     let direct = aless(&["--render", "markdown"], Some("[1,2]"));
     assert_eq!(scalars.stdout, direct.stdout);
-    for (input, reason) in [
-        ("[{\"a\":1},2]", "but the first row was an object"),
-        ("[1,{\"a\":1}]", "but the first row was a scalar"),
-        ("[[1],[2]]", "is an array; a row is an object"),
-        ("{\"a\":1}", "is an object, not an array of records"),
+    // Another format's render writes as it goes: a row refused after the
+    // first was written leaves the table's head on the output, and the
+    // output is partial (aless#17); a document refused at its first row
+    // leaves nothing.
+    for (input, reason, written) in [
+        (
+            "[{\"a\":1},2]",
+            "but the first row was an object",
+            "| a |\n| --- |\n| 1 |\n",
+        ),
+        (
+            "[1,{\"a\":1}]",
+            "but the first row was a scalar",
+            "| value |\n| --- |\n| 1 |\n",
+        ),
+        ("[[1],[2]]", "is an array; a row is an object", ""),
+        ("{\"a\":1}", "is an object, not an array of records", ""),
     ] {
         let out = aless(&identity, Some(input));
         assert_eq!(
@@ -2967,14 +2994,19 @@ fn a_programs_output_is_written_as_any_format() {
             "{input}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(out.stdout.is_empty(), "{input}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), written, "{input}");
         let error = &json(&out.stderr)["error"];
         assert_eq!(error["code"], "INPUT_INVALID", "{input}: {error}");
         assert!(
             error["message"].as_str().unwrap().contains(reason),
             "{input}: {error}"
         );
-        assert_eq!(error["output"], "none", "{input}");
+        let output = if written.is_empty() {
+            "none"
+        } else {
+            "partial"
+        };
+        assert_eq!(error["output"], output, "{input}");
     }
 }
 
