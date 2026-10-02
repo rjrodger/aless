@@ -287,6 +287,26 @@ fn positions_outside_the_text_are_not_found() {
         json!(format!("no line 3 in {bare}: it has 2 lines"))
     );
     assert_eq!(e["nearest"]["path"], json!(".b"));
+    // A CR that no LF follows ends no line: it is a character of its
+    // line, as it is to the grammars, so ` "b": 2}` plus the CR is nine.
+    let cr = dir.join("cr.json");
+    std::fs::write(&cr, "{\"a\": 1,\n \"b\": 2}\r").unwrap();
+    let cr = cr.to_str().unwrap();
+    assert_eq!(json(&at("2:9", cr).stdout)["path"], json!(".b"));
+    let out = at("2:10", cr);
+    assert_eq!(code(&out), 4);
+    assert_eq!(
+        json(&out.stderr)["error"]["message"],
+        json!(format!(
+            "no column 10 on line 2 of {cr}: the line has 9 characters"
+        ))
+    );
+    let out = at("3", cr);
+    assert_eq!(code(&out), 4);
+    assert_eq!(
+        json(&out.stderr)["error"]["message"],
+        json!(format!("no line 3 in {cr}: it has 2 lines"))
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

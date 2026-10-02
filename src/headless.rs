@@ -1276,15 +1276,31 @@ pub enum Outside {
 
 /// Whether a source position is outside `text`, and why when it is;
 /// `None` when it is inside. Lines and columns count from 1, columns in
-/// characters, as every position does. The lines are what [`load::lines`]
-/// splits the text into: a line's text excludes its terminator (LF or
+/// characters, as every position does. The lines are those of
+/// [`load::line_count`]: a line's text excludes its terminator (LF or
 /// CRLF), and a trailing terminator starts no line, so `"a\n"` has one. A
-/// column is inside its line when it is at most the line's length, so an
-/// empty line has no column inside it.
+/// CR that no LF follows ends no line and is a character of its line, as
+/// it is to the grammars, whose rows end at LF alone. A column is inside
+/// its line when it is at most the line's length, so an empty line has no
+/// column inside it. The lines are read up to the one asked for, never
+/// collected: the text can be as long as `--max-size` allows.
 pub fn outside(text: &str, line: u32, col: Option<u32>) -> Option<Outside> {
-    let lines = load::lines(text);
-    let Some(text) = (line as usize).checked_sub(1).and_then(|i| lines.get(i)) else {
-        return Some(Outside::Line { lines: lines.len() });
+    let past = || Outside::Line {
+        lines: load::line_count(text),
+    };
+    let Some(index) = (line as usize).checked_sub(1) else {
+        return Some(past());
+    };
+    let mut pieces = text.split('\n').peekable();
+    let Some(piece) = pieces.nth(index) else {
+        return Some(past());
+    };
+    let text = match pieces.peek() {
+        // Followed by an LF: the line's text, less the CR of a CRLF.
+        Some(_) => piece.strip_suffix('\r').unwrap_or(piece),
+        // After the last LF: a line only when there is text, whole.
+        None if piece.is_empty() => return Some(past()),
+        None => piece,
     };
     let len = text.chars().count();
     match col {
@@ -2074,6 +2090,19 @@ mod tests {
             Some(Col { col: 3, len: 2 })
         );
         assert_eq!(outside("ab\r\ncd", 3, None), Some(Line { lines: 2 }));
+        // A CR that no LF follows is a character of its line, as it is
+        // to the grammars, whose rows end at LF alone.
+        assert_eq!(outside("{\"a\":1}\r", 1, Some(8)), None);
+        assert_eq!(
+            outside("{\"a\":1}\r", 1, Some(9)),
+            Some(Col { col: 9, len: 8 })
+        );
+        assert_eq!(outside("{\"a\":1}\r", 2, None), Some(Line { lines: 1 }));
+        assert_eq!(outside("a\rb\n", 1, Some(3)), None, "a CR inside a line");
+        assert_eq!(outside("a\r\n", 1, Some(2)), Some(Col { col: 2, len: 1 }));
+        assert_eq!(outside("a\n\r", 2, Some(1)), None, "a last line of one CR");
+        assert_eq!(outside("a\n\r\n", 2, None), None, "an empty second line");
+        assert_eq!(outside("a\n\r\n", 2, Some(1)), Some(Col { col: 1, len: 0 }));
         assert_eq!(
             outside("a\n\nb\n", 2, None),
             None,
