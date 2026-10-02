@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use tabnas_transduce::{Code, Fail, JsonEvent, Metrics};
 
 use crate::alchemy::{self, ProgramArg};
-use crate::doc::{Doc, Key, Kind, NodeId};
+use crate::doc::{Doc, Key, Kind, NodeId, NO_NODE};
 use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Records, Renderer, What};
 use crate::fmt;
 use crate::grammar::GrammarError;
@@ -320,7 +320,8 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
     let source = one_source(req)?;
     let (name, loaded) = load(&source, req, stdin)?;
     let doc = &loaded.doc;
-    let start = select(doc, &req.start, &name, loaded.format)?;
+    let text = load::parser_text(&loaded.source);
+    let start = select(doc, text, &req.start, &name, loaded.format)?;
     let head = |m: &mut Map<String, Value>| {
         m.insert("file".into(), name.clone().into());
         m.insert("format".into(), loaded.format.name().into());
@@ -1239,7 +1240,8 @@ pub fn resolve(doc: &Doc, segs: &[Seg]) -> Result<NodeId, (NodeId, usize)> {
 /// the one the line starts with; of nodes starting at the same place, the
 /// innermost. On a line with none (a comment, a closing bracket, the inside
 /// of a long string): the node that starts last before it. `None` when no
-/// node has a known position.
+/// node has a known position. A position outside the text is the caller's
+/// to refuse ([`outside`]); what this answers for it is its `nearest`.
 pub fn node_at(doc: &Doc, line: u32, col: Option<u32>) -> Option<NodeId> {
     let known = || (0..doc.len() as NodeId).filter(|&i| doc.node(i).line != 0);
     let on_line: Vec<NodeId> = known().filter(|&i| doc.node(i).line == line).collect();
@@ -1263,8 +1265,43 @@ pub fn node_at(doc: &Doc, line: u32, col: Option<u32>) -> Option<NodeId> {
         .or_else(|| known().next())
 }
 
-/// The node an operation starts at.
-fn select(doc: &Doc, start: &Start, file: &str, format: Format) -> Result<NodeId, Failure> {
+/// Why a source position is outside the text, when it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outside {
+    /// The line is past the last: the text has `lines` lines.
+    Line { lines: usize },
+    /// The column is past the end of its line, which has `len` characters.
+    Col { col: u32, len: usize },
+}
+
+/// Whether a source position is outside `text`, and why when it is;
+/// `None` when it is inside. Lines and columns count from 1, columns in
+/// characters, as every position does. The lines are what [`load::lines`]
+/// splits the text into: a line's text excludes its terminator (LF or
+/// CRLF), and a trailing terminator starts no line, so `"a\n"` has one. A
+/// column is inside its line when it is at most the line's length, so an
+/// empty line has no column inside it.
+pub fn outside(text: &str, line: u32, col: Option<u32>) -> Option<Outside> {
+    let lines = load::lines(text);
+    let Some(text) = (line as usize).checked_sub(1).and_then(|i| lines.get(i)) else {
+        return Some(Outside::Line { lines: lines.len() });
+    };
+    let len = text.chars().count();
+    match col {
+        Some(col) if col as usize > len => Some(Outside::Col { col, len }),
+        _ => None,
+    }
+}
+
+/// The node an operation starts at. `text` is what the document was parsed
+/// from, which says whether a position is inside it.
+fn select(
+    doc: &Doc,
+    text: &str,
+    start: &Start,
+    file: &str,
+    format: Format,
+) -> Result<NodeId, Failure> {
     match start {
         Start::Root => Ok(0),
         Start::Path(text) => {
@@ -1298,9 +1335,42 @@ fn select(doc: &Doc, start: &Start, file: &str, format: Format) -> Result<NodeId
                 Some(c) => format!("{line}:{c}"),
                 None => line.to_string(),
             };
-            node_at(doc, *line, *col).ok_or_else(|| {
+            // What a position inside the text answers; for one outside
+            // it, what it would have answered: the error's `nearest`.
+            let near = node_at(doc, *line, *col);
+            if let Some(why) = outside(text, *line, *col) {
+                let counted = |n: usize, what: &str| match n {
+                    1 => format!("1 {what}"),
+                    n => format!("{n} {what}s"),
+                };
+                let message = match why {
+                    Outside::Line { lines: 0 } => format!("no line {line} in {file}: it is empty"),
+                    Outside::Line { lines } => {
+                        format!(
+                            "no line {line} in {file}: it has {}",
+                            counted(lines, "line")
+                        )
+                    }
+                    Outside::Col { col, len: 0 } => {
+                        format!("no column {col} on line {line} of {file}: the line is empty")
+                    }
+                    Outside::Col { col, len } => format!(
+                        "no column {col} on line {line} of {file}: the line has {}",
+                        counted(len, "character")
+                    ),
+                };
+                return Err(Failure::not_found(
+                    doc,
+                    file,
+                    format,
+                    ("at", &at),
+                    near.unwrap_or(NO_NODE),
+                    message,
+                ));
+            }
+            near.ok_or_else(|| {
                 let message = format!("no node in {file} has a known source position");
-                Failure::not_found(doc, file, format, ("at", &at), NodeId::MAX, message)
+                Failure::not_found(doc, file, format, ("at", &at), NO_NODE, message)
             })
         }
     }
@@ -1565,8 +1635,10 @@ impl Failure {
 
     /// `--path` or `--at` named nothing: `{"kind": "not_found", "file",
     /// "format", "path" or "at", "message", "nearest", "keys"}`, where
-    /// `nearest` is the entry of the deepest node the path did reach, and
-    /// `keys` the first of that node's keys when it is an object.
+    /// `nearest` is the entry of `near`, the deepest node the path did
+    /// reach or the node a position outside the text would have answered
+    /// inside it (`null` for [`NO_NODE`]), and `keys` the first of that
+    /// node's keys when it is an object.
     fn not_found(
         doc: &Doc,
         file: &str,
@@ -1964,6 +2036,7 @@ mod tests {
             Some(r#".c."odd key""#),
             "the node before"
         );
+        // Past the end of the text, which `select` refuses: its `nearest`.
         assert_eq!(at(99, None).as_deref(), Some(r#".c."odd key""#));
         // Nested nodes starting at the same place: the innermost.
         let y = load::parse("items:\n  - name: web\n    port: 80\n", Format::Yaml).unwrap();
@@ -1971,6 +2044,159 @@ mod tests {
         assert_eq!(path.as_deref(), Some(".items[0].name"));
         let none = Doc::from_lines(&[]);
         assert_eq!(node_at(&none, 1, None), None);
+    }
+
+    #[test]
+    fn a_position_is_inside_the_text_or_not() {
+        use Outside::{Col, Line};
+        // A line's text excludes its terminator, LF or CRLF; a trailing
+        // terminator starts no line; an empty line has no column inside
+        // it; columns count characters.
+        assert_eq!(outside("a\n", 1, None), None);
+        assert_eq!(outside("a\n", 1, Some(1)), None);
+        assert_eq!(outside("a\n", 1, Some(2)), Some(Col { col: 2, len: 1 }));
+        assert_eq!(outside("a\n", 2, None), Some(Line { lines: 1 }));
+        assert_eq!(
+            outside("a", 1, Some(1)),
+            None,
+            "no terminator: a line still"
+        );
+        assert_eq!(outside("a", 2, None), Some(Line { lines: 1 }));
+        assert_eq!(outside("ab\r\ncd", 1, Some(2)), None);
+        assert_eq!(
+            outside("ab\r\ncd", 1, Some(3)),
+            Some(Col { col: 3, len: 2 }),
+            "the CR is not text"
+        );
+        assert_eq!(outside("ab\r\ncd", 2, Some(2)), None);
+        assert_eq!(
+            outside("ab\r\ncd", 2, Some(3)),
+            Some(Col { col: 3, len: 2 })
+        );
+        assert_eq!(outside("ab\r\ncd", 3, None), Some(Line { lines: 2 }));
+        assert_eq!(
+            outside("a\n\nb\n", 2, None),
+            None,
+            "an empty line is a line"
+        );
+        assert_eq!(
+            outside("a\n\nb\n", 2, Some(1)),
+            Some(Col { col: 1, len: 0 })
+        );
+        assert_eq!(outside("", 1, None), Some(Line { lines: 0 }));
+        assert_eq!(outside("\n", 1, None), None, "one empty line");
+        assert_eq!(outside("\n", 2, None), Some(Line { lines: 1 }));
+        assert_eq!(
+            outside("é1\n", 1, Some(2)),
+            None,
+            "columns count characters"
+        );
+        assert_eq!(outside("é1\n", 1, Some(3)), Some(Col { col: 3, len: 2 }));
+    }
+
+    #[test]
+    fn positions_outside_the_text_are_not_found() {
+        // DOC's lines: `{`; `  "a": 1,` (9 characters); `  "b": [true,
+        // null, "x"],`; `  "c": {"d": 2.5, "odd key": "v"}` (33); `}`.
+        let at = |op: Op, line, col, src: &str| {
+            let mut r = req(op);
+            r.start = Start::At(line, col);
+            with_stdin(&r, src)
+        };
+        let path = |out: &Output| json_of(&out.stdout)["path"].clone();
+        let error = |out: &Output| json_of(&out.stderr)["error"].clone();
+        // The last position inside the text is the closing brace at 5:1,
+        // and answers the node before it.
+        let out = at(Op::Where, 5, Some(1), DOC);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(path(&out), json!(r#".c."odd key""#));
+        // Between two nodes on a line, the one before; at the end of a
+        // line, the last on it.
+        assert_eq!(path(&at(Op::Where, 4, Some(17), DOC)), json!(".c.d"));
+        assert_eq!(
+            path(&at(Op::Where, 4, Some(33), DOC)),
+            json!(r#".c."odd key""#)
+        );
+        assert_eq!(path(&at(Op::Where, 2, Some(9), DOC)), json!(".a"));
+        // A line past the last.
+        let out = at(Op::Where, 6, None, DOC);
+        assert_eq!(out.status, status::NOT_FOUND);
+        assert!(out.stdout.is_empty());
+        let e = error(&out);
+        assert_eq!(e["kind"], json!("not_found"));
+        assert_eq!(e["file"], json!("-"));
+        assert_eq!(e["format"], json!("json"));
+        assert_eq!(e["at"], json!("6"));
+        assert_eq!(e["message"], json!("no line 6 in -: it has 5 lines"));
+        assert_eq!(e["nearest"]["path"], json!(r#".c."odd key""#));
+        assert_eq!(e["nearest"]["line"], json!(4));
+        assert_eq!(e["keys"], Value::Null);
+        // A column past the end of its line.
+        for (line, col, nearest, why) in [
+            (5, 2, r#".c."odd key""#, "the line has 1 character"),
+            (2, 10, ".a", "the line has 9 characters"),
+            (4, 34, r#".c."odd key""#, "the line has 33 characters"),
+        ] {
+            let out = at(Op::Where, line, Some(col), DOC);
+            assert_eq!(out.status, status::NOT_FOUND, "{line}:{col}");
+            let e = error(&out);
+            assert_eq!(e["at"], json!(format!("{line}:{col}")));
+            assert_eq!(
+                e["message"],
+                json!(format!("no column {col} on line {line} of -: {why}"))
+            );
+            assert_eq!(e["nearest"]["path"], json!(nearest));
+        }
+        // --json, --paths and --find answer the same way.
+        for op in [Op::Json, Op::Paths, Op::Find("a".into())] {
+            let flag = op.flag();
+            let out = at(op, 6, None, DOC);
+            assert_eq!(out.status, status::NOT_FOUND, "{flag}");
+            assert_eq!(error(&out)["nearest"]["path"], json!(r#".c."odd key""#));
+        }
+        // The nearest node's keys, as for a path: the `{}` at 1:5 is an
+        // object with none.
+        let out = at(Op::Where, 1, Some(8), "[1, {}]\n");
+        assert_eq!(out.status, status::NOT_FOUND);
+        let e = error(&out);
+        assert_eq!(e["nearest"]["path"], json!("[1]"));
+        assert_eq!(e["keys"], json!([]));
+        assert_eq!(path(&at(Op::Where, 1, Some(7), "[1, {}]\n")), json!("[1]"));
+        // CRLF: the CR is not text, and a trailing CRLF starts no line.
+        let crlf = "{\r\n  \"a\": 1\r\n}\r\n";
+        assert_eq!(path(&at(Op::Where, 2, Some(8), crlf)), json!(".a"));
+        let out = at(Op::Where, 2, Some(9), crlf);
+        assert_eq!(out.status, status::NOT_FOUND);
+        assert_eq!(
+            error(&out)["message"],
+            json!("no column 9 on line 2 of -: the line has 8 characters")
+        );
+        assert_eq!(path(&at(Op::Where, 3, Some(1), crlf)), json!(".a"));
+        let out = at(Op::Where, 4, None, crlf);
+        assert_eq!(out.status, status::NOT_FOUND);
+        assert_eq!(
+            error(&out)["message"],
+            json!("no line 4 in -: it has 3 lines")
+        );
+        // A last line without a terminator is a line.
+        let bare = "{\n  \"a\": 1\n}";
+        assert_eq!(path(&at(Op::Where, 3, Some(1), bare)), json!(".a"));
+        assert_eq!(at(Op::Where, 3, Some(2), bare).status, status::NOT_FOUND);
+        let out = at(Op::Where, 4, None, bare);
+        assert_eq!(out.status, status::NOT_FOUND);
+        assert_eq!(error(&out)["nearest"]["path"], json!(".a"));
+        // An empty text has no line, and no node with a position: nearest
+        // is null.
+        let mut r = req(Op::Where);
+        r.files = vec!["-".into()];
+        r.kind = Some(Format::Text);
+        r.start = Start::At(1, None);
+        let out = with_stdin(&r, "");
+        assert_eq!(out.status, status::NOT_FOUND);
+        let e = error(&out);
+        assert_eq!(e["message"], json!("no line 1 in -: it is empty"));
+        assert_eq!(e["nearest"], Value::Null);
+        assert_eq!(e["keys"], Value::Null);
     }
 
     #[test]

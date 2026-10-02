@@ -153,16 +153,26 @@ shell, whose globbing would take `[0]`.
 
 - `kind` is jq's name for the type: object, array, string, number,
   boolean or null.
-- `line` and `col` count from 1 and give where the node starts in the
-  source: at its key when it has one, else at its value. They are exact
-  for the JSON family, TOML, INI, CSV and ZON, best-effort for YAML, XML
-  and Markdown, and `null` when unknown.
+- `line` and `col` count from 1, columns in characters, and give where
+  the node starts in the source: at its key when it has one, else at its
+  value. They are exact for the JSON family, TOML, INI, CSV and ZON,
+  best-effort for YAML, XML and Markdown, and `null` when unknown.
 - A container has `length`, its item count; a scalar has `value`. A
   string over 200 characters is cut to 200, with `"truncated": true` and
   its full `length`. Numbers are 64-bit floats, so an integer beyond
   2^53 loses precision; NaN and the infinities, which JSON cannot hold,
   are `"NaN"`, `"Infinity"` and `"-Infinity"` in an entry and `null` in
   `--json` output.
+
+Inside the text, `--at` answers the node starting last at or before the
+position on its line, the innermost of several starting there (a line
+alone, or a column before the line's first node, that first node; on a
+line with no node of its own, a comment or a closing bracket, the last
+node before the line, or the document's first node when none is).
+Outside the text it names nothing: a line past the last line, or a
+column past the end of its line, where a line's text excludes its
+terminator (LF or CRLF), a trailing terminator starts no line (`"a\n"`
+has one), and an empty line has no column inside it.
 
 A listing puts one entry per line and says what it left out:
 
@@ -223,8 +233,10 @@ code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
 `report`, the whole report the viewer shows, uncoloured; a field that
 does not apply is `null` (`file` too, when it was standard output that
 could not be written). A `not_found` error has the `path` or `at` it
-was given, the entry of the `nearest` node the path did reach, and that
-node's first `keys` when it is an object. A `too_large` error has the
+was given, the entry of the `nearest` node, the deepest node the path
+did reach or, for `--at`, the node a position inside the text would have
+answered (`null` when no node has a position), and that node's first
+`keys` when it is an object. A `too_large` error has the
 fields of an `io` one plus the input's `size` (`null` for standard input,
 which is read no further than the limit) and the `limit`, in bytes, and
 its `hint` names the `--max-size` that would read it. A `timeout` error
