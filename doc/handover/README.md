@@ -202,6 +202,20 @@ order" step 1:
   --all-targets --all-features -- -D warnings` on Rust 1.97 did not
   report it, so check with `ci/rust/run.sh`, which CI runs.
 
+Codex reviewed f109c0b and left two findings, both unanswered:
+
+- P1 at `test/spec/bad-token.tsv:52`: the file's header names Go's
+  different answers under relex with recovery and at the
+  `maxRecoveries` cap, but no group in `test/spec/divergent.tsv` or
+  `DIVERGENCE.md` registers them, so the parity gate cannot see either
+  side change. Register them per ADR-14, or fix Go (#266 covers the
+  first).
+- P2 at `rs/src/parser.rs:1977`: for a built-in lexer fault, the new
+  branch hands lex subscribers a mutable `#BD` token, then recovers
+  from, or fails with, the original error, ignoring what a subscriber
+  changed. TypeScript runs subscribers before `parse_alts` reads the
+  token, so the mutated token should take the normal token path.
+
 `cargo test` and `go test ./...` pass on it locally. Still to do: fix the
 clippy errors, run the TypeScript suite, finish the open findings the parser handover lists for
 Engine 1 and 2, review f109c0b, and pass the fleet gate. After that come
