@@ -1165,7 +1165,7 @@ dependencies = [
 [[package]]
 name = "tabnas-csv"
 version = "0.6.0"
-source = "git+https://github.com/tabnas/csv#2ba7fd8a740985796d896be2d680c74d18684cd3"
+source = "git+https://github.com/tabnas/csv#f78ebe0f70ad3725d4eefeb29fb332d22a2b871f"
 dependencies = [
  "indexmap",
  "serde",
@@ -1198,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "tabnas-ini"
 version = "0.5.12"
-source = "git+https://github.com/tabnas/ini#1597e83dc07de865d0162b934b19e647e788f7d9"
+source = "git+https://github.com/tabnas/ini#713c18a9791d41600c8625f8f483f7b048b709f0"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1210,7 +1210,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json"
 version = "0.5.11"
-source = "git+https://github.com/tabnas/json#dcdfa82e7b2d863f0b490ec9c76909acd743b548"
+source = "git+https://github.com/tabnas/json#7e893b8f19abf738bf76a4c9961dd178de633169"
 dependencies = [
  "regex",
  "serde_json",
@@ -1220,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "tabnas-json5"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/json5#abbb6719eb31abd4bd03171971e4a2c0826caf74"
+source = "git+https://github.com/tabnas/json5#978401358597816036c54d56dc2830e35e9f7f74"
 dependencies = [
  "indexmap",
  "regex",
@@ -1232,7 +1232,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonc"
 version = "0.5.8"
-source = "git+https://github.com/tabnas/jsonc#f4e1230fde5ac50be30250d86bbcee32449d55ca"
+source = "git+https://github.com/tabnas/jsonc#337e32b6c27d94ff677dea814e9e46be2470bba0"
 dependencies = [
  "serde_json",
  "tabnas-jsonic",
@@ -1242,7 +1242,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonic"
 version = "0.7.2"
-source = "git+https://github.com/tabnas/jsonic#5e26e360cb5e43aa8f58152cd05b3139e97264d7"
+source = "git+https://github.com/tabnas/jsonic#fc0edf0c6077240c54695262ca4003c45bea87f0"
 dependencies = [
  "indexmap",
  "regex",
@@ -1254,7 +1254,7 @@ dependencies = [
 [[package]]
 name = "tabnas-jsonl"
 version = "0.1.10"
-source = "git+https://github.com/tabnas/jsonl#ab637f2cb7c305fe6507191f61b46b3c10684930"
+source = "git+https://github.com/tabnas/jsonl#81336692e368fd3326d8594491a4e2680f135f7f"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -1274,7 +1274,7 @@ dependencies = [
 [[package]]
 name = "tabnas-markdown"
 version = "0.7.6"
-source = "git+https://github.com/tabnas/markdown#af8380072410097ca5fe605d0340ad9b3d62803e"
+source = "git+https://github.com/tabnas/markdown#2dc28f16e0348222bb01d14b01baffc91a1ac431"
 dependencies = [
  "indexmap",
  "regex",
@@ -1305,7 +1305,7 @@ dependencies = [
 [[package]]
 name = "tabnas-toml"
 version = "0.5.9"
-source = "git+https://github.com/tabnas/toml#9ea924ebf9413e3816621db6a067892bf427414c"
+source = "git+https://github.com/tabnas/toml#00f751d957fcf88aabf8f7d3ca72ecb874c48465"
 dependencies = [
  "indexmap",
  "regex",
@@ -1317,7 +1317,7 @@ dependencies = [
 [[package]]
 name = "tabnas-transduce"
 version = "0.1.0"
-source = "git+https://github.com/tabnas/transduce#2564a221455cba584b2677c58f34645ff9ad8821"
+source = "git+https://github.com/tabnas/transduce#8fed1b0f7f8ecac1a5c2d58683ef65909570b149"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1329,7 +1329,7 @@ dependencies = [
 [[package]]
 name = "tabnas-xml"
 version = "0.7.10"
-source = "git+https://github.com/tabnas/xml#6697e53245e1849231d0c18414cc5cf450070af6"
+source = "git+https://github.com/tabnas/xml#eca811abb77a9b557322db820e5d41557576fc7f"
 dependencies = [
  "indexmap",
  "regex",
@@ -1340,8 +1340,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.15"
-source = "git+https://github.com/tabnas/yaml#6a76f59eb799b1529fa91491c8e25602e8bfd268"
+version = "0.5.16"
+source = "git+https://github.com/tabnas/yaml#0b0ee4705a49dc41a671228b235d4befb9e0ecb7"
 dependencies = [
  "indexmap",
  "regex",
@@ -1353,7 +1353,7 @@ dependencies = [
 [[package]]
 name = "tabnas-zon"
 version = "0.5.10"
-source = "git+https://github.com/tabnas/zon#840b57f69cc4c72a1709b2fed382b1d62876836a"
+source = "git+https://github.com/tabnas/zon#5eedb7a9c58afc5e16fc771040597b9ff050bfa3"
 dependencies = [
  "indexmap",
  "serde",
