@@ -12,6 +12,14 @@
 //! This is grammar-agnostic and best-effort by design: it is exact for the
 //! JSON family, TOML, INI, CSV and ZON values, and degrades gracefully for
 //! YAML, XML and Markdown.
+//!
+//! Records keyed by a header row (CSV, TSV) are the one shape whose keys
+//! are not in the stream where the values are: every record's keys are
+//! the header's cells, lexed once, before any value. Matching a key by
+//! name there finds a header cell, or a value that happens to spell a
+//! column's name, and drags the record's first field onto the header
+//! line. [`align_records`] therefore skips the header line's tokens and
+//! places each field at its value alone.
 
 use std::sync::{Arc, Mutex};
 
@@ -183,6 +191,36 @@ fn matches_kind(tok: &Tok, kind: &Kind) -> bool {
 
 /// Assign source positions to the nodes of `doc` from its token stream.
 pub fn align(doc: &mut Doc, toks: &[Tok]) {
+    align_with(doc, toks, true);
+}
+
+/// [`align`] for a document of records keyed by a header row (CSV, TSV):
+/// an array of objects whose keys are the header's cells.
+///
+/// The header is lexed before any value, so its cells are the first tokens
+/// kept, all on one line. When the first of them spells the first record's
+/// first key, every token on that line is the header's and is skipped;
+/// otherwise nothing is (a document of another shape is aligned as it
+/// stands). Keys are then never matched by name, since no record carries
+/// its keys in the source: each field sits where its value was lexed, and
+/// a field whose value left no token (an empty cell) is left unplaced.
+pub fn align_records(doc: &mut Doc, toks: &[Tok]) {
+    let first_key = doc
+        .first_child(0)
+        .filter(|&r| matches!(doc.nodes[r as usize].kind, Kind::Object))
+        .and_then(|r| doc.first_child(r))
+        .and_then(|f| doc.nodes[f as usize].key.name().map(str::to_owned));
+    let header_line = match (toks.first(), first_key) {
+        (Some(t), Some(key)) if matches_str(t, &key) => Some(t.line),
+        _ => None,
+    };
+    let start = header_line.map_or(0, |line| toks.iter().take_while(|t| t.line == line).count());
+    align_with(doc, &toks[start..], false);
+}
+
+/// The alignment proper. With `keys` off a node's name is never looked
+/// for in the stream, only its value.
+fn align_with(doc: &mut Doc, toks: &[Tok], keys: bool) {
     let mut cursor = 0usize;
     let find = |cursor: usize, window: usize, pred: &dyn Fn(&Tok) -> bool| -> Option<usize> {
         let end = (cursor + window).min(toks.len());
@@ -194,7 +232,7 @@ pub fn align(doc: &mut Doc, toks: &[Tok]) {
             (n.key.clone(), n.kind.clone())
         };
         let mut placed = false;
-        if let Key::Name(name) = &key {
+        if let (true, Key::Name(name)) = (keys, &key) {
             if let Some(j) = find(cursor, WINDOW, &|t| matches_str(t, name)) {
                 doc.nodes[i].line = toks[j].line;
                 doc.nodes[i].col = toks[j].col;
@@ -387,5 +425,74 @@ mod tests {
         assert_eq!((doc.nodes[1].line, doc.nodes[1].col), (1, 2));
         let doc = parse("[1]");
         assert_eq!(doc.nodes[1].col, 2);
+    }
+
+    fn parse_csv(src: &str) -> Doc {
+        let mut p = tabnas_csv::make();
+        let sink = capture(&mut p);
+        let v = p.parse(src).unwrap();
+        let mut doc = Doc::from_value(&v);
+        align_records(&mut doc, &sink.lock().unwrap());
+        doc
+    }
+
+    fn positions(doc: &Doc) -> Vec<(u32, u32)> {
+        doc.nodes.iter().map(|n| (n.line, n.col)).collect()
+    }
+
+    /// A record's keys are the header's cells, so the first record's first
+    /// field used to be placed on the header line, at the cell that spells
+    /// its key; every field sits at its own value.
+    #[test]
+    fn csv_fields_sit_at_their_values_and_never_on_the_header() {
+        let doc = parse_csv("name,age,city\nada,36,london\nlin,28,helsinki\n");
+        assert_eq!(
+            positions(&doc),
+            vec![
+                (2, 1), // the root array: its first record
+                (2, 1), // [0]
+                (2, 1), // [0].name  (was 1:1, the header cell)
+                (2, 5), // [0].age
+                (2, 8), // [0].city
+                (3, 1), // [1]
+                (3, 1), // [1].name
+                (3, 5), // [1].age
+                (3, 8), // [1].city
+            ]
+        );
+    }
+
+    /// Values that spell column names are values, not keys.
+    #[test]
+    fn csv_values_that_spell_a_column_name_do_not_shift_the_record() {
+        let doc = parse_csv("a,b\nb,a\n");
+        assert_eq!(positions(&doc)[2..], [(2, 1), (2, 3)]);
+    }
+
+    /// A short record's missing field has no value token and no position;
+    /// the fields after it keep theirs, and so does the next record.
+    #[test]
+    fn csv_empty_cell_is_unplaced_and_the_rest_stay_put() {
+        let doc = parse_csv("name,age,city\nada,36\nlin,28,helsinki\n");
+        assert_eq!(
+            positions(&doc)[2..],
+            [(2, 1), (2, 5), (0, 0), (3, 1), (3, 1), (3, 5), (3, 8)]
+        );
+    }
+
+    /// The header line is wherever the first token is, and only when it
+    /// spells the first key: a document of another shape is left alone.
+    #[test]
+    fn csv_header_is_found_by_its_first_cell() {
+        let doc = parse_csv("\n\nname,age\nada,36\n");
+        assert_eq!(positions(&doc)[2..], [(4, 1), (4, 5)]);
+        // Not a header-keyed document: the same text aligned as records
+        // still places every value in order.
+        let mut p = tabnas_json::make();
+        let sink = capture(&mut p);
+        let v = p.parse("[{\"a\": 1}, {\"a\": 2}]").unwrap();
+        let mut doc = Doc::from_value(&v);
+        align_records(&mut doc, &sink.lock().unwrap());
+        assert_eq!(positions(&doc)[2..], [(1, 8), (1, 12), (1, 18)]);
     }
 }

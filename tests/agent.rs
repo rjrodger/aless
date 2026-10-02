@@ -178,6 +178,40 @@ fn outline_drill_down_and_positions() {
     assert_eq!(v["value"], json!("TAPL"));
 }
 
+/// CSV and TSV records are keyed by the header row, which is lexed before
+/// any value: the first record's first field used to be placed on the
+/// header line, at the cell that spells its key. Every field is at its
+/// value, and nothing sits on the header line.
+#[test]
+fn csv_and_tsv_positions_start_below_the_header() {
+    for (file, format) in [
+        ("tests/fixtures/sample.csv", "csv"),
+        ("tests/fixtures/sample.tsv", "tsv"),
+    ] {
+        let out = aless(&["--where", "--path", "[0].name", file], None);
+        assert_eq!(code(&out), 0, "{file}");
+        let v = json(&out.stdout);
+        assert_eq!(v["format"], json!(format));
+        assert_eq!(
+            (v["line"].clone(), v["col"].clone()),
+            (json!(2), json!(1)),
+            "{file}: the first field is on the first record's line"
+        );
+        assert_eq!(v["value"], json!("ada"));
+        let out = aless(&["--where", "--at", "2:1", file], None);
+        assert_eq!(json(&out.stdout)["path"], json!("[0].name"), "{file}");
+        let out = aless(&["--paths", file], None);
+        let v = json(&out.stdout);
+        let on_header = v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["line"] == json!(1))
+            .count();
+        assert_eq!(on_header, 0, "{file}: nothing is placed on the header line");
+    }
+}
+
 #[test]
 fn find_lists_matches_with_positions() {
     let out = aless(&["--find", "title", "tests/fixtures/nested.json"], None);

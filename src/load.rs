@@ -91,6 +91,12 @@ impl Format {
         matches!(self, Format::Custom(_))
     }
 
+    /// Whether the document is a list of records keyed by a header row,
+    /// so that no record carries its keys in the source (CSV, TSV).
+    pub fn keyed_by_header(&self) -> bool {
+        matches!(self, Format::Csv | Format::Tsv)
+    }
+
     /// A format by name or by a common alias (`yml`, `md`, `ndjson`, `txt`).
     /// A custom grammar's name comes first: the command line asked for it,
     /// even over a built-in's.
@@ -1617,7 +1623,13 @@ fn parse_guarded(
             // go before the alignment lowers the peak on a large document.
             drop(value);
             if let Ok(toks) = sink.lock() {
-                prov::align(&mut doc, &toks);
+                // CSV and TSV records are keyed by the header row, which is
+                // lexed once, ahead of every value.
+                if format.keyed_by_header() {
+                    prov::align_records(&mut doc, &toks);
+                } else {
+                    prov::align(&mut doc, &toks);
+                }
             }
             Ok(doc)
         }
@@ -2995,5 +3007,12 @@ mod tests {
         let doc = parse("a,b\n1,2\n3,4\n", Format::Csv).unwrap();
         let second = doc.resolve(&[Key::Index(1)]).unwrap();
         assert_eq!(doc.node(second).line, 3);
+        // The first record is below the header, not on it.
+        let first = doc.resolve(&[Key::Index(0)]).unwrap();
+        assert_eq!(doc.node(first).line, 2);
+        let a = doc
+            .resolve(&[Key::Index(0), Key::Name("a".into())])
+            .unwrap();
+        assert_eq!((doc.node(a).line, doc.node(a).col), (2, 1));
     }
 }
