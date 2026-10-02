@@ -73,7 +73,7 @@ reply, and then its thread resolved.
 | [tabnas/parser#270](https://github.com/tabnas/parser/pull/270) | Go: Derive carries each custom matcher once (#242). | Green. | Not independently reviewed. |
 | [tabnas/parser#271](https://github.com/tabnas/parser/pull/271) | Go: under `line.single` a CRLF is one line token that advances the row (#265). | **prose red**; the rest green. | The prose gate. Not independently reviewed. csv's Go suite passes against it. A shared `lex-line-single.tsv` fixture would pin all three runtimes, which is left as a follow-up. |
 | [tabnas/parser#272](https://github.com/tabnas/parser/pull/272) | Registers #263 and #218 per ADR-14. | Green. | Four Codex P2s on `DIVERGENCE.md`, each asking for a registered row: a multi-character block-comment end (line 895); an end-less comment whose body holds the word `undefined`, where TypeScript answers `unexpected` (line 854); U+2028 or U+2029 also in `line.chars`, where Rust answers `unprintable` (line 784); and a custom `string.escape` mapping of a non-ASCII character, which Go misses because it looks up the first UTF-8 byte (line 808). #218's repair direction is written as "ruling pending". |
-| [tabnas/parser#274](https://github.com/tabnas/parser/pull/274) | Handover engine patches 1 and 2, in progress. | **rust red** at f109c0b on a misplaced clippy allow, fixed in 11792ed; CI was rerunning. | See "Stopped part way". |
+| [tabnas/parser#274](https://github.com/tabnas/parser/pull/274) | Handover engine patches 1 and 2, in progress. | **rust red.** 11792ed fixed a misplaced clippy allow, and the job then failed on three `clippy::format_collect` errors in `rs/tests/linear_time_test.rs`. fleet-pr was still running; the rest is green. | See "Stopped part way". |
 | [tabnas/css#56](https://github.com/tabnas/css/pull/56) | Go: string lexing off, as TypeScript has it; 65 stray-quote rows in `test/spec/quotes.tsv`, run by all three runtimes. | Green. | Afterwards parser's `DIVERGENCE.md`, `go/options.go` and `go/empty_chars_test.go` should stop citing css as a live empty-`Chars` site. |
 | [tabnas/toml#89](https://github.com/tabnas/toml/pull/89) | Go: a redefined key raises `toml_key_conflict`, as TypeScript and Rust do; shared `key-conflict.tsv`. | Green, mergeable. | Codex P1 at `test/conformance.tsv:127`: the new Go baseline, 280 of 509, was measured against the published parser v0.12.7, while CI runs against parser main as a sibling. Re-measure every runtime as CI does. Codex P2 at `go/refs.go:159`: `[[a.b]]` then `[[a.b.c]]` is a valid nested array of tables, which Go rejects with `toml_key_conflict` because it calls `tableAt(DEFINE)`. Use `arrayAt` when `table_array` is set, and add the case to the shared fixtures. Two decisions are also in the PR: TypeScript accepts four TOML-invalid documents, which Go now follows; and the position of a conflict, TypeScript 1:1, Go and Rust at the key, is registered with TypeScript moving. |
 
@@ -195,9 +195,15 @@ order" step 1:
   `test/spec/bad-token.tsv` gains `continuations` rows. Go answers three
   cases differently, which the file's header records.
 - 11792ed fixes the clippy failure f109c0b introduced.
+- CI's rust job still fails, on `clippy::format_collect` at lines 67,
+  117 and 121 of `rs/tests/linear_time_test.rs`, which patch 2 adds.
+  Each builds a `String` with `map(|..| format!(..)).collect()`. Build
+  it with `fold` and `write!`, as clippy suggests. A local `cargo clippy
+  --all-targets --all-features -- -D warnings` on Rust 1.97 did not
+  report it, so check with `ci/rust/run.sh`, which CI runs.
 
-`cargo test` and `go test ./...` pass on it locally. Still to do: run the
-TypeScript suite, finish the open findings the parser handover lists for
+`cargo test` and `go test ./...` pass on it locally. Still to do: fix the
+clippy errors, run the TypeScript suite, finish the open findings the parser handover lists for
 Engine 1 and 2, review f109c0b, and pass the fleet gate. After that come
 the downstream Rust test PRs for css, toml and yaml in the same window,
 then patch 3b, in which a merge of a removed default fixed token follows
