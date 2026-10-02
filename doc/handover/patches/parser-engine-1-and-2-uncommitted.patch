@@ -1,0 +1,368 @@
+diff --git a/go/bad_token_spec_test.go b/go/bad_token_spec_test.go
+index 0811606..cb68db1 100644
+--- a/go/bad_token_spec_test.go
++++ b/go/bad_token_spec_test.go
+@@ -75,12 +75,16 @@ func badTokenParser(t *testing.T, grammar string, grammars map[string]string, op
+ 		}
+ 		install(gs)
+ 	}
+-	if "-" != opts {
++	if "-" != opts && badTokenContinuations != opts {
+ 		install(optionsOnly(opts))
+ 	}
+ 	return j
+ }
+ 
++// badTokenContinuations is the `opts` cell that asks for Continuations(input)
++// instead of a parse.
++const badTokenContinuations = "continuations"
++
+ // badTokenCanon is the shared canonical value: sorted keys, integral
+ // numbers without a fraction, and an absent value as null.
+ func badTokenCanon(v any) string {
+@@ -161,7 +165,10 @@ func TestBadTokenSpec(t *testing.T) {
+ 		grammar, opts, input, value, errors := cols[0], cols[1], cols[2], cols[3], cols[4]
+ 		j := badTokenParser(t, grammar, grammars, opts)
+ 		var gotValue, gotErrors string
+-		if j.Config().Recover.Enabled {
++		if badTokenContinuations == opts {
++			_, names := j.Continuations(input)
++			gotValue, gotErrors = strings.Join(names, ","), "-"
++		} else if j.Config().Recover.Enabled {
+ 			v, errs, perr := j.ParseRecover(input)
+ 			if perr != nil {
+ 				t.Errorf("row %d %q %s: recovery returned an error: %v", row.lineNo, input, opts, perr)
+diff --git a/rs/src/parser.rs b/rs/src/parser.rs
+index be07787..3611db4 100644
+--- a/rs/src/parser.rs
++++ b/rs/src/parser.rs
+@@ -1880,6 +1880,36 @@ impl Parser {
+     }
+ 
+     #[allow(clippy::too_many_arguments)]
++    /// Record, for `continuations()`, what could have followed where a
++    /// fetch raised a bad token: the lexer's own fault, or a `#BD` token a
++    /// custom matcher returned.
++    ///
++    /// TypeScript records nothing at such a fetch (`_contTins` is cleared
++    /// when `parse_alts` begins and written only when every alternate has
++    /// failed on a buffered token), so `Tabnas.continuations` computes the
++    /// answer from the buffer for the rule that fetched, at position 0
++    /// (`continuationTins(ctx, rule)`), or, when that rule is `NORULE`
++    /// because the check for trailing content fetched, answers with the
++    /// start rule's openers. Here a rule's fetch records the same set, and
++    /// the trailing check records nothing, which `continuations_uncaught`
++    /// turns into the start openers.
++    fn capture_fetch_failure(
++        &self,
++        context: &Context,
++        rule: &Rule,
++        stack: &[Rule],
++        mode: &mut ParseMode<'_>,
++        fetch: Fetch,
++    ) {
++        if fetch != Fetch::Rule {
++            return;
++        }
++        if let Some(capture) = mode.continuation.as_deref_mut() {
++            capture.failure =
++                continuation_tins(context, rule, stack, &self.rules, &self.options, 0, None);
++        }
++    }
++
+     fn ensure_lookahead(
+         &self,
+         lexer: &mut Lexer,
+@@ -1954,17 +1984,7 @@ impl Parser {
+                             }
+                             mode.gave_up = true;
+                         }
+-                        if let Some(capture) = mode.continuation.as_deref_mut() {
+-                            capture.failure = continuation_tins(
+-                                context,
+-                                rule,
+-                                site.stack,
+-                                &self.rules,
+-                                &self.options,
+-                                context.t.len(),
+-                                None,
+-                            );
+-                        }
++                        self.capture_fetch_failure(context, rule, site.stack, mode, fetch);
+                         // The lexer boxes its error internally; this is
+                         // the boundary back to the parser's own result.
+                         return Err(*error);
+@@ -2012,31 +2032,30 @@ impl Parser {
+                         }
+                         mode.gave_up = true;
+                     }
+-                    if let Some(capture) = mode.continuation.as_deref_mut() {
+-                        capture.failure = continuation_tins(
+-                            context,
+-                            rule,
+-                            site.stack,
+-                            &self.rules,
+-                            &self.options,
+-                            context.t.len(),
+-                            None,
+-                        );
+-                    }
++                    self.capture_fetch_failure(context, rule, site.stack, mode, fetch);
+                     return Err(error);
+                 }
+                 if token.tin == TIN_ZZ {
+                     if let Some(capture) = mode.continuation.as_deref_mut() {
++                        // The end is a legal continuation of a prefix that
++                        // parses, whoever fetched it. What else is legal
++                        // there is what the fetching rule's alternates could
++                        // still take; the check for trailing content has no
++                        // rule, and TypeScript's capture (the lex subscriber
++                        // in `Tabnas.continuations`) answers it with nothing,
++                        // since its `rule` is then `NORULE`.
+                         capture.have_end = true;
+-                        capture.at_end.extend(continuation_tins(
+-                            context,
+-                            rule,
+-                            site.stack,
+-                            &self.rules,
+-                            &self.options,
+-                            context.t.len(),
+-                            None,
+-                        ));
++                        if fetch == Fetch::Rule {
++                            capture.at_end.extend(continuation_tins(
++                                context,
++                                rule,
++                                site.stack,
++                                &self.rules,
++                                &self.options,
++                                context.t.len(),
++                                None,
++                            ));
++                        }
+                     }
+                 }
+                 if !self.ignore_tins.contains(&token.tin) {
+diff --git a/rs/tests/bad_token_fetch_test.rs b/rs/tests/bad_token_fetch_test.rs
+index fbc889f..7a39d9b 100644
+--- a/rs/tests/bad_token_fetch_test.rs
++++ b/rs/tests/bad_token_fetch_test.rs
+@@ -282,6 +282,38 @@ fn lex_subscribers_see_the_lexers_own_faults() {
+     assert_eq!(vec!["custom_bad".to_string()], *seen.lock().unwrap());
+ }
+ 
++/// `continuations()` after a complete document, and at a bad token a rule
++/// fetched. Go answers both differently (the last rule's closers; and what
++/// alternates still waiting on a later position want), so neither is in
++/// the shared fixture; ts/test/bad-token.test.js pins the same answers.
++#[test]
++fn continuations_after_a_complete_document_are_the_start_openers() {
++    // The trailing-content check has no rule, and TypeScript's
++    // `continuations` answers a failure with no rule, or a prefix no rule
++    // ever ran on, with the start rule's openers. Before, the check's
++    // fetch recorded the last rule's close alternates, `#RB` here.
++    let nest = r##"{"options":{"rule":{"start":"top"},"fixed":{"token":{"#LB":"<","#RB":">"}}},
++      "rule":{"top":{"open":[{"s":"#LB","p":"body"}],"close":[{"s":"#RB"}]},
++              "body":{"open":[{"s":"#NR"}],"close":[{"s":"#RB","b":1},{"s":"#ZZ","b":1}]}}}"##;
++    let parser = with_bad_matcher(grammar(nest));
++    assert_eq!(parser.continuations("<1>?").tokens, ["#LB"]);
++    assert_eq!(parser.continuations("<1> ?").tokens, ["#LB"]);
++    assert_eq!(parser.continuations("<1>>").tokens, ["#LB"]);
++    // The end alone is legal after a complete document: the check's fetch
++    // of the end token says nothing about what else could follow.
++    assert_eq!(parser.continuations("<1>").tokens, ["#ZZ"]);
++
++    // At a bad token a rule fetched, nothing is recorded (TypeScript's
++    // `parse_alts` throws before it writes `_contTins`), so the answer is
++    // computed from the buffer at the first position of the fetching
++    // rule's alternates: what `[` hands over to, not the `]` that the
++    // two-token alternate `#OS #CS` still wanted.
++    let parser = with_bad_matcher(json());
++    let openers = ["#NR", "#ST", "#VL", "#OB", "#OS"];
++    assert_eq!(parser.continuations("[?").tokens, openers);
++    assert_eq!(parser.continuations(r#"{"a"?"#).tokens, openers);
++}
++
+ #[test]
+ fn a_recovering_parse_that_gives_up_lists_each_error_once() {
+     let parser = recovering(grammar(NEST));
+diff --git a/rs/tests/bad_token_spec_test.rs b/rs/tests/bad_token_spec_test.rs
+index 70b54e7..75632b1 100644
+--- a/rs/tests/bad_token_spec_test.rs
++++ b/rs/tests/bad_token_spec_test.rs
+@@ -12,6 +12,9 @@ use tabnas::{ImperativeLexMatcher, LexMatcher, Tabnas, TabnasError, Value};
+ 
+ const FIXTURE: &str = "../test/spec/bad-token.tsv";
+ 
++/// The `opts` cell that asks for `continuations(input)` instead of a parse.
++const CONTINUATIONS: &str = "continuations";
++
+ fn decode(field: &str) -> String {
+     field
+         .replace("\\r\\n", "\r\n")
+@@ -59,7 +62,7 @@ fn make(grammar: &str, grammars: &HashMap<String, String>, opts: &str) -> Tabnas
+             .unwrap_or_else(|| panic!("no @grammar named {grammar}"));
+         parser.grammar_json(spec).expect("install grammar");
+     }
+-    if opts != "-" {
++    if opts != "-" && opts != CONTINUATIONS {
+         parser
+             .grammar_json(&format!(r#"{{"options":{opts}}}"#))
+             .expect("install options");
+@@ -121,7 +124,10 @@ fn render_error(error: &TabnasError) -> String {
+     format!("{}@{}:{}{}", error.code, error.row, error.col, meta)
+ }
+ 
+-fn run(parser: &Tabnas, input: &str) -> (String, String) {
++fn run(parser: &Tabnas, input: &str, opts: &str) -> (String, String) {
++    if opts == CONTINUATIONS {
++        return (parser.continuations(input).tokens.join(","), "-".into());
++    }
+     if parser.options.parse.recover.enabled {
+         let out = parser.parse_recover(input);
+         assert!(out.fatal.is_none(), "recovery returned a fatal error");
+@@ -162,7 +168,7 @@ fn bad_token_fixture() {
+         let [grammar, opts, input, value, errors] = cols.as_slice() else {
+             panic!("row {row}: expected five columns, got {}", cols.len());
+         };
+-        let (got_value, got_errors) = run(&make(grammar, &grammars, opts), input);
++        let (got_value, got_errors) = run(&make(grammar, &grammars, opts), input, opts);
+         if (&got_value, &got_errors) != (value, errors) {
+             failures.push(format!(
+                 "row {row} {input:?} {opts}\n  value:  got {got_value}, want {value}\n  errors: got {got_errors}, want {errors}"
+diff --git a/test/spec/bad-token.tsv b/test/spec/bad-token.tsv
+index e87ed64..de3fb7f 100644
+--- a/test/spec/bad-token.tsv
++++ b/test/spec/bad-token.tsv
+@@ -7,7 +7,11 @@ grammar	opts	input	value	errors
+ #
+ #   grammar  `json`, or the name of an `# @grammar` definition below
+ #   opts     serialized engine options, installed as a second grammar
+-#            carrying nothing but `options`, or `-` for none
++#            carrying nothing but `options`, or `-` for none; or the word
++#            `continuations`, and the row asks the engine what could
++#            follow the input (`continuations(input)`) instead of parsing
++#            it: `value` is then the token names it answers, in its order,
++#            joined by `,`, and `errors` is `-`
+ #   input    the source; \n, \r and \t are decoded, as in every file here
+ #   value    the parse result: `-` when a fail-fast parse throws, else the
+ #            value in the shared canonical form (map keys sorted, and an
+@@ -41,14 +45,18 @@ grammar	opts	input	value	errors
+ # A recovering parse that gives up lists every error once: the one it
+ # gave up on is the last one it recorded, or a cascade it dropped.
+ #
+-# Two cases are not here because Go answers them differently. With
++# Three cases are not here because Go answers them differently. With
+ # relexing and recovery TOGETHER, Go lists a bad token no alternate
+ # re-cuts twice, once unrecovered and once recovered, where TypeScript
+-# and Rust list it once. And Go reads the `maxRecoveries` cap before it
++# and Rust list it once. Go reads the `maxRecoveries` cap before it
+ # records an error, so a cascade at the cap ends its parse where the
+-# other two drop the cascade and go on. The canonical answers are pinned
+-# by a second test in ts/test/bad-token.test.js and by
+-# rs/tests/bad_token_fetch_test.rs.
++# other two drop the cascade and go on. And asked what could follow a
++# document that is complete before a bad token (`<1>?` in `nest`), or
++# before any trailing content, Go answers with the last rule's closers
++# where TypeScript answers with the start rule's openers; at a bad token
++# a rule fetched (`[?`), Go also lists what the alternates still waiting
++# on a later position want. The canonical answers are pinned by a second
++# test in ts/test/bad-token.test.js and by rs/tests/bad_token_fetch_test.rs.
+ #
+ # Runners: ts/test/bad-token.test.js, go/bad_token_spec_test.go,
+ # rs/tests/bad_token_spec_test.rs.
+@@ -110,3 +118,18 @@ one	-	1 ? 2	-	custom_bad@1:3
+ one	{"parse":{"recover":{"enabled":true}}}	1 ? 2	1	custom_bad@1:3
+ one	{"parse":{"recover":{"enabled":true}}}	1 "x\n2	1	unprintable@1:5
+ one	{"parse":{"recover":{"enabled":true}}}	1	1	-
++#
++# Continuations. What `continuations()` says could follow the input, which
++# the canonical engine computes from the rule that fetched a bad token, at
++# the first position of its alternates (`continuationTins(ctx, rule)` in
++# ts/src/tabnas.ts: nothing is recorded at the fetch itself), and from the
++# start rule's openers when no rule fetched it, the trailing-content check
++# having no rule. The end of the source is legal after a complete document.
++nest	continuations	<	#NR	-
++nest	continuations	<1	#RB	-
++nest	continuations	<?	#NR	-
++nest	continuations	<1>	#ZZ	-
++one	continuations	1	#ZZ	-
++one	continuations	1 ?	#NR	-
++json	continuations	[1] ?	#ZZ	-
++json	continuations	[1,?	#NR,#ST,#VL,#OB,#OS,#CS,#CA	-
+diff --git a/ts/test/bad-token.test.js b/ts/test/bad-token.test.js
+index f27e5c0..27608ce 100644
+--- a/ts/test/bad-token.test.js
++++ b/ts/test/bad-token.test.js
+@@ -29,6 +29,9 @@ const bad = {
+   },
+ }
+ 
++// The `opts` cell that asks for `continuations(input)` instead of a parse.
++const CONTINUATIONS = 'continuations'
++
+ function make(grammar, grammars, opts) {
+   const tn = new Tabnas({ lex: { match: { bad } } })
+   if ('json' === grammar) {
+@@ -38,7 +41,7 @@ function make(grammar, grammars, opts) {
+     assert.ok(null != grammars[grammar], 'no @grammar named ' + grammar)
+     tn.grammar(grammars[grammar])
+   }
+-  if ('-' !== opts) {
++  if ('-' !== opts && CONTINUATIONS !== opts) {
+     tn.grammar({ options: JSON.parse(opts) })
+   }
+   return tn
+@@ -69,7 +72,10 @@ function renderError(e) {
+   return d.code + '@' + d.row + ':' + d.col + meta
+ }
+ 
+-function run(tn, input) {
++function run(tn, input, opts) {
++  if (CONTINUATIONS === opts) {
++    return [tn.continuations(input).tokens.join(','), '-']
++  }
+   const recovering = tn.internal().config.parse.recover.enabled
+   try {
+     const out = tn.parse(input)
+@@ -94,7 +100,7 @@ describe('bad-token', () => {
+       }
+       if (cols[0].startsWith('#') || cols.length < 5) continue
+       const [grammar, opts, input, value, errors] = cols
+-      const [gotValue, gotErrors] = run(make(grammar, grammars, opts), input)
++      const [gotValue, gotErrors] = run(make(grammar, grammars, opts), input, opts)
+       const where = 'bad-token.tsv row ' + row + ' ' + JSON.stringify(input) + ' ' + opts
+       assert.equal(gotErrors, errors, where + ': errors')
+       assert.equal(gotValue, value, where + ': value')
+@@ -118,4 +124,31 @@ describe('bad-token', () => {
+     const capped = { parse: { recover: { enabled: true, maxRecoveries: 1 } } }
+     assert.deepEqual(answer(capped, '[1,,,2]'), ['[1,2]', 'unexpected@1:4+skip0'])
+   })
++
++  // The third answer Go does not give. After a complete document, a bad
++  // token (or any trailing content) is met by the trailing-content check,
++  // which has no rule: continuations() answers with the start rule's
++  // openers, as it does for a prefix no rule ever ran on. At a bad token a
++  // rule fetched, nothing is recorded, and the answer is computed from the
++  // buffer at the first position of that rule's alternates: `[?` offers
++  // what `[` hands over to, not the `]` an alternate two tokens long still
++  // wanted. rs/tests/bad_token_fetch_test.rs pins the same answers in Rust.
++  it('continuations-after-a-complete-document-and-at-a-fetched-bad-token', () => {
++    const nest = {
++      options: { rule: { start: 'top' }, fixed: { token: { '#LB': '<', '#RB': '>' } } },
++      rule: {
++        top: { open: [{ s: '#LB', p: 'body' }], close: [{ s: '#RB' }] },
++        body: { open: [{ s: '#NR' }], close: [{ s: '#RB', b: 1 }, { s: '#ZZ', b: 1 }] },
++      },
++    }
++    const after = (src) => make('nest', { nest }, '-').continuations(src).tokens
++    assert.deepEqual(after('<1>?'), ['#LB'])
++    assert.deepEqual(after('<1> ?'), ['#LB'])
++    assert.deepEqual(after('<1>>'), ['#LB'])
++    assert.deepEqual(after('<1>'), ['#ZZ'])
++
++    const json = (src) => make('json', {}, '-').continuations(src).tokens
++    assert.deepEqual(json('[?'), ['#NR', '#ST', '#VL', '#OB', '#OS'])
++    assert.deepEqual(json('{"a"?'), ['#NR', '#ST', '#VL', '#OB', '#OS'])
++  })
+ })
