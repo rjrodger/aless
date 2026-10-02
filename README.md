@@ -231,12 +231,17 @@ its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. On standard input the time runs from the start
-of the run, so waiting on it counts: an input still being read when it
-passes (a writer that is slow, or sends nothing, or never closes its
-end) fails as `timeout` too, with `line` and `col` `null` and a message
-saying the input was still being read. On a file it runs from the start
-of the parse, so each file `--check` reads gets the whole of it. A `usage` error has only `kind` and `message`,
+saying how long it took. A read of JSON Lines, CSV or TSV a record at a
+time (`--render`, `--alchemy`) names the line the record it was reading
+starts on, with `col` `null`, since the deadline lands between two of
+the engine's steps, where it has no position of its own; the report then
+names the line alone (`file:N`). On standard input the time runs from
+the start of the run, so waiting on it counts: an input still being read
+when it passes (a writer that is slow, or sends nothing, or never closes
+its end) fails as `timeout` too, with `line` and `col` `null` and a
+message saying the input was still being read. On a file it runs from
+the start of the parse, so each file `--check` reads gets the whole of
+it. A `usage` error has only `kind` and `message`,
 except for a `--grammar` that does not compile, which adds the `grammar`
 name and, when it came from a file, the `file`. A grammar file that
 cannot be read is an `io` error, one over `--max-size` a `too_large`

@@ -2772,12 +2772,37 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let mut j = job(Format::Jsonl, Renderer::Csv, ".");
-        j.timeout = Some(Duration::from_millis(1));
         let lines: String = (0..40_000)
             .map(|i| format!("{{\"id\": {i}, \"name\": \"item {i}\"}}\n"))
             .collect();
-        match run_lines(&j, &lines).0.unwrap_err() {
-            ExportError::Load { error, .. } => assert_eq!(error.code, "timeout"),
+        // A line-by-line read stopped at its deadline names the line the
+        // record it was reading starts on, and no column, since the deadline
+        // lands between two of the engine's steps (tabnas/transduce#19): the
+        // JSON form writes the missing column as `null`, and the report names
+        // the line alone. The input arrives slowly, a buffer every few
+        // milliseconds, so that the deadline lands while a record is being
+        // read on any machine: raised before the first record, the abort
+        // would name no line.
+        struct Slow<'a>(&'a [u8]);
+        impl io::Read for Slow<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(2));
+                self.0.read(buf)
+            }
+        }
+        j.timeout = Some(Duration::from_millis(50));
+        let out = Shared::default();
+        let reader = Box::new(io::BufReader::new(Slow(lines.as_bytes())));
+        match export(&j, Input::Lines(reader), Box::new(out)).unwrap_err() {
+            ExportError::Load { error, .. } => {
+                assert_eq!(error.code, "timeout");
+                assert!(error.line > 0, "the record being read");
+                assert_eq!(error.col, 0, "no column");
+                assert_eq!(
+                    error.plain_report().lines().nth(1),
+                    Some(format!("  --> (stdin):{}", error.line).as_str())
+                );
+            }
             other => panic!("{other:?}"),
         }
         // Time enough: the same inputs export.

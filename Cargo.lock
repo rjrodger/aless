@@ -1164,8 +1164,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.5.11"
-source = "git+https://github.com/tabnas/csv#bbfa51afe8954facceecd7a42ed29665278edd7e"
+version = "0.6.0"
+source = "git+https://github.com/tabnas/csv#2ba7fd8a740985796d896be2d680c74d18684cd3"
 dependencies = [
  "indexmap",
  "serde",
@@ -1284,8 +1284,8 @@ dependencies = [
 
 [[package]]
 name = "tabnas-parser"
-version = "0.12.7"
-source = "git+https://github.com/tabnas/parser#84636cf142a6c325078b134809020fde9d1f4a88"
+version = "0.12.8"
+source = "git+https://github.com/tabnas/parser#599e0260595919c0a592b3d9775e3ee860686cb4"
 dependencies = [
  "indexmap",
  "regex",
@@ -1317,7 +1317,7 @@ dependencies = [
 [[package]]
 name = "tabnas-transduce"
 version = "0.1.0"
-source = "git+https://github.com/tabnas/transduce#b1a7f174d39fa32cd10ccb07dc4ff296fbeadce6"
+source = "git+https://github.com/tabnas/transduce#2564a221455cba584b2677c58f34645ff9ad8821"
 dependencies = [
  "indexmap",
  "serde_json",
