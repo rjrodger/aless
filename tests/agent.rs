@@ -178,6 +178,138 @@ fn outline_drill_down_and_positions() {
     assert_eq!(v["value"], json!("TAPL"));
 }
 
+/// `--at` inside the text answers the last node starting at or before the
+/// position; outside it (a line past the last, a column past the end of
+/// its line) it names nothing, status 4, with the node it would have
+/// answered as `nearest`.
+#[test]
+fn positions_outside_the_text_are_not_found() {
+    // 12 lines; line 11 is `  "version": 3` and line 12 is `}`.
+    let nested = "tests/fixtures/nested.json";
+    let at = |pos: &str, file: &str| aless(&["--where", "--at", pos, "--compact", file], None);
+    // The last position inside the text, the closing brace at 12:1,
+    // answers the node before it.
+    let out = at("12:1", nested);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stdout)["path"], json!(".version"));
+    // Between two nodes on a line (line 6: `"title"` at 8, `"price"` at
+    // 25), the one before.
+    assert_eq!(
+        json(&at("6:20", nested).stdout)["path"],
+        json!(".store.books[0].title")
+    );
+    // A line past the last.
+    let out = at("13", nested);
+    assert_eq!(code(&out), 4);
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], json!("not_found"));
+    assert_eq!(e["file"], json!(nested));
+    assert_eq!(e["format"], json!("json"));
+    assert_eq!(e["at"], json!("13"));
+    assert_eq!(
+        e["message"],
+        json!("no line 13 in tests/fixtures/nested.json: it has 12 lines")
+    );
+    assert_eq!(e["nearest"]["path"], json!(".version"));
+    assert_eq!(e["nearest"]["line"], json!(11));
+    assert_eq!(e["nearest"]["value"], json!(3));
+    assert_eq!(e["keys"], Value::Null);
+    // A column past the end of its line: 12:2, after the brace.
+    let out = at("12:2", nested);
+    assert_eq!(code(&out), 4);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["at"], json!("12:2"));
+    assert_eq!(
+        e["message"],
+        json!("no column 2 on line 12 of tests/fixtures/nested.json: the line has 1 character")
+    );
+    assert_eq!(e["nearest"]["path"], json!(".version"));
+    // --json and --paths answer the same way.
+    for op in ["--json", "--paths"] {
+        let out = aless(&[op, "--at", "99", nested], None);
+        assert_eq!(code(&out), 4, "{op}");
+        assert!(out.stdout.is_empty(), "{op}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("not_found"), "{op}");
+        assert_eq!(e["nearest"]["path"], json!(".version"), "{op}");
+    }
+    // Plain text, four lines, the third empty: an empty line exists, and
+    // has no column inside it; the fourth, `fourth line`, has eleven.
+    let lines = "tests/fixtures/lines.txt";
+    assert_eq!(json(&at("3", lines).stdout)["path"], json!("[2]"));
+    let out = at("3:1", lines);
+    assert_eq!(code(&out), 4);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(
+        e["message"],
+        json!("no column 1 on line 3 of tests/fixtures/lines.txt: the line is empty")
+    );
+    assert_eq!(e["nearest"]["path"], json!("[2]"));
+    assert_eq!(
+        json(&at("4:11", lines).stdout)["value"],
+        json!("fourth line")
+    );
+    assert_eq!(code(&at("4:12", lines)), 4);
+    let out = at("5", lines);
+    assert_eq!(code(&out), 4);
+    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!("[3]"));
+    // CRLF, and a last line without a terminator.
+    let dir = std::env::temp_dir().join(format!("aless-at-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let crlf = dir.join("crlf.json");
+    std::fs::write(&crlf, "{\"a\": 1,\r\n \"b\": 2}\r\n").unwrap();
+    let crlf = crlf.to_str().unwrap();
+    // `{"a": 1,` is eight characters, and so is ` "b": 2}`: the CR after
+    // each is not text, and the trailing CRLF starts no line.
+    assert_eq!(json(&at("1:8", crlf).stdout)["path"], json!(".a"));
+    let out = at("1:9", crlf);
+    assert_eq!(code(&out), 4);
+    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!(".a"));
+    assert_eq!(json(&at("2:8", crlf).stdout)["path"], json!(".b"));
+    assert_eq!(code(&at("2:9", crlf)), 4);
+    let out = at("3", crlf);
+    assert_eq!(code(&out), 4);
+    assert_eq!(
+        json(&out.stderr)["error"]["message"],
+        json!(format!("no line 3 in {crlf}: it has 2 lines"))
+    );
+    let bare = dir.join("bare.json");
+    std::fs::write(&bare, "{\"a\": 1,\n \"b\": 2}").unwrap();
+    let bare = bare.to_str().unwrap();
+    assert_eq!(json(&at("2:8", bare).stdout)["path"], json!(".b"));
+    assert_eq!(code(&at("2:9", bare)), 4);
+    let out = at("3", bare);
+    assert_eq!(code(&out), 4);
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(
+        e["message"],
+        json!(format!("no line 3 in {bare}: it has 2 lines"))
+    );
+    assert_eq!(e["nearest"]["path"], json!(".b"));
+    // A CR that no LF follows ends no line: it is a character of its
+    // line, as it is to the grammars, so ` "b": 2}` plus the CR is nine.
+    let cr = dir.join("cr.json");
+    std::fs::write(&cr, "{\"a\": 1,\n \"b\": 2}\r").unwrap();
+    let cr = cr.to_str().unwrap();
+    assert_eq!(json(&at("2:9", cr).stdout)["path"], json!(".b"));
+    let out = at("2:10", cr);
+    assert_eq!(code(&out), 4);
+    assert_eq!(
+        json(&out.stderr)["error"]["message"],
+        json!(format!(
+            "no column 10 on line 2 of {cr}: the line has 9 characters"
+        ))
+    );
+    let out = at("3", cr);
+    assert_eq!(code(&out), 4);
+    assert_eq!(
+        json(&out.stderr)["error"]["message"],
+        json!(format!("no line 3 in {cr}: it has 2 lines"))
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn find_lists_matches_with_positions() {
     let out = aless(&["--find", "title", "tests/fixtures/nested.json"], None);
