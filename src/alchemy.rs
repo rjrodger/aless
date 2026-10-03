@@ -35,8 +35,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use tabnas_alchemy::effects::{self, RendererProfile};
 use tabnas_alchemy::{Output, Program};
-use tabnas_transduce::{Code, Fail, Limits, Metrics};
+use tabnas_render::WriteOut;
+use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink};
 
 use crate::export::{self, ExportError, Input, Job, Records, Renderer};
 use crate::load::{self, LoadError};
@@ -188,20 +190,37 @@ pub fn run(
     };
     // A table is CSV unless --render json says JSON records, and JSON
     // events JSON unless --render csv says a table; a program's own text
-    // is written an item at a time.
+    // is written an item at a time, unless a `json` or `csv` render in
+    // the program writes it, which is written a record at a time.
     let records = match (program.output(), render) {
-        (Output::Text, _) => Records::Any,
+        (Output::Text, _) => match effects::summarize(program).renderer {
+            RendererProfile::Json { .. } => Records::Json,
+            RendererProfile::Csv { .. } => Records::Csv,
+            RendererProfile::Text => Records::Any,
+        },
         (Output::TableRows, Some(Renderer::Json)) => Records::Json,
         (Output::TableRows, _) => Records::Csv,
         (Output::JsonEvents, Some(Renderer::Csv)) => Records::Csv,
         (Output::JsonEvents, _) => Records::Json,
     };
     export::run_program(job, input, out, records, |pipe, abort| {
+        // The program's writer stage is aless's: the coalescing writer the
+        // program's own `sink` would put over the pipe, with the same
+        // limit and metrics, but with no budget, so every fragment reaches
+        // the pipe as it comes and a record is on the output the moment it
+        // ends, rather than held, up to 32 KB of them, until the run's
+        // flush that a failure never makes.
+        let metrics = Metrics::new();
+        let out = WriteOut::new(pipe)
+            .with_budget(0)
+            .with_limits(&limits)
+            .with_metrics(metrics.clone());
         // A sink that cannot be built (a renderer that does not fit what
         // the program exports) is the program's side's failure too.
         program
             .with_abort(abort)
-            .sink(pipe, render.and_then(renderer), &limits, Metrics::new())
+            .sink_out(Box::new(out), render.and_then(renderer), &limits, metrics)
+            .map(|sink| Box::new(sink) as Box<dyn Sink + Send>)
             .map_err(|fail| ExportError::Program(Box::new(fail)))
     })
 }

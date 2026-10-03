@@ -153,16 +153,26 @@ shell, whose globbing would take `[0]`.
 
 - `kind` is jq's name for the type: object, array, string, number,
   boolean or null.
-- `line` and `col` count from 1 and give where the node starts in the
-  source: at its key when it has one, else at its value. They are exact
-  for the JSON family, TOML, INI, CSV and ZON, best-effort for YAML, XML
-  and Markdown, and `null` when unknown.
+- `line` and `col` count from 1, columns in characters, and give where
+  the node starts in the source: at its key when it has one, else at its
+  value. They are exact for the JSON family, TOML, INI, CSV and ZON,
+  best-effort for YAML, XML and Markdown, and `null` when unknown.
 - A container has `length`, its item count; a scalar has `value`. A
   string over 200 characters is cut to 200, with `"truncated": true` and
   its full `length`. Numbers are 64-bit floats, so an integer beyond
   2^53 loses precision; NaN and the infinities, which JSON cannot hold,
   are `"NaN"`, `"Infinity"` and `"-Infinity"` in an entry and `null` in
   `--json` output.
+
+Inside the text, `--at` answers the node starting last at or before the
+position on its line, the innermost of several starting there (a line
+alone, or a column before the line's first node, that first node; on a
+line with no node of its own, a comment or a closing bracket, the last
+node before the line, or the document's first node when none is).
+Outside the text it names nothing: a line past the last line, or a
+column past the end of its line, where a line's text excludes its
+terminator (LF or CRLF), a trailing terminator starts no line (`"a\n"`
+has one), and an empty line has no column inside it.
 
 A listing puts one entry per line and says what it left out:
 
@@ -223,20 +233,27 @@ code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
 `report`, the whole report the viewer shows, uncoloured; a field that
 does not apply is `null` (`file` too, when it was standard output that
 could not be written). A `not_found` error has the `path` or `at` it
-was given, the entry of the `nearest` node the path did reach, and that
-node's first `keys` when it is an object. A `too_large` error has the
+was given, the entry of the `nearest` node, the deepest node the path
+did reach or, for `--at`, the node a position inside the text would have
+answered (`null` when no node has a position), and that node's first
+`keys` when it is an object. A `too_large` error has the
 fields of an `io` one plus the input's `size` (`null` for standard input,
 which is read no further than the limit) and the `limit`, in bytes, and
 its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. On standard input the time runs from the start
-of the run, so waiting on it counts: an input still being read when it
-passes (a writer that is slow, or sends nothing, or never closes its
-end) fails as `timeout` too, with `line` and `col` `null` and a message
-saying the input was still being read. On a file it runs from the start
-of the parse, so each file `--check` reads gets the whole of it. A `usage` error has only `kind` and `message`,
+saying how long it took. A read of JSON Lines, CSV or TSV a record at a
+time (`--render`, `--alchemy`) names the line the record it was reading
+starts on, with `col` `null`, since the deadline lands between two of
+the engine's steps, where it has no position of its own; the report then
+names the line alone (`file:N`). On standard input the time runs from
+the start of the run, so waiting on it counts: an input still being read
+when it passes (a writer that is slow, or sends nothing, or never closes
+its end) fails as `timeout` too, with `line` and `col` `null` and a
+message saying the input was still being read. On a file it runs from
+the start of the parse, so each file `--check` reads gets the whole of
+it. A `usage` error has only `kind` and `message`,
 except for a `--grammar` that does not compile, which adds the `grammar`
 name and, when it came from a file, the `file`. A grammar file that
 cannot be read is an `io` error, one over `--max-size` a `too_large`
@@ -325,13 +342,16 @@ $ aless --render csv --path .response.payload.deep.records response.json
 the result had been written before the failure, else `"none"`. A stream
 cannot take bytes back, so what was written stays, and it ends at the end
 of a record: a CSV row, a value directly inside the root JSON array or
-object, a line of JSON Lines. A record half written when the failure came
-is dropped, not written in part. A record longer than 16 MB is not held
-back whole: a JSON one is written up to the end of one of its own values,
-a CSV one as it comes, and a failure can cut it. A program's own text is
-written an item at a time, each item whole; another format's render
-(`--render yaml`) writes as it goes, and may stop inside one. The status follows the code, as the table
-above says. aless's own limits report as they do for a parse, plus that
+object (a bare number there, which may go on, ends at the comma after
+it), a line of JSON Lines. Every record whole when the failure came is
+on standard output before the error is reported, none held back in a
+buffer; a record half written is dropped, not written in part. A record
+longer than 16 MB is not held back whole: a JSON one is written up to the
+end of one of its own values, a CSV one as it comes, and a failure can cut
+it. A program's own text is written an item at a time, each item whole,
+and a `json` or `csv` render in the program a record at a time; another
+format's render (`--render yaml`) writes as it goes, and may stop inside
+one. The status follows the code, as the table above says. aless's own limits report as they do for a parse, plus that
 `output` field: nesting past its cap is a `parse` error with the code
 `too_deep`, a run past `--timeout` a `timeout` error (the deadline covers
 the whole run, the writing of a parsed value included), and a grammar

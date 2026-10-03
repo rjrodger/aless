@@ -64,6 +64,18 @@ aless --where --at 42:7 deploy.yaml
 aless --where --path '.spec.replicas' deploy.yaml
 ```
 
+Inside the text, `--at` answers the node starting last at or before the
+position on its line, the innermost of several starting there (a line
+alone, or a column before the line's first node, that first node; on a
+line with no node of its own, a comment or a closing bracket, the last
+node before the line, or the document's first node when none is).
+Outside the text it names nothing: a line past the last line, or a
+column past the end of its line, where a line's text excludes its
+terminator (LF or CRLF), a trailing terminator starts no line (`"a\n"`
+has one), and an empty line has no column inside it. That is exit 4,
+`not_found`, and its `nearest` is the node a position inside the text
+would have answered.
+
 Check that files parse, and see why one does not:
 
 ```bash
@@ -207,10 +219,10 @@ An **entry** describes one node:
 
 - `path` is in jq syntax. Pass it back to `--path` unchanged.
 - `kind` is one of object, array, string, number, boolean or null.
-- `line` and `col` count from 1 and point where the node starts: at its
-  key if it has one, else at its value. They are exact for the JSON
-  family, TOML, INI, CSV and ZON, best-effort for YAML, XML and Markdown,
-  and `null` when unknown.
+- `line` and `col` count from 1, columns in characters, and point where
+  the node starts: at its key if it has one, else at its value. They are
+  exact for the JSON family, TOML, INI, CSV and ZON, best-effort for
+  YAML, XML and Markdown, and `null` when unknown.
 - A container has `length`, its item count. A scalar has `value`.
   Strings over 200 characters are cut, and get `"truncated": true` and
   their full `length`.
@@ -247,8 +259,10 @@ Exit statuses, and the `error.kind` that goes with each:
 | 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none), or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run |
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
-path reached. When that node is an object it also carries `keys`, its
-first keys. Use them to correct the path.
+path reached, or for `--at` of the node a position inside the text would
+have answered (`null` when no node has a position). When that node is an
+object it also carries `keys`, its first keys. Use them to correct the
+path.
 
 A `transduce` error comes from `--render`: `code` is the transducer's
 (`INPUT_INVALID`, `RESOURCE_LIMIT_EXCEEDED`, `OUTPUT_FAILED`, …), and it
@@ -257,18 +271,27 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. What was written ends at the end of
 a record (a CSV row, a value directly inside the root JSON array or
-object, a JSON Lines line): a record half written when the failure came
-is dropped, unless it is longer than 16 MB, which is written as it comes
-(a JSON one to the end of one of its own values). A program's own text is
-written an item at a time; another format's render (`--render yaml`) may
-stop inside a record. `INPUT_INVALID` with a message that
-names `--path` means the value is not an array of records: point `--path`
-at one. `DUPLICATE_MEMBER` means a key on the exported path is repeated
+object, a bare number there ending at the comma after it, a JSON Lines
+line): every record whole when the failure came is
+on standard output before the error is reported, none held back in a
+buffer; a record half written is dropped, unless it is longer than 16 MB,
+which is written as it comes (a JSON one to the end of one of its own
+values). A program's own text is written an item at a time, and a `json`
+or `csv` render in the program a record at a time; another format's
+render (`--render yaml`) may stop inside a record. `INPUT_INVALID` with a
+message that names `--path` means the value is not an array of records:
+point `--path` at one. `DUPLICATE_MEMBER` means a key on the exported
+path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
 refuses rather than export a different one. `[-1]` on an array is a usage
 error under `--render` (a stream cannot count from the end); on an object
 it is the key `-1`. A `--render` run stopped by `--timeout` or by nesting
-reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`.
+reports `timeout` or `parse`/`too_deep` as any parse does, plus `output`;
+a record-at-a-time read (JSON Lines, CSV, TSV) stopped by `--timeout`
+names the line the record it was reading starts on, with `col` null,
+unless the deadline passed while standard input was still being read,
+a writer slow or silent: then `line` and `col` are both null, as for
+any input still being read when the time ran out.
 An error met while `--render yaml` was writing (a `transduce`,
 `too_deep` or `timeout` error) also carries `loss`, the sentences its
 warning gives on success.

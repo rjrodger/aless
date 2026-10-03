@@ -8,13 +8,13 @@
 //! the shape its render writes from, the files that hold its lift and its
 //! render (or, for a render alchemy carries, its name, `json` or `csv`),
 //! and the sentences that say what a written document does not keep. The
-//! format's Rust crate hands over the manifest and the parts' texts
-//! (`manifest_text()`, `lift_text()`, `render_text()`), so nothing is
-//! copied here: this module reads each crate's manifest once, keyed by its
-//! `languageId`, and `--render` names that id.
+//! format's Rust crate hands over one structural descriptor: the manifest,
+//! and each part's explicit entry point and optional source text
+//! (`translate()`). Nothing is copied here: this module reads each crate's
+//! manifest once, keyed by its `languageId`, and `--render` names that id.
 //!
-//! A lift or a render is a library of alchemy definitions with no `export`,
-//! its entry point `<id>-lift` or `<id>-render`. aless composes the
+//! A file-backed lift or render is a library of alchemy definitions with no
+//! `export`; the crate's descriptor names its entry point. aless composes the
 //! translation the design's table says, `render ∘ adapt ∘ lift`
 //! ([`compose`]): when the target writes from a shape the source reads as,
 //! the source's events reach the render in that shape (through the
@@ -60,6 +60,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use tabnas_alchemy::{compile_sources, Output, Program, Source};
+use tabnas_render::WriteOut;
 use tabnas_transduce::{Duplicates, Fail, Limits, Metrics, Sink, TreeContract};
 
 use crate::export::{self, ExportError, Input, Job, Records, Renderer, Rows};
@@ -96,20 +97,24 @@ impl Shape {
 /// one alchemy carries, which aless runs as its own renderer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Render {
-    /// A library of definitions whose entry point is `<id>-render`, named
-    /// in diagnostics by its crate and the path the manifest names.
-    Alc { file: String, text: &'static str },
+    /// A library of definitions, named in diagnostics by its crate and the
+    /// path the manifest names, and the explicit entry point the crate gives.
+    Alc {
+        file: String,
+        entry: &'static str,
+        text: &'static str,
+    },
     /// alchemy's `json`: the JSON renderer `--render json` runs.
     Json,
     /// alchemy's `csv`: the CSV renderer `--render csv` runs.
     Csv,
 }
 
-/// A format's lift: from its events to its first read shape's protocol,
-/// entry point `<id>-lift`.
+/// A format's lift: from its events to its first read shape's protocol.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lift {
     pub file: String,
+    pub entry: &'static str,
     pub text: &'static str,
 }
 
@@ -145,14 +150,13 @@ impl Part {
         }
     }
 
-    /// The render's entry point.
-    pub fn render_entry(&self) -> String {
-        format!("{}-render", self.id)
-    }
-
-    /// The lift's entry point.
-    pub fn lift_entry(&self) -> String {
-        format!("{}-lift", self.id)
+    /// The render's explicit entry point.
+    pub fn render_entry(&self) -> &'static str {
+        match self.render {
+            Render::Alc { entry, .. } => entry,
+            Render::Json => "json",
+            Render::Csv => "csv",
+        }
     }
 
     /// The built-in renderer that writes this format, when its manifest
@@ -166,72 +170,60 @@ impl Part {
     }
 }
 
-/// One crate aless reads: its name, its manifest, and the parts' texts it
-/// hands over.
+/// One translation part in the package-local structural interface, normalized
+/// from a grammar crate's otherwise-independent public type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CratePart {
+    entry: &'static str,
+    source: Option<&'static str>,
+}
+
+/// One crate aless reads: its name and normalized structural descriptor.
 struct Crate {
     name: &'static str,
     manifest: &'static str,
-    lift: Option<&'static str>,
-    render: Option<&'static str>,
+    lift: Option<CratePart>,
+    render: Option<CratePart>,
 }
 
 /// Each crate aless reads whose manifest may name translation parts.
 fn crates() -> Vec<Crate> {
-    let plain = |name, manifest| Crate {
-        name,
-        manifest,
-        lift: None,
-        render: None,
-    };
-    let rendered = |name, manifest, render| Crate {
-        name,
-        manifest,
-        lift: None,
-        render: Some(render),
-    };
+    // Every grammar deliberately owns its interface types. This macro is the
+    // narrow host adapter: it reads the same fields from each package-local
+    // value and immediately normalizes them into aless's private type.
+    macro_rules! descriptor {
+        ($name:literal, $module:ident) => {
+            $module::translate().map(|parts| Crate {
+                name: $name,
+                manifest: parts.manifest,
+                lift: parts.lift.map(|part| CratePart {
+                    entry: part.entry,
+                    source: part.source,
+                }),
+                render: parts.render.map(|part| CratePart {
+                    entry: part.entry,
+                    source: part.source,
+                }),
+            })
+        };
+    }
     vec![
-        plain("tabnas-json", tabnas_json::manifest_text()),
-        plain("tabnas-jsonc", tabnas_jsonc::manifest_text()),
-        plain("tabnas-json5", tabnas_json5::manifest_text()),
-        plain("tabnas-jsonic", tabnas_jsonic::manifest_text()),
-        plain("tabnas-csv", tabnas_csv::manifest_text()),
-        rendered(
-            "tabnas-jsonl",
-            tabnas_jsonl::manifest_text(),
-            tabnas_jsonl::render_text(),
-        ),
-        rendered(
-            "tabnas-yaml",
-            tabnas_yaml::manifest_text(),
-            tabnas_yaml::render_text(),
-        ),
-        rendered(
-            "tabnas-toml",
-            tabnas_toml::manifest_text(),
-            tabnas_toml::render_text(),
-        ),
-        rendered(
-            "tabnas-ini",
-            tabnas_ini::manifest_text(),
-            tabnas_ini::render_text(),
-        ),
-        rendered(
-            "tabnas-xml",
-            tabnas_xml::manifest_text(),
-            tabnas_xml::render_text(),
-        ),
-        rendered(
-            "tabnas-zon",
-            tabnas_zon::manifest_text(),
-            tabnas_zon::render_text(),
-        ),
-        Crate {
-            name: "tabnas-markdown",
-            manifest: tabnas_markdown::manifest_text(),
-            lift: Some(tabnas_markdown::lift_text()),
-            render: Some(tabnas_markdown::render_text()),
-        },
+        descriptor!("tabnas-json", tabnas_json),
+        descriptor!("tabnas-jsonc", tabnas_jsonc),
+        descriptor!("tabnas-json5", tabnas_json5),
+        descriptor!("tabnas-jsonic", tabnas_jsonic),
+        descriptor!("tabnas-csv", tabnas_csv),
+        descriptor!("tabnas-jsonl", tabnas_jsonl),
+        descriptor!("tabnas-yaml", tabnas_yaml),
+        descriptor!("tabnas-toml", tabnas_toml),
+        descriptor!("tabnas-ini", tabnas_ini),
+        descriptor!("tabnas-xml", tabnas_xml),
+        descriptor!("tabnas-zon", tabnas_zon),
+        descriptor!("tabnas-markdown", tabnas_markdown),
     ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The part a crate's manifest describes, or `None` when it names no
@@ -241,8 +233,8 @@ fn crates() -> Vec<Crate> {
 fn read_part(
     krate: &str,
     manifest: &str,
-    lift: Option<&'static str>,
-    render: Option<&'static str>,
+    lift: Option<CratePart>,
+    render: Option<CratePart>,
 ) -> Option<Part> {
     let manifest: Value = serde_json::from_str(manifest).ok()?;
     let id = manifest.get("languageId")?.as_str()?;
@@ -259,22 +251,54 @@ fn read_part(
         return None;
     }
     let writes = Shape::parse(translate.get("writes")?.as_str()?)?;
+    let render_part = render?;
+    if render_part.entry.is_empty() {
+        return None;
+    }
     let render = match translate.get("render")?.as_str()? {
-        "json" => Render::Json,
-        "csv" => Render::Csv,
+        "json"
+            if render_part
+                == (CratePart {
+                    entry: "json",
+                    source: None,
+                }) =>
+        {
+            Render::Json
+        }
+        "csv"
+            if render_part
+                == (CratePart {
+                    entry: "csv",
+                    source: None,
+                }) =>
+        {
+            Render::Csv
+        }
         path if path.ends_with(".alc") => Render::Alc {
             file: format!("{krate}/{path}"),
-            text: render?,
+            entry: render_part.entry,
+            text: render_part.source?,
         },
         _ => return None,
     };
-    let lift = match translate.get("lift").and_then(Value::as_str) {
-        Some(path) if path.ends_with(".alc") => Some(Lift {
-            file: format!("{krate}/{path}"),
-            text: lift?,
-        }),
+    let lift_path = match translate.get("lift") {
+        Some(Value::String(path)) => Some(path.as_str()),
         Some(_) => return None,
         None => None,
+    };
+    let lift = match (lift_path, lift) {
+        (Some(path), Some(part))
+            if path.ends_with(".alc") && !part.entry.is_empty() && part.source.is_some() =>
+        {
+            Some(Lift {
+                file: format!("{krate}/{path}"),
+                entry: part.entry,
+                text: part.source?,
+            })
+        }
+        (Some(_), _) => return None,
+        (None, None) => None,
+        _ => return None,
     };
     let loss = translate
         .get("loss")
@@ -544,7 +568,10 @@ fn render_of(target: &Part) -> (String, Option<Source<'_>>) {
     match &target.render {
         Render::Json => ("json".to_string(), None),
         Render::Csv => (format!("csv {CSV_OPTIONS}"), None),
-        Render::Alc { file, text } => (target.render_entry(), Some(Source::new(file, text))),
+        Render::Alc { file, text, .. } => (
+            target.render_entry().to_string(),
+            Some(Source::new(file, text)),
+        ),
     }
 }
 
@@ -560,13 +587,7 @@ pub fn translation(source: Option<&Part>, target: &Part) -> Result<Translation, 
     let tree = [Shape::Tree];
     let reads = source.map_or(&tree[..], |p| &p.reads[..]);
     let lift = source.and_then(|p| p.lift.as_ref());
-    let lift_entry = source.map(Part::lift_entry);
-    let (inner, adapter) = route(
-        reads,
-        lift.and(lift_entry.as_deref()),
-        target.writes,
-        "input",
-    );
+    let (inner, adapter) = route(reads, lift.map(|part| part.entry), target.writes, "input");
     let as_is = inner == "input";
     match &target.render {
         Render::Json if as_is => {
@@ -738,10 +759,19 @@ pub fn run(
         ..Limits::default()
     };
     export::run_program(job, input, out, records, |pipe, abort| {
+        // The writer stage is aless's, as for a program (`alchemy::run`):
+        // the program's own coalescing writer, with no budget, so every
+        // fragment reaches the pipe as it comes and a record is on the
+        // output the moment it ends, rather than held, up to 32 KB of
+        // them, until the run's flush that a failure never makes.
+        let out = WriteOut::new(pipe)
+            .with_budget(0)
+            .with_limits(&limits)
+            .with_metrics(metrics.clone());
         let sink = composition
             .program
             .with_abort(abort)
-            .sink(pipe, None, &limits, metrics.clone())
+            .sink_out(Box::new(out), None, &limits, metrics.clone())
             .map_err(|fail| ExportError::Program(Box::new(fail)))?;
         let sink: Box<dyn Sink + Send> = if composition.rows {
             Box::new(Rows::new(sink))
@@ -771,10 +801,11 @@ mod tests {
             assert_eq!(p.reads, vec![Shape::Tree], "{id}");
             assert_eq!(p.writes, Shape::Tree, "{id}");
             assert!(p.lift.is_none(), "{id}");
-            let Render::Alc { file, text } = &p.render else {
+            let Render::Alc { file, entry, text } = &p.render else {
                 panic!("{id} renders through its own file");
             };
             assert_eq!(file, &format!("tabnas-{id}/alchemy/render.alc"));
+            assert_eq!(*entry, format!("{id}-render"), "{id}");
             assert!(text.contains(&format!("def {}-render [", id)), "{id}");
             assert!(p.builtin().is_none(), "{id}");
         }
@@ -794,8 +825,8 @@ mod tests {
         assert_eq!(md.writes, Shape::Records);
         let lift = md.lift.as_ref().expect("a lift");
         assert_eq!(lift.file, "tabnas-markdown/alchemy/lift.alc");
+        assert_eq!(lift.entry, "markdown-lift");
         assert!(lift.text.contains("def markdown-lift ["));
-        assert_eq!(md.lift_entry(), "markdown-lift");
         assert_eq!(md.render_entry(), "markdown-render");
         assert!(part("yaml")
             .unwrap()
@@ -848,6 +879,10 @@ mod tests {
     #[test]
     fn a_manifest_this_host_cannot_take_gives_no_part() {
         let text = "def x-render [input] input";
+        let render = Some(CratePart {
+            entry: "not-derived-from-x-render",
+            source: Some(text),
+        });
         for manifest in [
             r#"{"languageId": "x"}"#,
             r#"{"languageId": "x", "translate": {"reads": "tree"}}"#,
@@ -856,13 +891,10 @@ mod tests {
             r#"{"languageId": "x", "translate": {"reads": [], "writes": "tree", "render": "x.alc"}}"#,
             r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.txt"}}"#,
             r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.alc", "lift": "l.alc"}}"#,
+            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.alc", "lift": 1}}"#,
             "not json",
         ] {
-            assert_eq!(
-                read_part("x", manifest, None, Some(text)),
-                None,
-                "{manifest}"
-            );
+            assert_eq!(read_part("x", manifest, None, render), None, "{manifest}");
         }
         assert_eq!(
             read_part(
@@ -878,17 +910,39 @@ mod tests {
             "tabnas-x",
             r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "records", "render": "csv"}}"#,
             None,
-            None,
+            Some(CratePart {
+                entry: "csv",
+                source: None,
+            }),
         )
         .unwrap();
         assert_eq!(part.render, Render::Csv);
         assert_eq!(part.builtin(), Some(Renderer::Csv));
         assert!(part.loss.is_empty());
+        assert_eq!(
+            read_part(
+                "tabnas-x",
+                r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "records", "render": "csv"}}"#,
+                None,
+                Some(CratePart {
+                    entry: "x-render",
+                    source: Some(text),
+                }),
+            ),
+            None,
+            "a built-in render must be handed over as that explicit entry without source"
+        );
         let part = read_part(
             "tabnas-x",
             r#"{"languageId": "x", "translate": {"reads": ["records", "tree"], "writes": "records", "lift": "alchemy/lift.alc", "render": "alchemy/render.alc", "loss": ["A.", 1]}}"#,
-            Some("def x-lift [input] input"),
-            Some(text),
+            Some(CratePart {
+                entry: "bespoke-lift",
+                source: Some("def bespoke-lift [input] input"),
+            }),
+            Some(CratePart {
+                entry: "bespoke-render",
+                source: Some(text),
+            }),
         )
         .unwrap();
         assert_eq!(part.reads, vec![Shape::Records, Shape::Tree]);
@@ -896,6 +950,8 @@ mod tests {
             part.lift.as_ref().unwrap().file,
             "tabnas-x/alchemy/lift.alc"
         );
+        assert_eq!(part.lift.as_ref().unwrap().entry, "bespoke-lift");
+        assert_eq!(part.render_entry(), "bespoke-render");
         assert_eq!(part.loss, vec!["A.".to_string()]);
     }
 
@@ -1144,6 +1200,7 @@ mod tests {
             lift: None,
             render: Render::Alc {
                 file: "tabnas-x/alchemy/render.alc".into(),
+                entry: "x-render",
                 text: "def x-render [input]\n  (nope input)",
             },
             loss: Vec::new(),

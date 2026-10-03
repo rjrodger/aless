@@ -102,7 +102,19 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     6 a parse (or a --grammar compile) ran past --timeout, or the input was
     still being read when it passed (--render, --alchemy: the whole run,
     the program's work included). A stream that fails stops at the end of
-    a record: a CSV row, a value in the root JSON array or object, a line.
+    a record, a CSV row, a value in the root JSON array or object, a line,
+    and every record whole by then is written before the error is reported.
+
+    Columns count characters. Inside the text, --at answers the node
+    starting last at or before the position on its line, the innermost of
+    several starting there (a line alone, or a column before the line's
+    first node, that first node; on a line with no node of its own, a
+    comment or a closing bracket, the last node before the line, or the
+    document's first node when none is). Outside the text it names
+    nothing: a line past the last line, or a column past the end of its
+    line, where a line's text excludes its terminator (LF or CRLF), a
+    trailing terminator starts no line, and an empty line has no column
+    inside it.
 
     aless --paths --depth 1 config.yaml     what is in it
     aless --json --path '.spec.containers[0]' deploy.yaml
