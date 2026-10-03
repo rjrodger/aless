@@ -742,6 +742,118 @@ fn render_csv_exports_the_records_at_a_path() {
     );
 }
 
+/// Every record whole when a stream failed is on standard output before
+/// the error is reported, and none in part, on every path the output
+/// takes: `--render csv` and `--render json`, a program's table and a
+/// program's JSON events (aless#17). Nothing whole waits in a renderer's
+/// buffer above the record pipe when the failure comes.
+#[test]
+fn whole_records_reach_standard_output_before_the_error() {
+    let text = "{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n{\"a\":\n";
+    for (mode, expected) in record_modes() {
+        let out = aless(mode, Some(text));
+        assert_eq!(
+            code(&out),
+            1,
+            "{mode:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{mode:?}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"), "{mode:?}");
+        assert_eq!(e["code"], json!("INPUT_INVALID"), "{mode:?}");
+        assert_eq!(
+            (e["line"].clone(), e["col"].clone()),
+            (json!(3), json!(6)),
+            "{mode:?}"
+        );
+        assert_eq!(e["output"], json!("partial"), "{mode:?}");
+    }
+    // A scalar record is whole where it ends, a string at its closing
+    // quote: the second string is on the output though nothing followed
+    // it. A bare number may go on, and is whole at the comma after it.
+    let json_compact = ["-k", "jsonl", "--render", "json", "--compact"];
+    let out = aless(&json_compact, Some("\"x\"\n\"y\"\n\"unterminated\n"));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.stdout, b"[\"x\",\"y\"");
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("partial"));
+    let out = aless(&json_compact, Some("1\n2\n\"unterminated\n"));
+    assert_eq!(code(&out), 1);
+    assert_eq!(out.stdout, b"[1");
+}
+
+/// A writer that goes quiet part way, past `--timeout`: the records it
+/// had written whole are on standard output before the `timeout` error,
+/// with `output` partial, on every path (aless#17).
+#[test]
+fn a_slow_stdin_leaves_whole_records_at_the_timeout() {
+    for (mode, expected) in record_modes() {
+        let started = std::time::Instant::now();
+        let mut child = Command::new(BIN)
+            .args(mode)
+            .args(["--timeout", "1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("aless starts");
+        // Two records, then the writer's end stays open and silent.
+        let mut held = child.stdin.take().unwrap();
+        held.write_all(b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n")
+            .unwrap();
+        held.flush().unwrap();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if started.elapsed() > std::time::Duration::from_secs(30) {
+                let _ = child.kill();
+                panic!("{mode:?}: still waiting on standard input after 30 s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        drop(held);
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(
+            status.code(),
+            Some(6),
+            "{mode:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{mode:?}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("timeout"), "{mode:?}");
+        assert_eq!(e["seconds"], json!(1.0), "{mode:?}");
+        assert_eq!(e["output"], json!("partial"), "{mode:?}");
+    }
+}
+
+/// The five ways two whole JSON Lines records reach standard output, and
+/// what they are there: the plain renders, a program's table (its
+/// columns inferred from the first row) and JSON events, and a composed
+/// render.
+fn record_modes() -> [(&'static [&'static str], &'static str); 5] {
+    const TABLE: &str = "def export [input] (table-from-json \
+        (record (entry :columns :infer) (entry :rows (path each-index))) input)";
+    const CSV: &str = "\"a\",\"b\"\r\n\"1\",\"x\"\r\n\"2\",\"y\"\r\n";
+    const JSON: &str = "[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"}";
+    const LINES: &str = "{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n";
+    [
+        (&["-k", "jsonl", "--render", "csv"], CSV),
+        (&["-k", "jsonl", "--render", "json", "--compact"], JSON),
+        (
+            &["-k", "jsonl", "--alchemy-expr", TABLE, "--render", "csv"],
+            CSV,
+        ),
+        (
+            &["-k", "jsonl", "--alchemy-expr", "def export [input] input"],
+            JSON,
+        ),
+        // A composed render (another format's, run as a program).
+        (&["-k", "jsonl", "--render", "jsonl"], LINES),
+    ]
+}
+
 /// `--render json` is `--json`, streamed: the same value for every fixture.
 #[test]
 fn render_json_agrees_with_json_for_every_fixture() {
@@ -845,14 +957,16 @@ fn render_failures_have_the_transduce_shape_and_status() {
     // The input did not parse: status 1, the transducer's code, the position.
     let out = aless(&["--render", "json", "tests/fixtures/bad.json"], None);
     assert_eq!(code(&out), 1);
-    assert!(out.stdout.is_empty());
+    // The first member was whole when the failure came, so it is on the
+    // output, and the output is partial (aless#17).
+    assert_eq!(out.stdout, b"{\n  \"a\": 1");
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("transduce"));
     assert_eq!(e["code"], json!("INPUT_INVALID"));
     assert_eq!(e["file"], json!("tests/fixtures/bad.json"));
     assert_eq!(e["format"], json!("json"));
     assert!(e["line"].is_u64() && e["col"].is_u64(), "{e}");
-    assert_eq!(e["output"], json!("none"));
+    assert_eq!(e["output"], json!("partial"));
     let out = aless(&["--render", "csv"], Some("[{\"a\": 1},\n {\"b\": }]"));
     assert_eq!(code(&out), 1);
     let e = &json(&out.stderr)["error"];
@@ -899,12 +1013,13 @@ fn render_failures_have_the_transduce_shape_and_status() {
         Some(r#"{"rows":[{"v":1}],"rows":[{"v":2}]}"#),
     );
     assert_eq!(code(&out), 1);
-    assert!(out.stdout.is_empty());
+    // The first's row was whole when the refusal came: on the output.
+    assert_eq!(out.stdout, b"\"v\"\r\n\"1\"\r\n");
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("transduce"));
     assert_eq!(e["code"], json!("DUPLICATE_MEMBER"));
     assert_eq!(e["path"], json!("."));
-    assert_eq!(e["output"], json!("none"));
+    assert_eq!(e["output"], json!("partial"));
     assert!(e["message"].as_str().unwrap().contains("\"rows\""), "{e}");
     // Mistakes in the command: status 2.
     for args in [
@@ -2259,7 +2374,9 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     .unwrap();
     let out = aless(&["--alchemy", failing.to_str().unwrap(), records], None);
     assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(out.stdout.is_empty());
+    // The first item was whole when the failure came, so it is on the
+    // output, and the output is partial (aless#17).
+    assert_eq!(out.stdout, b"Alice");
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("transduce"));
     assert_eq!(e["code"], json!("INPUT_INVALID"));
@@ -2268,7 +2385,7 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["format"], json!(null));
     assert_eq!((e["line"].clone(), e["col"].clone()), (json!(3), json!(14)));
     assert_eq!(e["input"], json!(records));
-    assert_eq!(e["output"], json!("none"));
+    assert_eq!(e["output"], json!("partial"));
     // The same rule by code: a failure from the program's sink with one
     // of the language's codes (the evaluator's `recursion`, met on an
     // item) is the program's, status 2, placed in the program, with
@@ -2309,7 +2426,12 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     let table = format!("{PROGRAMS}/table.alc");
     let out = aless(&["--alchemy", &table, missing.to_str().unwrap()], None);
     assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(out.stdout.is_empty());
+    // The header and the first row were whole when the failure came, so
+    // they are on the output, and the output is partial.
+    assert_eq!(
+        out.stdout,
+        b"\"Identifier\",\"Full name\",\"Balance\"\r\n\"123\",\"Alice\",\"50.25\"\r\n"
+    );
     let e = &json(&out.stderr)["error"];
     assert_eq!(e["kind"], json!("transduce"));
     assert_eq!(e["code"], json!("MISSING_VALUE"));
@@ -2317,7 +2439,7 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
     assert_eq!(e["format"], json!("json"));
     assert!(e.get("input").is_none(), "{e}");
     assert!(e.get("line").is_none() && e.get("col").is_none(), "{e}");
-    assert_eq!(e["output"], json!("none"));
+    assert_eq!(e["output"], json!("partial"));
     // Rendered as JSON, the same rows have no missing value to refuse.
     let out = aless(
         &[
@@ -2979,11 +3101,23 @@ fn a_programs_output_is_written_as_any_format() {
     );
     let direct = aless(&["--render", "markdown"], Some("[1,2]"));
     assert_eq!(scalars.stdout, direct.stdout);
-    for (input, reason) in [
-        ("[{\"a\":1},2]", "but the first row was an object"),
-        ("[1,{\"a\":1}]", "but the first row was a scalar"),
-        ("[[1],[2]]", "is an array; a row is an object"),
-        ("{\"a\":1}", "is an object, not an array of records"),
+    // Another format's render writes as it goes: a row refused after the
+    // first was written leaves the table's head on the output, and the
+    // output is partial (aless#17); a document refused at its first row
+    // leaves nothing.
+    for (input, reason, written) in [
+        (
+            "[{\"a\":1},2]",
+            "but the first row was an object",
+            "| a |\n| --- |\n| 1 |\n",
+        ),
+        (
+            "[1,{\"a\":1}]",
+            "but the first row was a scalar",
+            "| value |\n| --- |\n| 1 |\n",
+        ),
+        ("[[1],[2]]", "is an array; a row is an object", ""),
+        ("{\"a\":1}", "is an object, not an array of records", ""),
     ] {
         let out = aless(&identity, Some(input));
         assert_eq!(
@@ -2992,14 +3126,19 @@ fn a_programs_output_is_written_as_any_format() {
             "{input}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(out.stdout.is_empty(), "{input}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), written, "{input}");
         let error = &json(&out.stderr)["error"];
         assert_eq!(error["code"], "INPUT_INVALID", "{input}: {error}");
         assert!(
             error["message"].as_str().unwrap().contains(reason),
             "{input}: {error}"
         );
-        assert_eq!(error["output"], "none", "{input}");
+        let output = if written.is_empty() {
+            "none"
+        } else {
+            "partial"
+        };
+        assert_eq!(error["output"], output, "{input}");
     }
 }
 

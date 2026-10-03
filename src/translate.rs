@@ -60,6 +60,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use tabnas_alchemy::{compile_sources, Output, Program, Source};
+use tabnas_render::WriteOut;
 use tabnas_transduce::{Duplicates, Fail, Limits, Metrics, Sink, TreeContract};
 
 use crate::export::{self, ExportError, Input, Job, Records, Renderer, Rows};
@@ -758,10 +759,19 @@ pub fn run(
         ..Limits::default()
     };
     export::run_program(job, input, out, records, |pipe, abort| {
+        // The writer stage is aless's, as for a program (`alchemy::run`):
+        // the program's own coalescing writer, with no budget, so every
+        // fragment reaches the pipe as it comes and a record is on the
+        // output the moment it ends, rather than held, up to 32 KB of
+        // them, until the run's flush that a failure never makes.
+        let out = WriteOut::new(pipe)
+            .with_budget(0)
+            .with_limits(&limits)
+            .with_metrics(metrics.clone());
         let sink = composition
             .program
             .with_abort(abort)
-            .sink(pipe, None, &limits, metrics.clone())
+            .sink_out(Box::new(out), None, &limits, metrics.clone())
             .map_err(|fail| ExportError::Program(Box::new(fail)))?;
         let sink: Box<dyn Sink + Send> = if composition.rows {
             Box::new(Rows::new(sink))
