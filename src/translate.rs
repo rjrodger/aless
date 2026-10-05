@@ -59,10 +59,11 @@ use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
-use tabnas_alchemy::{compile_sources, Output, Program, Source};
+use tabnas_alchemy::{Output, Program, Source};
 use tabnas_render::WriteOut;
 use tabnas_transduce::{Duplicates, Fail, Limits, Metrics, Sink, TreeContract};
 
+use crate::alchemy::compile_sources;
 use crate::export::{self, ExportError, Input, Job, Records, Renderer, Rows};
 use crate::load::Format;
 

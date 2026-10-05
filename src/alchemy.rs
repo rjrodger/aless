@@ -34,9 +34,12 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tabnas_alchemy::effects::{self, RendererProfile};
-use tabnas_alchemy::{Output, Program};
+use tabnas_alchemy::shared::{Renderers, Routers};
+use tabnas_alchemy::value::Val;
+use tabnas_alchemy::{Output, Program, Source};
 use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink};
 
@@ -98,7 +101,25 @@ impl ProgramArg {
 /// resolved, checked, and its plan built. The work runs on a thread of
 /// alchemy's own stack size, bounded by its evaluation limits.
 pub fn compile(text: &str, file: &str) -> Result<Program, Fail> {
-    tabnas_alchemy::compile(text, file)
+    tabnas_alchemy::compile(text, file, routers(), renderers())
+}
+
+/// Compile a program linked from several sources
+/// ([`tabnas_alchemy::compile_sources`]): a format's parts and the main
+/// that calls them, or a program composed into a format's render.
+pub fn compile_sources(sources: &[Source<'_>]) -> Result<Program, Fail> {
+    tabnas_alchemy::compile_sources(sources, routers(), renderers())
+}
+
+/// The stages a program's sinks are built from. alchemy implements
+/// neither and depends on neither crate: its host passes transduce's
+/// routers and render's renderers in, and aless is that host.
+fn routers() -> Arc<dyn Routers<Val>> {
+    Arc::new(tabnas_transduce::routers())
+}
+
+fn renderers() -> Arc<dyn Renderers> {
+    Arc::new(tabnas_render::renderers())
 }
 
 /// A compiled program with the text it was compiled from, kept together:

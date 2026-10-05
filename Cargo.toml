@@ -56,7 +56,9 @@ tabnas-abnf = { git = "https://github.com/tabnas/abnf" }
 tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
 tabnas-render = { git = "https://github.com/tabnas/render" }
 # The alchemy language, behind `--alchemy`: a program compiled onto the
-# transducer and the renderers, run over any document the grammars read.
+# transducer's routers and the renderers, which aless passes in, and run
+# over any document the grammars read. The two crates above take their
+# shared types from it; it depends on neither.
 tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
 # Colour for a pane's text: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
@@ -140,15 +142,14 @@ tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-parser = { git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 tabnas-csv = { git = "https://github.com/tabnas/csv" }
+tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
 
 [patch."https://github.com/tabnas/render"]
 tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
+tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
 
 [patch."https://github.com/tabnas/alchemy"]
 tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
-tabnas-render = { git = "https://github.com/tabnas/render" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 
 # lsp's optional siblings are resolved only for the features a consumer
