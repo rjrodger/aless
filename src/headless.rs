@@ -69,6 +69,12 @@ pub const VALUE_CHARS: usize = 200;
 /// How many keys a not-found error lists.
 pub(crate) const KEYS_LISTED: usize = 20;
 
+/// Why `--render` takes no `--at`: the usage error's message, the same
+/// from the command line as from a [`Request`].
+pub const RENDER_TAKES_NO_AT: &str = "--render reads the input once, front to back, and \
+     cannot find a source position in it: start it with --path, or use --where --at to find \
+     the path";
+
 /// What to print.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
@@ -272,7 +278,7 @@ pub fn run_to(req: &Request, mut stdin: Stdin<'_>, out: Stdout) -> Output {
             (String::new(), status::OK)
         }),
         Op::Render(renderer) => {
-            export(req, *renderer, &mut stdin, out).map(|()| (String::new(), status::OK))
+            export(req, *renderer, None, &mut stdin, out).map(|()| (String::new(), status::OK))
         }
         Op::Alchemy {
             program,
@@ -371,22 +377,21 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
     Ok((out, status::OK))
 }
 
-/// `--render`: the input streamed through the transducer to `out`.
+/// `--render`: the input streamed through the transducer to `out`. A
+/// failure met while it was writing carries `loss` when it is given
+/// ([`Failure::with_loss`]); one met before (the command, an input that
+/// could not be opened) never does.
 fn export(
     req: &Request,
     renderer: Renderer,
+    loss: Option<&[String]>,
     stdin: &mut Stdin<'_>,
     out: Stdout,
 ) -> Result<(), Failure> {
     let path = match &req.start {
         Start::Root => Vec::new(),
         Start::Path(text) => parse_path(text).map_err(Failure::usage)?,
-        Start::At(..) => {
-            return Err(Failure::usage(
-                "--render reads the input once, front to back, and cannot find a source \
-                 position in it: start it with --path, or use --where --at to find the path",
-            ))
-        }
+        Start::At(..) => return Err(Failure::usage(RENDER_TAKES_NO_AT)),
     };
     let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, path.is_empty()) else {
@@ -417,8 +422,19 @@ fn export(
         Err(ExportError::ReaderGone) => return Ok(()),
         Err(e) => e,
     };
-    Err(match failure {
-        ExportError::Usage(m) => Failure::usage(m),
+    let f = match failure {
+        // The command's mistakes, found by the run: a path that cannot be
+        // streamed, or that names nothing. Their shapes are fixed.
+        ExportError::Usage(m) => return Err(Failure::usage(m)),
+        ExportError::NotFound { message, nearest } => {
+            let path = match &req.start {
+                Start::Path(text) => text.trim().to_string(),
+                _ => ".".to_string(),
+            };
+            return Err(Failure::not_found_streamed(
+                &name, format, &path, message, &nearest,
+            ));
+        }
         ExportError::Load { error, partial } => {
             let mut f = Failure::load(&name, format, &error).limited(None, req);
             f.error.insert(
@@ -430,14 +446,11 @@ fn export(
         ExportError::Transduce(fail) | ExportError::Program(fail) => {
             Failure::transduce(&name, format, &fail)
         }
-        ExportError::NotFound { message, nearest } => {
-            let path = match &req.start {
-                Start::Path(text) => text.trim().to_string(),
-                _ => ".".to_string(),
-            };
-            Failure::not_found_streamed(&name, format, &path, message, &nearest)
-        }
         ExportError::ReaderGone => unreachable!("handled above"),
+    };
+    Err(match loss {
+        Some(loss) => f.with_loss(loss),
+        None => f,
     })
 }
 
@@ -447,8 +460,8 @@ fn export(
 /// program runs ([`translate::run`]); or, for a format written by one of
 /// aless's own renderers (`--render json5`), that renderer. A write that
 /// succeeds returns the loss declaration for standard error
-/// ([`loss_note`]); a failure met while it ran carries the same sentences
-/// as `loss`.
+/// ([`loss_note`]); a failure met while it was writing carries the same
+/// sentences as `loss` ([`Failure::with_loss`]), on either path alike.
 fn translate(
     req: &Request,
     id: &str,
@@ -459,12 +472,7 @@ fn translate(
     let path = match &req.start {
         Start::Root => Vec::new(),
         Start::Path(text) => parse_path(text).map_err(Failure::usage)?,
-        Start::At(..) => {
-            return Err(Failure::usage(
-                "--render reads the input once, front to back, and cannot find a source \
-                 position in it: start it with --path, or use --where --at to find the path",
-            ))
-        }
+        Start::At(..) => return Err(Failure::usage(RENDER_TAKES_NO_AT)),
     };
     let (source, name, origin, format) = streamed_source(req)?;
     // The source's parts stand at the root only: its lift reads a whole
@@ -485,13 +493,8 @@ fn translate(
         translate::Translation::Composed(composition) => composition,
         // One of aless's own renderers over the events as they are.
         translate::Translation::Native { renderer, adapter } => {
-            return match export(req, renderer, stdin, out) {
-                Ok(()) => Ok(loss_note(part, &loss, adapter, &name, req.compact)),
-                Err(mut f) => {
-                    f.error.insert("loss".into(), json!(loss));
-                    Err(f)
-                }
-            };
+            return export(req, renderer, Some(&loss), stdin, out)
+                .map(|()| loss_note(part, &loss, adapter, &name, req.compact));
         }
     };
     let Some(plan) = export::plan(format, path.is_empty()) else {
@@ -544,9 +547,7 @@ fn translate(
         }
         Err(e) => e,
     };
-    let mut f = translation_failure(req, &name, format, part, failure)?;
-    f.error.insert("loss".into(), json!(loss));
-    Err(f)
+    Err(translation_failure(req, &name, format, part, failure)?.with_loss(&loss))
 }
 
 /// The file a compile failure of a composition is placed in: the one the
@@ -563,7 +564,8 @@ fn part_file<'a>(part: &'a Part, fail: &'a tabnas_transduce::Fail) -> &'a str {
 /// A failure met while a translation ran, as the error object: a usage
 /// error, a path that named nothing, aless's own limits, the render's or
 /// the lift's own failure placed in its file with the input named beside
-/// it, or the input's.
+/// it, or the input's. The first two, the command's mistakes, are `Err`:
+/// they are reported as they are, without `loss`.
 fn translation_failure(
     req: &Request,
     name: &str,
@@ -759,8 +761,12 @@ fn run_program(
         }
         Err(e) => e,
     };
-    let mut failed = match failure {
-        ExportError::Usage(m) => Failure::usage(m),
+    let failed = match failure {
+        // The command's mistakes, found by the run: reported as they are,
+        // without `loss`.
+        ExportError::Usage(m) | ExportError::NotFound { message: m, .. } => {
+            return Err(Failure::usage(m))
+        }
         // aless's own limits, the deadline among them: a timeout raised in
         // the program's work on an item carries no position (`export`
         // drops the program's span from it), one raised in the parse how
@@ -791,13 +797,14 @@ fn run_program(
         ExportError::Program(fail) | ExportError::Transduce(fail) => {
             Failure::transduce(&name, format, &fail)
         }
-        ExportError::NotFound { message, .. } => Failure::usage(message),
         ExportError::ReaderGone => unreachable!("handled above"),
     };
-    if part.is_some() {
-        failed.error.insert("loss".into(), json!(loss));
-    }
-    Err(failed)
+    // Met while a format's render was writing: its loss, as `--render`
+    // carries it.
+    Err(match part {
+        Some(_) => failed.with_loss(&loss),
+        None => failed,
+    })
 }
 
 /// The one input of a streamed run (`--render`, `--alchemy`): where it
@@ -1649,6 +1656,17 @@ impl Failure {
         self
     }
 
+    /// A failure met while a format's render was writing (`--render`, or
+    /// a program's output through `--render`) carries `loss`, the
+    /// sentences the render's warning gives on a write that succeeds; an
+    /// empty list for a format that declares none (JSON). Only such a
+    /// failure: a `usage` or `not_found` error, and one met before the
+    /// writing began, keep the shapes the README gives them.
+    fn with_loss(mut self, loss: &[String]) -> Failure {
+        self.error.insert("loss".into(), json!(loss));
+        self
+    }
+
     /// `--path` or `--at` named nothing: `{"kind": "not_found", "file",
     /// "format", "path" or "at", "message", "nearest", "keys"}`, where
     /// `nearest` is the entry of `near`, the deepest node the path did
@@ -1831,6 +1849,13 @@ impl Failure {
         }
         Failure { status, error }
     }
+}
+
+/// A command line aless cannot carry out, as the text `main` prints on
+/// standard error, to exit with [`status::USAGE`]: `{"error": {"kind":
+/// "usage", "message"}}`, the shape every usage error has.
+pub fn usage_failure(message: &str, compact: bool) -> String {
+    render(&json!({ "error": Failure::usage(message).error }), compact)
 }
 
 /// A grammar the command line gave (`--grammar`, `--grammar-expr`) could
@@ -2027,6 +2052,51 @@ mod tests {
         }
     }
 
+    /// A root array's items print as jq takes them, `.[0]` and
+    /// `.[0].name`, and go straight back in; the form without the dot,
+    /// `[0].name`, which aless printed before, is still read.
+    #[test]
+    fn a_root_arrays_paths_are_jq_and_resolve_back() {
+        let d = doc(r#"[{"name": "a", "tags": [1, [2]]}, 3]"#);
+        let printed: Vec<String> = (0..d.len() as NodeId)
+            .map(|id| fmt::path_jq(&d.path(id)))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                ".",
+                ".[0]",
+                ".[0].name",
+                ".[0].tags",
+                ".[0].tags[0]",
+                ".[0].tags[1]",
+                ".[0].tags[1][0]",
+                ".[1]",
+            ]
+        );
+        for (id, path) in printed.iter().enumerate() {
+            let segs = parse_path(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(resolve(&d, &segs), Ok(id as NodeId), "{path}");
+            // Without the leading dot, as before.
+            let bare = path.strip_prefix('.').unwrap_or(path);
+            assert_eq!(parse_path(bare), Ok(segs), "{bare:?}");
+        }
+        assert_eq!(
+            parse_path("[0].name"),
+            Ok(vec![Seg::Index(0), Seg::Name("name".into())])
+        );
+        // Through the command's own selection and listing.
+        let mut r = req(Op::Where);
+        r.start = Start::Path("[0].name".into());
+        r.compact = true;
+        let out = with_stdin(&r, r#"[{"name": "a"}]"#);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(json_of(&out.stdout)["path"], json!(".[0].name"));
+        r.start = Start::Path(".[-1]".into());
+        let out = with_stdin(&r, r#"[{"name": "a"}, 2]"#);
+        assert_eq!(json_of(&out.stdout)["path"], json!(".[1]"));
+    }
+
     #[test]
     fn positions_pick_the_node_a_tool_means() {
         // 1 {
@@ -2188,9 +2258,9 @@ mod tests {
         let out = at(Op::Where, 1, Some(8), "[1, {}]\n");
         assert_eq!(out.status, status::NOT_FOUND);
         let e = error(&out);
-        assert_eq!(e["nearest"]["path"], json!("[1]"));
+        assert_eq!(e["nearest"]["path"], json!(".[1]"));
         assert_eq!(e["keys"], json!([]));
-        assert_eq!(path(&at(Op::Where, 1, Some(7), "[1, {}]\n")), json!("[1]"));
+        assert_eq!(path(&at(Op::Where, 1, Some(7), "[1, {}]\n")), json!(".[1]"));
         // CRLF: the CR is not text, and a trailing CRLF starts no line.
         let crlf = "{\r\n  \"a\": 1\r\n}\r\n";
         assert_eq!(path(&at(Op::Where, 2, Some(8), crlf)), json!(".a"));
@@ -3207,10 +3277,14 @@ mod tests {
         };
         let mut at = r.clone();
         at.start = Start::At(1, None);
-        assert!(usage(with_stdin(&at, RECORDS)).contains("--path"));
+        assert_eq!(usage(with_stdin(&at, RECORDS)), RENDER_TAKES_NO_AT);
         let mut last = r.clone();
         last.start = Start::Path(".rows[-1]".into());
-        assert!(usage(with_stdin(&last, RECORDS)).contains("[-1]"));
+        let message = usage(with_stdin(&last, RECORDS));
+        assert!(
+            message.contains(": [-1] in .rows[-1] names an item of the array at .rows;"),
+            "{message}"
+        );
         let mut text = r.clone();
         text.kind = Some(Format::Text);
         assert!(usage(with_stdin(&text, "hello\n")).contains("-k"));
@@ -3243,6 +3317,71 @@ mod tests {
         let e = &json_of(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("parse"));
         assert_eq!(e["code"], json!("too_deep"));
+    }
+
+    /// `loss`, the sentences a format's render declares, is carried by a
+    /// failure met while that render was writing, and by no other: not by a
+    /// `usage` or `not_found` error, which keep their shapes, nor by one met
+    /// before the writing began (an input that cannot be read). The same
+    /// for `json` and `csv`, which aless's own renderers write, as for
+    /// `yaml`, a render composed and run as a program runs, and for a
+    /// program's output written through `--render`.
+    #[test]
+    fn loss_is_carried_only_by_failures_met_while_writing() {
+        let error = |r: &Request, src: Option<&str>| -> Value {
+            let out = match src {
+                Some(src) => with_stdin(r, src),
+                None => run(r, None),
+            };
+            assert_ne!(out.status, status::OK, "{}", out.stdout);
+            json_of(&out.stderr)["error"].clone()
+        };
+        let broken = "[{\"a\": 1},\n {\"b\": }]";
+        for id in ["json", "csv", "yaml"] {
+            let r = req(Op::Render(Renderer::from_name(id).unwrap()));
+            // Counting from the end, which a stream cannot: `usage`, with
+            // only its kind and message.
+            let mut last = r.clone();
+            last.start = Start::Path("[-1]".into());
+            let e = error(&last, Some("[[1], [2]]"));
+            assert_eq!(e["kind"], json!("usage"), "{id}: {e}");
+            assert_eq!(e.as_object().unwrap().len(), 2, "{id}: {e}");
+            // A path that names nothing.
+            let mut absent = r.clone();
+            absent.start = Start::Path(".nope".into());
+            let e = error(&absent, Some(RECORDS));
+            assert_eq!(e["kind"], json!("not_found"), "{id}: {e}");
+            assert!(e.get("loss").is_none(), "{id}: {e}");
+            // An input that cannot be read: nothing was being written.
+            let mut missing = r.clone();
+            missing.files = vec!["no/such/file.json".into()];
+            let e = error(&missing, None);
+            assert_eq!(e["kind"], json!("io"), "{id}: {e}");
+            assert!(e.get("loss").is_none(), "{id}: {e}");
+            // An input that fails part way: met while writing. JSON
+            // declares no loss, so its list is empty.
+            let e = error(&r, Some(broken));
+            assert_eq!(e["kind"], json!("transduce"), "{id}: {e}");
+            assert_eq!(e["output"], json!("partial"), "{id}: {e}");
+            let loss = e["loss"].as_array().unwrap_or_else(|| panic!("{id}: {e}"));
+            assert_eq!(loss.is_empty(), id == "json", "{id}: {e}");
+            // A program's output through the same render, the same way.
+            let program = |files: Vec<PathBuf>| {
+                let mut p = req(Op::Alchemy {
+                    program: ProgramArg::Expr("def export [input] input".into()),
+                    render: Renderer::from_name(id),
+                    explain: false,
+                });
+                p.files = files;
+                p
+            };
+            let e = error(&program(vec!["no/such/file.json".into()]), None);
+            assert_eq!(e["kind"], json!("io"), "{id}: {e}");
+            assert!(e.get("loss").is_none(), "{id}: {e}");
+            let e = error(&program(Vec::new()), Some(broken));
+            assert_eq!(e["kind"], json!("transduce"), "{id}: {e}");
+            assert!(e["loss"].is_array(), "{id}: {e}");
+        }
     }
 
     /// A grammar from the command line is a format like any other here:
@@ -3278,13 +3417,13 @@ mod tests {
             .iter()
             .map(|e| e["path"].as_str().unwrap())
             .collect();
-        assert_eq!(paths, [".", "[0]", "[1]"]);
+        assert_eq!(paths, [".", ".[0]", ".[1]"]);
         // The values are the tokens, so they have positions.
         let mut r = req(Op::Where);
         r.kind = Some(custom);
         r.start = Start::At(2, Some(5));
         let v = json_of(&with_stdin(&r, src).stdout);
-        assert_eq!(v["path"], json!("[1].val"));
+        assert_eq!(v["path"], json!(".[1].val"));
         assert_eq!(v["value"], json!("two"));
         assert_eq!((v["line"].clone(), v["col"].clone()), (json!(2), json!(5)));
         // An input the grammar refuses: a parse error in the grammar's name.
@@ -3434,6 +3573,22 @@ mod tests {
                 .unwrap()
                 .ends_with("took longer than 0.001 s to compile"),
             "{err}"
+        );
+    }
+
+    /// A usage error the command line causes, the viewer's refusal without
+    /// a terminal among them, has the shape every usage error has, and
+    /// goes on one line with `--compact`.
+    #[test]
+    fn command_line_usage_errors_have_the_usage_shape() {
+        assert_eq!(
+            usage_failure("unknown option: --x (see aless --help)", true),
+            "{\"error\":{\"kind\":\"usage\",\"message\":\"unknown option: --x (see aless \
+             --help)\"}}\n"
+        );
+        assert_eq!(
+            usage_failure("no", false),
+            "{\n  \"error\": {\n    \"kind\": \"usage\",\n    \"message\": \"no\"\n  }\n}\n"
         );
     }
 

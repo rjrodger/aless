@@ -31,9 +31,14 @@ working here; `CLAUDE.md` imports it.
   `tabnas`), so the dependency line reads
   `tabnas = { package = "tabnas-parser", git = … }` and every patch table
   names `tabnas-parser`. `cargo update -p tabnas-parser` (or any grammar)
-  moves a pin to that repository's current default branch. Every crate but
-  `tabnas-lsp` is on crates.io; once it is too: replace `git` with a
-  version requirement and delete the patch tables; nothing else changes.
+  moves a pin to that repository's current default branch. Every tabnas
+  crate is on crates.io now, `tabnas-lsp` included; what keeps the git
+  pins is issue #28: `tests/yaml_render.rs` reads the tabnas-yaml
+  repository's own fixtures (`test/spec` and the vendored YAML Test
+  Suite), found by walking up from the crate's manifest, and the
+  published crate ships only its `rs/` directory, so that test cannot run
+  against a registry source. Once it can: replace `git` with a version
+  requirement and delete the patch tables; nothing else changes.
   Do not vendor or copy tabnas code into this repository.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
@@ -80,9 +85,18 @@ working here; `CLAUDE.md` imports it.
   in the library is terminal-free and unit tested: `doc` (the arena
   model and rows), `fmt` (text forms, previews, JSON output, paths),
   `load` (format detection, the grammars, errors, the size, depth and
-  time limits, the parse's own thread), `headless` (the agent
-  interface: paths, listings, search, positions, checks, programs, JSON
-  errors),
+  time limits, the parse's own thread), `grammar` (custom grammars:
+  `--grammar` and `--grammar-expr` read within `--max-size`, compiled
+  once at startup by tabnas-abnf, on a thread of their own within
+  `--timeout` and under the repetition caps, with the plain-text lexing
+  options, into the registry `Format::Custom` indexes), `headless` (the
+  agent interface: paths, listings, search, positions, checks, programs,
+  JSON errors), `export` (`--render csv` and `json`: the input streamed
+  through the tabnas transducer as its format's plan allows, a record at
+  a time, the parse's events as it proceeds, or the parsed value walked,
+  into aless's own renderers; the fallback when a grammar refuses to
+  stream, whole records only on a failure, each failure sorted by what it
+  means; the source plumbing `alchemy` and `translate` run on),
   `alchemy` (programs in the alchemy language: compiled, explained, and
   run over the input through `export`'s plumbing), `translate` (`--render
   FORMAT` for any format whose crate carries a render: the registry

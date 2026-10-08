@@ -123,6 +123,61 @@ fn every_fixture_but_the_broken_one_checks() {
     }
 }
 
+/// A failed `--check` still prints its report on standard output, with
+/// status 1 and nothing on standard error. Each failing file's `error` is
+/// the object a run on that file alone would print: the parse error's
+/// every field for a file that does not parse, an `io` error for one that
+/// is not there, and for a directory a `usage` error, its kind and message.
+#[test]
+fn a_failed_check_reports_each_files_own_error() {
+    let out = aless(
+        &[
+            "--check",
+            "tests/fixtures/bad.json",
+            "tests/fixtures/grammars",
+            "tests/fixtures/missing.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 1);
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out.stdout);
+    assert_eq!(report["ok"], json!(false));
+    let errors: Vec<&Value> = report["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| &f["error"])
+        .collect();
+    assert_eq!(errors[0]["kind"], json!("parse"));
+    for key in [
+        "file",
+        "format",
+        "code",
+        "message",
+        "line",
+        "col",
+        "hint",
+        "source_line",
+        "report",
+    ] {
+        assert!(errors[0].get(key).is_some(), "{key}: {}", errors[0]);
+    }
+    assert_eq!(
+        *errors[1],
+        json!({
+            "kind": "usage",
+            "message": "tests/fixtures/grammars is a directory: aless reads files (list a \
+                directory with ls or find)"
+        })
+    );
+    assert_eq!(errors[2]["kind"], json!("io"));
+}
+
 #[test]
 fn outline_drill_down_and_positions() {
     let out = aless(
@@ -188,9 +243,14 @@ fn csv_and_tsv_positions_start_below_the_header() {
         ("tests/fixtures/sample.csv", "csv"),
         ("tests/fixtures/sample.tsv", "tsv"),
     ] {
+        // A root array's item is printed `.[0]`, as jq takes it; the form
+        // without the dot is still read.
         let out = aless(&["--where", "--path", "[0].name", file], None);
         assert_eq!(code(&out), 0, "{file}");
         let v = json(&out.stdout);
+        assert_eq!(v["path"], json!(".[0].name"), "{file}");
+        let again = aless(&["--where", "--path", ".[0].name", file], None);
+        assert_eq!(json(&again.stdout), v, "{file}");
         assert_eq!(v["format"], json!(format));
         assert_eq!(
             (v["line"].clone(), v["col"].clone()),
@@ -199,7 +259,7 @@ fn csv_and_tsv_positions_start_below_the_header() {
         );
         assert_eq!(v["value"], json!("ada"));
         let out = aless(&["--where", "--at", "2:1", file], None);
-        assert_eq!(json(&out.stdout)["path"], json!("[0].name"), "{file}");
+        assert_eq!(json(&out.stdout)["path"], json!(".[0].name"), "{file}");
         let out = aless(&["--paths", file], None);
         let v = json(&out.stdout);
         let on_header = v["entries"]
@@ -271,7 +331,7 @@ fn positions_outside_the_text_are_not_found() {
     // Plain text, four lines, the third empty: an empty line exists, and
     // has no column inside it; the fourth, `fourth line`, has eleven.
     let lines = "tests/fixtures/lines.txt";
-    assert_eq!(json(&at("3", lines).stdout)["path"], json!("[2]"));
+    assert_eq!(json(&at("3", lines).stdout)["path"], json!(".[2]"));
     let out = at("3:1", lines);
     assert_eq!(code(&out), 4);
     let e = &json(&out.stderr)["error"];
@@ -279,7 +339,7 @@ fn positions_outside_the_text_are_not_found() {
         e["message"],
         json!("no column 1 on line 3 of tests/fixtures/lines.txt: the line is empty")
     );
-    assert_eq!(e["nearest"]["path"], json!("[2]"));
+    assert_eq!(e["nearest"]["path"], json!(".[2]"));
     assert_eq!(
         json(&at("4:11", lines).stdout)["value"],
         json!("fourth line")
@@ -287,7 +347,7 @@ fn positions_outside_the_text_are_not_found() {
     assert_eq!(code(&at("4:12", lines)), 4);
     let out = at("5", lines);
     assert_eq!(code(&out), 4);
-    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!("[3]"));
+    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!(".[3]"));
     // CRLF, and a last line without a terminator.
     let dir = std::env::temp_dir().join(format!("aless-at-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -430,6 +490,36 @@ fn failures_are_json_on_stderr_with_a_status() {
         let e = json(&out.stderr);
         assert_eq!(e["error"]["kind"], json!("usage"), "{args:?}");
     }
+    // --compact puts a usage error from the command line on one line too,
+    // wherever it stands among the options; after `--` it is a file.
+    let out = aless(
+        &[
+            "--no-such-option",
+            "--compact",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "{\"error\":{\"kind\":\"usage\",\"message\":\"unknown option: --no-such-option (see \
+         aless --help)\"}}\n"
+    );
+    let out = aless(
+        &["--compact", "-k", "nope", "tests/fixtures/nested.json"],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert_eq!(String::from_utf8_lossy(&out.stderr).lines().count(), 1);
+    assert!(json(&out.stderr)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("unknown format: nope"));
+    let out = aless(&["--no-such-option", "--", "--compact"], None);
+    assert_eq!(code(&out), 2);
+    assert!(String::from_utf8_lossy(&out.stderr).lines().count() > 1);
+    assert_eq!(json(&out.stderr)["error"]["kind"], json!("usage"));
 }
 
 /// An output that cannot be written (here a full disk) is an `io` error
@@ -667,14 +757,14 @@ fn help_leads_with_the_agent_interface() {
         assert!(head.contains(flag), "{flag} in the first lines:\n{head}");
     }
     assert!(text.find("WITHOUT A SCREEN") < text.find("THE VIEWER"));
-    // The exit statuses say what --alchemy adds to each, as the README's
-    // and the skill's tables do: a program file that cannot be read is
-    // status 3, one over --max-size status 5, and the deadline covers the
-    // program's run.
+    // The exit statuses say what --grammar and --alchemy add to each, as
+    // the README's and the skill's tables do: a grammar or program file
+    // that cannot be read is status 3, one over --max-size status 5, and
+    // the deadline covers the program's run.
     let statuses = &text[text.find("Exit status:").unwrap()..text.find("THE VIEWER").unwrap()];
     for (status, what) in [
         (
-            "3 an input (or an --alchemy",
+            "3 an input (or a --grammar or --alchemy",
             "program file) could not be read",
         ),
         (
@@ -688,6 +778,20 @@ fn help_leads_with_the_agent_interface() {
     ] {
         assert!(statuses.contains(status), "{status:?} in:\n{statuses}");
         assert!(statuses.contains(what), "{what:?} in:\n{statuses}");
+    }
+    // Every option aless takes is listed, its other names among them, and
+    // what else switches to JSON output.
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "--format is another name for this option",
+        "--watch Reload them (the default)",
+        "--no-color, --no-colour No colours",
+        "a standard output that is not a terminal, or TERM=dumb prints JSON",
+        "(2.5, 90s, 2m; default none; 0 for no limit)",
+        "--indent <N> Indent --json and --render json N spaces a level",
+        "--compact JSON on one line, an error's too",
+    ] {
+        assert!(flat.contains(said), "{said:?} in:\n{text}");
     }
 }
 
@@ -955,6 +1059,85 @@ fn render_json_agrees_with_json_for_every_fixture() {
     );
 }
 
+/// One of the two places `--render json` and `--json` part (the other is a
+/// number's spelling, `render_json_keeps_a_numbers_source_spelling`): NaN
+/// and the infinities, which JSON cannot hold, are `null` in `--json`'s
+/// output, and a stream refuses each with `TARGET_VALUE_UNREPRESENTABLE`,
+/// status 1, what came before it written.
+#[test]
+fn render_json_refuses_the_numbers_json_cannot_hold() {
+    let out = aless(
+        &["-k", "yaml", "--json", "--compact"],
+        Some("a: .nan\nb: .inf\nc: -.inf\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{\"a\":null,\"b\":null,\"c\":null}\n"
+    );
+    for (value, said) in [(".nan", "NaN"), (".inf", "inf"), ("-.inf", "-inf")] {
+        let out = aless(
+            &["-k", "yaml", "--render", "json", "--compact"],
+            Some(&format!("a: 1\nb: {value}\n")),
+        );
+        assert_eq!(code(&out), 1, "{value}");
+        assert_eq!(out.stdout, b"{\"a\":1", "{value}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"), "{value}");
+        assert_eq!(e["code"], json!("TARGET_VALUE_UNREPRESENTABLE"), "{value}");
+        assert_eq!(
+            e["message"],
+            json!(format!("{said} has no representation as a number")),
+            "{value}"
+        );
+        assert_eq!(e["output"], json!("partial"), "{value}");
+    }
+}
+
+/// The other place they part: a stream writes a number as the source
+/// spells it wherever that spelling is JSON, so `1.0`, `1e2` and `-0`
+/// keep theirs and an integer beyond 2^53 keeps every digit, where
+/// `--json` writes the 64-bit float. A spelling JSON lacks (YAML's
+/// `0x1F`) is written as its value.
+#[test]
+fn render_json_keeps_a_numbers_source_spelling() {
+    for (kind, text, streamed, whole) in [
+        (
+            "json",
+            "{\"a\": 1.0, \"b\": 12345678901234567890, \"c\": 1e2, \"d\": -0}",
+            "{\"a\":1.0,\"b\":12345678901234567890,\"c\":1e2,\"d\":-0}",
+            "{\"a\":1,\"b\":1.2345678901234567e+19,\"c\":100,\"d\":0}\n",
+        ),
+        (
+            "yaml",
+            "a: 1.0\nb: 12345678901234567890\nc: 0x1F\n",
+            "{\"a\":1.0,\"b\":12345678901234567890,\"c\":31}",
+            "{\"a\":1,\"b\":1.2345678901234567e+19,\"c\":31}\n",
+        ),
+    ] {
+        let out = aless(&["-k", kind, "--render", "json", "--compact"], Some(text));
+        assert_eq!(
+            code(&out),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            streamed,
+            "{kind}"
+        );
+        let out = aless(&["-k", kind, "--json", "--compact"], Some(text));
+        assert_eq!(
+            code(&out),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), whole, "{kind}");
+    }
+}
+
 /// A grammar that refuses to stream a document part-way (jsonic's implicit
 /// list with a container first, a YAML stream of documents) is run again
 /// from the whole value, and the answer is --json's.
@@ -1037,9 +1220,22 @@ fn render_failures_have_the_transduce_shape_and_status() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "[5]\n");
     let out = aless(&["--render", "json", "--path", "[-1]"], Some("[[1], [2]]"));
     assert_eq!(code(&out), 2);
-    let e = &json(&out.stderr)["error"];
-    assert_eq!(e["kind"], json!("usage"));
-    assert!(e["message"].as_str().unwrap().contains("[-1]"), "{e}");
+    // A usage error is its kind and its message, whatever the format;
+    // the path in the message is jq's, counting from the end as given.
+    assert_eq!(
+        json(&out.stderr),
+        json!({"error": {
+            "kind": "usage",
+            "message": "--render reads the input once, front to back, so it cannot count from \
+                the end of an array: [-1] in .[-1] names an item of the array at .; use --json \
+                --path, which reads the whole document"
+        }})
+    );
+    for render in ["csv", "yaml"] {
+        let other = aless(&["--render", render, "--path", "[-1]"], Some("[[1], [2]]"));
+        assert_eq!(code(&other), 2, "{render}");
+        assert_eq!(json(&other.stderr), json(&out.stderr), "{render}");
+    }
     // A key on the path repeated after the first was taken: the grammars
     // and --json keep the last, which a stream cannot honour.
     let out = aless(
@@ -1075,6 +1271,30 @@ fn render_failures_have_the_transduce_shape_and_status() {
         assert_eq!(
             json(&out.stderr)["error"]["kind"],
             json!("usage"),
+            "{args:?}"
+        );
+    }
+    // --at with --render, word for word, whichever comes first.
+    for args in [
+        &["--render", "csv", "--at", "3", "tests/fixtures/nested.json"][..],
+        &[
+            "--at",
+            "3:1",
+            "--render",
+            "yaml",
+            "tests/fixtures/nested.json",
+        ],
+    ] {
+        let out = aless(args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert_eq!(
+            json(&out.stderr),
+            json!({"error": {
+                "kind": "usage",
+                "message": "--render reads the input once, front to back, and cannot find a \
+                    source position in it: start it with --path, or use --where --at to find \
+                    the path"
+            }}),
             "{args:?}"
         );
     }
@@ -1279,7 +1499,7 @@ fn the_hosts_grammar_runs_as_the_readme_shows() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         format!(
-            "{{\"file\":\"{sample}\",\"format\":\"hosts\",\"path\":\"[1].names[0]\",\"kind\":\"string\",\"line\":5,\"col\":17,\"value\":\"workstation.example.com\"}}\n"
+            "{{\"file\":\"{sample}\",\"format\":\"hosts\",\"path\":\".[1].names[0]\",\"kind\":\"string\",\"line\":5,\"col\":17,\"value\":\"workstation.example.com\"}}\n"
         )
     );
     // `--render csv | head -3`: a header and a row per record, the names
@@ -1397,12 +1617,12 @@ fn custom_grammars_work_with_every_operation() {
         .iter()
         .map(|e| e["path"].as_str().unwrap())
         .collect();
-    assert_eq!(paths, [".", "[0]", "[1]"]);
+    assert_eq!(paths, [".", ".[0]", ".[1]"]);
     assert_eq!(v["entries"][1]["line"], json!(2));
     // A position maps to a path: line 3, column 8 is inside `line`.
     let out = aless(&["--grammar", &kv, "--where", "--at", "3:8", file], None);
     let v = json(&out.stdout);
-    assert_eq!(v["path"], json!("[1].value"));
+    assert_eq!(v["path"], json!(".[1].value"));
     assert_eq!(v["value"], json!("line"));
     assert_eq!((v["line"].clone(), v["col"].clone()), (json!(3), json!(8)));
     // A word of one punctuation character is a value, placed like any
@@ -1425,7 +1645,7 @@ fn custom_grammars_work_with_every_operation() {
     );
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     let v = json(&out.stdout);
-    assert_eq!(v["path"], json!("[12].password"));
+    assert_eq!(v["path"], json!(".[12].password"));
     assert_eq!((v["line"].clone(), v["col"].clone()), (json!(15), json!(7)));
     assert_eq!(v["value"], json!("*"));
     // Inside a value assembled from several tokens (the gecos field), the
@@ -1445,12 +1665,12 @@ fn custom_grammars_work_with_every_operation() {
         ],
         None,
     );
-    assert_eq!(json(&out.stdout)["path"], json!("[10].gid"));
+    assert_eq!(json(&out.stdout)["path"], json!(".[10].gid"));
     // Search, with the viewer's pattern.
     let out = aless(&["--grammar", &kv, "--find", "aless", file], None);
     let v = json(&out.stdout);
     assert_eq!(v["total"], json!(1));
-    assert_eq!(v["matches"][0]["path"], json!("[0].value"));
+    assert_eq!(v["matches"][0]["path"], json!(".[0].value"));
     // --render csv: the records as rows, a nested array as JSON text in
     // its cell; the grammar is parsed whole first (no grammar from the
     // command line streams).

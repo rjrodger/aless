@@ -813,16 +813,20 @@ fn selector_of(path: &[Seg]) -> Selector {
     s
 }
 
-/// A path in jq's syntax, as the outputs print one.
+/// A path in jq's syntax, as the outputs print one ([`fmt::path_jq`]),
+/// with an index that counts from the end as it was given: `.a[-1]`.
 pub fn path_text(path: &[Seg]) -> String {
-    let keys: Vec<crate::doc::Key> = path
-        .iter()
-        .map(|s| match s {
-            Seg::Name(n) => crate::doc::Key::Name(n.as_str().into()),
-            Seg::Index(i) => crate::doc::Key::Index(u32::try_from(*i).unwrap_or(u32::MAX)),
-        })
-        .collect();
-    fmt::path_jq(&keys)
+    let mut out = String::new();
+    for seg in path {
+        match seg {
+            Seg::Name(n) => fmt::push_jq_name(&mut out, n),
+            Seg::Index(i) => fmt::push_jq_index(&mut out, *i),
+        }
+    }
+    if out.is_empty() {
+        out.push('.');
+    }
+    out
 }
 
 /// Sort a failure into what it means for aless.
@@ -950,19 +954,22 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
     }
 }
 
-/// A failure's path, relative to the exported value, made absolute; a
-/// failure that names no path, or something that is not one (a renderer's
-/// `column "x", row 3`), is left alone.
+/// A failure's path, relative to the exported value, made absolute, in
+/// jq's syntax as every output prints a path: an index first in it
+/// follows a dot (`[1]` at the root is `.[1]`). A failure that names no
+/// path, or something that is not one (a renderer's `column "x", row 3`),
+/// is left alone.
 fn absolute(mut fail: Fail, base: &[Seg]) -> Fail {
-    if base.is_empty() {
-        return fail;
-    }
     if let Some(p) = &fail.path {
-        let base = path_text(base);
-        fail.path = Some(match p.as_str() {
-            "." => base,
-            p if p.starts_with('.') || p.starts_with('[') => format!("{base}{p}"),
-            _ => return fail,
+        let p = p.as_str();
+        fail.path = Some(match (base.is_empty(), p) {
+            (true, p) if p.starts_with('[') => format!(".{p}"),
+            (true, _) => return fail,
+            (false, ".") => path_text(base),
+            (false, p) if p.starts_with('.') || p.starts_with('[') => {
+                format!("{}{p}", path_text(base))
+            }
+            (false, _) => return fail,
         });
     }
     fail
@@ -2483,10 +2490,23 @@ mod tests {
         // A path counting from the end of an array: known only when the
         // container turns out to be one.
         let j = job(Format::Json, Renderer::Csv, "[-1]");
-        assert!(matches!(
-            run_text(&j, "[[1], [2]]").0.unwrap_err(),
-            ExportError::Usage(m) if m.contains("[-1]") && m.contains("the array at .")
-        ));
+        match run_text(&j, "[[1], [2]]").0.unwrap_err() {
+            ExportError::Usage(m) => assert_eq!(
+                m,
+                "--render reads the input once, front to back, so it cannot count from the end \
+                 of an array: [-1] in .[-1] names an item of the array at .; use --json --path, \
+                 which reads the whole document"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let j = job(Format::Json, Renderer::Csv, ".a[-2]");
+        match run_text(&j, r#"{"a": [[1], [2]]}"#).0.unwrap_err() {
+            ExportError::Usage(m) => assert!(
+                m.contains(": [-2] in .a[-2] names an item of the array at .a;"),
+                "{m}"
+            ),
+            other => panic!("{other:?}"),
+        }
         let j = job(Format::Json, Renderer::Json, "[-1]");
         let (r, out) = run_text(&j, r#"{"-1": [1]}"#);
         r.unwrap();
@@ -2526,6 +2546,31 @@ mod tests {
             .path
             .as_deref(),
             Some("column \"a\", row 1")
+        );
+        // At the root, a row's path is jq's too: `.[1]`, not `[1]`.
+        let root = job(Format::Json, Renderer::Csv, ".");
+        let (r, out) = run_text(&root, r#"[{"x": 1}, [2]]"#);
+        match r.unwrap_err() {
+            ExportError::Transduce(f) => assert_eq!(f.path.as_deref(), Some(".[1]")),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(out, "\"x\"\r\n\"1\"\r\n");
+        let at = |p: &str, base: &[Seg]| absolute(Fail::input("x").at_path(p), base).path;
+        assert_eq!(at("[0].a", &[]).as_deref(), Some(".[0].a"));
+        assert_eq!(at(".", &[]).as_deref(), Some("."));
+        assert_eq!(at(".a", &[]).as_deref(), Some(".a"));
+        assert_eq!(at("[0]", &[Seg::Index(2)]).as_deref(), Some(".[2][0]"));
+        assert_eq!(at(".", &[Seg::Index(2)]).as_deref(), Some(".[2]"));
+        // A path as the outputs print one, counting from the end as given.
+        assert_eq!(path_text(&[]), ".");
+        assert_eq!(path_text(&[Seg::Index(-1)]), ".[-1]");
+        assert_eq!(
+            path_text(&[
+                Seg::Name("a b".into()),
+                Seg::Index(-2),
+                Seg::Name("c".into())
+            ]),
+            r#"."a b"[-2].c"#
         );
         // A grammar's own depth limit reads as too_deep, as the loader says.
         let deep = format!("{}1{}", "[".repeat(300), "]".repeat(300));

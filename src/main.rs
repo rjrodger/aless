@@ -41,11 +41,11 @@ USAGE:
     <command> | aless [OPTIONS]
 
 WITHOUT A SCREEN (scripts, agents, pipes):
-    Any option in this section but --depth (the viewer has one too), or
-    a standard output that is not a terminal, prints JSON instead of
-    starting the viewer, and nothing waits for keys: `aless FILE | jq .`
-    is the document as JSON. With --panes (below), --render and --alchemy
-    choose the viewer's output pane instead.
+    Any option in this section but --depth and --indent (the viewer has
+    them too), a standard output that is not a terminal, or TERM=dumb
+    prints JSON instead of starting the viewer, and nothing waits for keys:
+    `aless FILE | jq .` is the document as JSON. With --panes (below),
+    --render and --alchemy choose the viewer's output pane instead.
 
         --json              The document as JSON (the default), or the value
                             at the start that --path or --at gives
@@ -74,27 +74,36 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --max-output <SIZE> Stop a program that writes more than SIZE (default
                             1G; K, M or G; 0 for no limit)
         --path <PATH>       Start at PATH, in the jq syntax every output uses
-                            (.a.b[0].\"odd key\"); a.b[0], $.a.b[0] and JSON
-                            Pointer (/a/b/0) work too
+                            (.a.b[0].\"odd key\", .[0] in a root array);
+                            a.b[0], [0], $.a.b[0] and JSON Pointer (/a/b/0)
+                            work too
         --at <LINE[:COL]>   Start at the node at that source position
         --depth <N>         --paths and --find go N levels below the start
         --limit <N>         At most N entries (default 200, 0 for all);
                             \"total\" and \"truncated\" say what was left out
-        --compact           JSON on one line
+        --compact           JSON on one line, an error's too
+        --indent <N>        Indent --json and --render json N spaces a level
+                            (default 2)
 
     Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
-    keyed value is at its key. Numbers are 64-bit floats. Input is read
-    whole before it is parsed, so output starts when the parse ends;
+    keyed value is at its key. Numbers are 64-bit floats, but --render
+    json keeps a number's source spelling where that is JSON, a big
+    integer's digits included; NaN and the infinities, which JSON cannot
+    hold, are null to --json, and --render json refuses them
+    (TARGET_VALUE_UNREPRESENTABLE, status 1). Input is
+    read whole before it is parsed, so output starts when the parse ends;
     --render and --alchemy stream instead, and read JSON Lines and CSV a
     record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
     \"message\", …}}, with the file, line, col, code and hint when the input
     did not parse, and {\"kind\": \"alchemy\", \"code\", \"file\", \"line\", \"col\"}
-    when the program did not; one met while --render writes a format adds
-    \"loss\", the sentences its warning gives on success. Exit status: 0
+    when the program did not; one met while --render writes a format (not
+    a usage or not_found error) adds \"loss\", the sentences its warning
+    gives on success. Standard output is then empty, but for --check's
+    report and what a failed stream wrote. Exit status: 0
     success, 1 the input did not parse (--check: an input failed; --render,
-    --alchemy: the input or its records will not do), 2 bad usage (a
-    program or --grammar that does not compile too) or no terminal for the
-    viewer, 3 an input (or an --alchemy program file) could not be read,
+    --alchemy: the input or its records will not do), 2 bad usage (a program
+    or --grammar that does not compile too) or no terminal for the viewer,
+    3 an input (or a --grammar or --alchemy program file) could not be read,
     or the output not written, 4 --path or --at names nothing,
     5 an input (or a --grammar or --alchemy program file) is over --max-size
     (--render, --alchemy: over a limit of the transducer's, a program's
@@ -103,7 +112,9 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     still being read when it passed (--render, --alchemy: the whole run,
     the program's work included). A stream that fails stops at the end of
     a record, a CSV row, a value in the root JSON array or object, a line,
-    and every record whole by then is written before the error is reported.
+    and every record whole by then is written before the error is reported;
+    a record over 16 MB, and another format's render (--render yaml), can
+    stop inside one.
 
     Columns count characters. Inside the text, --at answers the node
     starting last at or before the position on its line, the innermost of
@@ -139,6 +150,7 @@ THE VIEWER (in a terminal):
     directory is explored. Keys: F1 or :help inside aless.
 
         --no-watch          Do not reload files when they change
+        --watch             Reload them (the default)
     -m, --mode <MODE>       Start in `data` (default) or `line` mode
         --depth <N>         Fold containers deeper than N levels at start
     -n, --line-numbers      Show absolute line numbers
@@ -146,10 +158,11 @@ THE VIEWER (in a terminal):
     -r, --relative-line-numbers
     -R, --no-relative-line-numbers
         --scrolloff <N>     Rows kept around the focus when scrolling (default 3)
-        --indent <N>        Indentation per level (default 2; --json too)
+        --indent <N>        Indentation per level (default 2; JSON output too)
         --hidden            Show dot-files in the explorer
         --ascii             Draw fold markers with ASCII characters
-        --no-color          No colours (as does NO_COLOR)
+        --no-color, --no-colour
+                            No colours (as does NO_COLOR)
         --no-mouse          Do not capture the mouse
         --panes <out,program>
                             Open panes beside the input: out, the document as
@@ -163,7 +176,8 @@ THE VIEWER (in a terminal):
 BOTH:
     -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
                             json jsonl jsonic jsonc json5 yaml toml ini csv tsv
-                            xml zon markdown feed text, or a --grammar NAME
+                            xml zon markdown feed text, or a --grammar NAME;
+                            --format is another name for this option
         --grammar <NAME=FILE>
                             Read a file whose extension or whole name is NAME
                             (x.hosts, /etc/hosts) with the ABNF grammar in FILE:
@@ -176,9 +190,10 @@ BOTH:
                             or G; 0 for no limit): a parse takes about 40 bytes
                             of memory per byte of input. A --grammar FILE too
         --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
-                            longer than this (2.5, 90s, 2m; default none): a
-                            large input can take minutes. On standard input it
-                            runs from the start, so waiting on the input counts
+                            longer than this (2.5, 90s, 2m; default none; 0
+                            for no limit): a large input can take minutes. On
+                            standard input it runs from the start, so waiting
+                            on the input counts
     -h, --help              This help
     -V, --version           Version
 ";
@@ -489,10 +504,7 @@ fn parse_args() -> Result<Args, String> {
         return Err("--check parses whole files: it takes no --path or --at".into());
     }
     if matches!(args.op, Some(Op::Render(_))) && matches!(args.start, Start::At(..)) {
-        return Err(
-            "--render reads the input once, front to back, and cannot find a source position              in it: start it with --path, or use --where --at to find the path"
-                .into(),
-        );
+        return Err(headless::RENDER_TAKES_NO_AT.into());
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
@@ -533,12 +545,11 @@ fn headless_wanted(args_ask: bool) -> bool {
 }
 
 /// Say that the command line asks for what cannot be done, as JSON on
-/// standard error without a screen and as a line with one, and exit with
-/// status 2.
-fn refuse_usage(e: &str, headless: bool) -> ! {
+/// standard error without a screen (on one line with `--compact`) and as a
+/// line with one, and exit with status 2.
+fn refuse_usage(e: &str, headless: bool, compact: bool) -> ! {
     if headless {
-        let error = serde_json::json!({"error": {"kind": "usage", "message": e}});
-        eprint!("{}", headless::render(&error, false));
+        eprint!("{}", headless::usage_failure(e, compact));
     } else {
         eprintln!("aless: {e}");
     }
@@ -550,12 +561,20 @@ fn main() {
         Ok(a) => a,
         Err(e) => {
             // The options could not be read, so ask the raw ones whether
-            // this was meant to run without a screen.
-            let asked = std::env::args_os().skip(1).any(|a| {
-                let a = a.to_string_lossy();
-                HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default())
-            });
-            refuse_usage(&e, headless_wanted(asked));
+            // this was meant to run without a screen, and on one line.
+            let raw: Vec<String> = std::env::args_os()
+                .skip(1)
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let asked = raw
+                .iter()
+                .any(|a| HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default()));
+            // Options end at `--`; after it, `--compact` is a file's name.
+            let compact = raw
+                .iter()
+                .take_while(|a| a.as_str() != "--")
+                .any(|a| a == "--compact");
+            refuse_usage(&e, headless_wanted(asked), compact);
         }
     };
     let headless = headless_wanted(args.headless);
@@ -564,6 +583,7 @@ fn main() {
             "--panes opens the viewer, which needs a terminal: without one, give --render or \
              --alchemy without --panes",
             true,
+            args.compact,
         );
     }
     // Before any input is read, grammar files included: input that never
@@ -601,6 +621,7 @@ fn main() {
                     Format::known_names().join(" ")
                 ),
                 headless,
+                args.compact,
             ),
         }
     }
@@ -669,15 +690,20 @@ fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, form
 }
 
 /// Say that the viewer cannot start and what works instead, then exit with
-/// status 2. Nothing has been drawn, so there is nothing to restore.
+/// status 2. Nothing has been drawn, so there is nothing to restore. There
+/// is no terminal to talk to, so this is said as every usage error is
+/// without one: `{"error": {"kind": "usage", "message"}}` on standard
+/// error, and nothing on standard output.
 fn refuse_viewer(e: &io::Error) -> ! {
-    eprintln!(
-        "aless: cannot start the viewer: {e}\n\
-         The viewer needs a terminal to draw on and read keys from. To read a\n\
-         file without a screen, use --json, --paths, --find, --where, --check or\n\
-         --render (see aless --help); aless FILE > out.json writes the document as JSON."
-    );
-    std::process::exit(headless::status::USAGE);
+    refuse_usage(
+        &format!(
+            "cannot start the viewer, which needs a terminal to draw on and read keys from: {e}. \
+             To read a file without a screen, use --json, --paths, --find, --where, --check or \
+             --render (see aless --help); aless FILE > out.json writes the document as JSON"
+        ),
+        true,
+        false,
+    )
 }
 
 /// Check that the viewer will have a terminal to read keys from: the one

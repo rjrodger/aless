@@ -8,23 +8,32 @@ description: Read, query, validate and export structured files with the aless co
 aless is a jless-style terminal viewer for people. For you it is a CLI
 that prints JSON: every run reads one file (or `--check` reads several),
 prints one JSON value on standard output and exits 0, or prints
-`{"error": {…}}` on standard error and exits non-zero.
+`{"error": {…}}` on standard error and exits non-zero. Standard output
+is then empty, with two exceptions: a failed `--check` still prints its
+report there (exit 1), and a `--render` or `--alchemy` stream that fails
+leaves there what it had written before the error: whole records, but
+for a record over 16 MB and another format's render (`--render yaml`),
+which can stop inside one.
 
 ## Rules
 
 1. **Always pass an output option**: `--json`, `--paths`, `--find`,
    `--where`, `--check`, `--render` or `--alchemy`. aless also prints JSON whenever standard output
-   is not a terminal, but an explicit option guarantees it. The viewer is
-   never what you want. Without a terminal it refuses with exit status 2;
-   in a pseudo-terminal it would wait for keys. Never pass `--panes`: it
+   is not a terminal, or `TERM=dumb` is set, but an explicit option
+   guarantees it. The viewer is never what you want. Without a terminal
+   it refuses with exit status 2 and a `usage` error; in a
+   pseudo-terminal it would wait for keys. Never pass `--panes`: it
    opens the viewer, and `--render` or `--alchemy` given with it choose
    the viewer's output pane instead of printing.
 2. **Name the file as an argument.** Standard input works, but it is
-   parsed as JSON unless `-k FORMAT` says otherwise (`-k yaml`,
-   `-k toml`, …).
+   parsed as JSON unless `-k FORMAT` (or `--format FORMAT`) says
+   otherwise (`-k yaml`, `-k toml`, …).
 3. **Check the exit status before reading standard output.** Only 0
    means standard output holds the answer (with `--check`, 1 still
-   comes with a full report).
+   comes with a full report; a failed `--render` or `--alchemy` leaves
+   only what it wrote before the failure, which a record over 16 MB or
+   another format's render, such as `--render yaml`, can leave cut
+   short).
 4. **Quote paths** for the shell: `--path '.items[0]'`, since the shell
    would glob `[0]`.
 5. **Start small on a big or unknown file.** Use `--paths --depth 1`
@@ -82,9 +91,12 @@ Check that files parse, and see why one does not:
 aless --check $(git ls-files '*.yaml' '*.yml' '*.toml' '*.json')
 ```
 
-Each failing file carries `line`, `col`, `code`, `message`, `hint`,
-`source_line` and `report`, the parser's full error report with the
-lines around the error. Fix the file at `line:col` and check again.
+Each failing file's `error` is the error a run on that file alone would
+print. A file that does not parse carries `line`, `col`, `code`,
+`message`, `hint`, `source_line` and `report`, the parser's full error
+report with the lines around the error: fix the file at `line:col` and
+check again. A file that cannot be read is an `io` error, and a
+directory a `usage` error, `{kind, message}` and nothing more.
 
 Export the records in a file as CSV, or a whole document as JSON,
 streamed as the file is read:
@@ -92,9 +104,18 @@ streamed as the file is read:
 ```bash
 aless --render csv data.jsonl                                   # one line, one row
 aless --render csv --path .response.payload.deep.records api.json
-aless --render json big.yaml                                    # --json, streamed
+aless --render json big.yaml                                    # the document as JSON, streamed
 aless -k jsonl --render csv < events.log                        # stdin, a record at a time
 ```
+
+`--render json` writes what `--json` writes, indented the same way
+(`--indent N`, `--compact`), but for two things. A number keeps the
+spelling it has in the source wherever that spelling is JSON: `1.0` stays
+`1.0` (`--json` writes `1`), and an integer beyond 2^53 keeps every digit,
+where `--json` writes the nearest 64-bit float. NaN and the infinities,
+which JSON cannot hold, `--json` writes as `null`, while `--render json`
+stops there with a `transduce` error, `TARGET_VALUE_UNREPRESENTABLE`,
+exit 1.
 
 The rows are the elements of the array at `--path` (the root when no
 path is given); for JSON Lines the lines, for CSV and TSV the records.
@@ -217,7 +238,8 @@ An **entry** describes one node:
 {"path":".spec.replicas","kind":"number","line":12,"col":3,"value":3}
 ```
 
-- `path` is in jq syntax. Pass it back to `--path` unchanged.
+- `path` is in jq syntax (a root array's items are `.[0]`, `.[1]`, …).
+  Pass it back to `--path`, or to jq, unchanged.
 - `kind` is one of object, array, string, number, boolean or null.
 - `line` and `col` count from 1, columns in characters, and point where
   the node starts: at its key if it has one, else at its value. They are
@@ -231,13 +253,13 @@ What each option prints:
 
 | Option | Shape |
 |---|---|
-| `--json` | the value itself |
+| `--json` | the value itself, indented 2 spaces a level (`--indent N` sets it, `--compact` puts it on one line) |
 | `--paths` | `{file, format, path, entries: [entry…], total, limit, truncated}` |
 | `--find RE` | `{file, format, path, pattern, matches: [entry…], total, limit, truncated}` |
 | `--where` | `{file, format, …entry}` |
 | `--check` | `{ok, files: [{file, format, ok, error}]}` |
 | `--render csv` | CSV text: a header row, then one record per row, all fields quoted, CRLF |
-| `--render json` | the value itself, streamed |
+| `--render json` | the value itself, streamed, indented as `--json` is, each number spelled as in the source where that is JSON; NaN and the infinities, which `--json` writes as `null`, fail it (`TARGET_VALUE_UNREPRESENTABLE`, exit 1) |
 | `--render yaml` | the value as one YAML document, streamed; `{"warning": {"kind": "loss", …}}` on standard error |
 | `--alchemy FILE` | what the program exports: text as it is, a table as CSV (`--render json`: JSON records), JSON events as JSON |
 | `--alchemy FILE --explain` | `{entry, output, protocol, chain, retention, …}`, the program's plan report |
@@ -253,16 +275,21 @@ Exit statuses, and the `error.kind` that goes with each:
 | 0 | none | success |
 | 1 | `parse`, `transduce` | the input did not parse; with `--check`, a file failed; with `--render` or `--alchemy`, the input or its records will not do |
 | 2 | `usage`, `alchemy` | bad option or path syntax, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or no terminal for the viewer |
-| 3 | `io`, `transduce` | the file, or an `--alchemy` program file, could not be read, or standard output could not be written |
+| 3 | `io`, `transduce` | the file, a `--grammar` file or an `--alchemy` program file could not be read, or standard output could not be written |
 | 4 | `not_found` | `--path` or `--at` named nothing |
 | 5 | `too_large`, `transduce` | the input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size` (default 64M); with `--render` or `--alchemy`, over a limit of the transducer's, a program's output over `--max-output` (default 1G) among them |
-| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none), or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run |
+| 6 | `timeout` | the parse, or a `--grammar` compile, ran longer than `--timeout` (default none; `--timeout 0` is none too), or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run |
+
+A `usage` error is `{kind, message}` and nothing more (a `--grammar`
+that does not compile adds `grammar`, and `file` when it came from one),
+the viewer's refusal without a terminal included. `--compact` puts any
+error on one line.
 
 A `not_found` error carries `nearest`, the entry of the deepest node the
 path reached, or for `--at` of the node a position inside the text would
-have answered (`null` when no node has a position). When that node is an
-object it also carries `keys`, its first keys. Use them to correct the
-path.
+have answered (`null` when no node has a position), and `keys`: that
+node's first keys when it is an object, else `null`. Use them to correct
+the path.
 
 A `transduce` error comes from `--render`: `code` is the transducer's
 (`INPUT_INVALID`, `RESOURCE_LIMIT_EXCEEDED`, `OUTPUT_FAILED`, …), and it
@@ -292,9 +319,12 @@ names the line the record it was reading starts on, with `col` null,
 unless the deadline passed while standard input was still being read,
 a writer slow or silent: then `line` and `col` are both null, as for
 any input still being read when the time ran out.
-An error met while `--render yaml` was writing (a `transduce`,
-`too_deep` or `timeout` error) also carries `loss`, the sentences its
-warning gives on success.
+An error met while `--render FORMAT` was writing, `--render json` and
+`csv` included (a `transduce`, `parse` such as `too_deep`, or `timeout`
+error, or the render's own `alchemy` one), also carries `loss`, the
+sentences its warning gives on success (an empty list for JSON). A
+`usage` or `not_found` error never does, nor does one met before the
+writing began, such as an input that cannot be read.
 
 An `alchemy` error is the program's own: `code` is the language's,
 `message` opens with the finer code, `file` is the program's path (or
@@ -327,16 +357,19 @@ and a `hint` naming the option.
 ## Paths
 
 jq syntax: `.`, `.a.b`, `.a[0]`, `.a[-1]` (the last item), `."odd key"`,
-`.["a.b"]`. Also accepted: `a.b[0]`, `$.a['b'][0]` and JSON Pointer
-`/a/b/0`. There are no wildcards, slices or recursive descent. For those,
-pipe `--json` into jq.
+`.["a.b"]`, and `.[0]` for a root array's first item. Also accepted:
+`a.b[0]` and `[0]` without the leading dot, `$.a['b'][0]` and JSON
+Pointer `/a/b/0`. There are no wildcards, slices or recursive descent.
+For those, pipe `--json` into jq.
 
 ## Caveats
 
-- Numbers are 64-bit floats: integers beyond 2^53 lose precision, so
+- Numbers are 64-bit floats: integers beyond 2^53 lose precision in
+  `--json` and in entries (`--render json` keeps their digits), so
   compare large IDs as text with `--find` rather than as numbers.
-- `--json` writes NaN and the infinities as `null`. Entries write them as
-  `"NaN"`, `"Infinity"` and `"-Infinity"`, with kind `number`.
+- `--json` writes NaN and the infinities as `null`, and `--render json`
+  refuses them (`TARGET_VALUE_UNREPRESENTABLE`, exit 1). Entries write
+  them as `"NaN"`, `"Infinity"` and `"-Infinity"`, with kind `number`.
 - Unknown extensions are read as plain text: an array of lines. Use `-k`
   to name the format, or `--grammar` to give the format one.
 - Big files are costly. aless reads and parses the whole input before it
@@ -369,5 +402,6 @@ pipe `--json` into jq.
   your command runner. If the runner has a timeout, pass `--timeout` a
   few seconds shorter (`--timeout 50` under a 60 s limit). A slow parse
   then ends with a `timeout` error, exit 6, showing how far it got,
-  instead of being killed without a word.
+  instead of being killed without a word. There is no limit by default,
+  and `--timeout 0` asks for none.
 - `aless --help` has the full option list. It opens with this interface.
