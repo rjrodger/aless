@@ -217,7 +217,8 @@ An **entry** describes one node:
 {"path":".spec.replicas","kind":"number","line":12,"col":3,"value":3}
 ```
 
-- `path` is in jq syntax. Pass it back to `--path` unchanged.
+- `path` is in jq syntax (a root array's items are `.[0]`, `.[1]`, …).
+  Pass it back to `--path`, or to jq, unchanged.
 - `kind` is one of object, array, string, number, boolean or null.
 - `line` and `col` count from 1, columns in characters, and point where
   the node starts: at its key if it has one, else at its value. They are
@@ -327,9 +328,10 @@ and a `hint` naming the option.
 ## Paths
 
 jq syntax: `.`, `.a.b`, `.a[0]`, `.a[-1]` (the last item), `."odd key"`,
-`.["a.b"]`. Also accepted: `a.b[0]`, `$.a['b'][0]` and JSON Pointer
-`/a/b/0`. There are no wildcards, slices or recursive descent. For those,
-pipe `--json` into jq.
+`.["a.b"]`, and `.[0]` for a root array's first item. Also accepted:
+`a.b[0]` and `[0]` without the leading dot, `$.a['b'][0]` and JSON
+Pointer `/a/b/0`. There are no wildcards, slices or recursive descent.
+For those, pipe `--json` into jq.
 
 ## Caveats
 

@@ -316,27 +316,42 @@ pub fn is_jq_identifier(s: &str) -> bool {
 }
 
 /// `.foo[3].bar` in jq's syntax; keys jq cannot take bare become
-/// `."weird key"`.
+/// `."weird key"`, and an index first in the path follows a dot, `.[0]`,
+/// since jq reads a bare `[0]` as an array of its own.
 pub fn path_jq(path: &[Key]) -> String {
     let mut out = String::new();
     for k in path {
         match k {
             Key::Root => {}
-            Key::Index(i) => out.push_str(&format!("[{i}]")),
-            Key::Name(n) => {
-                out.push('.');
-                if is_jq_identifier(n) {
-                    out.push_str(n);
-                } else {
-                    out.push_str(&quote(n));
-                }
-            }
+            Key::Index(i) => push_jq_index(&mut out, i64::from(*i)),
+            Key::Name(n) => push_jq_name(&mut out, n),
         }
     }
     if out.is_empty() {
         out.push('.');
     }
     out
+}
+
+/// Add an index step to a jq path being written: `[3]`, or `.[3]` when it
+/// is the path's first step. A negative index counts from the end, as jq's
+/// does: `.[-1]`.
+pub fn push_jq_index(out: &mut String, i: i64) {
+    if out.is_empty() {
+        out.push('.');
+    }
+    out.push_str(&format!("[{i}]"));
+}
+
+/// Add a key step to a jq path being written: `.foo`, or `."weird key"`
+/// for a key jq cannot take bare.
+pub fn push_jq_name(out: &mut String, n: &str) {
+    out.push('.');
+    if is_jq_identifier(n) {
+        out.push_str(n);
+    } else {
+        out.push_str(&quote(n));
+    }
 }
 
 #[cfg(test)]
@@ -423,6 +438,19 @@ mod tests {
         assert_eq!(path_bracket(&p), r#"["foo"][3]["bar baz"]"#);
         assert_eq!(path_jq(&p), r#".foo[3]."bar baz""#);
         assert_eq!(path_jq(&[]), ".");
+        // A root array's items: jq takes `.[0]`, and reads `[0]` as an
+        // array literal. Only the first step needs the dot.
+        assert_eq!(path_jq(&[Key::Index(0)]), ".[0]");
+        assert_eq!(
+            path_jq(&[Key::Index(1), Key::Name("name".into())]),
+            ".[1].name"
+        );
+        assert_eq!(path_jq(&[Key::Index(1), Key::Index(2)]), ".[1][2]");
+        // jless's dot path keeps its own form.
+        assert_eq!(path_dot(&[Key::Index(0)]), "[0]");
+        let mut negative = String::new();
+        push_jq_index(&mut negative, -1);
+        assert_eq!(negative, ".[-1]");
         // jq takes fewer keys bare than JavaScript does.
         let jq = |k: &str| path_jq(&[Key::Name(k.into())]);
         assert_eq!(jq("a_b1"), ".a_b1");

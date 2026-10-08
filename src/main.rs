@@ -74,8 +74,9 @@ WITHOUT A SCREEN (scripts, agents, pipes):
         --max-output <SIZE> Stop a program that writes more than SIZE (default
                             1G; K, M or G; 0 for no limit)
         --path <PATH>       Start at PATH, in the jq syntax every output uses
-                            (.a.b[0].\"odd key\"); a.b[0], $.a.b[0] and JSON
-                            Pointer (/a/b/0) work too
+                            (.a.b[0].\"odd key\", .[0] in a root array);
+                            a.b[0], [0], $.a.b[0] and JSON Pointer (/a/b/0)
+                            work too
         --at <LINE[:COL]>   Start at the node at that source position
         --depth <N>         --paths and --find go N levels below the start
         --limit <N>         At most N entries (default 200, 0 for all);

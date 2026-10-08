@@ -188,9 +188,14 @@ fn csv_and_tsv_positions_start_below_the_header() {
         ("tests/fixtures/sample.csv", "csv"),
         ("tests/fixtures/sample.tsv", "tsv"),
     ] {
+        // A root array's item is printed `.[0]`, as jq takes it; the form
+        // without the dot is still read.
         let out = aless(&["--where", "--path", "[0].name", file], None);
         assert_eq!(code(&out), 0, "{file}");
         let v = json(&out.stdout);
+        assert_eq!(v["path"], json!(".[0].name"), "{file}");
+        let again = aless(&["--where", "--path", ".[0].name", file], None);
+        assert_eq!(json(&again.stdout), v, "{file}");
         assert_eq!(v["format"], json!(format));
         assert_eq!(
             (v["line"].clone(), v["col"].clone()),
@@ -199,7 +204,7 @@ fn csv_and_tsv_positions_start_below_the_header() {
         );
         assert_eq!(v["value"], json!("ada"));
         let out = aless(&["--where", "--at", "2:1", file], None);
-        assert_eq!(json(&out.stdout)["path"], json!("[0].name"), "{file}");
+        assert_eq!(json(&out.stdout)["path"], json!(".[0].name"), "{file}");
         let out = aless(&["--paths", file], None);
         let v = json(&out.stdout);
         let on_header = v["entries"]
@@ -271,7 +276,7 @@ fn positions_outside_the_text_are_not_found() {
     // Plain text, four lines, the third empty: an empty line exists, and
     // has no column inside it; the fourth, `fourth line`, has eleven.
     let lines = "tests/fixtures/lines.txt";
-    assert_eq!(json(&at("3", lines).stdout)["path"], json!("[2]"));
+    assert_eq!(json(&at("3", lines).stdout)["path"], json!(".[2]"));
     let out = at("3:1", lines);
     assert_eq!(code(&out), 4);
     let e = &json(&out.stderr)["error"];
@@ -279,7 +284,7 @@ fn positions_outside_the_text_are_not_found() {
         e["message"],
         json!("no column 1 on line 3 of tests/fixtures/lines.txt: the line is empty")
     );
-    assert_eq!(e["nearest"]["path"], json!("[2]"));
+    assert_eq!(e["nearest"]["path"], json!(".[2]"));
     assert_eq!(
         json(&at("4:11", lines).stdout)["value"],
         json!("fourth line")
@@ -287,7 +292,7 @@ fn positions_outside_the_text_are_not_found() {
     assert_eq!(code(&at("4:12", lines)), 4);
     let out = at("5", lines);
     assert_eq!(code(&out), 4);
-    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!("[3]"));
+    assert_eq!(json(&out.stderr)["error"]["nearest"]["path"], json!(".[3]"));
     // CRLF, and a last line without a terminator.
     let dir = std::env::temp_dir().join(format!("aless-at-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -1067,9 +1072,22 @@ fn render_failures_have_the_transduce_shape_and_status() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "[5]\n");
     let out = aless(&["--render", "json", "--path", "[-1]"], Some("[[1], [2]]"));
     assert_eq!(code(&out), 2);
-    let e = &json(&out.stderr)["error"];
-    assert_eq!(e["kind"], json!("usage"));
-    assert!(e["message"].as_str().unwrap().contains("[-1]"), "{e}");
+    // A usage error is its kind and its message, whatever the format;
+    // the path in the message is jq's, counting from the end as given.
+    assert_eq!(
+        json(&out.stderr),
+        json!({"error": {
+            "kind": "usage",
+            "message": "--render reads the input once, front to back, so it cannot count from \
+                the end of an array: [-1] in .[-1] names an item of the array at .; use --json \
+                --path, which reads the whole document"
+        }})
+    );
+    for render in ["csv", "yaml"] {
+        let other = aless(&["--render", render, "--path", "[-1]"], Some("[[1], [2]]"));
+        assert_eq!(code(&other), 2, "{render}");
+        assert_eq!(json(&other.stderr), json(&out.stderr), "{render}");
+    }
     // A key on the path repeated after the first was taken: the grammars
     // and --json keep the last, which a stream cannot honour.
     let out = aless(
@@ -1333,7 +1351,7 @@ fn the_hosts_grammar_runs_as_the_readme_shows() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         format!(
-            "{{\"file\":\"{sample}\",\"format\":\"hosts\",\"path\":\"[1].names[0]\",\"kind\":\"string\",\"line\":5,\"col\":17,\"value\":\"workstation.example.com\"}}\n"
+            "{{\"file\":\"{sample}\",\"format\":\"hosts\",\"path\":\".[1].names[0]\",\"kind\":\"string\",\"line\":5,\"col\":17,\"value\":\"workstation.example.com\"}}\n"
         )
     );
     // `--render csv | head -3`: a header and a row per record, the names
@@ -1451,12 +1469,12 @@ fn custom_grammars_work_with_every_operation() {
         .iter()
         .map(|e| e["path"].as_str().unwrap())
         .collect();
-    assert_eq!(paths, [".", "[0]", "[1]"]);
+    assert_eq!(paths, [".", ".[0]", ".[1]"]);
     assert_eq!(v["entries"][1]["line"], json!(2));
     // A position maps to a path: line 3, column 8 is inside `line`.
     let out = aless(&["--grammar", &kv, "--where", "--at", "3:8", file], None);
     let v = json(&out.stdout);
-    assert_eq!(v["path"], json!("[1].value"));
+    assert_eq!(v["path"], json!(".[1].value"));
     assert_eq!(v["value"], json!("line"));
     assert_eq!((v["line"].clone(), v["col"].clone()), (json!(3), json!(8)));
     // A word of one punctuation character is a value, placed like any
@@ -1479,7 +1497,7 @@ fn custom_grammars_work_with_every_operation() {
     );
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     let v = json(&out.stdout);
-    assert_eq!(v["path"], json!("[12].password"));
+    assert_eq!(v["path"], json!(".[12].password"));
     assert_eq!((v["line"].clone(), v["col"].clone()), (json!(15), json!(7)));
     assert_eq!(v["value"], json!("*"));
     // Inside a value assembled from several tokens (the gecos field), the
@@ -1499,12 +1517,12 @@ fn custom_grammars_work_with_every_operation() {
         ],
         None,
     );
-    assert_eq!(json(&out.stdout)["path"], json!("[10].gid"));
+    assert_eq!(json(&out.stdout)["path"], json!(".[10].gid"));
     // Search, with the viewer's pattern.
     let out = aless(&["--grammar", &kv, "--find", "aless", file], None);
     let v = json(&out.stdout);
     assert_eq!(v["total"], json!(1));
-    assert_eq!(v["matches"][0]["path"], json!("[0].value"));
+    assert_eq!(v["matches"][0]["path"], json!(".[0].value"));
     // --render csv: the records as rows, a nested array as JSON text in
     // its cell; the grammar is parsed whole first (no grammar from the
     // command line streams).

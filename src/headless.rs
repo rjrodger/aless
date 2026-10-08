@@ -2052,6 +2052,51 @@ mod tests {
         }
     }
 
+    /// A root array's items print as jq takes them, `.[0]` and
+    /// `.[0].name`, and go straight back in; the form without the dot,
+    /// `[0].name`, which aless printed before, is still read.
+    #[test]
+    fn a_root_arrays_paths_are_jq_and_resolve_back() {
+        let d = doc(r#"[{"name": "a", "tags": [1, [2]]}, 3]"#);
+        let printed: Vec<String> = (0..d.len() as NodeId)
+            .map(|id| fmt::path_jq(&d.path(id)))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                ".",
+                ".[0]",
+                ".[0].name",
+                ".[0].tags",
+                ".[0].tags[0]",
+                ".[0].tags[1]",
+                ".[0].tags[1][0]",
+                ".[1]",
+            ]
+        );
+        for (id, path) in printed.iter().enumerate() {
+            let segs = parse_path(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(resolve(&d, &segs), Ok(id as NodeId), "{path}");
+            // Without the leading dot, as before.
+            let bare = path.strip_prefix('.').unwrap_or(path);
+            assert_eq!(parse_path(bare), Ok(segs), "{bare:?}");
+        }
+        assert_eq!(
+            parse_path("[0].name"),
+            Ok(vec![Seg::Index(0), Seg::Name("name".into())])
+        );
+        // Through the command's own selection and listing.
+        let mut r = req(Op::Where);
+        r.start = Start::Path("[0].name".into());
+        r.compact = true;
+        let out = with_stdin(&r, r#"[{"name": "a"}]"#);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(json_of(&out.stdout)["path"], json!(".[0].name"));
+        r.start = Start::Path(".[-1]".into());
+        let out = with_stdin(&r, r#"[{"name": "a"}, 2]"#);
+        assert_eq!(json_of(&out.stdout)["path"], json!(".[1]"));
+    }
+
     #[test]
     fn positions_pick_the_node_a_tool_means() {
         // 1 {
@@ -2213,9 +2258,9 @@ mod tests {
         let out = at(Op::Where, 1, Some(8), "[1, {}]\n");
         assert_eq!(out.status, status::NOT_FOUND);
         let e = error(&out);
-        assert_eq!(e["nearest"]["path"], json!("[1]"));
+        assert_eq!(e["nearest"]["path"], json!(".[1]"));
         assert_eq!(e["keys"], json!([]));
-        assert_eq!(path(&at(Op::Where, 1, Some(7), "[1, {}]\n")), json!("[1]"));
+        assert_eq!(path(&at(Op::Where, 1, Some(7), "[1, {}]\n")), json!(".[1]"));
         // CRLF: the CR is not text, and a trailing CRLF starts no line.
         let crlf = "{\r\n  \"a\": 1\r\n}\r\n";
         assert_eq!(path(&at(Op::Where, 2, Some(8), crlf)), json!(".a"));
@@ -3235,7 +3280,11 @@ mod tests {
         assert_eq!(usage(with_stdin(&at, RECORDS)), RENDER_TAKES_NO_AT);
         let mut last = r.clone();
         last.start = Start::Path(".rows[-1]".into());
-        assert!(usage(with_stdin(&last, RECORDS)).contains("[-1]"));
+        let message = usage(with_stdin(&last, RECORDS));
+        assert!(
+            message.contains(": [-1] in .rows[-1] names an item of the array at .rows;"),
+            "{message}"
+        );
         let mut text = r.clone();
         text.kind = Some(Format::Text);
         assert!(usage(with_stdin(&text, "hello\n")).contains("-k"));
@@ -3368,13 +3417,13 @@ mod tests {
             .iter()
             .map(|e| e["path"].as_str().unwrap())
             .collect();
-        assert_eq!(paths, [".", "[0]", "[1]"]);
+        assert_eq!(paths, [".", ".[0]", ".[1]"]);
         // The values are the tokens, so they have positions.
         let mut r = req(Op::Where);
         r.kind = Some(custom);
         r.start = Start::At(2, Some(5));
         let v = json_of(&with_stdin(&r, src).stdout);
-        assert_eq!(v["path"], json!("[1].val"));
+        assert_eq!(v["path"], json!(".[1].val"));
         assert_eq!(v["value"], json!("two"));
         assert_eq!((v["line"].clone(), v["col"].clone()), (json!(2), json!(5)));
         // An input the grammar refuses: a parse error in the grammar's name.

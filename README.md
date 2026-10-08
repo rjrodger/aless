@@ -139,9 +139,10 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--max-output SIZE` | stop an `--alchemy` program that writes more than SIZE (default `1G`; `0` for no limit) |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
-straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, and `[-1]`
-for a last item. `a.b[0]` without the dot, JSONPath's `$.a['b'][0]` and
-JSON Pointer's `/a/b/0` work too. Wildcards, slices and recursive descent
+straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, `.[0]` for
+a root array's first item and `.[-1]` for its last. `a.b[0]` without the
+dot (and so `[0]` for `.[0]`), JSONPath's `$.a['b'][0]` and JSON
+Pointer's `/a/b/0` work too. Wildcards, slices and recursive descent
 are jq's work: pipe `--json` into jq for those. Quote a path for the
 shell, whose globbing would take `[0]`.
 
@@ -723,7 +724,7 @@ $ head -5 tests/fixtures/grammars/hosts
 $ head -5 tests/fixtures/grammars/hosts | aless --grammar hosts=tests/fixtures/grammars/hosts.abnf -k hosts --json --compact
 [{"address":"127.0.0.1","names":["localhost"]},{"address":"127.0.1.1","names":["workstation.example.com","workstation"]}]
 $ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --where --at 5:17 --compact tests/fixtures/grammars/hosts
-{"file":"tests/fixtures/grammars/hosts","format":"hosts","path":"[1].names[0]","kind":"string","line":5,"col":17,"value":"workstation.example.com"}
+{"file":"tests/fixtures/grammars/hosts","format":"hosts","path":".[1].names[0]","kind":"string","line":5,"col":17,"value":"workstation.example.com"}
 $ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --render csv tests/fixtures/grammars/hosts | head -3
 "address","names"
 "127.0.0.1","[""localhost""]"
