@@ -71,34 +71,36 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 
 | Option | Effect |
 |---|---|
-| `-k`, `--kind FORMAT` | parse every input as FORMAT instead of by extension; FORMAT may be a `--grammar` NAME |
+| `-k`, `--kind FORMAT` | parse every input as FORMAT instead of by extension; FORMAT may be a `--grammar` NAME; `--format` is another name for it |
 | `--grammar NAME=FILE` | read files whose extension or whole name is NAME with the ABNF grammar in FILE; `NAME,NAME2=FILE` gives it two names; repeatable ([Custom grammars](#custom-grammars)) |
 | `--grammar-expr NAME=ABNF` | the same, with the grammar text on the command line |
-| `--no-watch` | do not reload files when they change |
+| `--no-watch` / `--watch` | do not reload files when they change / reload them (the default) |
 | `-m`, `--mode data\|line` | start in data (default) or line mode |
 | `--depth N` | fold containers deeper than N levels at start |
 | `-n` / `-N`, `-r` / `-R` | absolute / relative line numbers on / off |
 | `--scrolloff N` | rows kept around the focus when scrolling (default 3) |
-| `--indent N` | indentation per level (default 2) |
+| `--indent N` | indentation per level (default 2), JSON output's too |
 | `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
-| `--no-color`, `--no-mouse` | plain output; no mouse capture |
+| `--no-color` (or `--no-colour`), `--no-mouse` | plain output; no mouse capture |
 | `--panes out[,program]` | open panes beside the input: `out`, the document as `--render` or `--alchemy` writes it, and `program`, the program ([Panes](#panes)) |
 | `--stacked` | stack the panes rather than place them side by side |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none); on standard input, without a screen, it runs from the start, so waiting on the input counts |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none, `0` for no limit); on standard input, without a screen, it runs from the start, so waiting on the input counts |
 
 `NO_COLOR` in the environment also disables colour.
 
 ## Scripts and agents
 
 aless also runs without a screen. Give it any option from the table
-below except those the viewer shares (`--depth`, `-k`, the `--grammar`
-options and the limits), or let its standard output be something other
-than a terminal (a pipe, a file, an agent's tool call), and it prints
-JSON instead of starting the viewer. It
+below except those the viewer shares (`--depth`, `--indent`, `-k`, the
+`--grammar` options, `--max-size` and `--timeout`), or let its standard
+output be something other than a terminal (a pipe, a file, an agent's
+tool call), or set `TERM=dumb`, and it prints JSON instead of starting
+the viewer. It
 never waits for keys: when the viewer cannot start, aless says so at
-once, before reading any input, and exits with status 2. `--panes` is the
+once, before reading any input, with a `usage` error, and exits with
+status 2. `--panes` is the
 one exception to the first rule: it opens the viewer, and `--render`,
 `--alchemy` and `--alchemy-expr` given with it choose what its output
 pane shows ([Panes](#panes)), so without a terminal it refuses with
@@ -131,12 +133,14 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--at LINE[:COL]` | start at the node at that source position |
 | `--depth N` | `--paths` and `--find` go at most N levels below the start |
 | `--limit N` | at most N entries (default 200, 0 for all) |
-| `--compact` | JSON on one line |
-| `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise |
+| `--compact` | JSON on one line, an error's too |
+| `--indent N` | `--json` and `--render json` indented N spaces a level (default 2) |
+| `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise; `--format` is another name for it |
 | `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none); on standard input the time runs from the start, so waiting on the input counts |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none; `0` for no limit); on standard input the time runs from the start, so waiting on the input counts |
 | `--max-output SIZE` | stop an `--alchemy` program that writes more than SIZE (default `1G`; `0` for no limit) |
+| `TERM=dumb` | in the environment, not an option: JSON output, as when standard output is not a terminal, since such a terminal cannot draw the viewer |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
 straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, `.[0]` for
@@ -197,9 +201,16 @@ $ aless --paths --depth 1 nested.json
 `file` is the path as given, or `-` for standard input, and `path` is
 where the listing starts. `--find` prints the same with `pattern` and
 `matches`; `--where` prints one entry with `file` and `format`; `--check`
-prints `{"ok", "files": [{"file", "format", "ok", "error"}]}`.
+prints `{"ok", "files": [{"file", "format", "ok", "error"}]}`, where a
+failing file's `error` is the object a run on that file alone would
+print (below): a parse error's fields for a file that does not parse,
+`kind` and `message` alone for a directory.
 
-**Errors** are JSON on standard error, and standard output stays empty:
+**Errors** are JSON on standard error. Standard output then stays empty,
+with two exceptions: a failed `--check` still prints its report there,
+with status 1, and a `--render` or `--alchemy` stream that fails leaves
+there every record it had written whole ([Exporting](#exporting)). A
+parse error:
 
 ```
 $ aless bad.json
@@ -224,7 +235,7 @@ $ aless bad.json
 | 0 | success: standard output holds the answer | |
 | 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render` or `--alchemy`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
 | 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or the viewer without a terminal | `usage`, `alchemy` |
-| 3 | an input, or an `--alchemy` program file, could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
+| 3 | an input, a `--grammar` file or an `--alchemy` program file could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
 | 5 | an input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size`; with `--render` or `--alchemy`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`), a program's output over `--max-output` among them | `too_large`, `transduce` |
 | 6 | a parse, or a `--grammar` compile, ran longer than `--timeout`, or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run | `timeout` |
@@ -236,8 +247,9 @@ does not apply is `null` (`file` too, when it was standard output that
 could not be written). A `not_found` error has the `path` or `at` it
 was given, the entry of the `nearest` node, the deepest node the path
 did reach or, for `--at`, the node a position inside the text would have
-answered (`null` when no node has a position), and that node's first
-`keys` when it is an object. A `too_large` error has the
+answered (`null` when no node has a position), and `keys`, that node's
+first keys when it is an object and `null` otherwise. A `too_large`
+error has the
 fields of an `io` one plus the input's `size` (`null` for standard input,
 which is read no further than the limit) and the `limit`, in bytes, and
 its `hint` names the `--max-size` that would read it. A `timeout` error
@@ -254,7 +266,8 @@ when it passes (a writer that is slow, or sends nothing, or never closes
 its end) fails as `timeout` too, with `line` and `col` `null` and a
 message saying the input was still being read. On a file it runs from
 the start of the parse, so each file `--check` reads gets the whole of
-it. A `usage` error has only `kind` and `message`,
+it. A `usage` error has only `kind` and `message`, the viewer's refusal
+without a terminal among them,
 except for a `--grammar` that does not compile, which adds the `grammar`
 name and, when it came from a file, the `file`. A grammar file that
 cannot be read is an `io` error, one over `--max-size` a `too_large`
@@ -298,7 +311,7 @@ whole document has been built.
 ```bash
 aless --render csv data.jsonl                                   # one line, one row
 aless --render csv --path .response.payload.deep.records response.json
-aless --render json big.yaml                                    # --json, streamed
+aless --render json big.yaml                                    # the document as JSON, streamed
 aless -k jsonl --render csv < events.log                        # stdin, a record at a time
 ```
 
@@ -320,7 +333,11 @@ does not keep is declared on standard error on a write that succeeds, as
 every format's render declares it ([Writing any
 format](#writing-any-format)); JSON declares no loss, so `--render json`
 writes nothing there. `--render json`
-takes `--compact` and `--indent` as `--json` does. Two things a stream
+takes `--compact` and `--indent` as `--json` does, and writes the value
+`--json` writes, but for NaN and the infinities, which JSON cannot hold:
+`--json` writes each as `null`, and `--render json` refuses it, a
+`transduce` error with the code `TARGET_VALUE_UNREPRESENTABLE` and status
+1, what came before it written. Two things a stream
 cannot do, since the input is read once, front to back: `--at` is not
 accepted, and `[-1]` on an array (counting from the end) is a usage error,
 though on an object it is the key `-1`, as everywhere. A document that
@@ -371,7 +388,8 @@ $ aless --render csv broken.json
     "message": "unexpected: unexpected character(s): }",
     "line": 2,
     "col": 8,
-    "output": "none"
+    "output": "none",
+    "loss": ["A null and a missing cell are both written as the empty field, so the two cannot be told apart, or from an empty string, when read back.","A nested array or object in a cell is written as its compact JSON text.","Every field is written quoted.","Records end in CRLF.","Every value is written as text, so a number or a boolean reads back as a string.","The rows are the elements of the array at the start: an object row's members are its cells, and a scalar row is one cell named value.","The columns are the first row's members: a member a later row adds is not written, a member it lacks is written empty, and a member repeated in a row keeps its last value."]
   }
 }
 ```
@@ -466,10 +484,14 @@ $ aless --render yaml tests/fixtures/sample.csv
 **What a write does not keep** is declared rather than hidden. On a write
 that succeeds, standard output holds the document alone and standard
 error a JSON warning with the render's loss declaration, the adapter's
-sentences after it when one ran (named as `adapter`); an error met while
-it was writing carries the same sentences as `loss`. A format that
-declares no loss (JSON) writes nothing there. The sentences come from
-the format's manifest:
+sentences after it when one ran (named as `adapter`); a format that
+declares no loss (JSON) writes nothing there. An error met while it was
+writing (a `transduce`, `parse` or `timeout` error, or the render's own
+`alchemy` one) carries the same sentences as `loss`, an empty list for
+JSON, whether the render is one of aless's own (`json`, `csv`) or one
+run as a program; a `usage` or `not_found` error carries none, and nor
+does one met before the writing began, such as an input that cannot be
+read. The sentences come from the format's manifest:
 
 ```
 {"warning": {"kind": "loss", "message": "the document was written as yaml, which does not keep everything a document can hold", "file": "tests/fixtures/sample.csv", "render": "yaml", "loss": ["Comments are not kept.", "Anchors and aliases are not kept: an alias is written as a copy of the value it names.", "Tags are not kept.", "Styles are not kept: every string and key is written double-quoted, and every collection in block style.", "A stream of several documents is written as one document, a sequence of them."]}}

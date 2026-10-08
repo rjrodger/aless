@@ -123,6 +123,61 @@ fn every_fixture_but_the_broken_one_checks() {
     }
 }
 
+/// A failed `--check` still prints its report on standard output, with
+/// status 1 and nothing on standard error. Each failing file's `error` is
+/// the object a run on that file alone would print: the parse error's
+/// every field for a file that does not parse, an `io` error for one that
+/// is not there, and for a directory a `usage` error, its kind and message.
+#[test]
+fn a_failed_check_reports_each_files_own_error() {
+    let out = aless(
+        &[
+            "--check",
+            "tests/fixtures/bad.json",
+            "tests/fixtures/grammars",
+            "tests/fixtures/missing.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 1);
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out.stdout);
+    assert_eq!(report["ok"], json!(false));
+    let errors: Vec<&Value> = report["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| &f["error"])
+        .collect();
+    assert_eq!(errors[0]["kind"], json!("parse"));
+    for key in [
+        "file",
+        "format",
+        "code",
+        "message",
+        "line",
+        "col",
+        "hint",
+        "source_line",
+        "report",
+    ] {
+        assert!(errors[0].get(key).is_some(), "{key}: {}", errors[0]);
+    }
+    assert_eq!(
+        *errors[1],
+        json!({
+            "kind": "usage",
+            "message": "tests/fixtures/grammars is a directory: aless reads files (list a \
+                directory with ls or find)"
+        })
+    );
+    assert_eq!(errors[2]["kind"], json!("io"));
+}
+
 #[test]
 fn outline_drill_down_and_positions() {
     let out = aless(
@@ -702,14 +757,14 @@ fn help_leads_with_the_agent_interface() {
         assert!(head.contains(flag), "{flag} in the first lines:\n{head}");
     }
     assert!(text.find("WITHOUT A SCREEN") < text.find("THE VIEWER"));
-    // The exit statuses say what --alchemy adds to each, as the README's
-    // and the skill's tables do: a program file that cannot be read is
-    // status 3, one over --max-size status 5, and the deadline covers the
-    // program's run.
+    // The exit statuses say what --grammar and --alchemy add to each, as
+    // the README's and the skill's tables do: a grammar or program file
+    // that cannot be read is status 3, one over --max-size status 5, and
+    // the deadline covers the program's run.
     let statuses = &text[text.find("Exit status:").unwrap()..text.find("THE VIEWER").unwrap()];
     for (status, what) in [
         (
-            "3 an input (or an --alchemy",
+            "3 an input (or a --grammar or --alchemy",
             "program file) could not be read",
         ),
         (
@@ -723,6 +778,20 @@ fn help_leads_with_the_agent_interface() {
     ] {
         assert!(statuses.contains(status), "{status:?} in:\n{statuses}");
         assert!(statuses.contains(what), "{what:?} in:\n{statuses}");
+    }
+    // Every option aless takes is listed, its other names among them, and
+    // what else switches to JSON output.
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "--format is another name for this option",
+        "--watch Reload them (the default)",
+        "--no-color, --no-colour No colours",
+        "a standard output that is not a terminal, or TERM=dumb prints JSON",
+        "(2.5, 90s, 2m; default none; 0 for no limit)",
+        "--indent <N> Indent --json and --render json N spaces a level",
+        "--compact JSON on one line, an error's too",
+    ] {
+        assert!(flat.contains(said), "{said:?} in:\n{text}");
     }
 }
 
@@ -988,6 +1057,40 @@ fn render_json_agrees_with_json_for_every_fixture() {
         String::from_utf8_lossy(&out.stdout),
         "[\"cs\",\"classic\"]\n"
     );
+}
+
+/// Where `--render json` and `--json` part: NaN and the infinities, which
+/// JSON cannot hold, are `null` in `--json`'s output, and a stream refuses
+/// each with `TARGET_VALUE_UNREPRESENTABLE`, status 1, what came before it
+/// written.
+#[test]
+fn render_json_refuses_the_numbers_json_cannot_hold() {
+    let out = aless(
+        &["-k", "yaml", "--json", "--compact"],
+        Some("a: .nan\nb: .inf\nc: -.inf\n"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{\"a\":null,\"b\":null,\"c\":null}\n"
+    );
+    for (value, said) in [(".nan", "NaN"), (".inf", "inf"), ("-.inf", "-inf")] {
+        let out = aless(
+            &["-k", "yaml", "--render", "json", "--compact"],
+            Some(&format!("a: 1\nb: {value}\n")),
+        );
+        assert_eq!(code(&out), 1, "{value}");
+        assert_eq!(out.stdout, b"{\"a\":1", "{value}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["kind"], json!("transduce"), "{value}");
+        assert_eq!(e["code"], json!("TARGET_VALUE_UNREPRESENTABLE"), "{value}");
+        assert_eq!(
+            e["message"],
+            json!(format!("{said} has no representation as a number")),
+            "{value}"
+        );
+        assert_eq!(e["output"], json!("partial"), "{value}");
+    }
 }
 
 /// A grammar that refuses to stream a document part-way (jsonic's implicit
