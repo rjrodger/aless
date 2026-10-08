@@ -44,8 +44,12 @@ working here; `CLAUDE.md` imports it.
     ([RELEASING.md](RELEASING.md)).
   - What a packager needs is in [PACKAGING.md](PACKAGING.md).
   - The published crate carries only what `Cargo.toml`'s `include` names:
-    `src/`, `LICENSE`, `README.md` and `THIRD_PARTY_NOTICES.md`. So a file
-    the build reads must be under `src/`. CI's `cargo package` checks this.
+    - `src/` and the licence files;
+    - every file the README links to: the docs, `skills/`, and the
+      example grammars and programs under `tests/fixtures/`.
+
+    So a file the build reads must be under `src/`, and a new file the
+    README links to joins the list. CI's `cargo package` checks the build.
 - **`tests/yaml_render.rs` reads tabnas/yaml's own fixtures** (`test/spec`
   and the vendored YAML Test Suite), which the published crate does not
   ship. They come from a checkout of tabnas/yaml at the tag of the

@@ -11,10 +11,23 @@ homepage = "https://github.com/rjrodger/aless"
 readme = "README.md"
 keywords = ["json", "yaml", "toml", "viewer", "tui"]
 categories = ["command-line-utilities"]
-# What the published crate carries: the sources, and the files its licence
-# and the README name. The tests stay in the repository: one of them reads a
-# checkout of tabnas/yaml (TABNAS_YAML_DIR), which a crate cannot ship.
-include = ["/src", "/LICENSE", "/README.md", "/THIRD_PARTY_NOTICES.md"]
+# What the published crate carries: the sources, the licence files, and
+# every file the README links to (the docs, the agent skill, the example
+# grammars and programs). The tests stay in the repository: one of them
+# reads a checkout of tabnas/yaml (TABNAS_YAML_DIR), which a crate cannot
+# ship.
+include = [
+    "/src",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/PACKAGING.md",
+    "/RELEASING.md",
+    "/skills",
+    "/tests/fixtures/grammars",
+    "/tests/fixtures/programs",
+]
 
 [features]
 default = ["clipboard"]
