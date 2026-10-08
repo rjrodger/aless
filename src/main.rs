@@ -99,9 +99,8 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     gives on success. Standard output is then empty, but for --check's
     report and the whole records a failed stream wrote. Exit status: 0
     success, 1 the input did not parse (--check: an input failed; --render,
-    --alchemy: the input or its records will not do), 2 bad usage (a
-    program or --grammar that does not compile too) or no terminal for the
-    viewer,
+    --alchemy: the input or its records will not do), 2 bad usage (a program
+    or --grammar that does not compile too) or no terminal for the viewer,
     3 an input (or a --grammar or --alchemy program file) could not be read,
     or the output not written, 4 --path or --at names nothing,
     5 an input (or a --grammar or --alchemy program file) is over --max-size
