@@ -39,18 +39,41 @@ listed [below](#deviations-from-jless).
 
 ## Install
 
-Rust 1.88 or newer and git:
+0.1.0 will be the first release. Until it is out, build from git (Rust
+1.88 or newer):
 
 ```bash
 cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
-`Cargo.toml` takes the tabnas crates from crates.io, pinned by
-`Cargo.lock` (see [Dependencies](#dependencies)). `--locked` makes
-`cargo install` honour those pins instead of resolving the newest
-releases the requirements allow.
-Build from a checkout with `cargo build --release`; the binary is
-`target/release/aless`.
+From 0.1.0, every release is on [GitHub
+Releases](https://github.com/rjrodger/aless/releases), with these ways
+in:
+
+| | |
+|---|---|
+| Linux, macOS | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rjrodger/aless/releases/latest/download/aless-installer.sh \| sh` |
+| Windows | `powershell -ExecutionPolicy Bypass -c "irm https://github.com/rjrodger/aless/releases/latest/download/aless-installer.ps1 \| iex"` |
+| Homebrew (macOS, Linux) | `brew install rjrodger/tap/aless` |
+| Rust toolchain | `cargo install --locked aless`, or `cargo binstall aless` for the prebuilt binary |
+
+The installers put `aless` in `~/.cargo/bin`.
+
+The prebuilt binaries cover:
+- Linux, x86_64 and aarch64: built against glibc 2.35, or static (musl),
+  which runs anywhere; the shell installer picks for you;
+- macOS, x86_64 and aarch64;
+- Windows, x86_64 and aarch64.
+
+Each archive has a `.sha256` beside it, and its build provenance checks
+with `gh attestation verify FILE --repo rjrodger/aless`.
+
+`--locked` keeps the dependency versions `Cargo.lock` pins (see
+[Dependencies](#dependencies)). From a checkout, `cargo build --release`
+builds `target/release/aless`.
+
+For package maintainers: [PACKAGING.md](PACKAGING.md). For making a
+release: [RELEASING.md](RELEASING.md).
 
 ## Usage
 
@@ -1190,6 +1213,7 @@ cargo clippy --all-targets --locked -- -D warnings
 eval "$(scripts/yaml-fixtures.sh)"    # tabnas/yaml's fixtures, which tests/yaml_render.rs reads
 cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
+cargo package --locked                # the crate builds from exactly the files it publishes
 ```
 
 Module map — `src/main.rs` is the only file that touches the terminal;
