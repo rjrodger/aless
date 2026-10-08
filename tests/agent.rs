@@ -430,6 +430,36 @@ fn failures_are_json_on_stderr_with_a_status() {
         let e = json(&out.stderr);
         assert_eq!(e["error"]["kind"], json!("usage"), "{args:?}");
     }
+    // --compact puts a usage error from the command line on one line too,
+    // wherever it stands among the options; after `--` it is a file.
+    let out = aless(
+        &[
+            "--no-such-option",
+            "--compact",
+            "tests/fixtures/nested.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "{\"error\":{\"kind\":\"usage\",\"message\":\"unknown option: --no-such-option (see \
+         aless --help)\"}}\n"
+    );
+    let out = aless(
+        &["--compact", "-k", "nope", "tests/fixtures/nested.json"],
+        None,
+    );
+    assert_eq!(code(&out), 2);
+    assert_eq!(String::from_utf8_lossy(&out.stderr).lines().count(), 1);
+    assert!(json(&out.stderr)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("unknown format: nope"));
+    let out = aless(&["--no-such-option", "--", "--compact"], None);
+    assert_eq!(code(&out), 2);
+    assert!(String::from_utf8_lossy(&out.stderr).lines().count() > 1);
+    assert_eq!(json(&out.stderr)["error"]["kind"], json!("usage"));
 }
 
 /// An output that cannot be written (here a full disk) is an `io` error
@@ -1075,6 +1105,30 @@ fn render_failures_have_the_transduce_shape_and_status() {
         assert_eq!(
             json(&out.stderr)["error"]["kind"],
             json!("usage"),
+            "{args:?}"
+        );
+    }
+    // --at with --render, word for word, whichever comes first.
+    for args in [
+        &["--render", "csv", "--at", "3", "tests/fixtures/nested.json"][..],
+        &[
+            "--at",
+            "3:1",
+            "--render",
+            "yaml",
+            "tests/fixtures/nested.json",
+        ],
+    ] {
+        let out = aless(args, None);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert_eq!(
+            json(&out.stderr),
+            json!({"error": {
+                "kind": "usage",
+                "message": "--render reads the input once, front to back, and cannot find a \
+                    source position in it: start it with --path, or use --where --at to find \
+                    the path"
+            }}),
             "{args:?}"
         );
     }

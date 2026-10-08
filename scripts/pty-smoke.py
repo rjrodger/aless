@@ -335,8 +335,10 @@ def piped_input_scenario(work):
 def no_terminal_scenario(work):
     """A pty for standard output but no terminal to read keys from, as some
     agent harnesses run commands: the viewer must refuse at once, draw
-    nothing, and name the options that work; with TERM=dumb, aless prints
-    the document as JSON instead."""
+    nothing, and name the options that work, in the JSON usage error every
+    refusal without a terminal is (`{"error": {"kind": "usage", "message"}}`
+    on standard error); with TERM=dumb, aless prints the document as JSON
+    instead."""
     import json
     import subprocess
     failures = []
@@ -390,9 +392,19 @@ def no_terminal_scenario(work):
         if code != want_code:
             print(f"FAIL {label}: exit {code}, wanted {want_code}; stderr: {err}")
             failures.append(label)
-        elif want_code == 2 and (drawn or "--json" not in err):
-            print(f"FAIL {label}: drew {bytes(drawn[:80])!r}, said {err!r}")
-            failures.append(label)
+        elif want_code == 2:
+            try:
+                error = json.loads(err)["error"]
+                said = (error["kind"] == "usage" and "--json" in error["message"]
+                        and set(error) == {"kind", "message"})
+            except Exception:
+                said = False
+            if drawn or not said:
+                print(f"FAIL {label}: drew {bytes(drawn[:80])!r}, said {err!r}")
+                failures.append(label)
+            else:
+                print(f"ok   {label}: refuses at once with a usage error, draws nothing, "
+                      "points at --json")
         elif want_code == 0:
             try:
                 doc = json.loads(drawn.decode().replace("\r\n", "\n"))
@@ -402,8 +414,6 @@ def no_terminal_scenario(work):
                 failures.append(label)
             else:
                 print(f"ok   {label}: prints JSON")
-        else:
-            print(f"ok   {label}: refuses at once, draws nothing, points at --json")
     return failures, ""
 
 

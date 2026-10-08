@@ -489,10 +489,7 @@ fn parse_args() -> Result<Args, String> {
         return Err("--check parses whole files: it takes no --path or --at".into());
     }
     if matches!(args.op, Some(Op::Render(_))) && matches!(args.start, Start::At(..)) {
-        return Err(
-            "--render reads the input once, front to back, and cannot find a source position              in it: start it with --path, or use --where --at to find the path"
-                .into(),
-        );
+        return Err(headless::RENDER_TAKES_NO_AT.into());
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
@@ -533,12 +530,11 @@ fn headless_wanted(args_ask: bool) -> bool {
 }
 
 /// Say that the command line asks for what cannot be done, as JSON on
-/// standard error without a screen and as a line with one, and exit with
-/// status 2.
-fn refuse_usage(e: &str, headless: bool) -> ! {
+/// standard error without a screen (on one line with `--compact`) and as a
+/// line with one, and exit with status 2.
+fn refuse_usage(e: &str, headless: bool, compact: bool) -> ! {
     if headless {
-        let error = serde_json::json!({"error": {"kind": "usage", "message": e}});
-        eprint!("{}", headless::render(&error, false));
+        eprint!("{}", headless::usage_failure(e, compact));
     } else {
         eprintln!("aless: {e}");
     }
@@ -550,12 +546,20 @@ fn main() {
         Ok(a) => a,
         Err(e) => {
             // The options could not be read, so ask the raw ones whether
-            // this was meant to run without a screen.
-            let asked = std::env::args_os().skip(1).any(|a| {
-                let a = a.to_string_lossy();
-                HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default())
-            });
-            refuse_usage(&e, headless_wanted(asked));
+            // this was meant to run without a screen, and on one line.
+            let raw: Vec<String> = std::env::args_os()
+                .skip(1)
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let asked = raw
+                .iter()
+                .any(|a| HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default()));
+            // Options end at `--`; after it, `--compact` is a file's name.
+            let compact = raw
+                .iter()
+                .take_while(|a| a.as_str() != "--")
+                .any(|a| a == "--compact");
+            refuse_usage(&e, headless_wanted(asked), compact);
         }
     };
     let headless = headless_wanted(args.headless);
@@ -564,6 +568,7 @@ fn main() {
             "--panes opens the viewer, which needs a terminal: without one, give --render or \
              --alchemy without --panes",
             true,
+            args.compact,
         );
     }
     // Before any input is read, grammar files included: input that never
@@ -601,6 +606,7 @@ fn main() {
                     Format::known_names().join(" ")
                 ),
                 headless,
+                args.compact,
             ),
         }
     }
@@ -669,15 +675,20 @@ fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, form
 }
 
 /// Say that the viewer cannot start and what works instead, then exit with
-/// status 2. Nothing has been drawn, so there is nothing to restore.
+/// status 2. Nothing has been drawn, so there is nothing to restore. There
+/// is no terminal to talk to, so this is said as every usage error is
+/// without one: `{"error": {"kind": "usage", "message"}}` on standard
+/// error, and nothing on standard output.
 fn refuse_viewer(e: &io::Error) -> ! {
-    eprintln!(
-        "aless: cannot start the viewer: {e}\n\
-         The viewer needs a terminal to draw on and read keys from. To read a\n\
-         file without a screen, use --json, --paths, --find, --where, --check or\n\
-         --render (see aless --help); aless FILE > out.json writes the document as JSON."
-    );
-    std::process::exit(headless::status::USAGE);
+    refuse_usage(
+        &format!(
+            "cannot start the viewer, which needs a terminal to draw on and read keys from: {e}. \
+             To read a file without a screen, use --json, --paths, --find, --where, --check or \
+             --render (see aless --help); aless FILE > out.json writes the document as JSON"
+        ),
+        true,
+        false,
+    )
 }
 
 /// Check that the viewer will have a terminal to read keys from: the one
