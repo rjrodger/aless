@@ -16,6 +16,7 @@ working here; `CLAUDE.md` imports it.
   ```bash
   cargo fmt --all --check
   cargo clippy --all-targets --locked -- -D warnings
+  eval "$(scripts/yaml-fixtures.sh)"                # tabnas/yaml's fixtures, for tests/yaml_render.rs
   cargo test --locked
   python3 scripts/pty-smoke.py target/debug/aless   # unix: drives the real binary in a pty, and checks it refuses without one
   ```
@@ -23,23 +24,22 @@ working here; `CLAUDE.md` imports it.
   targets, and CI tests all three; from Linux, `cargo check --target
   x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin` (after
   `rustup target add`) catch platform-specific compile errors early.
-- **Dependencies come from GitHub, pinned by `Cargo.lock`.** `Cargo.toml`
-  names each tabnas repository with `git = …`, and a `[patch."<repo>"]`
-  table per grammar repository redirects the sibling
-  `path = "../../parser/rs"` dependencies those manifests carry. The
+- **Dependencies come from crates.io, pinned by `Cargo.lock`.** The
   engine's package is `tabnas-parser` (its library keeps the name
-  `tabnas`), so the dependency line reads
-  `tabnas = { package = "tabnas-parser", git = … }` and every patch table
-  names `tabnas-parser`. `cargo update -p tabnas-parser` (or any grammar)
-  moves a pin to that repository's current default branch. Every tabnas
-  crate is on crates.io now, `tabnas-lsp` included; what keeps the git
-  pins is issue #28: `tests/yaml_render.rs` reads the tabnas-yaml
-  repository's own fixtures (`test/spec` and the vendored YAML Test
-  Suite), found by walking up from the crate's manifest, and the
-  published crate ships only its `rs/` directory, so that test cannot run
-  against a registry source. Once it can: replace `git` with a version
-  requirement and delete the patch tables; nothing else changes.
-  Do not vendor or copy tabnas code into this repository.
+  `tabnas`), so its line reads
+  `tabnas = { package = "tabnas-parser", version = … }`; every grammar,
+  transduce, render, alchemy and lsp is a plain version requirement.
+  `cargo update -p tabnas-parser` (or any of them) moves a pin to the
+  newest release the requirement allows. Do not vendor or copy tabnas
+  code into this repository.
+- **`tests/yaml_render.rs` reads tabnas/yaml's own fixtures** (`test/spec`
+  and the vendored YAML Test Suite), which the published crate does not
+  ship. They come from a checkout of tabnas/yaml at the tag of the
+  tabnas-yaml version `Cargo.lock` pins, named by `TABNAS_YAML_DIR`:
+  `scripts/yaml-fixtures.sh` clones it under `target/yaml-fixtures/` and
+  prints the export line, and CI runs it before the tests. The test fails
+  when the variable is unset, and when the checkout's version is not the
+  locked one, so the fixtures still move with the pin.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,

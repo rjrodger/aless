@@ -1,8 +1,8 @@
 name: ci
 
 # aless must work on Linux, macOS and Windows, so every push and pull
-# request builds and tests on all three. The tabnas crates come straight
-# from GitHub (see Cargo.toml), pinned by Cargo.lock; `--locked` keeps the
+# request builds and tests on all three. The tabnas crates come from
+# crates.io (see Cargo.toml), pinned by Cargo.lock; `--locked` keeps the
 # pins honest.
 on:
   push:
@@ -12,7 +12,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   test:
@@ -34,6 +33,14 @@ jobs:
           rustup default stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # tests/yaml_render.rs reads tabnas/yaml's own fixtures, which the
+      # published crate does not ship: a checkout at the tag of the locked
+      # tabnas-yaml version, cloned here and named in TABNAS_YAML_DIR for
+      # the steps after this one.
+      - name: tabnas/yaml fixtures
+        shell: bash
+        run: scripts/yaml-fixtures.sh
 
       - name: Format
         if: runner.os == 'Linux'

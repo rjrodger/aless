@@ -45,13 +45,10 @@ Rust 1.88 or newer and git:
 cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
-`Cargo.toml` takes the tabnas crates straight from GitHub, pinned by
-`Cargo.lock` (see [Dependencies](#dependencies)). Every one of them is on
-crates.io now; what keeps the git pins is
-[#28](https://github.com/rjrodger/aless/issues/28), a test that reads the
-tabnas-yaml repository's own fixtures, which the published crate does not
-ship. `--locked` makes `cargo install` honour those pins instead of
-resolving each repository's current head.
+`Cargo.toml` takes the tabnas crates from crates.io, pinned by
+`Cargo.lock` (see [Dependencies](#dependencies)). `--locked` makes
+`cargo install` honour those pins instead of resolving the newest
+releases the requirements allow.
 Build from a checkout with `cargo build --release`; the binary is
 `target/release/aless`.
 
@@ -1166,22 +1163,17 @@ there. `C-z` suspend is Unix-only.
 
 ## Dependencies
 
-The engine (`tabnas`) and the grammar crates come from GitHub:
-`Cargo.toml` names each repository with `git = …` and `Cargo.lock` pins
-the commit. Each grammar's own manifest refers to its
-siblings by relative path (`tabnas = { path = "../../parser/rs" }`, the
-tabnas development model); inside a git checkout cargo reads that as
-"the package of that name in this same repository", which does not exist,
-so a `[patch."https://github.com/tabnas/<grammar>"]` table per repository
-supplies each sibling from its own repository. Every one of these crates
-is on crates.io now, `tabnas-lsp` included. What keeps the git pins is
-[#28](https://github.com/rjrodger/aless/issues/28):
-`tests/yaml_render.rs` reads the tabnas-yaml repository's own fixtures
-(its `test/spec` and the vendored YAML Test Suite), found by walking up
-from the crate's manifest to its repository, and the published crate
-ships only its `rs/` directory, so that test cannot run against a
-registry source. Once it can, the `git` entries become version
-requirements and the patch tables go; nothing else changes.
+The engine (`tabnas`, the `tabnas-parser` package) and the grammar
+crates come from crates.io, each a version requirement in `Cargo.toml`
+pinned by `Cargo.lock`.
+
+One test reaches past the published crates: `tests/yaml_render.rs` reads
+tabnas-yaml's own fixtures (its `test/spec` and the vendored YAML Test
+Suite), which the crate does not ship. It takes them from a checkout of
+tabnas/yaml at the tag of the tabnas-yaml version `Cargo.lock` pins,
+named by `TABNAS_YAML_DIR`; `scripts/yaml-fixtures.sh` clones one and
+prints the line that sets it, and the test fails without it, or with a
+checkout of another version.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
@@ -1195,6 +1187,7 @@ text. The other dependencies: crossterm (terminal), ratatui
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
+eval "$(scripts/yaml-fixtures.sh)"    # tabnas/yaml's fixtures, which tests/yaml_render.rs reads
 cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 ```

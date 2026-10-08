@@ -28,138 +28,45 @@ unicode-width = "0.2"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
-# The tabnas engine and grammars are taken straight from GitHub, pinned by
-# Cargo.lock to a commit each. Every one of them is on crates.io now,
-# tabnas-lsp included; what keeps the git pins is issue #28:
-# tests/yaml_render.rs reads the tabnas-yaml repository's own fixtures
-# (test/spec and the vendored YAML Test Suite), found by walking up from
-# the crate's manifest, and the published crate ships only its rs/
-# directory, so that test cannot run against a registry source. Once it
-# can, these become plain version requirements and the [patch] tables
-# below go away. The engine's package is tabnas-parser (its library keeps
-# the name `tabnas`), so the tables below name that package.
-tabnas = { package = "tabnas-parser", git = "https://github.com/tabnas/parser" }
-tabnas-json = { git = "https://github.com/tabnas/json" }
-tabnas-jsonl = { git = "https://github.com/tabnas/jsonl" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-tabnas-jsonc = { git = "https://github.com/tabnas/jsonc" }
-tabnas-json5 = { git = "https://github.com/tabnas/json5" }
-tabnas-yaml = { git = "https://github.com/tabnas/yaml" }
-tabnas-toml = { git = "https://github.com/tabnas/toml" }
-tabnas-ini = { git = "https://github.com/tabnas/ini" }
-tabnas-csv = { git = "https://github.com/tabnas/csv" }
-tabnas-xml = { git = "https://github.com/tabnas/xml" }
-tabnas-zon = { git = "https://github.com/tabnas/zon" }
-tabnas-markdown = { git = "https://github.com/tabnas/markdown" }
-tabnas-feed = { git = "https://github.com/tabnas/feed" }
+# The tabnas engine and grammars, from crates.io. The engine's package is
+# tabnas-parser; its library keeps the name `tabnas`. tests/yaml_render.rs
+# reads tabnas-yaml's own fixtures, which the published crate does not
+# ship, from a checkout of tabnas/yaml at the locked version's tag:
+# TABNAS_YAML_DIR names it, and scripts/yaml-fixtures.sh clones it.
+tabnas = { package = "tabnas-parser", version = "0.12.11" }
+tabnas-json = "0.5.16"
+tabnas-jsonl = "0.1.15"
+tabnas-jsonic = "0.7.8"
+tabnas-jsonc = "0.5.13"
+tabnas-json5 = "0.5.14"
+tabnas-yaml = "0.5.22"
+tabnas-toml = "0.5.15"
+tabnas-ini = "0.5.17"
+tabnas-csv = "0.6.5"
+tabnas-xml = "0.7.15"
+tabnas-zon = "0.5.15"
+tabnas-markdown = "0.7.11"
+tabnas-feed = "0.6.15"
 # The ABNF compiler behind --grammar and --grammar-expr: a custom grammar's
 # text becomes a GrammarSpec at startup. It emits through tabnas-bnf, the
 # compiler the BNF-family front-ends share.
-tabnas-abnf = { git = "https://github.com/tabnas/abnf" }
+tabnas-abnf = "0.4.20"
 # The streaming transducer and its renderers, behind `--render`.
-tabnas-transduce = { git = "https://github.com/tabnas/transduce" }
-tabnas-render = { git = "https://github.com/tabnas/render" }
+tabnas-transduce = "0.2.4"
+tabnas-render = "0.2.3"
 # The alchemy language, behind `--alchemy`: a program compiled onto the
 # transducer's routers and the renderers, which aless passes in, and run
 # over any document the grammars read. The two crates above take their
 # shared types from it; it depends on neither.
-tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
+tabnas-alchemy = "0.2.3"
 # Colour for a pane's text: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
 # feature is on: aless supplies the parsers, and needs neither the
 # bundled grammars (`fleet`) nor the grammar-text loaders (`dialects`).
-tabnas-lsp = { git = "https://github.com/tabnas/lsp" }
+tabnas-lsp = "0.1.7"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-# Each grammar crate names its siblings by relative path
-# (`tabnas = { package = "tabnas-parser", path = "../../parser/rs" }`), the
-# tabnas sibling-checkout development model. Inside a git checkout cargo
-# reads such a dependency as
-# "the package of that name in this same git source", which does not
-# exist, so these tables supply each sibling from its own repository. One
-# table per grammar repository, listing the siblings its manifest names.
-[patch."https://github.com/tabnas/json"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-
-[patch."https://github.com/tabnas/jsonl"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-json = { git = "https://github.com/tabnas/json" }
-
-[patch."https://github.com/tabnas/jsonic"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-json = { git = "https://github.com/tabnas/json" }
-
-[patch."https://github.com/tabnas/jsonc"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/json5"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/yaml"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/toml"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/ini"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-tabnas-hoover = { git = "https://github.com/tabnas/hoover" }
-
-[patch."https://github.com/tabnas/hoover"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-
-[patch."https://github.com/tabnas/csv"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/xml"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/zon"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-
-[patch."https://github.com/tabnas/markdown"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-
-[patch."https://github.com/tabnas/feed"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-jsonic = { git = "https://github.com/tabnas/jsonic" }
-tabnas-xml = { git = "https://github.com/tabnas/xml" }
-
-[patch."https://github.com/tabnas/abnf"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-bnf = { git = "https://github.com/tabnas/bnf" }
-
-[patch."https://github.com/tabnas/bnf"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-
-[patch."https://github.com/tabnas/transduce"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-json = { git = "https://github.com/tabnas/json" }
-tabnas-csv = { git = "https://github.com/tabnas/csv" }
-tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
-
-[patch."https://github.com/tabnas/render"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-alchemy = { git = "https://github.com/tabnas/alchemy" }
-
-[patch."https://github.com/tabnas/alchemy"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
-tabnas-json = { git = "https://github.com/tabnas/json" }
-
-# lsp's optional siblings are resolved only for the features a consumer
-# turns on, and aless turns on none: the engine is the one to supply.
-[patch."https://github.com/tabnas/lsp"]
-tabnas-parser = { git = "https://github.com/tabnas/parser" }
 
 # The engine checks its rule stack against a shadow copy on every step
 # when debug assertions are on: an O(depth) check per step, which a deep
