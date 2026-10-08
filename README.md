@@ -46,10 +46,12 @@ cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
 `Cargo.toml` takes the tabnas crates straight from GitHub, pinned by
-`Cargo.lock` (see [Dependencies](#dependencies)), until every one of them
-is on crates.io (`tabnas-lsp` is not yet);
-`--locked` makes `cargo install` honour those pins instead of resolving
-each repository's current head.
+`Cargo.lock` (see [Dependencies](#dependencies)). Every one of them is on
+crates.io now; what keeps the git pins is
+[#28](https://github.com/rjrodger/aless/issues/28), a test that reads the
+tabnas-yaml repository's own fixtures, which the published crate does not
+ship. `--locked` makes `cargo install` honour those pins instead of
+resolving each repository's current head.
 Build from a checkout with `cargo build --release`; the binary is
 `target/release/aless`.
 
@@ -1159,16 +1161,22 @@ there. `C-z` suspend is Unix-only.
 
 ## Dependencies
 
-The engine (`tabnas`) and the grammar crates are pre-release and live on
-GitHub, so `Cargo.toml` names each repository with `git = …` and
-`Cargo.lock` pins the commit. Each grammar's own manifest refers to its
+The engine (`tabnas`) and the grammar crates come from GitHub:
+`Cargo.toml` names each repository with `git = …` and `Cargo.lock` pins
+the commit. Each grammar's own manifest refers to its
 siblings by relative path (`tabnas = { path = "../../parser/rs" }`, the
 tabnas development model); inside a git checkout cargo reads that as
 "the package of that name in this same repository", which does not exist,
 so a `[patch."https://github.com/tabnas/<grammar>"]` table per repository
-supplies each sibling from its own repository. When the crates are
-published, the `git` entries become version requirements and the patch
-tables go; nothing else changes.
+supplies each sibling from its own repository. Every one of these crates
+is on crates.io now, `tabnas-lsp` included. What keeps the git pins is
+[#28](https://github.com/rjrodger/aless/issues/28):
+`tests/yaml_render.rs` reads the tabnas-yaml repository's own fixtures
+(its `test/spec` and the vendored YAML Test Suite), found by walking up
+from the crate's manifest to its repository, and the published crate
+ships only its `rs/` directory, so that test cannot run against a
+registry source. Once it can, the `git` entries become version
+requirements and the patch tables go; nothing else changes.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind

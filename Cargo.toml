@@ -29,11 +29,15 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
 # The tabnas engine and grammars are taken straight from GitHub, pinned by
-# Cargo.lock to a commit each. All of them but tabnas-lsp are on crates.io
-# now; once tabnas-lsp is too, these become plain version requirements and
-# the [patch] tables below go away. The engine's package is tabnas-parser
-# (its library keeps the name `tabnas`), so the tables below name that
-# package.
+# Cargo.lock to a commit each. Every one of them is on crates.io now,
+# tabnas-lsp included; what keeps the git pins is issue #28:
+# tests/yaml_render.rs reads the tabnas-yaml repository's own fixtures
+# (test/spec and the vendored YAML Test Suite), found by walking up from
+# the crate's manifest, and the published crate ships only its rs/
+# directory, so that test cannot run against a registry source. Once it
+# can, these become plain version requirements and the [patch] tables
+# below go away. The engine's package is tabnas-parser (its library keeps
+# the name `tabnas`), so the tables below name that package.
 tabnas = { package = "tabnas-parser", git = "https://github.com/tabnas/parser" }
 tabnas-json = { git = "https://github.com/tabnas/json" }
 tabnas-jsonl = { git = "https://github.com/tabnas/jsonl" }
