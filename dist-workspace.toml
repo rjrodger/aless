@@ -48,7 +48,7 @@ github-custom-job-permissions = { "publish-crates" = { contents = "read", id-tok
 # GitHub Release with every file attached.
 dispatch-releases = true
 # Pull requests run `dist plan` only.
-pr-run-mode = "upload"
+pr-run-mode = "plan"
 # Supply chain: a build-provenance attestation for every file, the
 # dependency tree embedded in each binary (cargo-auditable), and a
 # CycloneDX SBOM. Attestations are made when a release is hosted, so a
