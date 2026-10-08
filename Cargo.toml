@@ -52,13 +52,13 @@ tabnas-feed = "0.6.15"
 # compiler the BNF-family front-ends share.
 tabnas-abnf = "0.4.20"
 # The streaming transducer and its renderers, behind `--render`.
-tabnas-transduce = "0.2.4"
-tabnas-render = "0.2.3"
+tabnas-transduce = "0.2.5"
+tabnas-render = "0.2.4"
 # The alchemy language, behind `--alchemy`: a program compiled onto the
 # transducer's routers and the renderers, which aless passes in, and run
 # over any document the grammars read. The two crates above take their
 # shared types from it; it depends on neither.
-tabnas-alchemy = "0.2.3"
+tabnas-alchemy = "0.2.4"
 # Colour for a pane's text: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
 # feature is on: aless supplies the parsers, and needs neither the
