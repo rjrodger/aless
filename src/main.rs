@@ -86,9 +86,11 @@ WITHOUT A SCREEN (scripts, agents, pipes):
                             (default 2)
 
     Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
-    keyed value is at its key. Numbers are 64-bit floats; NaN and the
-    infinities, which JSON cannot hold, are null to --json, and --render
-    json refuses them (TARGET_VALUE_UNREPRESENTABLE, status 1). Input is
+    keyed value is at its key. Numbers are 64-bit floats, but --render
+    json keeps a number's source spelling where that is JSON, a big
+    integer's digits included; NaN and the infinities, which JSON cannot
+    hold, are null to --json, and --render json refuses them
+    (TARGET_VALUE_UNREPRESENTABLE, status 1). Input is
     read whole before it is parsed, so output starts when the parse ends;
     --render and --alchemy stream instead, and read JSON Lines and CSV a
     record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
@@ -97,7 +99,7 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     when the program did not; one met while --render writes a format (not
     a usage or not_found error) adds \"loss\", the sentences its warning
     gives on success. Standard output is then empty, but for --check's
-    report and the whole records a failed stream wrote. Exit status: 0
+    report and what a failed stream wrote. Exit status: 0
     success, 1 the input did not parse (--check: an input failed; --render,
     --alchemy: the input or its records will not do), 2 bad usage (a program
     or --grammar that does not compile too) or no terminal for the viewer,
@@ -110,7 +112,9 @@ WITHOUT A SCREEN (scripts, agents, pipes):
     still being read when it passed (--render, --alchemy: the whole run,
     the program's work included). A stream that fails stops at the end of
     a record, a CSV row, a value in the root JSON array or object, a line,
-    and every record whole by then is written before the error is reported.
+    and every record whole by then is written before the error is reported;
+    a record over 16 MB, and another format's render (--render yaml), can
+    stop inside one.
 
     Columns count characters. Inside the text, --at answers the node
     starting last at or before the position on its line, the innermost of

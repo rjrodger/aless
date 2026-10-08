@@ -211,8 +211,10 @@ print (below): a parse error's fields for a file that does not parse,
 **Errors** are JSON on standard error. Standard output then stays empty,
 with two exceptions: a failed `--check` still prints its report there,
 with status 1, and a `--render` or `--alchemy` stream that fails leaves
-there every record it had written whole ([Exporting](#exporting)). A
-parse error:
+there what it had written: every record it had written whole, and no
+part of one, but for a record over 16 MB and another format's render
+(`--render yaml`), which can stop inside one ([Exporting](#exporting)).
+A parse error:
 
 ```
 $ aless bad.json
@@ -336,10 +338,13 @@ every format's render declares it ([Writing any
 format](#writing-any-format)); JSON declares no loss, so `--render json`
 writes nothing there. `--render json`
 takes `--compact` and `--indent` as `--json` does, and writes the value
-`--json` writes, but for NaN and the infinities, which JSON cannot hold:
-`--json` writes each as `null`, and `--render json` refuses it, a
-`transduce` error with the code `TARGET_VALUE_UNREPRESENTABLE` and status
-1, what came before it written. Two things a stream
+`--json` writes, but for two things. A number keeps the spelling it has in
+the source wherever that spelling is JSON: `1.0` stays `1.0`, where
+`--json` writes `1`, and an integer beyond 2^53 keeps every digit, where
+`--json` writes the nearest 64-bit float. NaN and the infinities, which
+JSON cannot hold, `--json` writes as `null`, and `--render json` refuses,
+a `transduce` error with the code `TARGET_VALUE_UNREPRESENTABLE` and
+status 1, what came before it written. Two things a stream
 cannot do, since the input is read once, front to back: `--at` is not
 accepted, and `[-1]` on an array (counting from the end) is a usage error,
 though on an object it is the key `-1`, as everywhere. A document that

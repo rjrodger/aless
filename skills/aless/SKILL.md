@@ -11,7 +11,9 @@ prints one JSON value on standard output and exits 0, or prints
 `{"error": {…}}` on standard error and exits non-zero. Standard output
 is then empty, with two exceptions: a failed `--check` still prints its
 report there (exit 1), and a `--render` or `--alchemy` stream that fails
-leaves there every record it had written whole before the error.
+leaves there what it had written before the error: whole records, but
+for a record over 16 MB and another format's render (`--render yaml`),
+which can stop inside one.
 
 ## Rules
 
@@ -29,7 +31,9 @@ leaves there every record it had written whole before the error.
 3. **Check the exit status before reading standard output.** Only 0
    means standard output holds the answer (with `--check`, 1 still
    comes with a full report; a failed `--render` or `--alchemy` leaves
-   only the records written before the failure).
+   only what it wrote before the failure, which a record over 16 MB or
+   another format's render, such as `--render yaml`, can leave cut
+   short).
 4. **Quote paths** for the shell: `--path '.items[0]'`, since the shell
    would glob `[0]`.
 5. **Start small on a big or unknown file.** Use `--paths --depth 1`
@@ -105,9 +109,13 @@ aless -k jsonl --render csv < events.log                        # stdin, a recor
 ```
 
 `--render json` writes what `--json` writes, indented the same way
-(`--indent N`, `--compact`), but for NaN and the infinities, which JSON
-cannot hold: `--json` writes each as `null`, while `--render json` stops
-there with a `transduce` error, `TARGET_VALUE_UNREPRESENTABLE`, exit 1.
+(`--indent N`, `--compact`), but for two things. A number keeps the
+spelling it has in the source wherever that spelling is JSON: `1.0` stays
+`1.0` (`--json` writes `1`), and an integer beyond 2^53 keeps every digit,
+where `--json` writes the nearest 64-bit float. NaN and the infinities,
+which JSON cannot hold, `--json` writes as `null`, while `--render json`
+stops there with a `transduce` error, `TARGET_VALUE_UNREPRESENTABLE`,
+exit 1.
 
 The rows are the elements of the array at `--path` (the root when no
 path is given); for JSON Lines the lines, for CSV and TSV the records.
@@ -251,7 +259,7 @@ What each option prints:
 | `--where` | `{file, format, …entry}` |
 | `--check` | `{ok, files: [{file, format, ok, error}]}` |
 | `--render csv` | CSV text: a header row, then one record per row, all fields quoted, CRLF |
-| `--render json` | the value itself, streamed, indented as `--json` is; NaN and the infinities, which `--json` writes as `null`, fail it (`TARGET_VALUE_UNREPRESENTABLE`, exit 1) |
+| `--render json` | the value itself, streamed, indented as `--json` is, each number spelled as in the source where that is JSON; NaN and the infinities, which `--json` writes as `null`, fail it (`TARGET_VALUE_UNREPRESENTABLE`, exit 1) |
 | `--render yaml` | the value as one YAML document, streamed; `{"warning": {"kind": "loss", …}}` on standard error |
 | `--alchemy FILE` | what the program exports: text as it is, a table as CSV (`--render json`: JSON records), JSON events as JSON |
 | `--alchemy FILE --explain` | `{entry, output, protocol, chain, retention, …}`, the program's plan report |
@@ -356,7 +364,8 @@ For those, pipe `--json` into jq.
 
 ## Caveats
 
-- Numbers are 64-bit floats: integers beyond 2^53 lose precision, so
+- Numbers are 64-bit floats: integers beyond 2^53 lose precision in
+  `--json` and in entries (`--render json` keeps their digits), so
   compare large IDs as text with `--find` rather than as numbers.
 - `--json` writes NaN and the infinities as `null`, and `--render json`
   refuses them (`TARGET_VALUE_UNREPRESENTABLE`, exit 1). Entries write

@@ -1059,10 +1059,11 @@ fn render_json_agrees_with_json_for_every_fixture() {
     );
 }
 
-/// Where `--render json` and `--json` part: NaN and the infinities, which
-/// JSON cannot hold, are `null` in `--json`'s output, and a stream refuses
-/// each with `TARGET_VALUE_UNREPRESENTABLE`, status 1, what came before it
-/// written.
+/// One of the two places `--render json` and `--json` part (the other is a
+/// number's spelling, `render_json_keeps_a_numbers_source_spelling`): NaN
+/// and the infinities, which JSON cannot hold, are `null` in `--json`'s
+/// output, and a stream refuses each with `TARGET_VALUE_UNREPRESENTABLE`,
+/// status 1, what came before it written.
 #[test]
 fn render_json_refuses_the_numbers_json_cannot_hold() {
     let out = aless(
@@ -1090,6 +1091,50 @@ fn render_json_refuses_the_numbers_json_cannot_hold() {
             "{value}"
         );
         assert_eq!(e["output"], json!("partial"), "{value}");
+    }
+}
+
+/// The other place they part: a stream writes a number as the source
+/// spells it wherever that spelling is JSON, so `1.0`, `1e2` and `-0`
+/// keep theirs and an integer beyond 2^53 keeps every digit, where
+/// `--json` writes the 64-bit float. A spelling JSON lacks (YAML's
+/// `0x1F`) is written as its value.
+#[test]
+fn render_json_keeps_a_numbers_source_spelling() {
+    for (kind, text, streamed, whole) in [
+        (
+            "json",
+            "{\"a\": 1.0, \"b\": 12345678901234567890, \"c\": 1e2, \"d\": -0}",
+            "{\"a\":1.0,\"b\":12345678901234567890,\"c\":1e2,\"d\":-0}",
+            "{\"a\":1,\"b\":1.2345678901234567e+19,\"c\":100,\"d\":0}\n",
+        ),
+        (
+            "yaml",
+            "a: 1.0\nb: 12345678901234567890\nc: 0x1F\n",
+            "{\"a\":1.0,\"b\":12345678901234567890,\"c\":31}",
+            "{\"a\":1,\"b\":1.2345678901234567e+19,\"c\":31}\n",
+        ),
+    ] {
+        let out = aless(&["-k", kind, "--render", "json", "--compact"], Some(text));
+        assert_eq!(
+            code(&out),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            streamed,
+            "{kind}"
+        );
+        let out = aless(&["-k", kind, "--json", "--compact"], Some(text));
+        assert_eq!(
+            code(&out),
+            0,
+            "{kind}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), whole, "{kind}");
     }
 }
 
