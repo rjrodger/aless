@@ -19,6 +19,7 @@ working here; `CLAUDE.md` imports it.
   eval "$(scripts/yaml-fixtures.sh)"                # tabnas/yaml's fixtures, for tests/yaml_render.rs
   cargo test --locked
   python3 scripts/pty-smoke.py target/debug/aless   # unix: drives the real binary in a pty, and checks it refuses without one
+  cargo package --locked                            # linux: the crate builds from exactly the files it publishes
   ```
   `cargo test` builds the binary too. Windows and macOS are release
   targets, and CI tests all three; from Linux, `cargo check --target
@@ -32,6 +33,19 @@ working here; `CLAUDE.md` imports it.
   `cargo update -p tabnas-parser` (or any of them) moves a pin to the
   newest release the requirement allows. Do not vendor or copy tabnas
   code into this repository.
+- **Releases are dist's.** [`dist-workspace.toml`](dist-workspace.toml)
+  configures them, and dist generates `.github/workflows/release.yml` from
+  it. Never edit that workflow by hand: change the config and run
+  `dist generate` with the dist version the config names. A pull request's
+  `plan` job fails when the two disagree.
+  [`.github/workflows/publish-crates.yml`](.github/workflows/publish-crates.yml)
+  is this repository's own: the crates.io job that dist calls.
+  - A release is a `workflow_dispatch` that creates its own tag
+    ([RELEASING.md](RELEASING.md)).
+  - What a packager needs is in [PACKAGING.md](PACKAGING.md).
+  - The published crate carries only what `Cargo.toml`'s `include` names:
+    `src/`, `LICENSE`, `README.md` and `THIRD_PARTY_NOTICES.md`. So a file
+    the build reads must be under `src/`. CI's `cargo package` checks this.
 - **`tests/yaml_render.rs` reads tabnas/yaml's own fixtures** (`test/spec`
   and the vendored YAML Test Suite), which the published crate does not
   ship. They come from a checkout of tabnas/yaml at the tag of the

@@ -59,6 +59,12 @@ jobs:
         if: runner.os != 'Windows'
         run: python3 scripts/pty-smoke.py target/debug/aless
 
+      # The published crate carries only what Cargo.toml's include list
+      # names, and packaging it builds it from exactly those files.
+      - name: Crate packages and builds
+        if: runner.os == 'Linux'
+        run: cargo package --locked
+
       - name: Release build
         run: cargo build --release --locked
 

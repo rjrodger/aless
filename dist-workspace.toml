@@ -1,0 +1,73 @@
+# How aless is released: dist (https://github.com/axodotdev/cargo-dist)
+# builds the binaries, archives, installers, checksums, SBOM and
+# attestations, and writes .github/workflows/release.yml from this file.
+# Never edit release.yml by hand: change this file and run `dist generate`
+# with the dist version below. Every pull request runs `dist plan`, which
+# fails when the two disagree. RELEASING.md says how a release is made.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# The dist version CI installs, from its GitHub Release.
+cargo-dist-version = "0.33.0"
+ci = "github"
+# Every target is built natively on its own runner (see the overrides
+# below), except aarch64 Windows, which the x64 Windows runner cross-builds.
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-pc-windows-msvc",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+]
+# Beside LICENSE and README.md, which every archive carries already: the
+# notices for what aless borrows from jless and the AQL aless.
+include = ["THIRD_PARTY_NOTICES.md"]
+# `curl … | sh` and `irm … | iex` installers, and a Homebrew formula pushed
+# to the tap below. A shell or PowerShell install goes into $CARGO_HOME/bin,
+# where `cargo install` would put it, and installs no self-updater.
+installers = ["shell", "powershell", "homebrew"]
+install-path = "CARGO_HOME"
+install-updater = false
+# The tap the formula is pushed to, with the HOMEBREW_TAP_TOKEN secret:
+# `brew install rjrodger/tap/aless`.
+tap = "rjrodger/homebrew-tap"
+# After the GitHub Release exists: the formula, and crates.io through
+# .github/workflows/publish-crates.yml (trusted publishing).
+publish-jobs = ["homebrew", "./publish-crates"]
+# A release is a workflow_dispatch with the tag to make, `v<version>`; the
+# default, "dry-run", builds everything and publishes nothing. The run
+# creates the tag, at the commit it was dispatched on, when it creates the
+# GitHub Release with every file attached.
+dispatch-releases = true
+# Pull requests run `dist plan` only.
+pr-run-mode = "upload"
+# Supply chain: a build-provenance attestation for every file, the
+# dependency tree embedded in each binary (cargo-auditable), and a
+# CycloneDX SBOM. Attestations are made when a release is hosted, so a
+# dry run or a pull request's build makes none.
+github-attestations = true
+github-attestations-phase = "host"
+cargo-auditable = true
+cargo-cyclonedx = true
+
+[dist.github-custom-runners]
+# dist's default for Apple silicon is macos-14, which GitHub retires on
+# 2026-11-02.
+aarch64-apple-darwin = "macos-15"
+# dist's default cross-builds aarch64 Windows in a third-party container
+# (messense/cargo-xwin); the x64 Windows runner's MSVC carries the ARM64
+# tools, and aless compiles no C, so it builds there instead.
+aarch64-pc-windows-msvc = "windows-2022"
+
+# Every action pinned to a full commit SHA, as ci.yml pins its own: the
+# majors dist generates for, at their latest release.
+[dist.github-action-commits]
+"actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803"           # v6.1.0
+"actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9"    # v7.0.2
+"actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333"  # v8.0.2
+"actions/attest" = "1e69f48acb82d1966a394da916b4c1698aa569d6"             # v4.2.2
