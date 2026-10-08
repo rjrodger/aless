@@ -37,8 +37,11 @@ install-updater = false
 # `brew install rjrodger/tap/aless`.
 tap = "rjrodger/homebrew-tap"
 # After the GitHub Release exists: the formula, and crates.io through
-# .github/workflows/publish-crates.yml (trusted publishing).
+# .github/workflows/publish-crates.yml (trusted publishing). A called
+# job may ask for no more than its caller grants, so the crates job's
+# grant is named here: the release commit to read, and the OIDC token.
 publish-jobs = ["homebrew", "./publish-crates"]
+github-custom-job-permissions = { "publish-crates" = { contents = "read", id-token = "write" } }
 # A release is a workflow_dispatch with the tag to make, `v<version>`; the
 # default, "dry-run", builds everything and publishes nothing. The run
 # creates the tag, at the commit it was dispatched on, when it creates the
