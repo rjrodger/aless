@@ -4,10 +4,10 @@
 //! written through the render as `--render yaml` writes it, and read back,
 //! is the same value. It lives here rather than in tabnas/yaml because that
 //! repository does not depend on alchemy, and aless has both crates. The
-//! fixtures are the checkout cargo pinned, found through `cargo metadata`,
-//! so they move with the pin: the parity rows of `test/spec/*.tsv` that
-//! parse, and every case of the vendored YAML Test Suite that is not an
-//! error case.
+//! fixtures are a tabnas/yaml checkout at the tag of the version Cargo.lock
+//! pins, named by `TABNAS_YAML_DIR` (see [`yaml_checkout`]), so they move
+//! with the pin: the parity rows of `test/spec/*.tsv` that parse, and every
+//! case of the vendored YAML Test Suite that is not an error case.
 //!
 //! The inputs a reader defect misreads are a checked ledger,
 //! [`READER_DEFECT`]: each must still come back different, so a fix to the
@@ -17,13 +17,11 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use aless::export::{Input, Job, Records, What};
 use aless::load::Format;
 use aless::translate;
-use serde_json::Value;
 use tabnas_transduce::Metrics;
 
 /// The inputs whose output YAML's reader misreads, each with the issue
@@ -53,48 +51,57 @@ impl Write for Shared {
     }
 }
 
-/// The root of the tabnas-yaml checkout this build uses: the repository
-/// above its crate, as `cargo metadata` names the crate's manifest.
-///
-/// `cargo metadata` reads every package the lock names, the optional ones
-/// no feature here turns on among them (ratatui's `palette`, say), and a
-/// build downloads only what it compiles. So the read is offline first,
-/// and where the cache lacks one of those, it is repeated online to fetch
-/// it; `--locked` holds the lock as it is either way.
+/// The root of the tabnas/yaml checkout the fixtures come from: the
+/// directory `TABNAS_YAML_DIR` names, a relative one taken from this
+/// crate's root. The published crate ships only its `rs/` directory, so
+/// the fixtures are the repository's, at the tag of the tabnas-yaml
+/// version Cargo.lock pins: `scripts/yaml-fixtures.sh` clones it and
+/// names it, and CI runs that before the tests. Without the variable, or
+/// with a checkout of another version, this fails rather than reading no
+/// fixtures or the wrong ones.
 fn yaml_checkout() -> PathBuf {
-    let metadata = |offline: bool| {
-        let mut cargo = Command::new(env!("CARGO"));
-        cargo.args(["metadata", "--format-version", "1", "--locked"]);
-        if offline {
-            cargo.arg("--offline");
-        }
-        cargo
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("cargo metadata runs")
-    };
-    let mut out = metadata(true);
-    if !out.status.success() {
-        out = metadata(false);
-    }
-    assert!(
-        out.status.success(),
-        "cargo metadata: {}",
-        String::from_utf8_lossy(&out.stderr)
+    let dir = std::env::var_os("TABNAS_YAML_DIR").unwrap_or_else(|| {
+        panic!(
+            "TABNAS_YAML_DIR is not set: it names a checkout of tabnas/yaml at the tag of the \
+             tabnas-yaml version Cargo.lock pins; `eval \"$(scripts/yaml-fixtures.sh)\"` clones \
+             one and sets it"
+        )
+    });
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+    let manifest = root.join("rs/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest)
+        .unwrap_or_else(|e| panic!("TABNAS_YAML_DIR: {}: {e}", manifest.display()));
+    let checkout = text
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
+        .expect("tabnas-yaml's rs/Cargo.toml names its version");
+    let locked = locked_version("tabnas-yaml");
+    assert_eq!(
+        checkout,
+        locked,
+        "TABNAS_YAML_DIR ({}) is tabnas/yaml {checkout}, but Cargo.lock pins tabnas-yaml {locked}",
+        root.display()
     );
-    let metadata: Value = serde_json::from_slice(&out.stdout).expect("cargo metadata is JSON");
-    let manifest = metadata["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["name"] == "tabnas-yaml")
-        .and_then(|p| p["manifest_path"].as_str())
-        .expect("tabnas-yaml is a dependency");
-    Path::new(manifest)
-        .parent()
-        .and_then(Path::parent)
-        .expect("the crate is rs/ in its repository")
-        .to_path_buf()
+    root
+}
+
+/// The version Cargo.lock pins for `package`.
+fn locked_version(package: &str) -> String {
+    let lock = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))
+        .expect("Cargo.lock is beside Cargo.toml");
+    let name = format!("name = \"{package}\"");
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line == name {
+            if let Some(version) = lines
+                .next()
+                .and_then(|l| l.strip_prefix("version = \"")?.strip_suffix('"'))
+            {
+                return version.to_string();
+            }
+        }
+    }
+    panic!("Cargo.lock pins no {package}")
 }
 
 /// A fixture cell's escapes decoded, as the fixture runners decode them:
