@@ -39,8 +39,9 @@ Every pull request runs `dist plan`, which fails when the two disagree.
   [rjrodger/homebrew-tap](https://github.com/rjrodger/homebrew-tap) by
   [`publish-homebrew.yml`](.github/workflows/publish-homebrew.yml):
   `brew install rjrodger/tap/aless`. It is the formula dist writes, with
-  the man page and the bash, zsh and fish completions installed where
-  Homebrew's own formulas put theirs, and a test for `brew test`.
+  the man page and the bash, zsh, fish and PowerShell completions
+  installed where Homebrew's own formulas put theirs, and a test for
+  `brew test`.
 - **The crate on crates.io,** by trusted publishing
   ([`publish-crates.yml`](.github/workflows/publish-crates.yml)), or
   nothing when that version is there already.

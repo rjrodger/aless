@@ -9,8 +9,8 @@ completions among them, where neither man nor a shell looks for them.
 This adds what a formula in homebrew-core has:
 
 - the man page and the completions installed where Homebrew's formulas
-  put theirs (man1, bash_completion, zsh_completion, fish_completion);
-  PowerShell has no such place, so its completion stays in pkgshare;
+  put theirs (man1, bash_completion, zsh_completion, fish_completion and
+  pwsh_completion);
 - a test that runs aless, for `brew test aless`.
 
 publish-homebrew.yml runs this at each release, on the formula dist wrote
@@ -27,11 +27,11 @@ ANCHOR = "    install_binary_aliases!\n"
 
 EXTRAS = """
     # The man page and the completions, where Homebrew's formulas put theirs.
-    # PowerShell's completion stays in pkgshare, with what else is left.
     man1.install "man/aless.1"
     bash_completion.install "completions/aless.bash" => "aless"
     zsh_completion.install "completions/_aless"
     fish_completion.install "completions/aless.fish"
+    pwsh_completion.install "completions/_aless.ps1"
 """
 
 TEST = """

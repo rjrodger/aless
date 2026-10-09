@@ -86,7 +86,7 @@ The crate on crates.io holds the same source, without the tests.
 | Channel | How aless gets there | Who keeps it current |
 |---|---|---|
 | GitHub Releases, shell and PowerShell installers | `release.yml` | the release workflow |
-| Homebrew tap: `brew install rjrodger/tap/aless` | `release.yml` pushes the formula through `publish-homebrew.yml`: dist's, which installs the prebuilt binary, with the man page and the bash, zsh and fish completions installed where Homebrew's own formulas put theirs, and a `brew test` | the release workflow |
+| Homebrew tap: `brew install rjrodger/tap/aless` | `release.yml` pushes the formula through `publish-homebrew.yml`: dist's, which installs the prebuilt binary, with the man page and the bash, zsh, fish and PowerShell completions installed where Homebrew's own formulas put theirs, and a `brew test` | the release workflow |
 | crates.io: `cargo install --locked aless` | the first version by hand, then `publish-crates.yml` | the release workflow |
 | cargo-binstall: `cargo binstall aless` | finds the release archives by their names; no metadata needed | nobody |
 | homebrew-core: `brew install aless` | a pull request once aless meets Homebrew's [acceptance policy](https://docs.brew.sh/Package-Acceptance-Policy): built from source with `depends_on "rust" => :build` and `cargo install *std_cargo_args`, the man page and the completions from `--generate` (above); a description of at most 80 characters that does not start with an article (`Cargo.toml`'s is one); and enough GitHub stars, forks or watchers | Homebrew |

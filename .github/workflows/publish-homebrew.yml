@@ -11,8 +11,8 @@ name: publish-homebrew
 # the man page and the shells' completions among them, where neither man
 # nor a shell looks. scripts/homebrew-formula.py adds what a formula in
 # homebrew-core has: the man page in man1, the completions in
-# bash_completion, zsh_completion and fish_completion, and a test for
-# `brew test`. Then `brew style --fix` tidies dist's own lines, as dist's
+# bash_completion, zsh_completion, fish_completion and pwsh_completion,
+# and a test for `brew test`. Then `brew style --fix` tidies dist's own lines, as dist's
 # job does, and the formula is committed to the tap. That formula passes
 # `brew audit --strict` and `brew test`.
 #

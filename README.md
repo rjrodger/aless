@@ -64,8 +64,8 @@ shells' completions, under [`completions/`](completions/): bash
 (`aless.bash`), zsh (`_aless`), fish (`aless.fish`) and PowerShell
 (`_aless.ps1`).
 
-Homebrew installs the man page, and the bash, zsh and fish completions
-in its own directories for them; its
+Homebrew installs the man page, and the bash, zsh, fish and PowerShell
+completions in its own directories for them; its
 [shell completion guide](https://docs.brew.sh/Shell-Completion) says how
 a shell reads those (for zsh, `eval "$(brew shellenv)"` before
 `compinit`). For any other install, `aless --generate` prints each file
