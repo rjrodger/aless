@@ -104,13 +104,16 @@ These need the owner's accounts, so an automated session cannot do them.
    6. Once the DNS check on *Settings → Pages* passes, tick *Enforce
       HTTPS*. The option can take up to a day to appear, while the
       certificate is issued.
-4. **Recommended:**
-   - Turn on release immutability (*Settings → General → Releases*).
-     A published release can then never be changed, and its tag
-     never moved or reused.
-   - Give the `release` environment a required reviewer
-     (*Settings → Environments*), so publishing to crates.io waits for
-     your approval.
+4. **Recommended:** turn on release immutability (*Settings → General →
+   Releases*). A published release can then never be changed, and its tag
+   never moved or reused.
+
+   The `release` environment has no required reviewer, by the maintainer's
+   choice: crates.io publishes as soon as the GitHub Release exists, with
+   no approval step. Keep the environment itself, named `release`, since
+   the crates.io trusted publisher names it, and a deployment-branch rule
+   for `main` on it, where one is set, so that only a run from `main` can
+   publish.
 
 ## Each release
 
