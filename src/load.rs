@@ -125,30 +125,40 @@ impl Format {
         names
     }
 
+    /// The file extensions (without the dot, in lower case) that imply a
+    /// built-in format; none for a custom grammar, whose names are its
+    /// own. The help's table of formats is this one.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Format::Json => &["json", "geojson", "har", "jsonld", "webmanifest"],
+            Format::Jsonl => &["jsonl", "ndjson"],
+            Format::Jsonic => &["jsonic"],
+            Format::Jsonc => &["jsonc"],
+            Format::Json5 => &["json5"],
+            Format::Yaml => &["yaml", "yml"],
+            Format::Toml => &["toml"],
+            Format::Ini => &["ini", "cfg", "conf", "cnf"],
+            Format::Csv => &["csv"],
+            Format::Tsv => &["tsv", "tab"],
+            Format::Xml => &["xml", "svg", "xhtml", "xsd", "xsl", "xslt", "plist"],
+            Format::Zon => &["zon"],
+            Format::Markdown => &["md", "markdown"],
+            Format::Feed => &["rss", "atom"],
+            Format::Text => &["txt", "text", "log"],
+            Format::Custom(_) => &[],
+        }
+    }
+
     /// The format a file extension (without the dot) implies: a custom
     /// grammar of that name first, then the built-in table.
     pub fn from_extension(ext: &str) -> Option<Format> {
         if let Some(id) = grammar::lookup(ext) {
             return Some(Format::Custom(id));
         }
-        Some(match ext.to_ascii_lowercase().as_str() {
-            "json" | "geojson" | "har" | "jsonld" | "webmanifest" => Format::Json,
-            "jsonl" | "ndjson" => Format::Jsonl,
-            "jsonic" => Format::Jsonic,
-            "jsonc" => Format::Jsonc,
-            "json5" => Format::Json5,
-            "yaml" | "yml" => Format::Yaml,
-            "toml" => Format::Toml,
-            "ini" | "cfg" | "conf" | "cnf" => Format::Ini,
-            "csv" => Format::Csv,
-            "tsv" | "tab" => Format::Tsv,
-            "xml" | "svg" | "xhtml" | "xsd" | "xsl" | "xslt" | "plist" => Format::Xml,
-            "zon" => Format::Zon,
-            "md" | "markdown" => Format::Markdown,
-            "rss" | "atom" => Format::Feed,
-            "txt" | "text" | "log" => Format::Text,
-            _ => return None,
-        })
+        let ext = ext.to_ascii_lowercase();
+        Format::ALL
+            .into_iter()
+            .find(|f| f.extensions().contains(&ext.as_str()))
     }
 
     /// The format of a path: a custom grammar whose name is the whole file

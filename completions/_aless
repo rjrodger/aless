@@ -1,0 +1,58 @@
+#compdef aless
+# zsh completion for aless, written by `aless --generate complete-zsh`.
+# Install it as _aless in a directory on $fpath.
+
+_aless() {
+  _arguments -S \
+    '--json[the document as JSON (the default)]' \
+    '--paths[an entry for the start and each node below]' \
+    '--find=[the entries whose "key"\: value text matches]:REGEX: ' \
+    '--where[the start'\''s entry\: its path and position]' \
+    '--check[parse each FILE and report on each]' \
+    '--render=[the value written as FORMAT, streamed]:FORMAT:(csv ini json json5 jsonc jsonic jsonl markdown toml xml yaml zon)' \
+    '--alchemy=[run the alchemy program in FILE]:FILE:_files' \
+    '--alchemy-expr=[the same, the program on the command line]:TEXT: ' \
+    '--explain[the program'\''s plan as JSON, and no run]' \
+    '--path=[start at PATH, in jq syntax]:PATH: ' \
+    '--at=[start at the node at a source position]:LINE[\:COL]: ' \
+    '--limit=[at most N entries (default 200; 0 for all)]:N: ' \
+    '--compact[JSON on one line, an error'\''s too]' \
+    '--max-output=[cap a program'\''s output (default 1G)]:SIZE: ' \
+    '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
+    '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
+    '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
+    '*--grammar=[a format of your own, from an ABNF grammar]:NAME=FILE:_files' \
+    '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
+    '--depth=[list N levels down; the viewer folds deeper]:N: ' \
+    '--indent=[indentation per level (default 2)]:N: ' \
+    '--max-size=[refuse an input over SIZE (default 64M)]:SIZE: ' \
+    '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
+    '--no-watch[do not reload files when they change]' \
+    '--watch[reload files when they change (the default)]' \
+    '(--mode -m)--mode=[start in data (default) or line mode]:MODE:(data line)' \
+    '(--mode -m)-m[start in data (default) or line mode]:MODE:(data line)' \
+    '(--line-numbers -n)--line-numbers[show absolute line numbers]' \
+    '(--line-numbers -n)-n[show absolute line numbers]' \
+    '(--no-line-numbers -N)--no-line-numbers[hide absolute line numbers]' \
+    '(--no-line-numbers -N)-N[hide absolute line numbers]' \
+    '(--relative-line-numbers -r)--relative-line-numbers[show relative line numbers]' \
+    '(--relative-line-numbers -r)-r[show relative line numbers]' \
+    '(--no-relative-line-numbers -R)--no-relative-line-numbers[hide relative line numbers]' \
+    '(--no-relative-line-numbers -R)-R[hide relative line numbers]' \
+    '--scrolloff=[rows kept around the focus (default 3)]:N: ' \
+    '--hidden[show dot-files in the explorer]' \
+    '--ascii[draw fold markers in ASCII]' \
+    '(--no-color --no-colour)--no-color[no colours (as NO_COLOR does)]' \
+    '(--no-color --no-colour)--no-colour[no colours (as NO_COLOR does)]' \
+    '--no-mouse[do not capture the mouse]' \
+    '--panes=[open the output and program panes]:PANES:(out program out,program)' \
+    '--stacked[stack the panes]' \
+    '(--help -h)--help[the options (-h), or the whole reference]' \
+    '(--help -h)-h[the options (-h), or the whole reference]' \
+    '(--version -V)--version[the version]' \
+    '(--version -V)-V[the version]' \
+    '--generate=[a man page, shell completions or the skill]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell skill)' \
+    '*:file:_files'
+}
+
+_aless "$@"

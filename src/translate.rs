@@ -357,15 +357,22 @@ pub fn source_part(format: Format) -> Option<&'static Part> {
 /// Every name `--render` takes, as a message lists them: the built-ins and
 /// every id a crate's manifest names, in order, `csv, ini, json, … or zon`.
 pub fn names() -> String {
-    let mut names: Vec<&str> = vec![Renderer::Csv.name(), Renderer::Json.name()];
-    names.extend(parts().iter().map(|p| p.id.as_str()));
-    names.sort_unstable();
-    names.dedup();
+    let names = render_names();
     match names.split_last() {
         Some((last, [])) => last.to_string(),
         Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
         None => String::new(),
     }
+}
+
+/// Every format `--render` writes, sorted: aless's own two, and each
+/// format whose crate carries a render.
+pub fn render_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = vec![Renderer::Csv.name(), Renderer::Json.name()];
+    names.extend(parts().iter().map(|p| p.id.as_str()));
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// Why `--render` refuses a name: a format aless reads and has no render

@@ -1,3 +1,7 @@
 * text=auto
 tests/fixtures/** -text
 examples/*.yaml -text
+# Written by `aless --generate` (scripts/generate.sh) and installed as they
+# are, so LF on every checkout, as the binary writes them.
+man/** text eol=lf
+completions/** text eol=lf

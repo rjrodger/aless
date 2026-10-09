@@ -7,6 +7,7 @@
 
 pub mod alchemy;
 pub mod app;
+pub mod cli;
 pub mod clip;
 pub mod doc;
 pub mod explorer;

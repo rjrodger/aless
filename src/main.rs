@@ -2,6 +2,7 @@
 //! the event loop, painting, and the side effects the application asks
 //! for (watching files, copying, suspending).
 
+use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -23,6 +24,7 @@ use ratatui::Terminal;
 
 use aless::alchemy::ProgramArg;
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
+use aless::cli;
 use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
@@ -30,173 +32,14 @@ use aless::pane::{Role, Through};
 use aless::render;
 use aless::watch::FileWatcher;
 
-const USAGE: &str = "\
-aless — JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree: a
-jless-style viewer in a terminal, and JSON on standard output for scripts
-and agents
-
-USAGE:
-    aless [OPTIONS] [FILE]...           the viewer, in a terminal
-    aless --paths --depth 1 FILE        output, anywhere (see WITHOUT A SCREEN)
-    <command> | aless [OPTIONS]
-
-WITHOUT A SCREEN (scripts, agents, pipes):
-    Any option in this section but --depth and --indent (the viewer has
-    them too), a standard output that is not a terminal, or TERM=dumb
-    prints JSON instead of starting the viewer, and nothing waits for keys:
-    `aless FILE | jq .` is the document as JSON. With --panes (below),
-    --render and --alchemy choose the viewer's output pane instead.
-
-        --json              The document as JSON (the default), or the value
-                            at the start that --path or --at gives
-        --paths             An entry for the start and each node below it:
-                            {path, kind, line, col, value or length}
-        --find <REGEX>      Entries of the nodes whose `\"key\": value` text
-                            matches: smart case, `REGEX/s` to match case
-        --where             The start's entry: its path and source position
-        --check             Parse each FILE and report
-                            {ok, files: [{file, format, ok, error}]}
-        --render <FORMAT>   The value at the start written as FORMAT, streamed
-                            as it is read: csv (the records: the elements of
-                            an array; JSON Lines and CSV row by row), json, or
-                            a format whose crate carries a render (ini, json5,
-                            jsonc, jsonic, jsonl, markdown, toml, xml, yaml,
-                            zon); what it does not keep is said in a
-                            {\"warning\": …} on standard error
-        --alchemy <FILE>    Run the alchemy program in FILE over the input and
-                            stream what it exports: its own text as it is, a
-                            table as CSV (--render json: JSON records), JSON
-                            events as JSON (--render csv: a table), either as
-                            any format --render names
-        --alchemy-expr <TEXT>
-                            The same, with the program on the command line
-        --explain           The program's plan report as JSON, and no run
-        --max-output <SIZE> Stop a program that writes more than SIZE (default
-                            1G; K, M or G; 0 for no limit)
-        --path <PATH>       Start at PATH, in the jq syntax every output uses
-                            (.a.b[0].\"odd key\", .[0] in a root array);
-                            a.b[0], [0], $.a.b[0] and JSON Pointer (/a/b/0)
-                            work too
-        --at <LINE[:COL]>   Start at the node at that source position
-        --depth <N>         --paths and --find go N levels below the start
-        --limit <N>         At most N entries (default 200, 0 for all);
-                            \"total\" and \"truncated\" say what was left out
-        --compact           JSON on one line, an error's too
-        --indent <N>        Indent --json and --render json N spaces a level
-                            (default 2)
-
-    Quote a PATH for the shell ('.a[0]'). Positions are 1-based, and a
-    keyed value is at its key. Numbers are 64-bit floats, but --render
-    json keeps a number's source spelling where that is JSON, a big
-    integer's digits included; NaN and the infinities, which JSON cannot
-    hold, are null to --json, and --render json refuses them
-    (TARGET_VALUE_UNREPRESENTABLE, status 1). Input is
-    read whole before it is parsed, so output starts when the parse ends;
-    --render and --alchemy stream instead, and read JSON Lines and CSV a
-    record at a time. Errors are JSON on standard error: {\"error\": {\"kind\",
-    \"message\", …}}, with the file, line, col, code and hint when the input
-    did not parse, and {\"kind\": \"alchemy\", \"code\", \"file\", \"line\", \"col\"}
-    when the program did not; one met while --render writes a format (not
-    a usage or not_found error) adds \"loss\", the sentences its warning
-    gives on success. Standard output is then empty, but for --check's
-    report and what a failed stream wrote. Exit status: 0
-    success, 1 the input did not parse (--check: an input failed; --render,
-    --alchemy: the input or its records will not do), 2 bad usage (a program
-    or --grammar that does not compile too) or no terminal for the viewer,
-    3 an input (or a --grammar or --alchemy program file) could not be read,
-    or the output not written, 4 --path or --at names nothing,
-    5 an input (or a --grammar or --alchemy program file) is over --max-size
-    (--render, --alchemy: over a limit of the transducer's, a program's
-    output over --max-output among them),
-    6 a parse (or a --grammar compile) ran past --timeout, or the input was
-    still being read when it passed (--render, --alchemy: the whole run,
-    the program's work included). A stream that fails stops at the end of
-    a record, a CSV row, a value in the root JSON array or object, a line,
-    and every record whole by then is written before the error is reported;
-    a record over 16 MB, and another format's render (--render yaml), can
-    stop inside one.
-
-    Columns count characters. Inside the text, --at answers the node
-    starting last at or before the position on its line, the innermost of
-    several starting there (a line alone, or a column before the line's
-    first node, that first node; on a line with no node of its own, a
-    comment or a closing bracket, the last node before the line, or the
-    document's first node when none is). Outside the text it names
-    nothing: a line past the last line, or a column past the end of its
-    line, where a line's text excludes its terminator (LF or CRLF), a
-    trailing terminator starts no line, and an empty line has no column
-    inside it.
-
-    aless --paths --depth 1 config.yaml     what is in it
-    aless --json --path '.spec.containers[0]' deploy.yaml
-    aless --where --at 42:7 deploy.yaml     the path at a linter's 42:7
-    aless --find '\"image\":' deploy.yaml     every image, with its line
-    aless --check $(git ls-files '*.toml')  do they all parse?
-    aless -k csv --json < data.csv          stdin is JSON unless -k says
-    aless --render csv --path .items x.json the records under .items as CSV
-    aless --render json big.yaml            the document as JSON, streamed
-    aless --render yaml data.csv            the records as YAML, streamed
-    aless --render toml config.json         any format as any other
-    aless --alchemy export.alc api.json     a program's output, streamed
-    aless --alchemy export.alc --explain    what the program will do
-    aless --grammar hosts=hosts.abnf --paths /etc/hosts   a format of your own
-    aless --grammar-expr 'kv=…' --json settings.kv        (see --grammar below)
-
-THE VIEWER (in a terminal):
-    Each FILE opens in its own tab (Tab / Shift-Tab switch). Files are
-    watched and reloaded on change, keeping your place. A directory opens
-    in the explorer: the same tree, Enter opens a file. Without a FILE,
-    standard input is read when it is not a terminal, else the current
-    directory is explored. Keys: F1 or :help inside aless.
-
-        --no-watch          Do not reload files when they change
-        --watch             Reload them (the default)
-    -m, --mode <MODE>       Start in `data` (default) or `line` mode
-        --depth <N>         Fold containers deeper than N levels at start
-    -n, --line-numbers      Show absolute line numbers
-    -N, --no-line-numbers
-    -r, --relative-line-numbers
-    -R, --no-relative-line-numbers
-        --scrolloff <N>     Rows kept around the focus when scrolling (default 3)
-        --indent <N>        Indentation per level (default 2; JSON output too)
-        --hidden            Show dot-files in the explorer
-        --ascii             Draw fold markers with ASCII characters
-        --no-color, --no-colour
-                            No colours (as does NO_COLOR)
-        --no-mouse          Do not capture the mouse
-        --panes <out,program>
-                            Open panes beside the input: out, the document as
-                            --render or --alchemy writes it (JSON when neither
-                            is given; with --panes they choose this pane's
-                            output instead of printing), and program, the
-                            program. C-w moves between panes, s shows a pane's
-                            text or tree, :pane out|program|close
-        --stacked           Stack the panes rather than side by side
-
-BOTH:
-    -k, --kind <FORMAT>     Parse every input as FORMAT instead of by extension:
-                            json jsonl jsonic jsonc json5 yaml toml ini csv tsv
-                            xml zon markdown feed text, or a --grammar NAME;
-                            --format is another name for this option
-        --grammar <NAME=FILE>
-                            Read a file whose extension or whole name is NAME
-                            (x.hosts, /etc/hosts) with the ABNF grammar in FILE:
-                            RFC 5234 as tabnas/abnf compiles it, with ; @object
-                            and ; @array comments saying what a rule builds.
-                            NAME,NAME2=FILE gives it two names; repeatable
-        --grammar-expr <NAME=ABNF>
-                            The same, with the grammar text on the command line
-        --max-size <SIZE>   Refuse an input larger than SIZE (default 64M; K, M
-                            or G; 0 for no limit): a parse takes about 40 bytes
-                            of memory per byte of input. A --grammar FILE too
-        --timeout <SECONDS> Stop a parse, or a --grammar compile, that runs
-                            longer than this (2.5, 90s, 2m; default none; 0
-                            for no limit): a large input can take minutes. On
-                            standard input it runs from the start, so waiting
-                            on the input counts
-    -h, --help              This help
-    -V, --version           Version
-";
+/// What the command line asks for.
+enum Parsed {
+    /// The viewer, or output without one.
+    Run(Box<Args>),
+    /// Text to print as it is, and exit: `-h`, `--help`, `--version`,
+    /// `--generate`.
+    Print(String),
+}
 
 struct Args {
     files: Vec<PathBuf>,
@@ -233,25 +76,11 @@ struct Args {
     max_output: Option<u64>,
 }
 
-/// Options that ask for output rather than the viewer.
-const HEADLESS_OPTIONS: &[&str] = &[
-    "--json",
-    "--paths",
-    "--find",
-    "--where",
-    "--check",
-    "--render",
-    "--alchemy",
-    "--alchemy-expr",
-    "--explain",
-    "--path",
-    "--at",
-    "--limit",
-    "--compact",
-    "--max-output",
-];
-
-fn parse_args() -> Result<Args, String> {
+/// Read the command line, `argv` without the program's name. Every option
+/// is one [`cli::OPTIONS`] lists, which the help, the man page and the
+/// completions are written from: an option the table does not list is no
+/// option.
+fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String> {
     let mut args = Args {
         files: Vec::new(),
         kind_name: None,
@@ -272,7 +101,7 @@ fn parse_args() -> Result<Args, String> {
         timeout: aless::load::Limits::DEFAULT.timeout,
         max_output: Some(aless::load::DEFAULT_MAX_OUTPUT),
     };
-    let mut it = std::env::args_os().skip(1);
+    let mut it = argv.into_iter();
     let mut only_files = false;
     while let Some(arg) = it.next() {
         let s = arg.to_string_lossy().into_owned();
@@ -280,11 +109,19 @@ fn parse_args() -> Result<Args, String> {
             args.files.push(PathBuf::from(arg));
             continue;
         }
+        // Options end at `--`: every argument after it is a file.
+        if s == "--" {
+            only_files = true;
+            continue;
+        }
         // A long option's value may follow it or be attached: `--kind=json`.
         let (name, mut inline) = match s.split_once('=') {
             Some((n, v)) if n.starts_with("--") => (n.to_string(), Some(v.to_string())),
             _ => (s.clone(), None),
         };
+        if cli::lookup(&name).is_none() {
+            return Err(format!("unknown option: {name} (see aless --help)"));
+        }
         let mut value = || -> Result<String, String> {
             match inline.take() {
                 Some(v) => Ok(v),
@@ -298,23 +135,16 @@ fn parse_args() -> Result<Args, String> {
             v.parse()
                 .map_err(|_| format!("{name} needs a number, not {v}"))
         };
-        if HEADLESS_OPTIONS.contains(&name.as_str()) {
+        if cli::asks_for_output(&name) {
             args.headless = true;
             args.headless_given.push(name.clone());
         }
         let mut op = None;
         match name.as_str() {
-            "--" => only_files = true,
-            "-h" | "--help" => {
-                // `aless --help | head` must not panic on the closed pipe.
-                let _ = io::stdout().write_all(USAGE.as_bytes());
-                std::process::exit(0);
-            }
-            "-V" | "--version" => {
-                let version = format!("aless {}\n", env!("CARGO_PKG_VERSION"));
-                let _ = io::stdout().write_all(version.as_bytes());
-                std::process::exit(0);
-            }
+            "-h" => return Ok(Parsed::Print(cli::summary())),
+            "--help" => return Ok(Parsed::Print(cli::reference())),
+            "-V" | "--version" => return Ok(Parsed::Print(format!("aless {}\n", cli::VERSION))),
+            "--generate" => return cli::generate(&value()?).map(Parsed::Print),
             "-k" | "--kind" | "--format" => args.kind_name = Some(value()?),
             "--grammar" | "--grammar-expr" => {
                 // Raw, not through `value()`: FILE is a path, and a path's
@@ -509,7 +339,7 @@ fn parse_args() -> Result<Args, String> {
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
     }
-    Ok(args)
+    Ok(Parsed::Run(Box::new(args)))
 }
 
 /// Record the program `--alchemy` or `--alchemy-expr` (`name`) names,
@@ -557,8 +387,13 @@ fn refuse_usage(e: &str, headless: bool, compact: bool) -> ! {
 }
 
 fn main() {
-    let mut args = match parse_args() {
-        Ok(a) => a,
+    let mut args = match parse_args(std::env::args_os().skip(1)) {
+        Ok(Parsed::Run(a)) => *a,
+        Ok(Parsed::Print(text)) => {
+            // `aless --help | head` must not panic on the closed pipe.
+            let _ = io::stdout().write_all(text.as_bytes());
+            std::process::exit(0);
+        }
         Err(e) => {
             // The options could not be read, so ask the raw ones whether
             // this was meant to run without a screen, and on one line.
@@ -568,7 +403,7 @@ fn main() {
                 .collect();
             let asked = raw
                 .iter()
-                .any(|a| HEADLESS_OPTIONS.contains(&a.split('=').next().unwrap_or_default()));
+                .any(|a| cli::asks_for_output(a.split('=').next().unwrap_or_default()));
             // Options end at `--`; after it, `--compact` is a file's name.
             let compact = raw
                 .iter()
@@ -1015,5 +850,92 @@ fn convert(ev: Event) -> Option<Input> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aless::cli::{Value, OPTIONS};
+
+    fn parse(argv: &[&str]) -> Result<Parsed, String> {
+        parse_args(argv.iter().map(OsString::from))
+    }
+
+    /// A value the option takes.
+    fn sample(long: &str, value: Value) -> &'static str {
+        match (long, value) {
+            (_, Value::Words(words)) => words[0],
+            (_, Value::Format | Value::Render) => "json",
+            ("--grammar", _) => "g=g.abnf",
+            ("--grammar-expr", _) => "g=doc = TX",
+            ("--alchemy-expr", _) => "def export [input] input",
+            ("--path", _) => ".a",
+            ("--at", _) => "1:1",
+            ("--find", _) => "x",
+            ("--max-size" | "--max-output", _) => "1M",
+            ("--alchemy", _) => "x.alc",
+            _ => "1",
+        }
+    }
+
+    /// The table is the parser's gate, so every option the help, the man
+    /// page and the completions name is read, under each of its names.
+    #[test]
+    fn every_option_in_the_table_is_read() {
+        for opt in OPTIONS {
+            for name in opt.all_names() {
+                let mut argv = vec![name.as_str()];
+                if let Some((_, value)) = opt.arg {
+                    argv.push(sample(opt.long, value));
+                }
+                // --explain needs a program to explain.
+                if opt.long == "--explain" {
+                    argv.extend(["--alchemy-expr", "def export [input] input"]);
+                }
+                if let Err(e) = parse(&argv) {
+                    panic!("{argv:?}: {e}");
+                }
+                // Attached, a long option's value reads the same.
+                if let (Some((_, value)), true) = (opt.arg, name.starts_with("--")) {
+                    let attached = format!("{name}={}", sample(opt.long, value));
+                    if let Err(e) = parse(&[attached.as_str()]) {
+                        panic!("{attached}: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_option_the_table_does_not_list_is_refused() {
+        for argv in [&["--nope"][..], &["-x"], &["--Json"], &["-kjson"]] {
+            match parse(argv) {
+                Err(e) => assert!(e.starts_with("unknown option: "), "{argv:?}: {e}"),
+                Ok(_) => panic!("{argv:?} was read"),
+            }
+        }
+        // After `--`, an option's name is a file's.
+        match parse(&["--", "--nope"]) {
+            Ok(Parsed::Run(args)) => assert_eq!(args.files, [PathBuf::from("--nope")]),
+            _ => panic!("-- --nope"),
+        }
+    }
+
+    #[test]
+    fn help_version_and_generate_print() {
+        let print = |argv: &[&str]| match parse(argv) {
+            Ok(Parsed::Print(text)) => text,
+            _ => panic!("{argv:?} prints nothing"),
+        };
+        assert_eq!(print(&["-h"]), cli::summary());
+        assert_eq!(print(&["--help"]), cli::reference());
+        assert_eq!(print(&["-V"]), format!("aless {}\n", cli::VERSION));
+        assert_eq!(print(&["--generate", "man"]), cli::man_page());
+        assert_eq!(print(&["--generate=skill"]), cli::SKILL);
+        let Err(e) = parse(&["--generate", "nope"]) else {
+            panic!("--generate nope");
+        };
+        assert!(e.starts_with("--generate writes man, "), "{e}");
     }
 }
