@@ -123,12 +123,11 @@ These need the owner's accounts, so an automated session cannot do them.
    - run `scripts/generate.sh`: the man page names the version, and the
      date the changelog gives it, and CI fails until it does.
 
-   Merge it once CI is green. For 0.1.0 the version is already right, and
-   only the changelog heading, and the man page with it, change.
+   Merge it once CI is green.
 2. **A dry run.** *Actions → release → Run workflow*, on `main`, leaving the
    tag as `dry-run`. Every target builds, and nothing is published.
 3. **The release.** The same, with the tag `vX.Y.Z`, which must equal
-   `Cargo.toml`'s version. For 0.1.0, publish to crates.io first (above).
+   `Cargo.toml`'s version.
 4. **Check it.**
 
    ```bash
