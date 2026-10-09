@@ -39,9 +39,11 @@ The report is on standard output with the status 1, unlike other errors, which g
 In a CI job, hand it the files git tracks:
 
 ```sh
-aless --check $(git ls-files '*.json' '*.yaml' '*.yml' '*.toml')
+git ls-files -z '*.json' '*.yaml' '*.yml' '*.toml' | xargs -0 -r aless --check --
 ```
 
-The job fails when a file does not parse, and the report says which. A file that is too large or too slow fails too, with its own error: `--max-size` (64 MB unless you set it) and `--timeout` set the bounds, and the [reference](/reference/command-line.html#errors) gives each error's fields. A format of your own is checked with its grammar named, as in `aless --grammar hosts=hosts.abnf --check hosts`.
+`-z` and `xargs -0` keep each name whole, spaces included, and `--` ends aless's options, so a name that starts with `-` is read as a file. `-r` runs nothing when no file matches; without it, aless would run with no file and read standard input.
+
+The job fails when a file does not parse, and the report says which. Through `xargs` the status is 123 rather than aless's 1, and any status but 0 fails the job. A file that is too large or too slow fails too, with its own error: `--max-size` (64 MB unless you set it) and `--timeout` set the bounds, and the [reference](/reference/command-line.html#errors) gives each error's fields. A format of your own is checked with its grammar named, as in `aless --grammar hosts=hosts.abnf --check hosts`.
 
 To see the same report in a terminal, open the file in the viewer: a file that does not parse shows the parser's report, with a caret under the place it stopped.

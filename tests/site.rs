@@ -80,13 +80,16 @@ struct Page {
     title: String,
     /// One sentence: the page's meta description, and its line in lists.
     description: String,
-    /// Its place in its section's list.
+    /// Its place in its section's list; 0 for a page in none.
     order: i64,
     /// Its section; `None` for the home page and the 404 page.
     section: Option<usize>,
     /// The Markdown it was written in, without its front matter; `None`
     /// for a page written from the binary.
     markdown: Option<String>,
+    /// A page written from the binary, as the terminal shows it: what
+    /// `aless --help` or F1 prints. Published beside the page as `.txt`.
+    text: Option<String>,
     /// The file it comes from, for the footer's link to it.
     origin: String,
     /// The page's content as HTML.
@@ -134,8 +137,15 @@ fn build() -> Site {
             page.path.clone(),
             render(&layout, page, &pages).into_bytes(),
         );
-        if let Some(twin) = twin(page, &pages) {
-            files.insert(page.path.replace(".html", ".md"), twin.into_bytes());
+        files.insert(
+            page.path.replace(".html", ".md"),
+            twin(page, &pages).into_bytes(),
+        );
+        if let Some(text) = &page.text {
+            files.insert(
+                page.path.replace(".html", ".txt"),
+                text.clone().into_bytes(),
+            );
         }
     }
     for name in ["style.css", "favicon.svg", "CNAME"] {
@@ -156,12 +166,6 @@ fn build() -> Site {
         assert!(previous.is_none(), "two downloads are named {name}");
     }
     files.insert("SKILL.md".into(), aless::cli::SKILL.as_bytes().to_vec());
-    files.insert(
-        "reference/command-line.txt".into(),
-        aless::cli::reference().into_bytes(),
-    );
-    let keys = aless::app::help_lines().join("\n") + "\n";
-    files.insert("reference/keys.txt".into(), keys.into_bytes());
     files.insert("llms.txt".into(), llms(&pages).into_bytes());
     files.insert("sitemap.xml".into(), sitemap(&pages).into_bytes());
     Site { pages, files }
@@ -197,10 +201,20 @@ fn markdown_pages() -> Vec<Page> {
                     .cloned()
                     .unwrap_or_else(|| panic!("{origin}: no {key} in its front matter"))
             };
-            let order = meta
-                .get("order")
-                .map(|o| o.parse().expect("order is a number"))
-                .unwrap_or(0);
+            // `order` places a page in its section's list, which every
+            // page of a section but its index is in, and no other page.
+            let listed = section.is_some() && stem != "index";
+            let order = match (listed, meta.get("order")) {
+                (true, Some(order)) => order
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{origin}: order {order:?} is not a number")),
+                (true, None) => panic!("{origin}: no order in its front matter"),
+                (false, Some(_)) => panic!(
+                    "{origin}: order places a page in its section's list, and an index \
+                     page, the home page and the 404 page are in none"
+                ),
+                (false, None) => 0,
+            };
             pages.push(Page {
                 path,
                 title: field("title"),
@@ -209,6 +223,7 @@ fn markdown_pages() -> Vec<Page> {
                 section,
                 body: markdown_html(&markdown),
                 markdown: Some(markdown),
+                text: None,
                 origin,
             });
         }
@@ -308,6 +323,7 @@ fn reference_pages() -> Vec<Page> {
             order: 1,
             section: Some(REFERENCE),
             markdown: None,
+            text: Some(aless::cli::reference()),
             origin: "src/cli.rs".into(),
             body: command_line,
         },
@@ -320,6 +336,7 @@ fn reference_pages() -> Vec<Page> {
             order: 2,
             section: Some(REFERENCE),
             markdown: None,
+            text: Some(aless::app::help_lines().join("\n") + "\n"),
             origin: "src/app.rs".into(),
             body: keys_html(),
         },
@@ -599,16 +616,28 @@ fn url(path: &str) -> String {
     format!("{HOMEPAGE}/{path}")
 }
 
-/// A page as Markdown, for a reader that prefers it: the page's own
-/// Markdown, under its title, with the site's links made absolute.
-fn twin(page: &Page, pages: &[Page]) -> Option<String> {
-    let markdown = page.markdown.as_ref()?;
-    let mut out = format!(
-        "# {}\n\n{}\n\n{}",
-        page.title,
-        page.description,
-        fill(markdown).replace("](/", &format!("]({HOMEPAGE}/"))
-    );
+/// A page as Markdown, for a reader that prefers it, at its address with
+/// `.md` for `.html`: its own Markdown under its title, with the site's
+/// links made absolute, or for a page written from the binary, its text as
+/// the terminal shows it. The pages and `llms.txt` promise one for every
+/// page.
+fn twin(page: &Page, pages: &[Page]) -> String {
+    let body = match (&page.markdown, &page.text) {
+        (Some(markdown), _) => fill(markdown).replace("](/", &format!("]({HOMEPAGE}/")),
+        (None, Some(text)) => {
+            // A fence longer than any run of backticks in the text.
+            let run = Regex::new("`+")
+                .unwrap()
+                .find_iter(text)
+                .map(|m| m.len())
+                .max()
+                .unwrap_or(0);
+            let fence = "`".repeat(run.max(2) + 1);
+            format!("{fence}text\n{text}{fence}\n")
+        }
+        (None, None) => panic!("{}: neither Markdown nor text", page.path),
+    };
+    let mut out = format!("# {}\n\n{}\n\n{body}", page.title, page.description);
     if let Some(section) = page.section.filter(|_| page.is_index()) {
         out.push('\n');
         for member in members(pages, section) {
@@ -620,7 +649,7 @@ fn twin(page: &Page, pages: &[Page]) -> Option<String> {
             ));
         }
     }
-    Some(out)
+    out
 }
 
 /// `llms.txt`: what the site is, and every page, for a language model.
@@ -634,10 +663,7 @@ fn llms(pages: &[Page]) -> String {
     for (i, section) in SECTIONS.iter().enumerate() {
         out.push_str(&format!("\n## {}\n\n", section.label));
         for page in members(pages, i) {
-            let address = match &page.markdown {
-                Some(_) => url(&page.path.replace(".html", ".md")),
-                None => url(&page.path.replace(".html", ".txt")),
-            };
+            let address = url(&page.path.replace(".html", ".md"));
             out.push_str(&format!(
                 "- [{}]({address}): {}\n",
                 page.title, page.description
@@ -756,6 +782,8 @@ fn the_site_builds_and_its_links_hold() {
                 ));
             }
         }
+        let twin = page.path.replace(".html", ".md");
+        assert!(site.files.contains_key(&twin), "{}: no {twin}", page.path);
         if page.markdown.is_some() && page.path != "index.html" {
             assert!(
                 !page.body.contains("<h1"),

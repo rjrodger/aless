@@ -162,8 +162,10 @@ from jless. This file is the guide for any agent working here;
   no phrase `site/reject.txt` bans, no em dash, no emoji, "we" in
   tutorials alone, "I" nowhere. `ALESS_SITE_OUT=DIR` writes the site, and
   `.github/workflows/pages.yml` publishes it from `main`. On a page:
-  - the front matter is `title`, `description` (one sentence) and
-    `order`; the layout writes the `h1`, so the Markdown starts at `##`;
+  - the front matter is `title`, `description` (one sentence) and,
+    on a page in a section's list (every page of a section but its
+    index), `order`, its place in the list; the layout writes the `h1`,
+    so the Markdown starts at `##`;
   - links between pages are from the site's root
     (`/how-to/convert.html`), and the build makes them relative;
   - output is pasted from a real run, in a `console` block with `$ `
