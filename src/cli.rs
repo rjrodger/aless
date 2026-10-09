@@ -1961,6 +1961,17 @@ mod tests {
         assert!(SKILL.starts_with("---\nname: aless\n"));
     }
 
+    /// The man page and the completions are ASCII, so no encoding a
+    /// shell or a formatter reads them in can change them.
+    #[test]
+    fn the_generated_files_are_ascii() {
+        for what in GENERATE.iter().filter(|w| **w != "skill") {
+            let text = generate(what).unwrap();
+            let bad: Vec<char> = text.chars().filter(|c| !c.is_ascii()).collect();
+            assert!(bad.is_empty(), "{what}: {bad:?}");
+        }
+    }
+
     /// The man page and every shell's completions name every option.
     #[test]
     fn the_generated_files_name_every_option() {

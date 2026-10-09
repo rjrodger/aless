@@ -78,7 +78,10 @@ aless --generate man > ~/.local/share/man/man1/aless.1
 aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
 aless --generate complete-bash > ~/.local/share/bash-completion/completions/aless
 aless --generate complete-fish > ~/.config/fish/completions/aless.fish
-aless --generate complete-powershell >> $PROFILE         # PowerShell
+```
+
+```powershell
+aless --generate complete-powershell | Add-Content $PROFILE
 ```
 
 `--locked` keeps the dependency versions `Cargo.lock` pins (see
