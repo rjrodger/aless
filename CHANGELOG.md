@@ -22,10 +22,15 @@ The first release.
   `--grammar-expr`).
 - Without a screen, JSON for scripts and agents: `--json`, `--paths`,
   `--find`, `--where` and `--check`, each with source positions.
+- `--help`, the whole reference an agent needs to drive aless: every
+  option, what each output prints, every error kind with its fields, the
+  exit statuses, paths, positions, formats and limits. `-h` is a summary.
+- `--generate`: the man page, completions for bash, zsh, fish and
+  PowerShell, and the Agent Skill, from the binary itself.
 - `--render` to CSV, JSON, or any format whose tabnas crate carries a
   render, and `--alchemy` programs over any input.
 - Releases: binaries for Linux (x86_64 and aarch64, glibc and static
   musl), macOS (x86_64 and aarch64) and Windows (x86_64 and aarch64), shell
   and PowerShell installers, a Homebrew tap, `cargo install` and
   `cargo binstall`, with checksums, a CycloneDX SBOM and build-provenance
-  attestations.
+  attestations. Each archive carries the man page and the completions.

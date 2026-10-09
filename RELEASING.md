@@ -12,7 +12,9 @@ Every pull request runs `dist plan`, which fails when the two disagree.
   tag, at the commit it was dispatched on, with every file attached at
   once:
   - an archive per target, holding `aless` (or `aless.exe`), `LICENSE`,
-    `README.md` and `THIRD_PARTY_NOTICES.md`, each with its `.sha256`:
+    `README.md`, `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md`, the man page
+    (`man/aless.1`) and the shells' completions (`completions/`), each
+    archive with its `.sha256`:
 
     | Target | Archive |
     |---|---|
@@ -79,10 +81,12 @@ These need the owner's accounts, so an automated session cannot do them.
    - run `cargo update --workspace`, which moves only aless's own entry
      in `Cargo.lock`, since CI builds with `--locked`;
    - rename `## Unreleased` in [CHANGELOG.md](CHANGELOG.md) to
-     `## [X.Y.Z] - YYYY-MM-DD`, which is what becomes the Release's notes.
+     `## [X.Y.Z] - YYYY-MM-DD`, which is what becomes the Release's notes;
+   - run `scripts/generate.sh`: the man page names the version, and the
+     date the changelog gives it, and CI fails until it does.
 
    Merge it once CI is green. For 0.1.0 the version is already right, and
-   only the changelog heading changes.
+   only the changelog heading, and the man page with it, change.
 2. **A dry run.** *Actions → release → Run workflow*, on `main`, leaving the
    tag as `dry-run`. Every target builds, and nothing is published.
 3. **The release.** The same, with the tag `vX.Y.Z`, which must equal

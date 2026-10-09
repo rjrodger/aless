@@ -26,7 +26,7 @@ targets = [
 ]
 # Beside LICENSE and README.md, which every archive carries already: the
 # notices for what aless borrows from jless and the AQL aless.
-include = ["THIRD_PARTY_NOTICES.md"]
+include = ["THIRD_PARTY_NOTICES.md", "man/", "completions/"]
 # `curl … | sh` and `irm … | iex` installers, and a Homebrew formula pushed
 # to the tap below. A shell or PowerShell install goes into $CARGO_HOME/bin,
 # where `cargo install` would put it, and installs no self-updater.

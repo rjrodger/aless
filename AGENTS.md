@@ -48,8 +48,10 @@ working here; `CLAUDE.md` imports it.
     - every file the README links to: the docs, `skills/`, and the
       example grammars and programs under `tests/fixtures/`.
 
-    So a file the build reads must be under `src/`, and a new file the
-    README links to joins the list. CI's `cargo package` checks the build.
+    So a file the build reads must be under `src/`, or on the list (the
+    skill and the changelog, which `--generate skill` and the man page
+    read), and a new file the README links to joins the list. CI's
+    `cargo package` checks the build.
 - **`tests/yaml_render.rs` reads tabnas/yaml's own fixtures** (`test/spec`
   and the vendored YAML Test Suite), which the published crate does not
   ship. They come from a checkout of tabnas/yaml at the tag of the
@@ -109,12 +111,15 @@ working here; `CLAUDE.md` imports it.
   `--timeout` and under the repetition caps, with the plain-text lexing
   options, into the registry `Format::Custom` indexes), `headless` (the
   agent interface: paths, listings, search, positions, checks, programs,
-  JSON errors), `export` (`--render csv` and `json`: the input streamed
-  through the tabnas transducer as its format's plan allows, a record at
-  a time, the parse's events as it proceeds, or the parsed value walked,
-  into aless's own renderers; the fallback when a grammar refuses to
-  stream, whole records only on a failure, each failure sorted by what it
-  means; the source plumbing `alchemy` and `translate` run on),
+  JSON errors), `cli` (every option, in the one table the parser reads;
+  the reference `--help` prints, the summary `-h` prints, the man page
+  and the shells' completions), `export` (`--render csv` and `json`: the
+  input streamed through the tabnas transducer as its format's plan
+  allows, a record at a time, the parse's events as it proceeds, or the
+  parsed value walked, into aless's own renderers; the fallback when a
+  grammar refuses to stream, whole records only on a failure, each
+  failure sorted by what it means; the source plumbing `alchemy` and
+  `translate` run on),
   `alchemy` (programs in the alchemy language: compiled, explained, and
   run over the input through `export`'s plumbing), `translate` (`--render
   FORMAT` for any format whose crate carries a render: the registry
@@ -142,13 +147,22 @@ working here; `CLAUDE.md` imports it.
   listings, `--check` reports, `{"error": …}` objects) and the exit
   statuses are documented in four places that must agree with the code
   and each other: the README's "Scripts and agents" section, the
-  `WITHOUT A SCREEN` part of `--help` in `src/main.rs`,
+  reference `--help` prints (its topics in `src/cli.rs`),
   [`skills/aless/SKILL.md`](skills/aless/SKILL.md), and the tests in
   `src/headless.rs` and `tests/agent.rs`. Fields may be added; never
   rename, remove or repurpose one. Headless runs never block and never
   draw: no reading a terminal's standard input, no viewer without a
   terminal (it refuses with status 2, writing nothing to standard
   output), and nothing on standard output but the answer.
+- **Every option is in `cli::OPTIONS`.** The parser in `src/main.rs`
+  refuses any option the table does not list, and `-h`, `--help`, the
+  man page and the completions are written from it, so a new option goes
+  into the table, with its summary and its detail, and is read in
+  `parse_args`; `every_option_in_the_table_is_read` fails when it is
+  not. `man/aless.1` and `completions/` are the committed output of
+  `scripts/generate.sh`, which a release archive and the crate carry:
+  run it after changing an option, the reference or the version, and
+  `the_generated_files_are_current` fails until you do.
 - **To look at a file while working here**, use aless itself:
   `target/debug/aless --paths --depth 1 FILE`, `--json --path P FILE`,
   `--where --at LINE:COL FILE`; see [the skill](skills/aless/SKILL.md).
