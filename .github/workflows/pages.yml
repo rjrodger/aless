@@ -8,13 +8,14 @@ name: pages
 # console example's output, the house style) and writes the site into
 # ALESS_SITE_OUT; ci.yml runs the same checks on every pull request.
 #
-# The owner sets two things once, in Settings → Pages: the source,
-# "GitHub Actions", and the custom domain. With that source GitHub reads
-# the domain from the setting and ignores a CNAME file; site/CNAME is
-# published all the same, and tests/site.rs holds it to Cargo.toml's
-# homepage. Until Pages is enabled, the site is built and checked and the
-# deploy is skipped with a notice, rather than failing main. RELEASING.md
-# has the steps, the DNS record included.
+# The owner verifies the domain for their account, then sets two things
+# once, in Settings → Pages: the source, "GitHub Actions", and the custom
+# domain. With that source GitHub reads the domain from the setting and
+# ignores a CNAME file; site/CNAME is published all the same, and
+# tests/site.rs holds it to Cargo.toml's homepage. Until Pages is enabled,
+# the site is built and checked and the deploy is skipped with a notice,
+# rather than failing main. RELEASING.md has the steps, the DNS records
+# included.
 on:
   push:
     branches: [main]
