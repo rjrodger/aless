@@ -39,14 +39,7 @@ listed [below](#deviations-from-jless).
 
 ## Install
 
-0.1.0 will be the first release. Until it is out, build from git (Rust
-1.88 or newer):
-
-```bash
-cargo install --locked --git https://github.com/rjrodger/aless aless
-```
-
-From 0.1.0, every release is on [GitHub
+Every release is on [GitHub
 Releases](https://github.com/rjrodger/aless/releases), with these ways
 in:
 
@@ -82,6 +75,13 @@ aless --generate complete-fish > ~/.config/fish/completions/aless.fish
 
 ```powershell
 aless --generate complete-powershell | Add-Content $PROFILE
+```
+
+For the newest commit on `main` rather than a release, build from git
+(Rust 1.88 or newer):
+
+```bash
+cargo install --locked --git https://github.com/rjrodger/aless aless
 ```
 
 `--locked` keeps the dependency versions `Cargo.lock` pins (see

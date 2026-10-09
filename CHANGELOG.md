@@ -8,7 +8,7 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
-## Unreleased
+## [0.1.0] - 2026-10-09
 
 The first release.
 
@@ -34,3 +34,5 @@ The first release.
   and PowerShell installers, a Homebrew tap, `cargo install` and
   `cargo binstall`, with checksums, a CycloneDX SBOM and build-provenance
   attestations. Each archive carries the man page and the completions.
+
+[0.1.0]: https://github.com/rjrodger/aless/releases/tag/v0.1.0
