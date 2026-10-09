@@ -20,8 +20,8 @@ for the owner submitting it to one. How a release is made is in
   it, and yank then copies through the terminal (OSC 52) instead.
 - **What to install:**
   - the binary, `target/release/aless` (`aless.exe` on Windows);
-  - `LICENSE` (MIT) and `THIRD_PARTY_NOTICES.md` (the MIT notices of
-    jless and of the AQL aless) as its licence files;
+  - `LICENSE` (MIT) and `THIRD_PARTY_NOTICES.md` (jless's MIT notice)
+    as its licence files;
   - `README.md` as its documentation;
   - the man page and the shells' completions, where each system keeps
     them:
@@ -86,7 +86,7 @@ The crate on crates.io holds the same source, without the tests.
 | Channel | How aless gets there | Who keeps it current |
 |---|---|---|
 | GitHub Releases, shell and PowerShell installers | `release.yml` | the release workflow |
-| Homebrew tap: `brew install rjrodger/tap/aless` | `release.yml` pushes the formula, which dist writes: it installs the binary, and puts the man page and the completions in `$(brew --prefix)/share/aless/`, where neither `man` nor a shell looks | the release workflow |
+| Homebrew tap: `brew install rjrodger/tap/aless` | `release.yml` pushes the formula through `publish-homebrew.yml`: dist's, which installs the prebuilt binary, with the man page and the bash, zsh and fish completions installed where Homebrew's own formulas put theirs, and a `brew test` | the release workflow |
 | crates.io: `cargo install --locked aless` | the first version by hand, then `publish-crates.yml` | the release workflow |
 | cargo-binstall: `cargo binstall aless` | finds the release archives by their names; no metadata needed | nobody |
 | homebrew-core: `brew install aless` | a pull request once aless meets Homebrew's [acceptance policy](https://docs.brew.sh/Package-Acceptance-Policy): built from source with `depends_on "rust" => :build` and `cargo install *std_cargo_args`, the man page and the completions from `--generate` (above); a description of at most 80 characters that does not start with an article (`Cargo.toml`'s is one); and enough GitHub stars, forks or watchers | Homebrew |

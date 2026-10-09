@@ -642,6 +642,17 @@ fish (\-\-generate complete\-fish)
 PowerShell (\-\-generate complete\-powershell)
 .PD
 .PP
+A shell reads its completions from where it looks for them (a package puts them
+there), or from its startup file each time it starts:
+.PP
+.RS 2
+.nf
+eval "$(aless \-\-generate complete\-bash)"     # \(ti/.bashrc
+eval "$(aless \-\-generate complete\-zsh)"      # \(ti/.zshrc, after compinit
+aless \-\-generate complete\-fish | source      # config.fish
+.fi
+.RE
+.PP
 The Agent Skill (\-\-generate skill) is a file an agent loads from a directory
 of its own. For Claude Code:
 .PP

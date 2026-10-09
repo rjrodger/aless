@@ -7,8 +7,8 @@ keeping the reader's place — and, without a screen, a CLI that prints
 JSON for scripts and agents. Start with [README.md](README.md) for what
 it does, the key map, the agent interface and the module map;
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records what it borrows
-from jless and from the AQL aless. This file is the guide for any agent
-working here; `CLAUDE.md` imports it.
+from jless. This file is the guide for any agent working here;
+`CLAUDE.md` imports it.
 
 ## Working on this repository
 
@@ -39,7 +39,12 @@ working here; `CLAUDE.md` imports it.
   `dist generate` with the dist version the config names. A pull request's
   `plan` job fails when the two disagree.
   [`.github/workflows/publish-crates.yml`](.github/workflows/publish-crates.yml)
-  is this repository's own: the crates.io job that dist calls.
+  and [`publish-homebrew.yml`](.github/workflows/publish-homebrew.yml)
+  are this repository's own: the crates.io job, and the Homebrew job
+  that writes the formula dist makes through
+  [`scripts/homebrew-formula.py`](scripts/homebrew-formula.py) (the man
+  page, the completions and a test) and pushes it to the tap, both called
+  by dist.
   - A release is a `workflow_dispatch` that creates its own tag
     ([RELEASING.md](RELEASING.md)).
   - What a packager needs is in [PACKAGING.md](PACKAGING.md).

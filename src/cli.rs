@@ -1167,6 +1167,16 @@ const TOPICS: &[Topic] = &[
                 ),
             ]),
             Block::Text(
+                "A shell reads its completions from where it looks for them (a \
+                package puts them there), or from its startup file each time it \
+                starts:",
+            ),
+            Block::Code(
+                "eval \"$(aless --generate complete-bash)\"     # ~/.bashrc\n\
+                 eval \"$(aless --generate complete-zsh)\"      # ~/.zshrc, after compinit\n\
+                 aless --generate complete-fish | source      # config.fish",
+            ),
+            Block::Text(
                 "The Agent Skill (--generate skill) is a file an agent loads from a \
                 directory of its own. For Claude Code:",
             ),
@@ -1705,7 +1715,8 @@ pub fn complete_zsh() -> String {
     let mut out = String::from(
         "#compdef aless\n\
          # zsh completion for aless, written by `aless --generate complete-zsh`.\n\
-         # Install it as _aless in a directory on $fpath.\n\
+         # Install it as _aless in a directory on $fpath, or load it from\n\
+         # ~/.zshrc after compinit: eval \"$(aless --generate complete-zsh)\"\n\
          \n\
          _aless() {\n  \
            _arguments -S \\\n",
@@ -1743,7 +1754,16 @@ pub fn complete_zsh() -> String {
             ));
         }
     }
-    out.push_str("    '*:file:_files'\n}\n\n_aless \"$@\"\n");
+    // Autoloaded from $fpath, the file is the body of _aless, which runs
+    // the completion; sourced, it registers the function with compdef.
+    out.push_str(
+        "    '*:file:_files'\n}\n\n\
+         if [ \"$funcstack[1]\" = \"_aless\" ]; then\n  \
+           _aless \"$@\"\n\
+         else\n  \
+           compdef _aless aless\n\
+         fi\n",
+    );
     out
 }
 
@@ -2042,6 +2062,40 @@ mod tests {
         assert!(
             date.is_empty() || (date.len() == 10 && date.as_bytes()[4] == b'-'),
             "{date:?}"
+        );
+    }
+
+    /// Cargo.toml's description is the line crates.io shows, and dist
+    /// writes it into the Homebrew formula as its `desc`, which `brew audit`
+    /// holds to these rules (Homebrew's rubocops/shared/desc_helper.rb).
+    #[test]
+    fn the_description_keeps_homebrews_rules() {
+        let desc = env!("CARGO_PKG_DESCRIPTION");
+        let breaks = |pattern: &str| regex::Regex::new(pattern).unwrap().is_match(desc);
+        assert!(!desc.is_empty());
+        assert!(
+            !breaks(r"^\s|\s$"),
+            "no leading or trailing space: {desc:?}"
+        );
+        assert!(!breaks(r"(?i)command ?line"), "\"command-line\": {desc:?}");
+        assert!(!breaks(r"(?i)^(?:the|an?)\s"), "no article first: {desc:?}");
+        let first = desc.split_whitespace().next().unwrap_or_default();
+        assert!(
+            !breaks("^[a-z]") || ["iOS", "iPhone", "macOS"].contains(&first),
+            "a capital letter first: {desc:?}"
+        );
+        assert!(
+            !breaks(r"(?i)^a[\s-]?l[\s-]?e[\s-]?s[\s-]?s\b"),
+            "not the formula's name first: {desc:?}"
+        );
+        assert!(
+            !desc.ends_with('.') || desc.ends_with("etc."),
+            "no full stop: {desc:?}"
+        );
+        assert!(!breaks(r"\p{So}"), "no emoji or symbols: {desc:?}");
+        assert!(
+            desc.chars().count() <= 80,
+            "at most 80 characters: {desc:?}"
         );
     }
 }
