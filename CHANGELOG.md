@@ -8,6 +8,15 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [0.1.1] - 2026-10-09
+
+The first release with prebuilt binaries. 0.1.0 went to crates.io alone,
+published by hand; 0.1.1 is the same program, released the whole way: the
+archives for Linux, macOS and Windows with their checksums and attestations,
+the installers, the Homebrew tap, and crates.io by trusted publishing. What
+aless does is under 0.1.0, below, and at
+[aless.tabnas.dev](https://aless.tabnas.dev).
+
 ## [0.1.0] - 2026-10-09
 
 The first release.
@@ -42,4 +51,5 @@ The first release.
   how-to guides, the reference and explanations, with the reference
   written from the binary and every example's output checked against it.
 
-[0.1.0]: https://github.com/rjrodger/aless/releases/tag/v0.1.0
+[0.1.1]: https://github.com/rjrodger/aless/releases/tag/v0.1.1
+[0.1.0]: https://crates.io/crates/aless/0.1.0
