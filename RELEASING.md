@@ -78,27 +78,32 @@ These need the owner's accounts, so an automated session cannot do them.
    [`pages.yml`](.github/workflows/pages.yml) builds the site from `site/`
    on every push to `main`, and deploys it once Pages is set up; until
    then it builds and checks the site and skips the deploy with a notice.
-   1. *Settings → Pages*: set *Source* to *GitHub Actions*.
-   2. On the same page, set *Custom domain* to `aless.tabnas.dev` and
-      save. Do this before the DNS record exists: a record that points at
-      GitHub before a repository claims the name lets someone else's
-      repository claim it. With an Actions workflow GitHub reads the domain
-      from this setting, not from a `CNAME` file.
-   3. In Cloudflare's DNS for `tabnas.dev`, add a `CNAME` record, name
+   1. Verify `aless.tabnas.dev` for your account first, as GitHub
+      recommends before a domain is added to a repository: your profile's
+      *Settings → Pages → Add a domain*, then the TXT record it gives
+      (in Cloudflare's DNS for `tabnas.dev`, the name
+      `_github-pages-challenge-rjrodger.aless`), then *Verify*. Keep the
+      record. A verified name can be published only from your account's
+      repositories, so no one else can claim it, even if this
+      repository's setting is lost or Pages is turned off while the
+      `CNAME` record below still points at GitHub. Verify
+      `aless.tabnas.dev`, not `tabnas.dev`: verifying `tabnas.dev` would
+      keep the tabnas organisation's repositories off `tabnas.dev` and
+      every name directly under it.
+   2. *Settings → Pages*: set *Source* to *GitHub Actions*.
+   3. On the same page, set *Custom domain* to `aless.tabnas.dev` and
+      save. Do this before the `CNAME` record exists: a record that
+      points at GitHub before a repository claims the name lets someone
+      else's repository claim it. With an Actions workflow GitHub reads
+      the domain from this setting, not from a `CNAME` file.
+   4. In Cloudflare's DNS for `tabnas.dev`, add a `CNAME` record, name
       `aless`, target `rjrodger.github.io`, *DNS only* (grey cloud), so that
       GitHub can see the record and issue the certificate. No wildcard
       record: GitHub warns that one invites takeovers.
-   4. *Actions → pages → Run workflow* on `main`, or merge anything.
-   5. Once the DNS check on *Settings → Pages* passes, tick *Enforce
+   5. *Actions → pages → Run workflow* on `main`, or merge anything.
+   6. Once the DNS check on *Settings → Pages* passes, tick *Enforce
       HTTPS*. The option can take up to a day to appear, while the
       certificate is issued.
-   6. Recommended: verify `aless.tabnas.dev`, not `tabnas.dev`, for your
-      account (your profile's *Settings → Pages → Add a domain*, then the
-      TXT record it gives, `_github-pages-challenge-rjrodger.aless`), so
-      that no other account can publish to the name even if the
-      repository's setting is lost. Verifying `tabnas.dev` itself would
-      keep the tabnas organisation's repositories off `tabnas.dev` and
-      every name directly under it.
 4. **Recommended:**
    - Turn on release immutability (*Settings → General → Releases*).
      A published release can then never be changed, and its tag
