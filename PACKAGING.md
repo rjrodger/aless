@@ -115,11 +115,11 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more'
 arch=('x86_64' 'aarch64')
-url='https://github.com/rjrodger/aless'
+url='https://aless.tabnas.dev'
 license=('MIT')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/rjrodger/aless/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP') # updpkgsums fills it
 
 prepare() {
@@ -160,8 +160,8 @@ with:
 pkgname=aless-bin
 provides=('aless')
 conflicts=('aless')
-source_x86_64=("$url/releases/download/v$pkgver/aless-x86_64-unknown-linux-gnu.tar.xz")
-source_aarch64=("$url/releases/download/v$pkgver/aless-aarch64-unknown-linux-gnu.tar.xz")
+source_x86_64=("https://github.com/rjrodger/aless/releases/download/v$pkgver/aless-x86_64-unknown-linux-gnu.tar.xz")
+source_aarch64=("https://github.com/rjrodger/aless/releases/download/v$pkgver/aless-aarch64-unknown-linux-gnu.tar.xz")
 sha256sums_x86_64=('SKIP') # updpkgsums fills them
 sha256sums_aarch64=('SKIP')
 # and in package(): cd "aless-$CARCH-unknown-linux-gnu"
@@ -179,7 +179,7 @@ whose workflow keeps the manifest current through `checkver` and
 {
     "version": "0.1.0",
     "description": "Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more",
-    "homepage": "https://github.com/rjrodger/aless",
+    "homepage": "https://aless.tabnas.dev",
     "license": "MIT",
     "architecture": {
         "64bit": {

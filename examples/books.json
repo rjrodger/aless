@@ -1,0 +1,20 @@
+[
+  {
+    "title": "A Book of Examples",
+    "author": "A. N. Author",
+    "year": 1999,
+    "tags": ["examples", "reference"]
+  },
+  {
+    "title": "Shelves and How to Fill Them",
+    "author": "B. Bookworm",
+    "year": 2012,
+    "tags": ["furniture"]
+  },
+  {
+    "title": "The Index",
+    "author": "C. Cataloguer",
+    "year": 2021,
+    "tags": []
+  }
+]

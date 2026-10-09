@@ -1,0 +1,179 @@
+/* The tabnas palette (deep monastery green, illuminated gold, warm
+   parchment), as tabnas.dev and the other tabnas pages use it. The site
+   makes no requests elsewhere, so the faces are their fallbacks rather
+   than webfonts. */
+:root {
+  color-scheme: light dark;
+
+  --green-950: #0b2d1a; --green-900: #0e3320; --green-800: #123c24;
+  --green-700: #14512e; --green-300: #82b89b; --green-200: #b9d7c6;
+  --gold-700: #9e7720;  --gold-500: #cb9e3e;  --gold-300: #e6cd8b;
+  --parch-50: #fdfbf3;  --parch-100: #faf6ea; --parch-200: #f7eed4;
+
+  --bg: var(--parch-100);
+  --surface: var(--parch-50);
+  --ink: var(--green-800);
+  --ink-soft: #3a4a3f;
+  --ink-mute: #6a7269;
+  --primary: var(--green-700);
+  --accent: var(--gold-700);
+  --rule: #ddd0af;
+  --code-bg: var(--parch-200);
+
+  --font-heading: "Cormorant Garamond", Georgia, serif;
+  --font-body: Atkinson, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--green-950);
+    --surface: var(--green-900);
+    --ink: #f1e8cd;
+    --ink-soft: #cdbf98;
+    --ink-mute: #9aa79b;
+    --primary: var(--green-300);
+    --accent: var(--gold-300);
+    --rule: #29452f;
+    --code-bg: var(--green-900);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+
+a { color: var(--primary); text-underline-offset: 0.15em; }
+a:hover { color: var(--accent); }
+
+.skip { position: absolute; left: -999rem; }
+.skip:focus {
+  left: 1rem; top: 1rem; z-index: 10;
+  background: var(--surface); padding: 0.5rem 0.75rem;
+}
+
+.site-header { background: var(--surface); border-bottom: 1px solid var(--rule); }
+.bar {
+  max-width: 74rem; margin: 0 auto; padding: 0.75rem 1rem;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1.75rem;
+}
+.brand {
+  font-family: var(--font-mono); font-weight: 700; font-size: 1.3rem;
+  color: var(--ink); text-decoration: none;
+}
+.sections { display: flex; flex-wrap: wrap; gap: 0.25rem 1.1rem; font-size: 0.95rem; }
+.sections a { text-decoration: none; }
+
+.page {
+  max-width: 74rem; margin: 0 auto; padding: 1.75rem 1rem 3.5rem;
+  display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 3rem;
+}
+body.home .page { display: block; max-width: 54rem; }
+
+.sidebar {
+  font-size: 0.92rem; align-self: start;
+  position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto;
+}
+.sidebar .nav-group { margin: 1.2rem 0 0.3rem; font-weight: 600; }
+.sidebar .nav-group:first-child { margin-top: 0; }
+.sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar li { margin: 0.2rem 0; }
+.sidebar a { color: var(--ink-soft); text-decoration: none; }
+.sidebar .nav-group a { color: var(--ink); }
+.sidebar a[aria-current="page"] { color: var(--primary); font-weight: 600; }
+.sidebar a:hover { color: var(--accent); }
+
+main { min-width: 0; }
+article { max-width: 46rem; }
+
+h1, h2, h3, h4 { font-family: var(--font-heading); line-height: 1.2; color: var(--ink); }
+h1 { font-size: 2.4rem; margin: 0.2rem 0 0.6rem; }
+h2 {
+  font-size: 1.65rem; margin: 2.4rem 0 0.8rem;
+  padding-bottom: 0.25rem; border-bottom: 1px solid var(--rule);
+}
+h3 { font-size: 1.3rem; margin: 1.8rem 0 0.5rem; }
+h4 { font-size: 1.1rem; margin: 1.5rem 0 0.4rem; }
+
+.anchor {
+  margin-left: 0.3rem; font-family: var(--font-body); font-size: 0.75em;
+  color: var(--ink-mute); text-decoration: none; opacity: 0;
+}
+h2:hover .anchor, h3:hover .anchor, h4:hover .anchor, .anchor:focus { opacity: 1; }
+
+.kind {
+  margin: 0; font-family: var(--font-mono); font-size: 0.78rem;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
+}
+.lede { margin-top: 0; font-size: 1.15rem; color: var(--ink-soft); }
+.note { margin-top: -0.4rem; color: var(--ink-mute); font-style: italic; }
+
+code, pre, kbd { font-family: var(--font-mono); }
+:not(pre) > code {
+  font-size: 0.88em; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 0.85rem 1rem; overflow-x: auto; line-height: 1.45;
+}
+pre code { font-size: 0.86rem; }
+kbd {
+  font-size: 0.85em; padding: 0 0.3em;
+  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px;
+  background: var(--surface);
+}
+
+/* A capture of the viewer, drawn as a terminal draws it: light on dark,
+   the status bar in reverse video. */
+pre.screen { background: #071a0f; color: #f1e8cd; border-color: var(--green-700); }
+pre.screen code { font-size: 0.84rem; line-height: 1.3; }
+pre.screen .status { background: #f1e8cd; color: #071a0f; }
+
+table { border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--rule); padding: 0.4rem 0.65rem; text-align: left; vertical-align: top; }
+th { background: var(--code-bg); }
+
+dl dt { margin-top: 0.9rem; font-weight: 600; }
+dl dd { margin: 0.2rem 0 0 1.25rem; }
+dl dd > p:first-child { margin-top: 0; }
+dl.pages dd { margin-left: 0; color: var(--ink-soft); font-weight: normal; }
+
+blockquote {
+  margin: 1.25rem 0; padding: 0.1rem 1rem;
+  border-left: 3px solid var(--gold-500); color: var(--ink-soft);
+}
+
+.site-footer { border-top: 1px solid var(--rule); color: var(--ink-mute); font-size: 0.9rem; }
+.site-footer p { max-width: 74rem; margin: 0 auto; padding: 1.1rem 1rem; }
+
+/* The home page. */
+.hero h1 { font-family: var(--font-mono); font-size: 3rem; margin-bottom: 0.25rem; }
+.hero .tagline { font-size: 1.3rem; color: var(--ink-soft); margin-top: 0; }
+.quadrants {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.5rem 2rem; margin: 1rem 0;
+}
+.quadrants h3 { margin-bottom: 0.2rem; }
+.quadrants p { margin-top: 0.2rem; color: var(--ink-soft); }
+
+/* On a narrow screen the page comes first and the contents after it, so a
+   reader arriving from a link starts at what they came for. */
+@media (max-width: 54rem) {
+  .page { display: flex; flex-direction: column; gap: 0; }
+  .sidebar {
+    order: 1; position: static; max-height: none; overflow: visible;
+    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+  }
+  .sidebar ul { display: flex; flex-wrap: wrap; gap: 0.1rem 1rem; }
+  h1 { font-size: 2rem; }
+}

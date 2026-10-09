@@ -38,5 +38,8 @@ The first release.
   attestations. Each archive carries the man page and the completions,
   and the Homebrew formula installs them where Homebrew's own formulas
   put theirs.
+- A homepage, [aless.tabnas.dev](https://aless.tabnas.dev): tutorials,
+  how-to guides, the reference and explanations, with the reference
+  written from the binary and every example's output checked against it.
 
 [0.1.0]: https://github.com/rjrodger/aless/releases/tag/v0.1.0

@@ -1213,9 +1213,19 @@ const TOPICS: &[Topic] = &[
         blocks: &[Block::Terms(&[
             ("jq(1), jless(1)", "where the paths and the keys come from"),
             (
-                "the README",
-                "all of this at length, and every key of the viewer: \
-                https://github.com/rjrodger/aless",
+                "the documentation",
+                concat!(
+                    "tutorials, how-to guides, this reference with every key of the \
+                    viewer, and how aless works: ",
+                    env!("CARGO_PKG_HOMEPAGE")
+                ),
+            ),
+            (
+                "the source",
+                concat!(
+                    "the code, its README and the releases: ",
+                    env!("CARGO_PKG_REPOSITORY")
+                ),
             ),
             (
                 "alchemy",
@@ -1440,6 +1450,204 @@ pub fn summary() -> String {
         0,
     );
     out
+}
+
+/// The reference `--help` prints, as HTML, for the documentation site:
+/// a section for each topic, in the same order, titled in sentence case
+/// with an `id` a link can name (`exit-status`), and each option with an
+/// `id` of its own (`opt-render` for `--render`), which a mention of the
+/// option elsewhere in the reference links to.
+pub fn reference_html() -> String {
+    let mut out = String::new();
+    for topic in TOPICS {
+        out.push_str(&format!(
+            "<h2 id=\"{}\">{}</h2>\n",
+            title_id(topic.title),
+            html_escape(&sentence_case(topic.title))
+        ));
+        if !topic.note.is_empty() {
+            out.push_str(&format!(
+                "<p class=\"note\">{}</p>\n",
+                html_text(&sentence_case(topic.note))
+            ));
+        }
+        for block in topic.blocks {
+            match block {
+                Block::Text(text) => {
+                    out.push_str(&format!("<p>{}</p>\n", html_text(&fill(text))));
+                }
+                Block::Code(code) => out.push_str(&format!(
+                    "<pre><code>{}</code></pre>\n",
+                    html_escape(&fill(code))
+                )),
+                Block::Terms(terms) => push_html_terms(&mut out, &static_terms(terms)),
+                Block::Formats => {
+                    out.push_str("<table>\n<thead><tr><th>Format</th><th>Extensions</th></tr></thead>\n<tbody>\n");
+                    for (name, extensions) in format_terms() {
+                        out.push_str(&format!(
+                            "<tr><td><code>{}</code></td><td>{}</td></tr>\n",
+                            html_escape(&name),
+                            html_escape(&extensions)
+                        ));
+                    }
+                    out.push_str("</tbody>\n</table>\n");
+                }
+                Block::Options(section) => {
+                    out.push_str("<dl class=\"options\">\n");
+                    for opt in options_in(*section) {
+                        out.push_str(&format!(
+                            "<dt id=\"{}\"><code>{}</code></dt>\n<dd><p>{}</p></dd>\n",
+                            option_id(opt),
+                            html_escape(&opt.head()),
+                            html_text(&fill(opt.detail))
+                        ));
+                    }
+                    out.push_str("</dl>\n");
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `id` of an option's entry in [`reference_html`]: `opt-render`.
+pub fn option_id(opt: &Opt) -> String {
+    format!("opt-{}", opt.long.trim_start_matches('-'))
+}
+
+/// The `id` of a topic's section in [`reference_html`]: `exit-status`.
+fn title_id(title: &str) -> String {
+    title.to_lowercase().replace(' ', "-")
+}
+
+/// `EXIT STATUS` as a heading is written: `Exit status`.
+fn sentence_case(text: &str) -> String {
+    let lower = text.to_lowercase();
+    let mut chars = lower.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Terms as HTML: numbered rules as a list, the rest as a definition list.
+fn push_html_terms(out: &mut String, terms: &[(String, String)]) {
+    let numbered = terms.iter().all(|(term, _)| {
+        term.strip_suffix('.')
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    if numbered {
+        out.push_str("<ol>\n");
+        for (_, meaning) in terms {
+            out.push_str(&format!("<li>{}</li>\n", html_text(meaning)));
+        }
+        out.push_str("</ol>\n");
+        return;
+    }
+    out.push_str("<dl>\n");
+    for (term, meaning) in terms {
+        out.push_str(&format!(
+            "<dt><code>{}</code></dt>\n<dd>{}</dd>\n",
+            html_escape(term),
+            html_text(meaning)
+        ));
+    }
+    out.push_str("</dl>\n");
+}
+
+/// `text` with `& < > "` escaped, for HTML.
+fn html_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Prose as HTML: escaped, with each web address a link, each option
+/// named in it set as code and linked to its entry, and each topic named
+/// by its title (`see EXIT STATUS`) linked to its section.
+fn html_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 4);
+    let mut rest = text;
+    while let Some((at, title)) = next_title(rest) {
+        out.push_str(&html_words(&rest[..at]));
+        out.push_str(&format!(
+            "<a href=\"#{}\">{}</a>",
+            title_id(title),
+            html_escape(&sentence_case(title))
+        ));
+        rest = &rest[at + title.len()..];
+    }
+    out.push_str(&html_words(rest));
+    out
+}
+
+/// Where the first topic named by its title starts in `text`, and the
+/// title: a whole word or words in capitals, as the terminal's reference
+/// names a section. Of two titles that start there, the longer, so
+/// `OUTPUT OPTIONS` is not read as `OUTPUT`.
+fn next_title(text: &str) -> Option<(usize, &'static str)> {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
+    TOPICS
+        .iter()
+        .filter_map(|topic| {
+            text.match_indices(topic.title)
+                .find(|(at, _)| {
+                    !word(text[..*at].chars().next_back())
+                        && !word(text[at + topic.title.len()..].chars().next())
+                })
+                .map(|(at, _)| (at, topic.title))
+        })
+        .min_by_key(|(at, title)| (*at, std::cmp::Reverse(title.len())))
+}
+
+/// Words of prose as HTML: escaped, with each web address a link, and
+/// each option named set as code and linked to its entry.
+fn html_words(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 4);
+    for (i, word) in text.split(' ').enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let start = word.len() - word.trim_start_matches('(').len();
+        let core = word[start..].trim_end_matches(['.', ',', ';', ':', ')']);
+        let (lead, rest) = word.split_at(start);
+        let trail = &rest[core.len()..];
+        out.push_str(&html_escape(lead));
+        if core.starts_with("https://") || core.starts_with("http://") {
+            let url = html_escape(core);
+            out.push_str(&format!("<a href=\"{url}\">{url}</a>"));
+        } else if let Some(opt) = mentioned_option(core) {
+            out.push_str(&format!(
+                "<a href=\"#{}\"><code>{}</code></a>",
+                option_id(opt),
+                html_escape(core)
+            ));
+        } else {
+            out.push_str(&html_escape(core));
+        }
+        out.push_str(&html_escape(trail));
+    }
+    out
+}
+
+/// The option a word of the reference names: `--kind`, `--kind=yaml`, `-k`.
+fn mentioned_option(word: &str) -> Option<&'static Opt> {
+    let name = word.split('=').next().unwrap_or(word);
+    let body = name.strip_prefix("--").or_else(|| name.strip_prefix('-'))?;
+    if !body.starts_with(|c: char| c.is_ascii_alphabetic())
+        || !body.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    lookup(name)
 }
 
 /// What `--generate WHAT` prints.
@@ -2065,6 +2273,42 @@ mod tests {
         );
     }
 
+    /// The site's reference has every topic and every option, each with an
+    /// id a link can name, and links an option where the text mentions it.
+    #[test]
+    fn the_html_reference_names_every_topic_and_option() {
+        let html = reference_html();
+        for topic in TOPICS {
+            let id = format!("<h2 id=\"{}\">", title_id(topic.title));
+            assert!(html.contains(&id), "{}", topic.title);
+        }
+        for opt in OPTIONS {
+            let id = format!("<dt id=\"{}\">", option_id(opt));
+            assert!(html.contains(&id), "{}", opt.long);
+        }
+        assert!(html.contains("<a href=\"#opt-kind\"><code>-k</code></a>"));
+        assert!(!html.contains("{renders}") && !html.contains("{version}"));
+        assert_eq!(
+            html_text("(--kind=yaml)."),
+            "(<a href=\"#opt-kind\"><code>--kind=yaml</code></a>)."
+        );
+        assert_eq!(html_text("a - b -1 non-zero --"), "a - b -1 non-zero --");
+        assert_eq!(
+            html_text("see https://x.example/a."),
+            "see <a href=\"https://x.example/a\">https://x.example/a</a>."
+        );
+        assert_eq!(html_text("{\"a\": <1>}"), "{&quot;a&quot;: &lt;1&gt;}");
+        assert_eq!(sentence_case("EXIT STATUS"), "Exit status");
+        assert_eq!(
+            html_text("see OUTPUT, ERRORS and EXIT STATUS. Under OUTPUT OPTIONS --json"),
+            "see <a href=\"#output\">Output</a>, <a href=\"#errors\">Errors</a> and \
+             <a href=\"#exit-status\">Exit status</a>. Under \
+             <a href=\"#output-options\">Output options</a> \
+             <a href=\"#opt-json\"><code>--json</code></a>"
+        );
+        assert_eq!(html_text("OUTPUTS NO_PATHS"), "OUTPUTS NO_PATHS");
+    }
+
     /// Cargo.toml's description is the line crates.io shows, and dist
     /// writes it into the Homebrew formula as its `desc`, which `brew audit`
     /// holds to these rules (Homebrew's rubocops/shared/desc_helper.rb).
@@ -2093,6 +2337,10 @@ mod tests {
             "no full stop: {desc:?}"
         );
         assert!(!breaks(r"\p{So}"), "no emoji or symbols: {desc:?}");
+        assert!(
+            env!("CARGO_PKG_HOMEPAGE").starts_with("https://"),
+            "the formula's homepage, and SEE ALSO's"
+        );
         assert!(
             desc.chars().count() <= 80,
             "at most 80 characters: {desc:?}"
