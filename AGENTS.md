@@ -148,6 +148,31 @@ from jless. This file is the guide for any agent working here;
   headlessly against real files, `agent.rs` runs the built binary the way
   an agent does). Fixtures are under `tests/fixtures/`, one per format at
   least. Reload tests write to `std::env::temp_dir()`.
+- **The documentation site** (`https://aless.tabnas.dev`, `Cargo.toml`'s
+  `homepage`) is Markdown under `site/`, a directory for each of
+  Diátaxis's kinds: `tutorials/` (lessons, followed from start to end),
+  `how-to/` (one task each), `reference/` and `explanation/` (why).
+  `tests/site.rs` builds it: it renders the pages with tabnas-markdown into
+  `site/layout.html`, and writes the reference's two pages from the binary
+  (`cli::reference_html`, `app::help_lines`), never by hand. It checks
+  every link and anchor, every option an example names, every `console`
+  example's output (on Unix, run by `sh` in a directory of the files the
+  site publishes under `/examples/`: `examples/*` and the
+  `tests/fixtures/` that `FIXTURES` names), and the prose's house style:
+  no phrase `site/reject.txt` bans, no em dash, no emoji, "we" in
+  tutorials alone, "I" nowhere. `ALESS_SITE_OUT=DIR` writes the site, and
+  `.github/workflows/pages.yml` publishes it from `main`. On a page:
+  - the front matter is `title`, `description` (one sentence) and
+    `order`; the layout writes the `h1`, so the Markdown starts at `##`;
+  - links between pages are from the site's root
+    (`/how-to/convert.html`), and the build makes them relative;
+  - output is pasted from a real run, in a `console` block with `$ `
+    before each command; a capture of the viewer is a `screen` block, 80
+    columns, taken in a pty as `scripts/pty-smoke.py` drives one;
+  - `{{version}}` and `{{tagline}}` are filled in from the binary.
+
+  A new option or key reaches the reference by itself; a change to an
+  output a page quotes fails `tests/site.rs` until the page matches.
 - **The agent interface is a contract.** The output shapes (entries,
   listings, `--check` reports, `{"error": …}` objects) and the exit
   statuses are documented in four places that must agree with the code

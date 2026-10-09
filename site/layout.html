@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{head_title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="canonical" href="{{canonical}}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{head_title}}">
+<meta property="og:description" content="{{description}}">
+<meta property="og:url" content="{{canonical}}">
+<link rel="icon" href="{{root}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}style.css">
+</head>
+<body class="{{body_class}}">
+<a class="skip" href="#content">Skip to the content</a>
+<header class="site-header">
+<div class="bar">
+<a class="brand" href="{{root}}">aless</a>
+<nav class="sections" aria-label="Sections">
+<a href="{{root}}tutorials/index.html">Tutorials</a>
+<a href="{{root}}how-to/index.html">How-to guides</a>
+<a href="{{root}}reference/index.html">Reference</a>
+<a href="{{root}}explanation/index.html">Explanation</a>
+<a href="https://github.com/rjrodger/aless">Source</a>
+</nav>
+</div>
+</header>
+<div class="page">
+{{nav}}
+<main id="content">
+<article>
+{{page_head}}
+{{content}}
+</article>
+</main>
+</div>
+<footer class="site-footer">
+<p>aless {{version}}, MIT licence, a <a href="https://tabnas.dev">tabnas</a> project.
+<a href="https://github.com/rjrodger/aless">Source</a> ·
+<a href="https://github.com/rjrodger/aless/releases">releases</a> ·
+<a href="https://github.com/rjrodger/aless/blob/main/CHANGELOG.md">changelog</a> ·
+<a href="{{source}}">this page's source</a></p>
+</footer>
+</body>
+</html>

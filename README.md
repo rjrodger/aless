@@ -12,6 +12,10 @@ values by path, search hits and parse errors, each with its source
 position ([Scripts and agents](#scripts-and-agents)). Pure Rust; runs on
 Linux, macOS and Windows.
 
+**Documentation: [aless.tabnas.dev](https://aless.tabnas.dev)**, with
+tutorials, how-to guides, the whole reference, and the reasons behind the
+design.
+
 ```
 ▼ {
   ▽ store: {
@@ -1258,6 +1262,11 @@ option it does not list. `-h`, `--help`, the man page and the completions
 are all written from it, and the committed `man/aless.1` and
 `completions/` are what `scripts/generate.sh` writes: `tests/agent.rs`
 fails when they differ from what the binary writes.
+
+The documentation site is Markdown under `site/`, built by
+`tests/site.rs`, which also runs every example on its pages and checks
+their links; `ALESS_SITE_OUT=DIR cargo test --test site` writes the site
+into `DIR`. `AGENTS.md` says how its pages are written.
 
 Module map — `src/main.rs` is the only file that touches the terminal;
 the library is terminal-free and unit tested:
