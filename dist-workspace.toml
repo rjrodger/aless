@@ -24,8 +24,8 @@ targets = [
     "x86_64-unknown-linux-gnu",
     "x86_64-unknown-linux-musl",
 ]
-# Beside LICENSE and README.md, which every archive carries already: the
-# notices for what aless borrows from jless and the AQL aless.
+# Beside LICENSE and README.md, which every archive carries already:
+# jless's MIT notice, the man page and the shells' completions.
 include = ["THIRD_PARTY_NOTICES.md", "man/", "completions/"]
 # `curl … | sh` and `irm … | iex` installers, and a Homebrew formula pushed
 # to the tap below. A shell or PowerShell install goes into $CARGO_HOME/bin,
@@ -34,14 +34,21 @@ installers = ["shell", "powershell", "homebrew"]
 install-path = "CARGO_HOME"
 install-updater = false
 # The tap the formula is pushed to, with the HOMEBREW_TAP_TOKEN secret:
-# `brew install rjrodger/tap/aless`.
+# `brew install rjrodger/tap/aless`, which the release notes name from it.
+# dist warns that a tap is set while its own Homebrew job is not among the
+# publish jobs below; publish-homebrew.yml is that job, so the warning is
+# expected.
 tap = "rjrodger/homebrew-tap"
-# After the GitHub Release exists: the formula, and crates.io through
-# .github/workflows/publish-crates.yml (trusted publishing). A called
-# job may ask for no more than its caller grants, so the crates job's
-# grant is named here: the release commit to read, and the OIDC token.
-publish-jobs = ["homebrew", "./publish-crates"]
-github-custom-job-permissions = { "publish-crates" = { contents = "read", id-token = "write" } }
+# After the GitHub Release exists: the formula, through
+# .github/workflows/publish-homebrew.yml rather than dist's own job, since
+# dist's formula leaves the man page and the completions where neither man
+# nor a shell looks (that workflow says how it installs them); and
+# crates.io, through .github/workflows/publish-crates.yml (trusted
+# publishing). A called job may ask for no more than its caller grants, so
+# each job's grant is named here: the release commit to read, and for
+# crates.io the OIDC token.
+publish-jobs = ["./publish-homebrew", "./publish-crates"]
+github-custom-job-permissions = { "publish-homebrew" = { contents = "read" }, "publish-crates" = { contents = "read", id-token = "write" } }
 # A release is a workflow_dispatch with the tag to make, `v<version>`; the
 # default, "dry-run", builds everything and publishes nothing. The run
 # creates the tag, at the commit it was dispatched on, when it creates the

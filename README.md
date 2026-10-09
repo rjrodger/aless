@@ -31,9 +31,8 @@ Linux, macOS and Windows.
 ```
 
 aless reproduces jless's interface — the key map, data and line modes,
-collapsed previews, regex search, the yank commands — and adds what the
-AQL [aless](https://github.com/voxgig-boru/aless) pioneered: tabs, watching,
-and a reload that re-anchors the view. Both are credited in
+collapsed previews, regex search, the yank commands — and adds tabs,
+watching, and a reload that re-anchors the view. jless is credited in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Deviations from jless are
 listed [below](#deviations-from-jless).
 
@@ -63,14 +62,28 @@ with `gh attestation verify FILE --repo rjrodger/aless`. Beside the
 binary it carries the man page, [`man/aless.1`](man/aless.1), and the
 shells' completions, under [`completions/`](completions/): bash
 (`aless.bash`), zsh (`_aless`), fish (`aless.fish`) and PowerShell
-(`_aless.ps1`). `aless --generate` prints each of them too, from the
-binary itself, for an install that has no archive:
+(`_aless.ps1`).
+
+Homebrew installs the man page, and the bash, zsh, fish and PowerShell
+completions in its own directories for them; its
+[shell completion guide](https://docs.brew.sh/Shell-Completion) says how
+a shell reads those (for zsh, `eval "$(brew shellenv)"` before
+`compinit`). For any other install, `aless --generate` prints each file
+from the binary itself, to save where the shell looks:
 
 ```bash
 aless --generate man > ~/.local/share/man/man1/aless.1
-aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
 aless --generate complete-bash > ~/.local/share/bash-completion/completions/aless
+aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
 aless --generate complete-fish > ~/.config/fish/completions/aless.fish
+```
+
+or to load from the shell's startup file each time it starts:
+
+```bash
+eval "$(aless --generate complete-bash)"         # ~/.bashrc
+eval "$(aless --generate complete-zsh)"          # ~/.zshrc, after compinit
+aless --generate complete-fish | source          # ~/.config/fish/config.fish
 ```
 
 ```powershell
@@ -104,7 +117,7 @@ aless --mode line --line-numbers x.json
 aless --panes out --render yaml data.csv     # the document beside its YAML
 aless --panes out,program --alchemy export.alc api.json   # a program's output, and the program
 aless                                # explore the current directory; Enter opens a file
-aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (see examples/)
+aless examples/bookshelf-openapi.yaml   # an OpenAPI spec to try (see examples/)
 ```
 
 | Option | Effect |
@@ -1273,5 +1286,5 @@ the library is terminal-free and unit tested:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). jless and the AQL aless are MIT too; their
-notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT — see [LICENSE](LICENSE). jless is MIT too; its notice is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

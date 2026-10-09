@@ -1,0 +1,297 @@
+openapi: 3.0.0
+info:
+  title: Bookshelf demo API
+  version: 1.0.0
+  description: >-
+    A small API for keeping books on shelves, written for aless to open.
+    Every path, schema and response here is an example.
+  license:
+    name: MIT
+servers:
+  - url: https://bookshelf.example/v1
+    description: An example server
+tags:
+  - name: shelf
+    description: Shelves, and the books on them
+  - name: author
+    description: The people who wrote the books
+paths:
+  /api/shelf:
+    get:
+      tags: [shelf]
+      operationId: listShelves
+      summary: List the shelves
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: The shelves, in the order they were made
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Shelf'
+    post:
+      tags: [shelf]
+      operationId: createShelf
+      summary: Make a shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewShelf'
+      responses:
+        '201':
+          description: The shelf, as it was made
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shelf'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    
+  /api/shelf/{shelf_id}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags: [shelf]
+      operationId: getShelf
+      summary: One shelf
+      responses:
+        '200':
+          description: The shelf
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shelf'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [shelf]
+      operationId: updateShelf
+      summary: Rename a shelf, or change its order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewShelf'
+      responses:
+        '200':
+          description: The shelf, as it is now
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shelf'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [shelf]
+      operationId: deleteShelf
+      summary: Take a shelf down, with the books on it
+      responses:
+        '204':
+          description: The shelf is gone
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/shelf/{shelf_id}/book:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags: [shelf]
+      operationId: listBooks
+      summary: The books on a shelf
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: The books, in the shelf's order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Book'
+    post:
+      tags: [shelf]
+      operationId: addBook
+      summary: Put a book on a shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Book'
+      responses:
+        '201':
+          description: The book, on the shelf
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Book'
+  /api/shelf/{shelf_id}/book/{book_id}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+      - name: book_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [shelf]
+      operationId: getBook
+      summary: One book
+      responses:
+        '200':
+          description: The book
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Book'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [shelf]
+      operationId: removeBook
+      summary: Take a book off a shelf
+      responses:
+        '204':
+          description: The book is off the shelf
+  /api/author:
+    get:
+      tags: [author]
+      operationId: listAuthors
+      summary: Everyone who wrote a book on a shelf
+      responses:
+        '200':
+          description: The authors, by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Author'
+  /api/author/{author_id}:
+    get:
+      tags: [author]
+      operationId: getAuthor
+      summary: One author
+      parameters:
+        - name: author_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The author
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Author'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    ShelfId:
+      name: shelf_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: At most this many, and all when absent
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: The request is not one this API takes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Nothing has that id
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    NewShelf:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: Kitchen
+        sortOrder:
+          $ref: '#/components/schemas/SortOrder'
+    Shelf:
+      allOf:
+        - $ref: '#/components/schemas/NewShelf'
+        - type: object
+          required: [id, bookCount]
+          properties:
+            id:
+              type: string
+              example: s-1
+            bookCount:
+              type: integer
+              example: 12
+            sortOrder:
+              description: >-
+                How the books on the shelf are ordered when they are listed.
+                One of title, author or added.
+              allOf:
+                - $ref: '#/components/schemas/SortOrder'
+    SortOrder:
+      type: string
+      enum: [title, author, added]
+      default: added
+    Book:
+      type: object
+      required: [title, authorId]
+      properties:
+        id:
+          type: string
+          readOnly: true
+        title:
+          type: string
+          example: A Book of Examples
+        authorId:
+          type: string
+        published:
+          type: integer
+          description: The year it was published
+          example: 1999
+        tags:
+          type: array
+          items:
+            type: string
+    Author:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          example: A. N. Author
+        books:
+          type: array
+          items:
+            $ref: '#/components/schemas/Book'
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: not_found
+        message:
+          type: string

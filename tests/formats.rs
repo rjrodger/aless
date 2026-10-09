@@ -175,7 +175,7 @@ fn unicode_and_edge_values_render() {
 fn the_openapi_example_loads() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
-        .join("solardemo-1.0.0-openapi-3.0.0.yaml");
+        .join("bookshelf-openapi.yaml");
     let loaded = load::load_path(&path, None).unwrap();
     assert_eq!(loaded.format, Format::Yaml);
     let doc = &loaded.doc;
@@ -190,11 +190,11 @@ fn the_openapi_example_loads() {
         .children(paths)
         .map(|c| doc.node(c).key.name().unwrap())
         .collect();
-    assert_eq!(first[0], "/api/planet", "source order is kept");
+    assert_eq!(first[0], "/api/shelf", "source order is kept");
     // A quoted numeric key and a $ref string.
     let reference = text(&[
         Key::Name("paths".into()),
-        Key::Name("/api/planet".into()),
+        Key::Name("/api/shelf".into()),
         Key::Name("post".into()),
         Key::Name("responses".into()),
         Key::Name("201".into()),
@@ -203,37 +203,39 @@ fn the_openapi_example_loads() {
         Key::Name("schema".into()),
         Key::Name("$ref".into()),
     ]);
-    assert_eq!(reference, "#/components/schemas/Planet");
+    assert_eq!(reference, "#/components/schemas/Shelf");
     // A `>-` folded block scalar.
     let description = text(&[
         Key::Name("components".into()),
         Key::Name("schemas".into()),
-        Key::Name("Planet".into()),
+        Key::Name("Shelf".into()),
+        Key::Name("allOf".into()),
+        Key::Index(1),
         Key::Name("properties".into()),
-        Key::Name("terraformState".into()),
+        Key::Name("sortOrder".into()),
         Key::Name("description".into()),
     ]);
     assert_eq!(
         description,
-        "Set by the terraform action, and absent until it first runs. One of idle, terraforming or complete."
+        "How the books on the shelf are ordered when they are listed. One of title, author or added."
     );
-    // Source positions reach the tree.
-    let moon = doc
+    // Source positions reach the tree, past the whitespace-only line.
+    let books = doc
         .resolve(&[
             Key::Name("paths".into()),
-            Key::Name("/api/planet/{planet_id}/moon".into()),
+            Key::Name("/api/shelf/{shelf_id}/book".into()),
         ])
         .unwrap();
     assert_eq!(
-        doc.node(moon).line,
-        line_of_example("  /api/planet/{planet_id}/moon:")
+        doc.node(books).line,
+        line_of_example("  /api/shelf/{shelf_id}/book:")
     );
 }
 
 fn line_of_example(needle: &str) -> u32 {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
-        .join("solardemo-1.0.0-openapi-3.0.0.yaml");
+        .join("bookshelf-openapi.yaml");
     let text = std::fs::read_to_string(path).unwrap();
     text.lines()
         .position(|l| l.trim_end() == needle)

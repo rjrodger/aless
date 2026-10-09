@@ -1,6 +1,7 @@
 * text=auto
 tests/fixtures/** -text
-examples/*.yaml -text
+# Byte for byte, whitespace-only lines included: the tests read them so.
+examples/*.yaml -text -whitespace
 # Written by `aless --generate` (scripts/generate.sh) and installed as they
 # are, so LF on every checkout, as the binary writes them. The skill too:
 # the binary embeds it, and `--generate skill` writes it.

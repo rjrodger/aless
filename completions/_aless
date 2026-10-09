@@ -1,6 +1,7 @@
 #compdef aless
 # zsh completion for aless, written by `aless --generate complete-zsh`.
-# Install it as _aless in a directory on $fpath.
+# Install it as _aless in a directory on $fpath, or load it from
+# ~/.zshrc after compinit: eval "$(aless --generate complete-zsh)"
 
 _aless() {
   _arguments -S \
@@ -55,4 +56,8 @@ _aless() {
     '*:file:_files'
 }
 
-_aless "$@"
+if [ "$funcstack[1]" = "_aless" ]; then
+  _aless "$@"
+else
+  compdef _aless aless
+fi
