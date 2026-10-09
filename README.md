@@ -66,7 +66,23 @@ The prebuilt binaries cover:
 - Windows, x86_64 and aarch64.
 
 Each archive has a `.sha256` beside it, and its build provenance checks
-with `gh attestation verify FILE --repo rjrodger/aless`.
+with `gh attestation verify FILE --repo rjrodger/aless`. Beside the
+binary it carries the man page, [`man/aless.1`](man/aless.1), and the
+shells' completions, under [`completions/`](completions/): bash
+(`aless.bash`), zsh (`_aless`), fish (`aless.fish`) and PowerShell
+(`_aless.ps1`). `aless --generate` prints each of them too, from the
+binary itself, for an install that has no archive:
+
+```bash
+aless --generate man > ~/.local/share/man/man1/aless.1
+aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
+aless --generate complete-bash > ~/.local/share/bash-completion/completions/aless
+aless --generate complete-fish > ~/.config/fish/completions/aless.fish
+```
+
+```powershell
+aless --generate complete-powershell | Add-Content $PROFILE
+```
 
 `--locked` keeps the dependency versions `Cargo.lock` pins (see
 [Dependencies](#dependencies)). From a checkout, `cargo build --release`
@@ -109,6 +125,9 @@ aless examples/solardemo-1.0.0-openapi-3.0.0.yaml   # an OpenAPI spec to try (se
 | `--stacked` | stack the panes rather than place them side by side |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
 | `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none, `0` for no limit); on standard input, without a screen, it runs from the start, so waiting on the input counts |
+| `-h` / `--help` | a summary of the options / the whole reference: every option, what each output prints, the errors and exit statuses, paths, positions, formats and limits |
+| `-V`, `--version` | the version |
+| `--generate WHAT` | print the man page (`man`), a shell's completions (`complete-bash`, `complete-zsh`, `complete-fish`, `complete-powershell`) or the Agent Skill (`skill`) |
 
 `NO_COLOR` in the environment also disables colour.
 
@@ -680,9 +699,13 @@ $ aless --alchemy-expr 'def export [input] (nope input)' data.json
 
 These shapes are a contract: fields may be added, but none is renamed,
 removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
-is an Agent Skill that teaches an agent all of this (copy the
-`skills/aless` directory into `~/.claude/skills/`, or wherever your agent
-loads skills from), and `aless --help` opens with it.
+is an Agent Skill that teaches an agent all of this. `aless --generate
+skill` prints it from the binary, so an agent can be given it wherever
+aless is installed (`mkdir -p ~/.claude/skills/aless && aless --generate
+skill > ~/.claude/skills/aless/SKILL.md` for Claude Code, or the
+directory your agent loads skills from). `aless --help` is the same
+reference in the terminal, and opens with this interface; `aless -h` is
+a summary of the options.
 
 ## Formats
 
@@ -1214,7 +1237,14 @@ eval "$(scripts/yaml-fixtures.sh)"    # tabnas/yaml's fixtures, which tests/yaml
 cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 cargo package --locked                # the crate builds from exactly the files it publishes
+scripts/generate.sh                   # man/ and completions/, after an option or the help changes
 ```
+
+Every option is in one table, `cli::OPTIONS`, and the parser reads no
+option it does not list. `-h`, `--help`, the man page and the completions
+are all written from it, and the committed `man/aless.1` and
+`completions/` are what `scripts/generate.sh` writes: `tests/agent.rs`
+fails when they differ from what the binary writes.
 
 Module map — `src/main.rs` is the only file that touches the terminal;
 the library is terminal-free and unit tested:
@@ -1229,6 +1259,7 @@ the library is terminal-free and unit tested:
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
+| `cli` | every option, in one table the parser reads; the reference `--help` prints, the summary of `-h`, the man page and the shells' completions (`--generate`) |
 | `load` | format detection; the tabnas grammars; errors with positions; the size, depth and time limits; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |

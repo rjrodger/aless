@@ -757,42 +757,128 @@ fn help_leads_with_the_agent_interface() {
         assert!(head.contains(flag), "{flag} in the first lines:\n{head}");
     }
     assert!(text.find("WITHOUT A SCREEN") < text.find("THE VIEWER"));
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // A section of the reference: from its title to the next one's.
+    let section = |title: &str, next: &str| -> String {
+        let from = flat
+            .find(&format!("{title}: "))
+            .unwrap_or_else(|| panic!("{title}"));
+        let to = flat[from..]
+            .find(&format!("{next}: "))
+            .unwrap_or_else(|| panic!("{next} after {title}"));
+        flat[from..from + to].to_string()
+    };
     // The exit statuses say what --grammar and --alchemy add to each, as
     // the README's and the skill's tables do: a grammar or program file
     // that cannot be read is status 3, one over --max-size status 5, and
     // the deadline covers the program's run.
-    let statuses = &text[text.find("Exit status:").unwrap()..text.find("THE VIEWER").unwrap()];
-    for (status, what) in [
-        (
-            "3 an input (or a --grammar or --alchemy",
-            "program file) could not be read",
-        ),
-        (
-            "5 an input (or a --grammar or --alchemy",
-            "file) is over --max-size",
-        ),
-        (
-            "6 a parse (or a --grammar compile) ran past --timeout",
-            "the whole run",
-        ),
+    let statuses = section("EXIT STATUS", "LARGE INPUTS AND STREAMING");
+    for said in [
+        "3 an input, a --grammar file or an --alchemy program file could not be read",
+        "5 an input, a --grammar file or an --alchemy program file is over --max-size",
+        "6 a parse, or a --grammar compile, ran past --timeout",
+        "the whole run, the program's work included (timeout)",
+        "4 --path or --at names nothing (not_found)",
     ] {
-        assert!(statuses.contains(status), "{status:?} in:\n{statuses}");
-        assert!(statuses.contains(what), "{what:?} in:\n{statuses}");
+        assert!(statuses.contains(said), "{said:?} in:\n{statuses}");
+    }
+    // Every error kind, with the fields it carries.
+    let errors = section("ERRORS", "EXIT STATUS");
+    for kind in [
+        "parse",
+        "io",
+        "too_large",
+        "timeout",
+        "not_found",
+        "usage",
+        "transduce",
+        "alchemy",
+    ] {
+        assert!(
+            errors.contains(&format!(" {kind} ")),
+            "{kind} in:\n{errors}"
+        );
+    }
+    for field in [
+        "source_line",
+        "report",
+        "nearest",
+        "keys",
+        "output",
+        "loss",
+        "seconds",
+    ] {
+        assert!(errors.contains(field), "{field} in:\n{errors}");
+    }
+    // What each output option prints.
+    let output = section("OUTPUT", "ERRORS");
+    for shape in [
+        "{file, format, path, entries: [entry, ...], total, limit, truncated}",
+        "{file, format, path, pattern, matches: [entry, ...], total, limit, truncated}",
+        "{ok, files: [{file, format, ok, error}]}",
+        "{\"warning\": {\"kind\": \"loss\"",
+    ] {
+        assert!(output.contains(shape), "{shape:?} in:\n{output}");
     }
     // Every option aless takes is listed, its other names among them, and
     // what else switches to JSON output.
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
+        "-k, --kind, --format <FORMAT>",
         "--format is another name for this option",
-        "--watch Reload them (the default)",
-        "--no-color, --no-colour No colours",
-        "a standard output that is not a terminal, or TERM=dumb prints JSON",
+        "--watch Reload a file when it changes, keeping your place (the default)",
+        "--no-color, --no-colour Draw without colours",
+        "when standard output is not a terminal (a pipe, a file, an agent's tool call), or when TERM=dumb",
         "(2.5, 90s, 2m; default none; 0 for no limit)",
         "--indent <N> Indent --json and --render json N spaces a level",
-        "--compact JSON on one line, an error's too",
+        "--compact JSON on one line",
+        "--generate <WHAT>",
+        "NO_COLOR set and not empty",
     ] {
         assert!(flat.contains(said), "{said:?} in:\n{text}");
     }
+}
+
+/// The man page and the completions in the repository are what the binary
+/// writes, byte for byte: a release archive carries the committed files.
+#[test]
+fn the_generated_files_are_current() {
+    for (what, path) in [
+        ("man", "man/aless.1"),
+        ("complete-bash", "completions/aless.bash"),
+        ("complete-zsh", "completions/_aless"),
+        ("complete-fish", "completions/aless.fish"),
+        ("complete-powershell", "completions/_aless.ps1"),
+    ] {
+        let out = aless(&["--generate", what], None);
+        assert_eq!(code(&out), 0, "{what}");
+        let committed = std::fs::read(path).unwrap_or_default();
+        assert!(
+            out.stdout == committed,
+            "{path} is not what `aless --generate {what}` writes: run scripts/generate.sh"
+        );
+    }
+    // The skill is the repository's own file, as it is.
+    let out = aless(&["--generate", "skill"], None);
+    assert_eq!(out.stdout, std::fs::read("skills/aless/SKILL.md").unwrap());
+}
+
+/// `-h` is the summary: an option a line, and where the rest is.
+#[test]
+fn short_help_is_a_summary_of_the_options() {
+    let out = aless(&["-h"], None);
+    assert_eq!(code(&out), 0);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.lines().count() < 80, "{text}");
+    for said in [
+        "--json ",
+        "--render <FORMAT> ",
+        "-k, --kind, --format <FORMAT> ",
+        "--no-color, --no-colour ",
+        "aless --help prints the whole reference",
+    ] {
+        assert!(text.contains(said), "{said:?} in:\n{text}");
+    }
+    assert!(!text.contains("EXIT STATUS"), "{text}");
 }
 
 #[test]

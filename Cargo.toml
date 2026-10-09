@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Richard Rodger <http://richardrodger.com>"]
-description = "A jless-style terminal viewer for every format the tabnas parsers read, with tabs and watch-and-reload that keeps your place."
+description = "Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more"
 license = "MIT"
 repository = "https://github.com/rjrodger/aless"
 homepage = "https://github.com/rjrodger/aless"
@@ -12,10 +12,10 @@ readme = "README.md"
 keywords = ["json", "yaml", "toml", "viewer", "tui"]
 categories = ["command-line-utilities"]
 # What the published crate carries: the sources, the licence files, and
-# every file the README links to (the docs, the agent skill, the example
-# grammars and programs). The tests stay in the repository: one of them
-# reads a checkout of tabnas/yaml (TABNAS_YAML_DIR), which a crate cannot
-# ship.
+# every file the README links to (the docs, the agent skill, the man page
+# and the completions, the example grammars and programs). The tests stay
+# in the repository: one of them reads a checkout of tabnas/yaml
+# (TABNAS_YAML_DIR), which a crate cannot ship.
 include = [
     "/src",
     "/LICENSE",
@@ -25,6 +25,8 @@ include = [
     "/PACKAGING.md",
     "/RELEASING.md",
     "/skills",
+    "/man",
+    "/completions",
     "/tests/fixtures/grammars",
     "/tests/fixtures/programs",
 ]

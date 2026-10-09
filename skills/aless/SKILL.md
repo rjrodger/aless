@@ -404,4 +404,8 @@ For those, pipe `--json` into jq.
   then ends with a `timeout` error, exit 6, showing how far it got,
   instead of being killed without a word. There is no limit by default,
   and `--timeout 0` asks for none.
-- `aless --help` has the full option list. It opens with this interface.
+- `aless --help` is the full reference: every option, what each output
+  prints, every error kind with its fields, the exit statuses, paths,
+  positions, formats and limits. It opens with this interface; `aless -h`
+  is a summary of the options. `aless --generate skill` prints this skill,
+  so an agent can be given it wherever aless is installed.
