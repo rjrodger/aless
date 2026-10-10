@@ -124,7 +124,10 @@ These need the owner's accounts, so an automated session cannot do them.
    - rename `## Unreleased` in [CHANGELOG.md](CHANGELOG.md) to
      `## [X.Y.Z] - YYYY-MM-DD`, which is what becomes the Release's notes;
    - run `scripts/generate.sh`: the man page names the version, and the
-     date the changelog gives it, and CI fails until it does.
+     date the changelog gives it, and CI fails until it does;
+   - set the version in [PACKAGING.md](PACKAGING.md)'s AUR recipe
+     (`pkgver`) and Scoop manifest (`version` and the two download URLs),
+     which the published crate carries as a packager's starting point.
 
    Merge it once CI is green.
 2. **A dry run.** *Actions → release → Run workflow*, on `main`, leaving the
