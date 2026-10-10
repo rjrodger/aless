@@ -405,7 +405,7 @@ fn export(
         Start::At(..) => return Err(Failure::usage(RENDER_TAKES_NO_AT)),
     };
     let (source, name, origin, format) = streamed_source(req)?;
-    let Some(plan) = export::plan(format, path.is_empty()) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no records to export: name its format with -k, \
              such as -k jsonl or -k csv"
@@ -423,10 +423,9 @@ fn export(
         started: req.limits_for(&source).started,
         max_output: None,
     };
-    let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => export::export(&job, Input::Text(&text), out),
-        Opened::Lines(reader) => export::export(&job, Input::Lines(reader), out),
-    };
+    let mut text = String::new();
+    let opened = open_input(req, &source, &name, format, plan, stdin)?;
+    let result = export::export(&job, opened.input(&mut text, req), out);
     let failure = match result {
         Ok(()) => return Ok(()),
         // The reader of the output went away (`| head`): nothing to report.
@@ -520,7 +519,7 @@ fn translate(
                 .map(|()| loss_note(part, &loss, &adapters, &name, req.compact));
         }
     };
-    let Some(plan) = export::plan(format, path.is_empty()) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no values to write as {id}: name its format with \
              -k, such as -k jsonl or -k csv"
@@ -540,24 +539,16 @@ fn translate(
     };
     let metrics = Metrics::new();
     let records = translate::records(part);
-    let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => translate::run(
-            &job,
-            &composition,
-            records,
-            Input::Text(&text),
-            out,
-            metrics,
-        ),
-        Opened::Lines(reader) => translate::run(
-            &job,
-            &composition,
-            records,
-            Input::Lines(reader),
-            out,
-            metrics,
-        ),
-    };
+    let mut text = String::new();
+    let opened = open_input(req, &source, &name, format, plan, stdin)?;
+    let result = translate::run(
+        &job,
+        &composition,
+        records,
+        opened.input(&mut text, req),
+        out,
+        metrics,
+    );
     let failure = match result {
         Ok(()) | Err(ExportError::ReaderGone) => {
             return Ok(loss_note(
@@ -735,7 +726,7 @@ fn run_program(
         _ => None,
     };
     let (source, name, origin, format) = streamed_source(req)?;
-    let Some(plan) = export::plan(format, true) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no values for a program to read: name its format \
              with -k, such as -k jsonl or -k csv"
@@ -766,10 +757,9 @@ fn run_program(
         ),
         None => alchemy::run(&job, &compiled, render, input, out),
     };
-    let result = match open_input(req, &source, &name, format, plan, stdin)? {
-        Opened::Text(text) => run(Input::Text(&text)),
-        Opened::Lines(reader) => run(Input::Lines(reader)),
-    };
+    let mut text = String::new();
+    let opened = open_input(req, &source, &name, format, plan, stdin)?;
+    let result = run(opened.input(&mut text, req));
     let loss = match &composition {
         Some((_, composition)) => composition.loss.clone(),
         None => Vec::new(),
@@ -865,8 +855,32 @@ enum Opened<'a> {
     /// The whole text, read within `--max-size` as a parse reads it.
     Text(String),
     /// A reader over a line-delimited file, read a record at a time, so
-    /// `--max-size` does not apply to it.
-    Lines(Box<dyn BufRead + Send + 'a>),
+    /// `--max-size` does not apply to it; with the file's path when it is
+    /// one, which a refused record has read again whole.
+    Lines(Box<dyn BufRead + Send + 'a>, Option<PathBuf>),
+}
+
+impl<'a> Opened<'a> {
+    /// The input a run takes: a line-delimited file that can be read again
+    /// whole is one, within `--max-size`, for the fallback a refused record
+    /// takes ([`Input::File`]).
+    fn input<'t>(self, text: &'t mut String, req: &Request) -> Input<'t>
+    where
+        'a: 't,
+    {
+        match self {
+            Opened::Text(t) => {
+                *text = t;
+                Input::Text(text)
+            }
+            Opened::Lines(lines, Some(path)) => Input::File {
+                lines,
+                path,
+                max_size: req.max_size,
+            },
+            Opened::Lines(lines, None) => Input::Lines(lines),
+        }
+    }
 }
 
 /// Open a streamed run's input as `plan` wants it.
@@ -907,7 +921,7 @@ fn open_input<'a>(
                         "no input: standard input is empty; name a FILE, or pipe a document into aless",
                     ));
                 }
-                Ok(Opened::Lines(Box::new(reader)))
+                Ok(Opened::Lines(Box::new(reader), None))
             } else {
                 let bytes = load::read_within(read, req.max_size)
                     .map_err(|e| too_large(&e.with_origin("(stdin)"), None))?;
@@ -924,7 +938,10 @@ fn open_input<'a>(
                 let e = LoadError::new(e.to_string()).with_origin(&load::origin_of(p));
                 Failure::load(name, format, &e)
             })?;
-            Ok(Opened::Lines(Box::new(io::BufReader::new(file))))
+            Ok(Opened::Lines(
+                Box::new(io::BufReader::new(file)),
+                Some(p.clone()),
+            ))
         }
         (Source::File(p), _) => {
             let text =

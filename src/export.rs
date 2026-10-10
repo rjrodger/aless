@@ -12,9 +12,11 @@
 //! than the document. Where the events come from is [`plan`]'s decision,
 //! and the one place the input format matters:
 //!
-//! - JSON Lines, CSV and TSV with the rows at the root are read a record
-//!   (or a chunk of records) at a time from a reader, so the file is never
-//!   in memory whole and `--max-size` does not apply to it;
+//! - JSON Lines, CSV and TSV are read a record (or a chunk of records) at
+//!   a time from a reader, so the file is never in memory whole and
+//!   `--max-size` does not apply to it: at the root the records are the
+//!   export's, and below it (`--path`) the scope takes the value it names
+//!   from the records as they pass;
 //! - a grammar the transducer has verified for incremental streaming
 //!   (`capability::incremental`: the JSON family, jsonic, YAML, ZON and
 //!   Markdown) is parsed whole, the events leaving as the parse proceeds,
@@ -43,6 +45,7 @@
 //! boundary the loader has.
 
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -107,8 +110,8 @@ impl Renderer {
 /// How an input reaches the transducer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Plan {
-    /// JSON Lines, CSV or TSV with the rows at the root: a record at a
-    /// time from a reader, never the file whole.
+    /// JSON Lines, CSV or TSV: a record at a time from a reader, never the
+    /// file whole, whether the export starts at the root or below it.
     Lines,
     /// The text whole, its grammar's events leaving as the parse proceeds;
     /// `prune` says whether the exported array is emptied behind them.
@@ -117,8 +120,10 @@ pub enum Plan {
     Materialize,
 }
 
-/// The plan for a format, given whether the export starts at the root.
-/// `None` for plain text, which has no grammar and so no events.
+/// The plan for a format, wherever the export starts: a path into a
+/// line-delimited file is a scope over its records, which reads the file
+/// to its end a record at a time as it does at the root. `None` for plain
+/// text, which has no grammar and so no events.
 ///
 /// Pruning empties the exported array in the engine's tree as its
 /// elements are streamed, which is sound only while the grammar never
@@ -128,10 +133,10 @@ pub enum Plan {
 /// merged), and Markdown builds its tree imperatively, appending to nodes
 /// it already inserted; whether either reads a streamed array back is not
 /// established, so neither is pruned. The rest keep the memory saving.
-pub fn plan(format: Format, at_root: bool) -> Option<Plan> {
+pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
-        Format::Jsonl | Format::Csv | Format::Tsv if at_root => Plan::Lines,
+        Format::Jsonl | Format::Csv | Format::Tsv => Plan::Lines,
         // A grammar from the command line is nobody's verified grammar,
         // whatever it is named (it may take a built-in's name).
         Format::Custom(_) => Plan::Materialize,
@@ -202,6 +207,18 @@ pub enum Input<'a> {
     Text(&'a str),
     /// A reader over a line-delimited file.
     Lines(Box<dyn BufRead + Send + 'a>),
+    /// A reader over a line-delimited file that can be read again whole.
+    /// A record the stream refuses before anything was written (one that
+    /// repeats a member, whose last value a record-at-a-time stream cannot
+    /// keep once the first has left) has the file read once more, within
+    /// `max_size`, for the whole value's route, as a text's refusal does;
+    /// a reader that cannot be read again (standard input) keeps the
+    /// refusal.
+    File {
+        lines: Box<dyn BufRead + Send + 'a>,
+        path: PathBuf,
+        max_size: Option<u64>,
+    },
 }
 
 /// The node `--path` did reach when it named nothing, for a `not_found`
@@ -403,7 +420,11 @@ fn attempt<S: Sink + Send + 'static>(
     let mode = mode_for(job);
     let text = match &input {
         Input::Text(text) => Some(*text),
-        Input::Lines(_) => None,
+        Input::Lines(_) | Input::File { .. } => None,
+    };
+    let again = match &input {
+        Input::File { path, max_size, .. } => Some((path.clone(), *max_size)),
+        _ => None,
     };
     // Two flags per attempt, both fresh: the source polls one, raised by
     // the parser's guard with the position, or by the alarm where no
@@ -468,6 +489,36 @@ fn attempt<S: Sink + Send + 'static>(
                 stage.commit();
                 classify(job, *f, written, broken)
             })
+        }
+        // A file read a record at a time is read again whole, within the
+        // size limit the record-at-a-time read did not need; a file over
+        // it, or gone, leaves the stream's own refusal standing.
+        None if refused && written.load(Ordering::Relaxed) == 0 => {
+            let whole =
+                again.and_then(|(path, max_size)| load::read_path_within(&path, max_size).ok());
+            match whole {
+                Some(whole) => {
+                    stage.discard();
+                    let abort = AbortFlag::new();
+                    let program = AbortFlag::new();
+                    run(
+                        job,
+                        Input::Text(&whole),
+                        chain(program.clone())?,
+                        SourceMode::Materialize,
+                        abort,
+                        program,
+                    )
+                    .map_err(|f| {
+                        stage.commit();
+                        classify(job, *f, written, broken)
+                    })
+                }
+                None => {
+                    stage.commit();
+                    Err(classify(job, *failed, written, broken))
+                }
+            }
         }
         _ => {
             stage.commit();
@@ -571,7 +622,7 @@ fn run<S: Sink + Send + 'static>(
     program: AbortFlag,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
-    let lines = matches!(input, Input::Lines(_));
+    let lines = matches!(input, Input::Lines(_) | Input::File { .. });
     let alarm = Alarm {
         lines,
         parsed: Arc::new(AtomicBool::new(false)),
@@ -584,7 +635,7 @@ fn run<S: Sink + Send + 'static>(
         job.started,
         move || alarm.fire(),
         move |deadline: Option<Deadline>| match input {
-            Input::Lines(reader) => {
+            Input::Lines(reader) | Input::File { lines: reader, .. } => {
                 let source = LinesSource::new(reader, line_format(format))
                     .limits(limits())
                     .abort(abort);
@@ -768,7 +819,7 @@ fn mode_for(job: &Job) -> SourceMode {
     if job.format.is_custom() {
         return SourceMode::Materialize;
     }
-    let prune = match plan(job.format, job.path.is_empty()) {
+    let prune = match plan(job.format) {
         Some(Plan::Incremental { prune }) => prune,
         // A line-delimited format handed over as one text: JSON Lines is
         // verified, CSV and TSV are not.
@@ -2194,40 +2245,22 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_follows_the_format_and_the_start() {
-        assert_eq!(plan(Format::Jsonl, true), Some(Plan::Lines));
-        assert_eq!(plan(Format::Csv, true), Some(Plan::Lines));
-        assert_eq!(plan(Format::Tsv, true), Some(Plan::Lines));
-        // A path into a line-delimited file needs the document.
-        assert_eq!(
-            plan(Format::Jsonl, false),
-            Some(Plan::Incremental { prune: true })
-        );
-        assert_eq!(plan(Format::Csv, false), Some(Plan::Materialize));
+    fn the_plan_follows_the_format() {
+        // A record at a time, under a path as at the root.
+        for f in [Format::Jsonl, Format::Csv, Format::Tsv] {
+            assert_eq!(plan(f), Some(Plan::Lines), "{f}");
+        }
         for f in [Format::Json, Format::Json5, Format::Jsonc, Format::Zon] {
-            assert_eq!(
-                plan(f, true),
-                Some(Plan::Incremental { prune: true }),
-                "{f}"
-            );
-            assert_eq!(
-                plan(f, false),
-                Some(Plan::Incremental { prune: true }),
-                "{f}"
-            );
+            assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
         // Verified, but they may read a streamed container back.
         for f in [Format::Yaml, Format::Jsonic, Format::Markdown] {
-            assert_eq!(
-                plan(f, true),
-                Some(Plan::Incremental { prune: false }),
-                "{f}"
-            );
+            assert_eq!(plan(f), Some(Plan::Incremental { prune: false }), "{f}");
         }
         for f in [Format::Toml, Format::Ini, Format::Xml, Format::Feed] {
-            assert_eq!(plan(f, true), Some(Plan::Materialize), "{f}");
+            assert_eq!(plan(f), Some(Plan::Materialize), "{f}");
         }
-        assert_eq!(plan(Format::Text, true), None);
+        assert_eq!(plan(Format::Text), None);
         // Every name is a part's, the built-ins' among them, since their
         // manifests name aless's own renderers.
         assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Part("csv")));
@@ -2511,6 +2544,116 @@ mod tests {
         let (r, out) = run_lines(&j, "a\tb\n1\t2\n");
         r.unwrap();
         assert_eq!(out, "[{\"a\":\"1\",\"b\":\"2\"}]\n");
+    }
+
+    /// A path into JSON Lines, CSV or TSV is a scope over the records as
+    /// they pass, read a record at a time: what it writes, and how it
+    /// fails, is what the same document read whole writes (CSV and TSV
+    /// parsed and walked, JSON Lines streamed as one text), for a record,
+    /// a value inside one, a path the document does not have, a path that
+    /// counts from the end, and a later record the grammar refuses.
+    #[test]
+    fn a_path_into_a_line_delimited_file_reads_it_a_record_at_a_time() {
+        let jsonl =
+            "{\"a\": 1, \"b\": [1, 2]}\n{\"a\": 2.50, \"b\": []}\n\n{\"a\": \"x\", \"b\": [3]}\n";
+        let csv = "a,b\n1,x\n2,\"y,z\"\n3,\"q\"\"r\"\n";
+        let tsv = "a\tb\n1\tx\n2\ty\n";
+        let paths = [
+            ".[0]",
+            ".[1]",
+            ".[2]",
+            ".[1].a",
+            ".[2].b",
+            "/1/a",
+            ".[0].b[1]",
+            ".[7]",
+            ".x",
+            ".[1].z",
+            ".[-1]",
+        ];
+        for (format, text) in [
+            (Format::Jsonl, jsonl),
+            (Format::Csv, csv),
+            (Format::Tsv, tsv),
+        ] {
+            for renderer in [Renderer::Json, Renderer::Csv] {
+                for path in paths {
+                    let j = job(format, renderer, path);
+                    let (whole, whole_out) = run_text(&j, text);
+                    let (lines, lines_out) = run_lines(&j, text);
+                    let at = format!("{format} {} {path}", renderer.name());
+                    assert_eq!(format!("{lines:?}"), format!("{whole:?}"), "{at}");
+                    assert_eq!(lines_out, whole_out, "{at}");
+                }
+            }
+        }
+        // The file is read to its end, a record at a time, so a later
+        // record the grammar refuses fails the run after the value the
+        // scope took was written whole: the failure says so, as one at the
+        // root does, and names its line.
+        let j = job(Format::Jsonl, Renderer::Json, ".[0]");
+        let (r, out) = run_lines(&j, "{\"a\": [1, 2]}\n{\"a\":\n");
+        assert_eq!(out, "{\"a\":[1,2]}");
+        match r {
+            Err(ExportError::Transduce(fail)) => {
+                assert_eq!(fail.code, Code::InputInvalid, "{fail:?}");
+                assert_eq!(fail.row, Some(2), "{fail:?}");
+                assert!(fail.committed_output, "{fail:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A record the stream refuses before anything was written, one that
+    /// repeats a member, is read again whole when the input is a file, and
+    /// the parsed value, which keeps the last of the two, is written, at
+    /// the root as below it: what the text read whole writes. A reader that
+    /// cannot be read again keeps the refusal, with nothing written.
+    #[test]
+    fn a_refused_record_from_a_file_falls_back_to_the_whole_value() {
+        let text = "{\"a\": 1, \"a\": 2, \"b\": [1]}\n{\"a\": 3}\n";
+        let path =
+            std::env::temp_dir().join(format!("aless-refused-record-{}.jsonl", std::process::id()));
+        std::fs::write(&path, text).unwrap();
+        for at in [".", ".[0]", ".[0].b"] {
+            let j = job(Format::Jsonl, Renderer::Json, at);
+            let (whole, whole_out) = run_text(&j, text);
+            whole.unwrap();
+            let out = Shared::default();
+            let input = Input::File {
+                lines: Box::new(io::BufReader::new(std::fs::File::open(&path).unwrap())),
+                path: path.clone(),
+                max_size: None,
+            };
+            export(&j, input, Box::new(out.clone())).unwrap();
+            assert_eq!(out.text(), whole_out, "{at}");
+            // Within --max-size only: a file over it keeps the refusal.
+            let input = Input::File {
+                lines: Box::new(io::BufReader::new(std::fs::File::open(&path).unwrap())),
+                path: path.clone(),
+                max_size: Some(4),
+            };
+            let over = Shared::default();
+            let r = export(&j, input, Box::new(over.clone()));
+            let (lines, lines_out) = run_lines(&j, text);
+            for (r, out) in [(r, over.text()), (lines, lines_out)] {
+                if at == ".[0].b" {
+                    // The repeated member is not in the value taken.
+                    r.unwrap();
+                    assert_eq!(out, "[1]\n", "{at}");
+                    continue;
+                }
+                match r {
+                    Err(ExportError::Transduce(fail)) => {
+                        assert_eq!(fail.code, Code::DuplicateMember, "{at} {fail:?}");
+                        assert!(!fail.committed_output, "{at} {fail:?}");
+                    }
+                    other => panic!("{at}: {other:?}"),
+                }
+                assert_eq!(out, "", "{at}");
+            }
+        }
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

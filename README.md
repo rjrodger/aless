@@ -460,11 +460,13 @@ $ aless --render csv broken.json
 }
 ```
 
-**Streaming, honestly.** JSON Lines, CSV and TSV with the rows at the
-root are read from the file a record (or a chunk of records) at a time,
-so the file is never in memory whole and `--max-size` does not apply to
-it; the transducer's own limits per record do (a line over
-`max_record_bytes`, 64 MB, fails). Every other format is parsed whole by
+**Streaming, honestly.** JSON Lines, CSV and TSV are read from the file
+a record (or a chunk of records) at a time, at the root and below it
+(`--path .[3]` takes the fourth record as it passes, and the rest of the
+file is read to its end the same way, to validate it), so the file is
+never in memory whole and `--max-size` does not apply to it; the
+transducer's own limits per record do (a line over `max_record_bytes`,
+64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
 JSON family, jsonic, YAML, ZON and Markdown the records are streamed out
@@ -476,7 +478,11 @@ document part-way (a jsonic implicit list whose first element is a
 container, a YAML stream of several documents or a `<<` merge key, a
 repeated member the grammar merges), aless falls back once to parsing it
 whole and streaming its value, provided nothing has been written yet;
-otherwise the refusal is reported with `output: "partial"`. `--timeout`
+otherwise the refusal is reported with `output: "partial"`. A JSON Lines
+record that repeats a member is refused so too, its stream holding the
+member twice: before anything was written, a file is read again whole,
+within `--max-size`, and its value written; standard input, which cannot
+be read again, keeps the refusal. `--timeout`
 stops either kind at the deadline, with `output` saying whether records
 had already been written.
 
@@ -578,7 +584,9 @@ member the parse streams twice (JSON's `{"a":1,"a":2}`, whose value
 keeps the last) is refused with `DUPLICATE_MEMBER`, and a stream no tree
 has with `STREAMABILITY_UNKNOWN`. Either way aless falls back once to
 the parsed value, as `--json` reads it, when nothing has been written;
-otherwise the refusal is reported with `output: "partial"`.
+otherwise the refusal is reported with `output: "partial"`. JSON Lines
+from standard input, read a record at a time and never again, keeps the
+refusal, with `output: "none"`.
 
 The output of each render reads back as the same value in a reader of
 its format; where a format's own reader misreads a shape its render

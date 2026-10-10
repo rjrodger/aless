@@ -954,6 +954,64 @@ fn render_csv_exports_the_records_at_a_path() {
         String::from_utf8_lossy(&out.stdout),
         "\"name\",\"age\",\"city\"\r\n\"ada\",\"36\",\"london\"\r\n\"lin\",\"28\",\"helsinki\"\r\n"
     );
+    // Below the root too: --path takes its value from the records as they
+    // pass, so the file is never read whole, and --max-size does not apply
+    // to it there either.
+    for file in ["tests/fixtures/sample.csv", "tests/fixtures/sample.jsonl"] {
+        let out = aless(
+            &[
+                "--render",
+                "json",
+                "--compact",
+                "--path",
+                ".[1]",
+                "--max-size",
+                "10",
+                file,
+            ],
+            None,
+        );
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let whole = aless(&["--json", "--compact", "--path", ".[1]", file], None);
+        assert_eq!(json(&out.stdout), json(&whole.stdout), "{file}");
+    }
+    // A record that repeats a member streams it twice, which a tree's
+    // events cannot hold: refused before anything was written, a file is
+    // read again whole, and the parsed value, which keeps the last, is
+    // written, as --json reads it. Standard input cannot be read again, so
+    // there the refusal stands, with nothing written.
+    let dir = std::env::temp_dir().join(format!("aless-repeated-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("repeated.jsonl");
+    let text = "{\"a\": 1, \"a\": 2.50}\n{\"a\": 3}\n";
+    std::fs::write(&file, text).unwrap();
+    let file = file.to_str().unwrap();
+    for at in [".", ".[0]"] {
+        let out = aless(&["--render", "json", "--compact", "--path", at, file], None);
+        assert_eq!(
+            code(&out),
+            0,
+            "{at}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let whole = aless(&["--json", "--compact", "--path", at, file], None);
+        assert_eq!(json(&out.stdout), json(&whole.stdout), "{at}");
+        let out = aless(
+            &["-k", "jsonl", "--render", "json", "--compact", "--path", at],
+            Some(text),
+        );
+        assert_eq!(code(&out), 1, "{at}");
+        assert!(out.stdout.is_empty(), "{at}");
+        let e = &json(&out.stderr)["error"];
+        assert_eq!(e["code"], json!("DUPLICATE_MEMBER"), "{at}: {e}");
+        assert_eq!(e["output"], json!("none"), "{at}: {e}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
     // Standard input too, with -k saying the format.
     let out = aless(
         &["-k", "jsonl", "--render", "csv"],
