@@ -756,6 +756,72 @@ fn nesting_too_deep_to_parse_fails_cleanly() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A document of one of the newer formats nested past what its reader
+/// takes is the same `too_deep` parse error, read as by the viewer or
+/// written by `--render`, never an abort. A `.proto` file is refused before
+/// it is parsed when its braces nest past the 100 levels tabnas-proto's
+/// preflight counts, since a value built past them can abort the process
+/// as it is dropped; CSS stops at its grammar's 768 open rules, a feed at
+/// XML's 256 open elements, an expression at 127 operations, and PGN's
+/// variations, which have no limit of their own, at aless's cap.
+#[test]
+fn the_newer_formats_nested_too_deep_fail_cleanly() {
+    let n = 20_000;
+    let dir = std::env::temp_dir().join(format!("aless-deeper-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, kind, text) in [
+        (
+            "deep.proto",
+            "proto",
+            format!(
+                "syntax = \"proto3\";\n{}{}\n",
+                "message M { ".repeat(n),
+                "}".repeat(n)
+            ),
+        ),
+        ("deep.css", "css", "a{".repeat(n) + &"}".repeat(n)),
+        (
+            "deep.rss",
+            "feed",
+            format!(
+                "<rss version=\"2.0\"><channel>{}{}</channel></rss>\n",
+                "<a>".repeat(n),
+                "</a>".repeat(n)
+            ),
+        ),
+        (
+            "deep.expr",
+            "expr",
+            format!("{}1{}\n", "(".repeat(n), ")".repeat(n)),
+        ),
+        ("long.expr", "expr", vec!["1"; n].join("+") + "\n"),
+        (
+            "deep.pgn",
+            "pgn",
+            format!("1. e4 {}{} *\n", "(1. d4 ".repeat(n), ")".repeat(n)),
+        ),
+    ] {
+        let deep = dir.join(name);
+        std::fs::write(&deep, text).unwrap();
+        let file = deep.to_str().unwrap();
+        for mode in [
+            vec!["-k", kind, "--json", file],
+            vec!["-k", kind, "--render", "json", file],
+            vec!["-k", kind, "--render", kind, file],
+        ] {
+            let out = aless(&mode, None);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(code(&out), 1, "{name} {mode:?}: {stderr}");
+            assert!(out.stdout.is_empty(), "{name} {mode:?}");
+            let e = &json(&out.stderr)["error"];
+            assert_eq!(e["kind"], json!("parse"), "{name} {mode:?}: {e}");
+            assert_eq!(e["code"], json!("too_deep"), "{name} {mode:?}: {e}");
+            assert_eq!(e["format"], json!(kind), "{name} {mode:?}: {e}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn help_leads_with_the_agent_interface() {
     let out = aless(&["--help"], None);
