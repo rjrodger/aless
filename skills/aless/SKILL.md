@@ -162,10 +162,12 @@ table, the inferred table or `records`. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
-`output: "partial"`. `--render` with a format that has no render (`tsv`)
-is a usage error that lists the ones that do, and so is one that names a
-format by an extension (`rss`), which names the format's render (`feed`)
-instead.
+`output: "partial"`. JSON Lines from standard input, read a record at a
+time and never again, keeps the refusal (`output: "none"`); from a file,
+it is read again whole, within `--max-size`. `--render` with a format
+that has no render (`tsv`) is a usage error that lists the ones that do,
+and so is one that names a format by an extension (`rss`), which names
+the format's render (`feed`) instead.
 
 Four renders take only their own kind of tree. `--render css`, `proto`
 and `pgn` write only the tree their own documents read as; given any

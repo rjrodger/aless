@@ -45,6 +45,7 @@
 //! boundary the loader has.
 
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -206,6 +207,18 @@ pub enum Input<'a> {
     Text(&'a str),
     /// A reader over a line-delimited file.
     Lines(Box<dyn BufRead + Send + 'a>),
+    /// A reader over a line-delimited file that can be read again whole.
+    /// A record the stream refuses before anything was written (one that
+    /// repeats a member, whose last value a record-at-a-time stream cannot
+    /// keep once the first has left) has the file read once more, within
+    /// `max_size`, for the whole value's route, as a text's refusal does;
+    /// a reader that cannot be read again (standard input) keeps the
+    /// refusal.
+    File {
+        lines: Box<dyn BufRead + Send + 'a>,
+        path: PathBuf,
+        max_size: Option<u64>,
+    },
 }
 
 /// The node `--path` did reach when it named nothing, for a `not_found`
@@ -407,7 +420,11 @@ fn attempt<S: Sink + Send + 'static>(
     let mode = mode_for(job);
     let text = match &input {
         Input::Text(text) => Some(*text),
-        Input::Lines(_) => None,
+        Input::Lines(_) | Input::File { .. } => None,
+    };
+    let again = match &input {
+        Input::File { path, max_size, .. } => Some((path.clone(), *max_size)),
+        _ => None,
     };
     // Two flags per attempt, both fresh: the source polls one, raised by
     // the parser's guard with the position, or by the alarm where no
@@ -472,6 +489,36 @@ fn attempt<S: Sink + Send + 'static>(
                 stage.commit();
                 classify(job, *f, written, broken)
             })
+        }
+        // A file read a record at a time is read again whole, within the
+        // size limit the record-at-a-time read did not need; a file over
+        // it, or gone, leaves the stream's own refusal standing.
+        None if refused && written.load(Ordering::Relaxed) == 0 => {
+            let whole =
+                again.and_then(|(path, max_size)| load::read_path_within(&path, max_size).ok());
+            match whole {
+                Some(whole) => {
+                    stage.discard();
+                    let abort = AbortFlag::new();
+                    let program = AbortFlag::new();
+                    run(
+                        job,
+                        Input::Text(&whole),
+                        chain(program.clone())?,
+                        SourceMode::Materialize,
+                        abort,
+                        program,
+                    )
+                    .map_err(|f| {
+                        stage.commit();
+                        classify(job, *f, written, broken)
+                    })
+                }
+                None => {
+                    stage.commit();
+                    Err(classify(job, *failed, written, broken))
+                }
+            }
         }
         _ => {
             stage.commit();
@@ -579,7 +626,7 @@ fn run<S: Sink + Send + 'static>(
     program: AbortFlag,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
-    let lines = matches!(input, Input::Lines(_));
+    let lines = matches!(input, Input::Lines(_) | Input::File { .. });
     let alarm = Alarm {
         lines,
         parsed: Arc::new(AtomicBool::new(false)),
@@ -592,7 +639,7 @@ fn run<S: Sink + Send + 'static>(
         job.started,
         move || alarm.fire(),
         move |deadline: Option<Deadline>| match input {
-            Input::Lines(reader) => {
+            Input::Lines(reader) | Input::File { lines: reader, .. } => {
                 let source = LinesSource::new(reader, line_format(format))
                     .limits(limits())
                     .abort(abort);
@@ -2651,6 +2698,58 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A record the stream refuses before anything was written, one that
+    /// repeats a member, is read again whole when the input is a file, and
+    /// the parsed value, which keeps the last of the two, is written, at
+    /// the root as below it: what the text read whole writes. A reader that
+    /// cannot be read again keeps the refusal, with nothing written.
+    #[test]
+    fn a_refused_record_from_a_file_falls_back_to_the_whole_value() {
+        let text = "{\"a\": 1, \"a\": 2, \"b\": [1]}\n{\"a\": 3}\n";
+        let path =
+            std::env::temp_dir().join(format!("aless-refused-record-{}.jsonl", std::process::id()));
+        std::fs::write(&path, text).unwrap();
+        for at in [".", ".[0]", ".[0].b"] {
+            let j = job(Format::Jsonl, Renderer::Json, at);
+            let (whole, whole_out) = run_text(&j, text);
+            whole.unwrap();
+            let out = Shared::default();
+            let input = Input::File {
+                lines: Box::new(io::BufReader::new(std::fs::File::open(&path).unwrap())),
+                path: path.clone(),
+                max_size: None,
+            };
+            export(&j, input, Box::new(out.clone())).unwrap();
+            assert_eq!(out.text(), whole_out, "{at}");
+            // Within --max-size only: a file over it keeps the refusal.
+            let input = Input::File {
+                lines: Box::new(io::BufReader::new(std::fs::File::open(&path).unwrap())),
+                path: path.clone(),
+                max_size: Some(4),
+            };
+            let over = Shared::default();
+            let r = export(&j, input, Box::new(over.clone()));
+            let (lines, lines_out) = run_lines(&j, text);
+            for (r, out) in [(r, over.text()), (lines, lines_out)] {
+                if at == ".[0].b" {
+                    // The repeated member is not in the value taken.
+                    r.unwrap();
+                    assert_eq!(out, "[1]\n", "{at}");
+                    continue;
+                }
+                match r {
+                    Err(ExportError::Transduce(fail)) => {
+                        assert_eq!(fail.code, Code::DuplicateMember, "{at} {fail:?}");
+                        assert!(!fail.committed_output, "{at} {fail:?}");
+                    }
+                    other => panic!("{at}: {other:?}"),
+                }
+                assert_eq!(out, "", "{at}");
+            }
+        }
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
