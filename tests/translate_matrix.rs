@@ -8,7 +8,13 @@
 //! record at a time, the verified grammars as the parse proceeds, the rest
 //! whole. A pair that fails to write, that writes a document its own
 //! grammar refuses, or that reads back as anything but the conventions say
-//! is a failure, and so is a corpus that shrinks.
+//! is a failure, and so is a corpus that shrinks. Two refusals are a
+//! target's declared outcome, and counted as such: a schema-only target's
+//! (CSS, proto, PGN, which write only the tree their own documents read
+//! as) of a document of another tree, before anything is read, with the
+//! usage error naming the program route; and a version's (semver's embed)
+//! of a tree that is not a version, `TARGET_VALUE_UNREPRESENTABLE` before
+//! anything is written.
 //!
 //! The corpora are the grammar repositories' own, at the tags of the
 //! versions Cargo.lock pins, which `scripts/fixtures.sh` clones and names
@@ -28,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use aless::export::{self, Input, Job, Plan, Records, What};
+use aless::export::{self, ExportError, Input, Job, Plan, Records, Renderer, What};
 use aless::load::Format;
 use aless::translate::{self, Options, Part, Shape, Translation};
 use tabnas::Tabnas;
@@ -68,6 +74,15 @@ fn locked(name: &str) -> String {
     panic!("Cargo.lock pins no {name}")
 }
 
+/// The grammar repository a format's id is from: PGN's is tabnas/chess,
+/// whose manifest's `languageId` is `pgn`; every other is its id's.
+fn repository(id: &str) -> &str {
+    match id {
+        "pgn" => "chess",
+        id => id,
+    }
+}
+
 /// The checkout of a grammar repository at the tag of the version
 /// Cargo.lock pins: `TABNAS_FIXTURES_DIR/<repository>/<version>`, a
 /// relative directory taken from this crate's root. Without the variable,
@@ -93,11 +108,11 @@ fn checkout(repository: &str) -> PathBuf {
     dir
 }
 
-/// The twelve formats aless writes, by id, and the format aless reads a
+/// The eighteen formats aless writes, by id, and the format aless reads a
 /// document of each with.
-const FORMATS: [&str; 12] = [
-    "csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml",
-    "zon",
+const FORMATS: [&str; 18] = [
+    "css", "csv", "expr", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
+    "pgn", "proto", "semver", "toml", "xml", "yaml", "zon",
 ];
 
 fn format(id: &str) -> Format {
@@ -123,6 +138,13 @@ fn format_of(extension: &str) -> Option<&'static str> {
         "xml" => "xml",
         "yaml" => "yaml",
         "zon" => "zon",
+        "rss" | "atom" => "feed",
+        "css" => "css",
+        "proto" => "proto",
+        "pgn" => "pgn",
+        // Formats that declare no extension: aless's fixtures name them.
+        "expr" => "expr",
+        "semver" => "semver",
         _ => return None,
     })
 }
@@ -213,7 +235,7 @@ fn unescape(cell: &str) -> String {
 fn spec_corpus() -> Vec<(String, &'static str, String)> {
     let mut docs = Vec::new();
     for id in FORMATS {
-        let dir = checkout(id).join("test/spec");
+        let dir = checkout(repository(id)).join("test/spec");
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()))
             .map(|e| e.unwrap().path())
@@ -279,6 +301,10 @@ fn parser(id: &str) -> Tabnas {
         "xml" => tabnas_xml::make(),
         "yaml" => tabnas_yaml::make(),
         "zon" => tabnas_zon::make(),
+        "css" => tabnas_css::make(),
+        "pgn" => tabnas_chess::make(&tabnas_chess::ChessOptions::default())
+            .expect("the chess grammar installs"),
+        "feed" => tabnas_feed::make(),
         other => panic!("no parser for {other}"),
     }
 }
@@ -295,12 +321,35 @@ impl Sink for Collect {
     }
 }
 
+/// Whether aless reads a format's document as more than its grammar's
+/// value: proto's as its descriptor, expr's as its S-expressions, a version
+/// without the line break a file ends with (`load::read_as`,
+/// `load::parse_text`).
+fn read_by_aless(id: &str) -> bool {
+    matches!(id, "proto" | "expr" | "semver")
+}
+
 /// A document read whole with a format's grammar, as a value: its events,
 /// incrementally where the grammar is verified (so a number keeps the
 /// lexeme the document spelled it with), collected, or the grammar's value
 /// where the incremental source cannot follow it. A repeated member keeps
-/// its last value.
+/// its last value. A document aless reads as more than its grammar's value
+/// ([`read_by_aless`]) is read as aless's own JSON export writes it, which
+/// holds every value those three formats' trees can: no number in them is
+/// one JSON cannot spell (proto's descriptor holds a NaN as null).
 fn read(id: &str, text: &str) -> Result<Datum, Fail> {
+    if read_by_aless(id) {
+        let out = Buffer::default();
+        export::export(
+            &job(id, format(id), What::Render(Renderer::Json)),
+            input(format(id), text),
+            Box::new(out.clone()),
+        )
+        .map_err(|e| Fail::input(format!("aless does not read it: {e:?}")))?;
+        let json = String::from_utf8(out.0.lock().unwrap().clone())
+            .map_err(|e| Fail::input(format!("aless wrote no UTF-8: {e}")))?;
+        return read("json", &json);
+    }
     let once = |mode: SourceMode| {
         let collect = Collect(DatumBuilder::new(
             usize::MAX,
@@ -363,10 +412,30 @@ fn input(from: Format, text: &str) -> Input<'_> {
     }
 }
 
+/// A write that wrote no document.
+enum Unwritten {
+    /// A schema-only target (css, proto, pgn) refused a source of another
+    /// tree before reading it, with the usage error naming the program
+    /// route: that target's declared outcome for such a source.
+    SchemaOnly,
+    /// The target's embed refused the tree, with
+    /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written: a version's
+    /// (semver's) declared outcome for a tree that is not a version
+    /// (admin's log of the plan, 2026-10-10).
+    NotAVersion,
+    /// Anything else, a failure.
+    Failed(String),
+}
+
+/// The schema a format's documents carry, when it has one.
+fn schema(id: &str) -> Option<String> {
+    translate::source_part(format(id)).and_then(|p| p.schema.clone())
+}
+
 /// `text`, read as `from`, written by `--render` into `to`: the route
 /// [`translate::translation`] decides, on aless's own renderer or
 /// composed.
-fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, String> {
+fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwritten> {
     let key = (from.to_string(), to.to_string());
     let translation = match TRANSLATIONS.with(|t| t.borrow().get(&key).cloned()) {
         Some(t) => t,
@@ -376,7 +445,16 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, String
                 target(to),
                 &Options::default(),
             )
-            .map_err(|f| format!("does not compose: {f}"))?;
+            .map_err(|f| {
+                // Only a source of another schema is refused so.
+                if translate::schema_only(&f, target(to), name).is_some()
+                    && schema(from) != target(to).schema
+                {
+                    Unwritten::SchemaOnly
+                } else {
+                    Unwritten::Failed(format!("does not compose: {f}"))
+                }
+            })?;
             let t = Rc::new(t);
             TRANSLATIONS.with(|c| c.borrow_mut().insert(key, t.clone()));
             t
@@ -398,9 +476,22 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, String
             Metrics::new(),
         ),
     };
-    result.map_err(|e| format!("does not write: {e:?}"))?;
     let bytes = out.0.lock().unwrap().clone();
-    String::from_utf8(bytes).map_err(|e| format!("writes no UTF-8: {e}"))
+    match result {
+        Ok(()) => {}
+        // A version's embed refuses a tree of another schema that is not a
+        // version before the render writes anything.
+        Err(ExportError::Program(fail))
+            if to == "semver"
+                && schema(from) != target(to).schema
+                && fail.code == Code::TargetValueUnrepresentable
+                && bytes.is_empty() =>
+        {
+            return Err(Unwritten::NotAVersion)
+        }
+        Err(e) => return Err(Unwritten::Failed(format!("does not write: {e:?}"))),
+    }
+    String::from_utf8(bytes).map_err(|e| Unwritten::Failed(format!("writes no UTF-8: {e}")))
 }
 
 /// `text`, read as `from`, through a program `program` whose export
@@ -809,6 +900,442 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
+/// The default operators' source texts, which expr's render writes in
+/// infix (`(` a group): an operation is a list whose first element is one.
+const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
+
+/// What expr's conventions make of a value its render is given, as its
+/// reader reads the document back: a negative number is the operator `-`
+/// applied to its magnitude; a number that is not finite is the string
+/// `Infinity`, `-Infinity` or `NaN`; and a list whose first element is an
+/// object whose `src` member is a default operator's source text has that
+/// text in its place, the object's other members not kept.
+fn expr_reading(d: &Datum) -> Datum {
+    match d {
+        Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
+        Datum::Number { value, .. } if value.is_infinite() => Datum::String(
+            if *value > 0.0 {
+                "Infinity"
+            } else {
+                "-Infinity"
+            }
+            .into(),
+        ),
+        Datum::Number { value, lexeme } if value.is_sign_negative() => Datum::Array(vec![
+            Datum::String("-".into()),
+            Datum::Number {
+                value: -value,
+                lexeme: lexeme
+                    .as_deref()
+                    .and_then(|l| l.strip_prefix('-'))
+                    .map(Into::into),
+            },
+        ]),
+        Datum::Array(items) => {
+            let mut items: Vec<Datum> = items.iter().map(expr_reading).collect();
+            let operator = match items.first() {
+                Some(Datum::Object(m)) => match m.get("src") {
+                    Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
+                        Some(src.clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(src) = operator {
+                items[0] = Datum::String(src);
+            }
+            Datum::Array(items)
+        }
+        Datum::Object(members) => Datum::Object(
+            members
+                .iter()
+                .map(|(k, v)| (k.clone(), expr_reading(v)))
+                .collect(),
+        ),
+        d => d.clone(),
+    }
+}
+
+/// What a version's conventions make of a version its render is given, as
+/// its reader reads the text back: only major, minor, patch, prerelease
+/// and build are kept; a prerelease or build absent, null, empty or an
+/// empty list is an empty list, and one given as one string the list of
+/// its dot-separated identifiers; a major, minor, patch or prerelease
+/// identifier of digits is a number, and a build identifier a string.
+fn semver_reading(d: &Datum) -> Datum {
+    let Some(members) = d.as_object() else {
+        return d.clone();
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let number = |d: &Datum| match d {
+        Datum::String(s) if digits(s) && s.len() < 16 => Datum::Number {
+            value: s.parse().unwrap_or(0.0),
+            lexeme: Some(s.clone()),
+        },
+        d => d.clone(),
+    };
+    let text = |d: &Datum| match d {
+        Datum::Number { value, lexeme } => {
+            Datum::String(lexeme.clone().unwrap_or_else(|| value.to_string().into()))
+        }
+        d => d.clone(),
+    };
+    let ids = |d: Option<&Datum>, each: &dyn Fn(&Datum) -> Datum| match d {
+        Some(Datum::Array(items)) => Datum::Array(items.iter().map(each).collect()),
+        Some(Datum::String(s)) if !s.is_empty() => Datum::Array(
+            s.split('.')
+                .map(|id| each(&Datum::String(id.into())))
+                .collect(),
+        ),
+        _ => Datum::Array(Vec::new()),
+    };
+    let mut out: Vec<(Box<str>, Datum)> = ["major", "minor", "patch"]
+        .into_iter()
+        .filter_map(|part| members.get(part).map(|v| (part.into(), number(v))))
+        .collect();
+    out.push(("prerelease".into(), ids(members.get("prerelease"), &number)));
+    out.push(("build".into(), ids(members.get("build"), &text)));
+    Datum::Object(out.into_iter().collect())
+}
+
+/// The tag feed's render names what it supplies with.
+const FEED_RENDER: &str = "tag:tabnas.dev,2026:feed-render";
+
+/// The date feed's render gives a feed or an entry with none.
+const FEED_EPOCH: &str = "1970-01-01T00:00:00Z";
+
+/// Whether `s` is `n` ASCII digits.
+fn digits(s: &str, n: usize) -> bool {
+    s.len() == n && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Whether `s` is two digits from `lo` to `hi`.
+fn two(s: &str, lo: u32, hi: u32) -> bool {
+    digits(s, 2) && s.parse::<u32>().is_ok_and(|n| (lo..=hi).contains(&n))
+}
+
+/// Whether `s` is an RFC 3339 date-time with the upper-case `T` and `Z`
+/// Atom requires, as feed's render tells one: a full date; a time, its
+/// seconds perhaps with a fraction; `Z` or an offset.
+fn feed_is_3339(s: &str) -> bool {
+    fn time(t: &str) -> bool {
+        let p: Vec<&str> = t.split(':').collect();
+        let second = |sec: &str| {
+            let q: Vec<&str> = sec.split('.').collect();
+            match q.as_slice() {
+                [s] => two(s, 0, 60),
+                [s, f] => two(s, 0, 60) && !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()),
+                _ => false,
+            }
+        };
+        p.len() == 3 && two(p[0], 0, 23) && two(p[1], 0, 59) && second(p[2])
+    }
+    fn offset(o: &str) -> bool {
+        let p: Vec<&str> = o.split(':').collect();
+        p.len() == 2 && two(p[0], 0, 23) && two(p[1], 0, 59)
+    }
+    let halves: Vec<&str> = s.split('T').collect();
+    let [date, rest] = halves.as_slice() else {
+        return false;
+    };
+    let d: Vec<&str> = date.split('-').collect();
+    if !(d.len() == 3 && digits(d[0], 4) && two(d[1], 1, 12) && two(d[2], 1, 31)) {
+        return false;
+    }
+    let z: Vec<&str> = rest.split('Z').collect();
+    let plus: Vec<&str> = rest.split('+').collect();
+    let minus: Vec<&str> = rest.split('-').collect();
+    match (z.as_slice(), plus.as_slice(), minus.as_slice()) {
+        ([t, ""], _, _) => time(t),
+        ([_], [t, o], _) => time(t) && offset(o),
+        ([_], [_], [t, o]) => time(t) && offset(o),
+        _ => false,
+    }
+}
+
+/// An RSS date, RFC 822's date-time with a four-digit year allowed and its
+/// names in any case, as the same instant in RFC 3339's form, as feed's
+/// render writes one: an optional day of the week and a comma, then the
+/// day, the month, the year (two digits before 50 in the 2000s, else in
+/// the 1900s, as RFC 2822 reads them), the time (seconds `00` where it
+/// has none) and the zone (`Z` for UT, GMT and Z, the US zones and
+/// `+HHMM` as offsets). `None` for any other text, a comment or another
+/// military zone among them.
+fn feed_822(s: &str) -> Option<String> {
+    const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let words = |t: &str| -> Vec<String> {
+        t.replace(['\n', '\r', '\t'], " ")
+            .split(' ')
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect()
+    };
+    let parts: Vec<&str> = s.split(',').collect();
+    let w = match parts.as_slice() {
+        [_] => words(s),
+        [day, rest] => match words(day).as_slice() {
+            [d] if DAYS.contains(&d.to_ascii_lowercase().as_str()) => words(rest),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let [day, month, year, time, zone] = <[String; 5]>::try_from(w).ok()?;
+    let day = if digits(&day, 1) {
+        format!("0{day}")
+    } else {
+        day
+    };
+    if !two(&day, 1, 31) {
+        return None;
+    }
+    let month = MONTHS
+        .iter()
+        .position(|m| *m == month.to_ascii_lowercase())?
+        + 1;
+    let year = if digits(&year, 4) {
+        year
+    } else if digits(&year, 2) {
+        format!("{}{year}", if year.as_str() < "50" { "20" } else { "19" })
+    } else {
+        return None;
+    };
+    let mut hms: Vec<&str> = time.split(':').collect();
+    if hms.len() == 2 {
+        hms.push("00");
+    }
+    if !(hms.len() == 3 && two(hms[0], 0, 23) && two(hms[1], 0, 59) && two(hms[2], 0, 60)) {
+        return None;
+    }
+    let numeric = |sign: char, d: &str| {
+        (digits(d, 4) && two(&d[..2], 0, 23) && two(&d[2..], 0, 59))
+            .then(|| format!("{sign}{}:{}", &d[..2], &d[2..]))
+    };
+    let offset = match zone.to_ascii_lowercase().as_str() {
+        "ut" | "gmt" | "z" => "Z".to_string(),
+        "est" | "cdt" => "-05:00".to_string(),
+        "edt" => "-04:00".to_string(),
+        "cst" => "-06:00".to_string(),
+        "mst" => "-07:00".to_string(),
+        "mdt" => "-06:00".to_string(),
+        "pst" => "-08:00".to_string(),
+        "pdt" => "-07:00".to_string(),
+        _ => match (zone.strip_prefix('+'), zone.strip_prefix('-')) {
+            (Some(d), _) => numeric('+', d)?,
+            (_, Some(d)) => numeric('-', d)?,
+            _ => return None,
+        },
+    };
+    Some(format!("{year}-{month:02}-{day}T{}{offset}", hms.join(":")))
+}
+
+/// A date as feed's render writes it and its reader reads it back: `Ok`
+/// with its RFC 3339 form (a date with no text is written as a missing one
+/// is), or `Err` with the text of a date in neither form, which the render
+/// writes as the epoch followed by a category that holds the text.
+fn feed_date(v: &Datum) -> Result<String, String> {
+    match v {
+        Datum::String(s) if s.is_empty() => Ok(FEED_EPOCH.to_string()),
+        Datum::String(s) => {
+            let upper = s.replace('t', "T").replace('z', "Z");
+            if feed_is_3339(&upper) {
+                Ok(upper)
+            } else {
+                feed_822(s).ok_or_else(|| s.to_string())
+            }
+        }
+        other => Err(other.to_string()),
+    }
+}
+
+/// A value as feed's render writes it, read back: a member whose value is
+/// null not written, and a character XML 1.0 cannot carry written as
+/// U+FFFD.
+fn feed_clean(d: &Datum) -> Datum {
+    let carried = |c: char| {
+        matches!(c, '\t' | '\n' | '\r') || (c >= ' ' && c != '\u{fffe}' && c != '\u{ffff}')
+    };
+    match d {
+        Datum::String(s) if !s.chars().all(carried) => Datum::String(
+            s.chars()
+                .map(|c| if carried(c) { c } else { '\u{fffd}' })
+                .collect::<String>()
+                .into(),
+        ),
+        Datum::Array(items) => Datum::Array(items.iter().map(feed_clean).collect()),
+        Datum::Object(members) => Datum::Object(
+            members
+                .iter()
+                .filter(|(_, v)| !matches!(v, Datum::Null))
+                .map(|(k, v)| (k.clone(), feed_clean(v)))
+                .collect(),
+        ),
+        d => d.clone(),
+    }
+}
+
+/// A feed's or an entry's members as feed's render writes them, read back
+/// (`entry` the entry's position; `None` for the feed): Atom 1.0; a text
+/// construct of type xhtml as html, its value trimmed; each date in RFC
+/// 3339's form, or the epoch and a category holding the text of one in
+/// neither form, written after it, so among the categories in the order
+/// of the members; an entry's RSS source not read back; and the id, the
+/// title and the updated Atom requires, where they are missing.
+fn feed_members(members: &[(Box<str>, Datum)], entry: Option<usize>) -> Vec<(Box<str>, Datum)> {
+    let text = |name: &str| ["title", "subtitle", "rights", "summary", "content"].contains(&name);
+    let trimmed = |s: &str| {
+        s.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+            .to_string()
+    };
+    let mut out: Vec<(Box<str>, Datum)> = Vec::new();
+    let mut categories: Vec<Datum> = Vec::new();
+    let mut has_categories = false;
+    for (k, v) in members {
+        let v = match (k.as_ref(), v) {
+            ("version", _) => Datum::String("1.0".into()),
+            ("format", _) => Datum::String("atom".into()),
+            ("source", _) if entry.is_some() => continue,
+            ("updated" | "published", date) => match feed_date(date) {
+                Ok(date) => Datum::String(date.into()),
+                Err(kept) => {
+                    categories.push(Datum::Object(
+                        [
+                            ("term".into(), Datum::String(k.clone())),
+                            (
+                                "scheme".into(),
+                                Datum::String(format!("{FEED_RENDER}/date").into()),
+                            ),
+                            ("label".into(), Datum::String(kept.into())),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ));
+                    Datum::String(FEED_EPOCH.into())
+                }
+            },
+            ("categories", Datum::Array(own)) => {
+                has_categories = true;
+                categories.extend(own.iter().cloned());
+                continue;
+            }
+            ("entries", Datum::Array(entries)) => Datum::Array(
+                entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| match e.as_object() {
+                        Some(m) => {
+                            let m: Vec<(Box<str>, Datum)> =
+                                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                            Datum::Object(feed_members(&m, Some(i)).into_iter().collect())
+                        }
+                        None => e.clone(),
+                    })
+                    .collect(),
+            ),
+            (name, Datum::Object(construct)) if text(name) => {
+                let xhtml =
+                    matches!(construct.get("type"), Some(Datum::String(t)) if &**t == "xhtml");
+                if xhtml {
+                    Datum::Object(
+                        construct
+                            .iter()
+                            .map(|(ck, cv)| match (ck.as_ref(), cv) {
+                                ("type", _) => (ck.clone(), Datum::String("html".into())),
+                                ("value", Datum::String(s)) => {
+                                    (ck.clone(), Datum::String(trimmed(s).into()))
+                                }
+                                _ => (ck.clone(), cv.clone()),
+                            })
+                            .collect(),
+                    )
+                } else {
+                    v.clone()
+                }
+            }
+            _ => v.clone(),
+        };
+        out.push((k.clone(), v));
+    }
+    if has_categories || !categories.is_empty() {
+        out.push(("categories".into(), Datum::Array(categories)));
+    }
+    let has = |out: &[(Box<str>, Datum)], name: &str| out.iter().any(|(k, _)| &**k == name);
+    if !has(&out, "id") {
+        let id = match entry {
+            Some(i) => format!("{FEED_RENDER}/{i}"),
+            None => FEED_RENDER.to_string(),
+        };
+        out.push(("id".into(), Datum::String(id.into())));
+    }
+    if !has(&out, "title") {
+        let empty = [
+            ("type".into(), Datum::String("text".into())),
+            ("value".into(), Datum::String("".into())),
+        ];
+        out.push(("title".into(), Datum::Object(empty.into_iter().collect())));
+    }
+    if !has(&out, "updated") {
+        out.push(("updated".into(), Datum::String(FEED_EPOCH.into())));
+    }
+    out
+}
+
+/// What feed's render makes of a feed's own tree, read back by its reader
+/// (feed's loss list): its members as [`feed_members`] writes them, and,
+/// for a feed without an author, unless it has entries and every one has
+/// one, an author named by its title where that is text and not empty,
+/// and `unknown` otherwise, with the render's uri.
+fn feed_reading(d: &Datum) -> Datum {
+    let d = feed_clean(d);
+    let Some(feed) = d.as_object() else {
+        return d;
+    };
+    let members: Vec<(Box<str>, Datum)> =
+        feed.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut out = feed_members(&members, None);
+    let get = |out: &[(Box<str>, Datum)], name: &str| {
+        out.iter()
+            .find(|(k, _)| &**k == name)
+            .map(|(_, v)| v.clone())
+    };
+    let authored = |d: Option<Datum>| matches!(d, Some(Datum::Array(a)) if !a.is_empty());
+    if !authored(get(&out, "authors")) {
+        let entries = match get(&out, "entries") {
+            Some(Datum::Array(entries)) => entries,
+            _ => Vec::new(),
+        };
+        let every = !entries.is_empty()
+            && entries
+                .iter()
+                .all(|e| authored(e.as_object().and_then(|m| m.get("authors")).cloned()));
+        if !every {
+            let name = match get(&out, "title") {
+                Some(Datum::Object(t)) if matches!(t.get("type"), Some(Datum::String(k)) if &**k == "text") => {
+                    match t.get("value") {
+                        Some(Datum::String(v)) if !v.is_empty() => v.clone(),
+                        _ => "unknown".into(),
+                    }
+                }
+                _ => "unknown".into(),
+            };
+            let author: Datum = Datum::Object(
+                [
+                    ("name".into(), Datum::String(name)),
+                    ("uri".into(), Datum::String(FEED_RENDER.into())),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            out.retain(|(k, _)| &**k != "authors");
+            out.push(("authors".into(), Datum::Array(vec![author])));
+        }
+    }
+    Datum::Object(out.into_iter().collect())
+}
+
 /// Whether `written`, the document aless wrote into `to` from a source of
 /// `from` whose value is `source`, reads back as the conventions say.
 fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), String> {
@@ -828,16 +1355,25 @@ fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), Stri
         let yaml = through_program("markdown-records.alc", &program, "markdown", written)
             .map_err(|f| format!("the written table does not read back: {f}"))?;
         read("yaml", &yaml).map_err(|f| format!("its records do not read back: {f}"))?
-    } else if to == "xml" && embedded {
-        // An embedding reads back through its reverse: the element tree,
-        // as JSON, unembedded, and written where a non-finite number has a
-        // spelling.
-        let tree = read("xml", written)
+    } else if (to == "xml" || to == "feed") && embedded {
+        // An embedding reads back through its reverse: the element tree, or
+        // the feed, as JSON, unembedded, and written where a non-finite
+        // number has a spelling. (expr's and semver's reverses are the
+        // identity, so their documents read back as they are.)
+        let tree = read(to, written)
             .map_err(|f| format!("the written document does not read back: {f}"))?;
-        let embed = part.embed.as_ref().expect("xml has an embed");
-        let program = format!("{}\ndef export [input] (xml-unembed input)\n", embed.text);
-        let yaml = through_program("xml-unembed.alc", &program, "json", &tree.to_string())
-            .map_err(|f| format!("the element tree does not unembed: {f}"))?;
+        let embed = part
+            .embed
+            .as_ref()
+            .expect("an embedding format has an embed");
+        let program = format!("{}\ndef export [input] ({to}-unembed input)\n", embed.text);
+        let yaml = through_program(
+            &format!("{to}-unembed.alc"),
+            &program,
+            "json",
+            &tree.to_string(),
+        )
+        .map_err(|f| format!("the tree does not unembed: {f}"))?;
         read("yaml", &yaml).map_err(|f| format!("the unembedded tree does not read back: {f}"))?
     } else {
         read(to, written).map_err(|f| format!("the written document does not read back: {f}"))?
@@ -858,6 +1394,13 @@ fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), Stri
         "jsonl" => map_non_finite(&wrap_array(source), &|_| Datum::Null),
         "toml" => without_nulls(&wrap_object(source, &key)),
         "zon" => zon_reading(source),
+        "expr" => expr_reading(source),
+        // Only a version reaches its render: the embed refuses any other
+        // tree, and a version's own documents are versions.
+        "semver" => semver_reading(source),
+        // A feed's own tree; a plain one read back through the reverse
+        // above, exactly.
+        "feed" if !embedded => feed_reading(source),
         _ => source.clone(),
     };
     let back = if to == "zon" { zon_back(&back) } else { back };
@@ -902,6 +1445,11 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
     let mut refused_sources = Vec::new();
     let mut too_deep = Vec::new();
     let mut pairs = 0;
+    // The declared refusals, by class: a schema-only target's of a source
+    // of another tree (by target), and a version's embed's of a tree that
+    // is not a version.
+    let mut schema_only: HashMap<&str, usize> = HashMap::new();
+    let mut not_a_version = 0;
     for (n, (name, from, text)) in docs.iter().enumerate() {
         let source = match read(from, text) {
             Ok(d) => d,
@@ -916,19 +1464,33 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
         }
         for to in FORMATS {
             pairs += 1;
-            let outcome = render(name, from, to, text).and_then(|written| {
-                // A records source read through its lift writes its table,
-                // not its tree: it is held to reading back.
-                let lifted = translate::source_part(format(from))
-                    .is_some_and(|p| p.reads.first() == Some(&Shape::Records))
-                    && target(to).writes == Shape::Records;
-                if lifted {
-                    return read(to, &written)
-                        .map(|_| ())
-                        .map_err(|f| format!("the written document does not read back: {f}"));
+            let written = match render(name, from, to, text) {
+                Ok(written) => written,
+                Err(Unwritten::SchemaOnly) => {
+                    *schema_only.entry(to).or_default() += 1;
+                    continue;
                 }
+                Err(Unwritten::NotAVersion) => {
+                    not_a_version += 1;
+                    continue;
+                }
+                Err(Unwritten::Failed(why)) => {
+                    failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                    continue;
+                }
+            };
+            // A records source read through its lift writes its table, not
+            // its tree: it is held to reading back.
+            let lifted = translate::source_part(format(from))
+                .is_some_and(|p| p.reads.first() == Some(&Shape::Records))
+                && target(to).writes == Shape::Records;
+            let outcome = if lifted {
+                read(to, &written)
+                    .map(|_| ())
+                    .map_err(|f| format!("the written document does not read back: {f}"))
+            } else {
                 check(from, to, &source, &written)
-            });
+            };
             if let Err(why) = outcome {
                 failures.push(format!("{name} ({from}) -> {to}: {why}"));
             }
@@ -952,9 +1514,15 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
     for line in &failures {
         eprintln!("FAIL {line}");
     }
+    let mut refusals: Vec<(&str, usize)> = schema_only.into_iter().collect();
+    refusals.sort_unstable();
+    let declared = refusals.iter().map(|(_, n)| n).sum::<usize>() + not_a_version;
     eprintln!(
-        "matrix: {pairs} pairs of {} documents; {} refused by their own reader, {} too deep",
+        "matrix: {pairs} pairs of {} documents; {} written and read back, {declared} refused as \
+         declared: by a schema-only target {refusals:?}, by semver as not a version \
+         {not_a_version}; {} documents refused by their own reader, {} too deep",
         docs.len(),
+        pairs - declared - failures.len(),
         refused_sources.len(),
         too_deep.len()
     );
@@ -984,7 +1552,7 @@ fn every_document_translates_into_every_format() {
 }
 
 /// The documents [`corpus`] reads, at least.
-const FLOOR: usize = 110;
+const FLOOR: usize = 117;
 
 /// Every format's own fixture corpus, into every format: thousands of
 /// documents, run by CI with `--ignored` in the `matrix` profile, where
@@ -992,7 +1560,7 @@ const FLOOR: usize = 110;
 #[test]
 #[ignore = "the cross product of every format's fixtures: CI runs it in the matrix profile"]
 fn every_fixture_of_every_format_translates_into_every_format() {
-    matrix(spec_corpus(), 2300, 1);
+    matrix(spec_corpus(), 3850, 1);
 }
 
 /// Ten times the records leave what the composed render retains where it

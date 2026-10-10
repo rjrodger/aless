@@ -31,7 +31,14 @@ fn every_fixture_loads() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let result = load::load_path(&path, None);
+        // A format that declares no extension (expressions, a version) is
+        // named with -k, here the name its fixture's extension spells.
+        let named = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(Format::from_name)
+            .filter(|f| f.extensions().is_empty() && Format::detect_known(&path).is_none());
+        let result = load::load_path(&path, named);
         if name == "bad.json" {
             let err = result.expect_err("bad.json must not parse");
             assert_eq!(err.line, 2, "{err}");
@@ -61,10 +68,20 @@ fn every_fixture_loads() {
         Format::Zon,
         Format::Markdown,
         Format::Feed,
+        Format::Css,
+        Format::Proto,
+        Format::Pgn,
+        Format::Expr,
+        Format::Semver,
         Format::Text,
     ] {
         assert!(seen.contains(&f), "no fixture exercised {f}");
     }
+    assert_eq!(
+        Format::ALL.len(),
+        20,
+        "a format added to ALL needs a fixture, and its place in the list above"
+    );
 }
 
 /// Every fixture grammar compiles, as the option that names it would
@@ -150,6 +167,65 @@ fn other_grammars_place_values() {
     let text = load::load_path(&fixture("lines.txt"), None).unwrap().doc;
     assert!(text.root().children >= 2);
     assert_eq!(text.node(2).line, 2);
+}
+
+/// The trees the newer grammars build are placed as well as their values
+/// follow the source: a stylesheet's declarations, a game's tags, an
+/// expression's terms, a version's parts, and the start of a .proto
+/// file's descriptor, whose later members are derived and regrouped, so
+/// best effort there.
+#[test]
+fn the_newer_grammars_place_values() {
+    let line = |name: &str, format: Option<Format>, path: &[Key]| {
+        let doc = load::load_path(&fixture(name), format).unwrap().doc;
+        let node = doc
+            .resolve(path)
+            .unwrap_or_else(|| panic!("{name}: {path:?}"));
+        doc.node(node).line
+    };
+    let name = |s: &str| Key::Name(s.into());
+    assert_eq!(
+        line(
+            "sample.css",
+            None,
+            &[
+                name("rules"),
+                Key::Index(1),
+                name("declarations"),
+                Key::Index(0),
+                name("property")
+            ]
+        ),
+        line_of("sample.css", "margin: 0")
+    );
+    assert_eq!(
+        line(
+            "sample.pgn",
+            None,
+            &[Key::Index(1), name("tags"), name("Event")]
+        ),
+        line_of("sample.pgn", "Annotated")
+    );
+    assert_eq!(
+        line(
+            "sample.expr",
+            Some(Format::Expr),
+            &[name("ratio"), Key::Index(1)]
+        ),
+        line_of("sample.expr", "ratio")
+    );
+    assert_eq!(
+        line("sample.semver", Some(Format::Semver), &[name("patch")]),
+        1
+    );
+    assert_eq!(
+        line("sample.proto", None, &[name("package")]),
+        line_of("sample.proto", "package demo")
+    );
+    assert_eq!(
+        line("sample.proto", None, &[name("dependency"), Key::Index(1)]),
+        line_of("sample.proto", "other.proto")
+    );
 }
 
 #[test]

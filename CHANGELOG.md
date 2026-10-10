@@ -10,8 +10,33 @@ bumps the version renames `Unreleased` to the version and its date
 
 ## Unreleased
 
+### Added
+
+- Five formats more, read by the crates that carry their translation
+  parts (admin ADR-27): CSS (`.css`, tabnas-css), Protocol Buffers'
+  `.proto` files (`.proto`, tabnas-proto, read as their
+  FileDescriptorProto in the JSON form protoc writes), PGN chess games
+  (`.pgn`, tabnas-chess, named `pgn` as its manifest names it),
+  arithmetic expressions (`-k expr`, tabnas-expr, each operation an array
+  of its operator and its terms) and semantic versions (`-k semver`,
+  tabnas-semver, read without the line break a file holding one ends
+  with). A `.css`, `.proto` or `.pgn` file, read as plain text before,
+  is read as its format.
+- `--render` writes each of them, and Atom feeds through tabnas-feed
+  0.6.16's render: `css`, `proto`, `pgn`, `expr`, `semver` and `feed`.
+  An expression takes any document as it is and a feed any through its
+  embedding. CSS, `.proto` and PGN write only the tree their own
+  documents read as, and refuse any other document before reading it,
+  as a `usage` error that names the route that can write one, a program
+  that makes that tree (`--alchemy FILE --render proto`); a version takes
+  only a tree that is a version, and refuses any other with
+  `TARGET_VALUE_UNREPRESENTABLE` before writing anything.
+
 ### Changed
 
+- `--render` given a format's extension rather than its name
+  (`--render rss`, `--render yml`) names the format's render
+  (`--render feed`), where it said the format had none.
 - `--render` reads JSON Lines, CSV and TSV a record at a time under
   `--path` too, as it does at the root: the path's value is
   taken from the records as they pass, and the rest of the file is read

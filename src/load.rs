@@ -37,6 +37,12 @@ pub enum Format {
     Zon,
     Markdown,
     Feed,
+    Css,
+    Proto,
+    /// PGN, chess games, by tabnas-chess: its manifest's `languageId`.
+    Pgn,
+    Expr,
+    Semver,
     Text,
     /// A grammar registered from the command line; see [`grammar`].
     Custom(CustomId),
@@ -45,7 +51,7 @@ pub enum Format {
 impl Format {
     /// The built-in formats. A custom grammar is not among them: the
     /// registry lists those ([`grammar::registered`]).
-    pub const ALL: [Format; 15] = [
+    pub const ALL: [Format; 20] = [
         Format::Json,
         Format::Jsonl,
         Format::Jsonic,
@@ -60,6 +66,11 @@ impl Format {
         Format::Zon,
         Format::Markdown,
         Format::Feed,
+        Format::Css,
+        Format::Proto,
+        Format::Pgn,
+        Format::Expr,
+        Format::Semver,
         Format::Text,
     ];
 
@@ -79,6 +90,11 @@ impl Format {
             Format::Zon => "zon",
             Format::Markdown => "markdown",
             Format::Feed => "feed",
+            Format::Css => "css",
+            Format::Proto => "proto",
+            Format::Pgn => "pgn",
+            Format::Expr => "expr",
+            Format::Semver => "semver",
             Format::Text => "text",
             // An id only comes from the registry, so the grammar is there.
             Format::Custom(id) => grammar::get(id).map_or("custom", |g| g.name),
@@ -126,8 +142,10 @@ impl Format {
     }
 
     /// The file extensions (without the dot, in lower case) that imply a
-    /// built-in format; none for a custom grammar, whose names are its
-    /// own. The help's table of formats is this one.
+    /// built-in format, as its crate's manifest declares them; none for a
+    /// format whose manifest declares none (expressions, a version), which
+    /// `-k` names, or for a custom grammar, whose names are its own. The
+    /// help's table of formats is this one.
     pub fn extensions(self) -> &'static [&'static str] {
         match self {
             Format::Json => &["json", "geojson", "har", "jsonld", "webmanifest"],
@@ -144,6 +162,10 @@ impl Format {
             Format::Zon => &["zon"],
             Format::Markdown => &["md", "markdown"],
             Format::Feed => &["rss", "atom"],
+            Format::Css => &["css"],
+            Format::Proto => &["proto"],
+            Format::Pgn => &["pgn"],
+            Format::Expr | Format::Semver => &[],
             Format::Text => &["txt", "text", "log"],
             Format::Custom(_) => &[],
         }
@@ -575,11 +597,13 @@ pub(crate) fn read_timed_out(e: &io::Error) -> Option<Duration> {
 /// How deep a parse's rule stack may grow before aless stops it: about
 /// three rules a level, so some 1,000 levels of nesting, far past any real
 /// document. Most grammars stop sooner, each as `too_deep` too: JSON,
-/// JSONL, JSONic, JSON5, YAML, TOML, INI and ZON at 127 levels, XML at
-/// 256 and JSONC at 512. This cap is for a grammar with no limit of its
-/// own, a grammar from the command line included: deeper, some recurse
-/// until the stack runs out, which ends the process, and slow down with
-/// the square of the depth long before that.
+/// JSONL, JSONic, JSON5, YAML, TOML, INI, ZON and expressions at 127
+/// levels (an expression at 127 operations, too), XML at 256, JSONC at
+/// 512 and CSS at 768 open rules, and proto refuses braces nested past
+/// 100 levels before it parses. This cap is for a grammar with no limit
+/// of its own (PGN's variations, a grammar from the command line):
+/// deeper, some recurse until the stack runs out, which ends the process,
+/// and slow down with the square of the depth long before that.
 ///
 /// Rule depth follows nesting, never length: every repetition the
 /// compilers emit is a loop that re-enters its rule in one frame (a
@@ -600,7 +624,8 @@ pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
 
 /// How many predecessor snapshots a rule reaches through `prev` in every
 /// document aless parses: the engine's `options.rule.history`, set on
-/// every parser [`make_parser`] makes, a custom grammar's included.
+/// every parser [`make_parser`] makes, a custom grammar's included, where
+/// the grammar does not bound it itself (CSS's, at one, is kept).
 /// Unbounded, the engine's default, every rule replaced or pushed stays
 /// reachable from the current one until its container closes, so a
 /// parse's memory grows with the document's length, not its nesting:
@@ -783,6 +808,22 @@ impl LoadError {
             source_line: None,
             report,
         }
+    }
+
+    /// A refusal a format's crate made of the document outside its
+    /// grammar's parse (proto's check of the version a file declares), in
+    /// the engine's layout under `[<format>/<code>]`, with no position.
+    pub(crate) fn refused(
+        format: Format,
+        code: &str,
+        message: impl Into<String>,
+        hint: &str,
+    ) -> LoadError {
+        let mut e = LoadError::tagged(code, message);
+        e.report = e
+            .report
+            .replacen(&format!("[aless/{code}]"), &format!("[{format}/{code}]"), 1);
+        e.with_hint(hint)
     }
 
     /// Whether the input could not be read at all, as opposed to read and
@@ -1337,6 +1378,24 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         Format::Zon => tabnas_zon::make(),
         Format::Markdown => tabnas_markdown::make(),
         Format::Feed => tabnas_feed::make(),
+        Format::Css => tabnas_css::make(),
+        // An engine with the rewind history the grammar needs, which
+        // backtracks across whole statements; the tree its parse builds is
+        // read into the descriptor by [`read_as`].
+        Format::Proto => tabnas_proto::make(),
+        Format::Pgn => match tabnas_chess::make(&tabnas_chess::ChessOptions::default()) {
+            // The crate colours its reports only when standard output is a
+            // terminal; aless styles or strips the engine's codes itself,
+            // so every grammar's report carries them, as the engine's
+            // default has it.
+            Ok(mut parser) => {
+                parser.options.color.active = tabnas::Options::default().color.active;
+                parser
+            }
+            Err(e) => return Err(grammar_failed(format, &e.to_string())),
+        },
+        Format::Expr => tabnas_expr::make(),
+        Format::Semver => tabnas_semver::make(),
         Format::Text => return Ok(None),
         Format::Custom(id) => {
             let Some(g) = grammar::get(id) else {
@@ -1349,8 +1408,8 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
             }
         }
     };
-    // A grammar that bounds its own history keeps its bound; none of the
-    // built-in ones does, and a grammar from the command line cannot.
+    // A grammar that bounds its own history keeps its bound: CSS's, which
+    // is tighter; a grammar from the command line cannot set one.
     parser.options.rule.history.get_or_insert(RULE_HISTORY);
     Ok(Some(parser))
 }
@@ -1361,6 +1420,86 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
 /// since tabnas/json5#82.)
 pub(crate) fn parser_text(src: &str) -> &str {
     src.strip_prefix('\u{feff}').unwrap_or(src)
+}
+
+/// The text `format`'s grammar parses: [`parser_text`], and a version
+/// (`semver`) without the one line break a file holding it ends with,
+/// which the grammar, taking no whitespace at all, would refuse. Every
+/// line and column is where it is in the source.
+pub(crate) fn parse_text(src: &str, format: Format) -> &str {
+    let text = parser_text(src);
+    match format {
+        Format::Semver => text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text),
+        _ => text,
+    }
+}
+
+/// What a format's crate checks of a text before its grammar parses it:
+/// proto counts a document's braces, and refuses one that nests them
+/// deeper than [`tabnas_proto::MAX_NESTING_DEPTH`], since the tree its
+/// parse would build for one is let go of by recursion
+/// ([`tabnas_proto::preflight`]).
+pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
+    match format {
+        Format::Proto => tabnas_proto::preflight(src).map_err(|e| proto_refused(format, e)),
+        _ => Ok(()),
+    }
+}
+
+/// What a document of `format` is read as, from the value its grammar's
+/// parse built: that value, for every format but two, whose crates build
+/// the tree their manifests' schemas name from it. proto's is the
+/// FileDescriptorProto (`proto-descriptor`) in the JSON form protoc writes
+/// one in, which [`tabnas_proto::to_descriptor`] builds from the syntax
+/// tree the parse returns, refusing a declaration of a version it does
+/// not know. expr's is its S-expressions (`expr`): each operation a list
+/// of its operator's source text and its terms, as
+/// [`tabnas_expr::simplify`] reads the nodes the parse left in this
+/// thread's arena, so it runs on the parse's thread, before that thread
+/// parses again, which releases them.
+pub(crate) fn read_as(format: Format, value: tabnas::Value) -> Result<tabnas::Value, LoadError> {
+    match format {
+        Format::Proto => {
+            let descriptor =
+                tabnas_proto::to_descriptor(&value, None).map_err(|e| proto_refused(format, e))?;
+            drop(value);
+            let json = serde_json::to_value(&descriptor)
+                .map_err(|e| grammar_failed(format, &e.to_string()))?;
+            Ok(tabnas::Value::from_json(&json))
+        }
+        Format::Expr => Ok(tabnas_expr::simplify(&value)),
+        _ => Ok(value),
+    }
+}
+
+/// A refusal of proto's own, outside its grammar's parse, as aless reports
+/// a load error: nesting past its braces (`too_deep`), a declaration of a
+/// version it does not know (`version`); an engine error as the engine
+/// gave it, and a grammar that would not install as the grammar's failure.
+fn proto_refused(format: Format, e: tabnas_proto::ProtoError) -> LoadError {
+    use tabnas_proto::ProtoError;
+    match e {
+        ProtoError::TooDeep(_) => {
+            let (message, hint) =
+                too_deep_words(format, Deep::Braces(tabnas_proto::MAX_NESTING_DEPTH));
+            LoadError::tagged("too_deep", message).with_hint(&hint)
+        }
+        ProtoError::Version(message) => {
+            let detail = message.strip_prefix("proto: ").unwrap_or(&message);
+            LoadError::refused(
+                format,
+                "version",
+                format!("version: {detail}"),
+                "A .proto file declares its version as syntax = \"proto2\" or \"proto3\", or \
+                 edition = \"2023\" or \"2024\"; one that declares none is read as proto2.",
+            )
+        }
+        ProtoError::Parse(e) => LoadError::from_tabnas(&e, None),
+        ProtoError::Grammar(message) => grammar_failed(format, &message),
+    }
 }
 
 /// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
@@ -1475,7 +1614,7 @@ pub(crate) fn parse_until(
         let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         return Ok(Doc::from_lines(&lines(src)));
     }
-    let src = parser_text(src);
+    let src = parse_text(src, format);
     on_parse_thread(
         timeout,
         started,
@@ -1592,6 +1731,7 @@ fn parse_guarded(
     deadline: Option<Deadline>,
     max_depth: usize,
 ) -> Result<Doc, LoadError> {
+    check_text(format, src)?;
     // Under a grammar of plain text, a lone `*` is a word and a value; a
     // document of records keyed by a header row (CSV, TSV) is aligned by
     // column, which its separators and line ends carry.
@@ -1632,6 +1772,7 @@ fn parse_guarded(
                 let (message, hint) = too_deep_words(format, Deep::Value);
                 return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
             }
+            let value = read_as(format, value)?;
             let mut doc = Doc::from_value(&value);
             // The engine's tree is not needed past this point; letting it
             // go before the alignment lowers the peak on a large document.
@@ -1738,6 +1879,9 @@ pub(crate) enum Deep {
     Value,
     /// The grammar's own nesting limit stopped it (the engine's `cancel`).
     Grammar,
+    /// The format's crate counted the text's braces before the parse, and
+    /// they nest past this many levels (proto's).
+    Braces(usize),
 }
 
 /// The message and hint of a `too_deep` error, as the loader and the
@@ -1771,11 +1915,33 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
              same units.\nReal documents nest a few dozen levels at most."
                 .to_string(),
         ),
+        // An expression's tree nests an operation in the next, so a long
+        // flat one is deep too: the grammar bounds the operations one
+        // expression holds (a group in parentheses is one), besides the
+        // nesting of its lists and maps, at the same number.
+        Deep::Grammar if format == Format::Expr => (
+            "too_deep: an expression larger or deeper than the expr grammar reads".to_string(),
+            format!(
+                "The expr grammar holds at most {limit} operations in one expression, a group \
+                 in parentheses among them, and nests lists and maps at most {limit} levels \
+                 deep; the parse stopped where the document passed one of them.\nSplit a long \
+                 expression into several.",
+                limit = tabnas_expr::NODE_LIMIT
+            ),
+        ),
         Deep::Grammar => (
             format!("too_deep: nested deeper than the {format} grammar reads"),
             format!(
                 "The {format} grammar has a nesting limit of its own, and the parse stopped \
                  where the document passed it.\nReal documents nest a few dozen levels at most."
+            ),
+        ),
+        Deep::Braces(levels) => (
+            format!("too_deep: nested deeper than the {format} grammar reads"),
+            format!(
+                "The {format} reader counts a document's braces before it parses it, and \
+                 refuses one that nests them more than {levels} levels deep.\nReal documents \
+                 nest a few levels at most."
             ),
         ),
     }
@@ -1972,6 +2138,22 @@ mod tests {
         assert_eq!(Format::from_name("ndjson"), Some(Format::Jsonl));
         assert!(Format::known_names().starts_with(&["json", "jsonl"]));
         assert!(!Format::Json.is_custom());
+        // The extensions each crate's manifest declares.
+        assert_eq!(Format::detect(Path::new("site.css")), Format::Css);
+        assert_eq!(Format::detect(Path::new("api/v1.proto")), Format::Proto);
+        assert_eq!(Format::detect(Path::new("games.PGN")), Format::Pgn);
+        // Expressions and versions declare none: -k names them.
+        assert!(Format::Expr.extensions().is_empty() && Format::Semver.extensions().is_empty());
+        assert_eq!(Format::detect(Path::new("calc.expr")), Format::Text);
+        assert_eq!(Format::detect(Path::new("VERSION")), Format::Text);
+        assert_eq!(Format::from_name("expr"), Some(Format::Expr));
+        assert_eq!(Format::from_name("semver"), Some(Format::Semver));
+        assert_eq!(Format::from_name("pgn"), Some(Format::Pgn));
+        assert_eq!(
+            Format::from_name("chess"),
+            None,
+            "PGN goes by its languageId"
+        );
     }
 
     /// A custom grammar is detected by the whole file name (`/etc/hosts`)
@@ -2868,12 +3050,30 @@ mod tests {
     /// way, bounded and not.
     #[test]
     fn the_rule_history_bound_changes_no_value() {
-        let both = |make: &dyn Fn() -> Tabnas, src: &str, what: &str| {
+        // Each value as aless reads it (`read_as`): an expression's tree is
+        // in the thread's arena until its S-expressions are read.
+        let both = |format: Option<Format>, make: &dyn Fn() -> Tabnas, src: &str, what: &str| {
             let bounded = make();
-            assert_eq!(bounded.options.rule.history, Some(RULE_HISTORY), "{what}");
+            // aless's bound, or a grammar's own where it is tighter (CSS's).
+            assert!(
+                bounded
+                    .options
+                    .rule
+                    .history
+                    .is_some_and(|h| h <= RULE_HISTORY),
+                "{what}"
+            );
             let mut unbounded = make();
             unbounded.options.rule.history = None;
-            let run = |p: Tabnas| p.parse(src).map(|v| v.to_json()).map_err(|e| e.to_string());
+            let run = |p: Tabnas| {
+                p.parse(src)
+                    .map_err(|e| e.to_string())
+                    .and_then(|v| match format {
+                        Some(format) => read_as(format, v).map_err(|e| e.to_string()),
+                        None => Ok(v),
+                    })
+                    .map(|v| v.to_json())
+            };
             assert_eq!(run(bounded), run(unbounded), "{what}");
         };
         for format in Format::ALL.iter().copied().filter(|f| *f != Format::Text) {
@@ -2906,21 +3106,49 @@ mod tests {
                     "<rss version=\"2.0\"><channel><title>t</title>{}</channel></rss>",
                     items(&|i| format!("<item><title>i{i}</title></item>"), "")
                 ),
+                Format::Css => items(&|i| format!(".c{i} {{ color: red; margin: {i}px }}"), "\n"),
+                Format::Proto => format!(
+                    "syntax = \"proto3\";\n{}",
+                    items(
+                        &|i| format!("message M{i} {{ int32 a = 1; string b = 2; }}"),
+                        "\n"
+                    )
+                ),
+                Format::Pgn => items(
+                    &|i| format!("[Event \"e{i}\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0"),
+                    "\n\n",
+                ),
+                Format::Expr => format!("[{}]", items(&|i| format!("{i}+{i}*({i}-1)"), ", ")),
+                Format::Semver => format!(
+                    "1.2.3-{}+{}",
+                    items(&|i| format!("a{i}"), "."),
+                    items(&|i| format!("b{i}"), ".")
+                ),
                 _ => continue,
             };
-            both(&make, &long, &format!("{format}: a long document"));
+            both(
+                Some(format),
+                &make,
+                &long,
+                &format!("{format}: a long document"),
+            );
         }
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let mut read = 0;
         for entry in std::fs::read_dir(&fixtures).unwrap() {
             let path = entry.unwrap().path();
-            let format = match Format::detect_known(&path) {
+            let format = match fixture_format(&path) {
                 Some(Format::Text) | None => continue,
                 Some(format) => format,
             };
             let src = std::fs::read_to_string(&path).unwrap();
             let make = || make_parser(format).unwrap().unwrap();
-            both(&make, parser_text(&src), &path.display().to_string());
+            both(
+                Some(format),
+                &make,
+                parse_text(&src, format),
+                &path.display().to_string(),
+            );
             read += 1;
         }
         let grammars = fixtures.join("grammars");
@@ -2937,10 +3165,10 @@ mod tests {
                 parser
             };
             let src = std::fs::read_to_string(&sample).unwrap();
-            both(&make, &src, &path.display().to_string());
+            both(None, &make, &src, &path.display().to_string());
             read += 1;
         }
-        assert!(read >= 20, "{read} fixtures read");
+        assert!(read >= 25, "{read} fixtures read");
         // A grammar from the command line takes the bound from
         // `make_parser` too.
         let def = grammar::Definition::parse(
@@ -2974,9 +3202,21 @@ mod tests {
         assert!(parse("[1,,2]", Format::Jsonc).is_err());
     }
 
+    /// The format a fixture is read as: its extension's, or, for a format
+    /// that declares no extension of its own (`sample.expr`,
+    /// `sample.semver`), the one its extension names, as `-k` names it.
+    fn fixture_format(path: &Path) -> Option<Format> {
+        Format::detect_known(path).or_else(|| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .and_then(Format::from_name)
+                .filter(|f| f.extensions().is_empty() && !f.is_custom())
+        })
+    }
+
     #[test]
     fn every_format_parses_its_sample() {
-        let samples: [(Format, &str); 14] = [
+        let samples: [(Format, &str); 19] = [
             (Format::Json, "{\"a\": [1, 2]}"),
             (Format::Jsonl, "{\"a\": 1}\n{\"a\": 2}\n"),
             (Format::Jsonic, "a: 1, b: {c: x}"),
@@ -2994,6 +3234,14 @@ mod tests {
                 Format::Feed,
                 "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>t</title><item><title>i</title></item></channel></rss>",
             ),
+            (Format::Css, "a { color: red }\n@media print { b { margin: 0 } }\n"),
+            (
+                Format::Proto,
+                "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
+            ),
+            (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
+            (Format::Expr, "a: 1+2*3, b: (4)\n"),
+            (Format::Semver, "1.2.3-rc.1+build.5\n"),
         ];
         // Every built-in but plain text has a sample: `ALL` is the list this
         // (and `make_parser`, `name`) must be exhaustive over, and a custom
@@ -3009,6 +3257,130 @@ mod tests {
                 "{format}: no node carries a source line"
             );
         }
+    }
+
+    /// The value as aless reads it, as compact JSON.
+    fn read_json(src: &str, format: Format) -> String {
+        let doc = parse(src, format).unwrap_or_else(|e| panic!("{format} {src:?}: {e}"));
+        crate::fmt::to_json_compact(&doc, 0)
+    }
+
+    /// A .proto file reads as its FileDescriptorProto (the schema
+    /// `proto-descriptor`), in the JSON form protoc writes one in, not as
+    /// the syntax tree the grammar builds; a number the reader reads as
+    /// NaN (a digit separator, `1_0`) is null there, as the render takes it.
+    #[test]
+    fn proto_reads_as_its_descriptor() {
+        assert_eq!(
+            read_json(
+                "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; string b = 1_0; }",
+                Format::Proto
+            ),
+            r#"{"package":"p","dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[{"name":"M","field":[{"name":"a","number":1,"label":"LABEL_OPTIONAL","type":"TYPE_INT32"},{"name":"b","number":null,"label":"LABEL_OPTIONAL","type":"TYPE_STRING"}],"nestedType":[],"enumType":[],"oneofDecl":[],"extension":[]}],"enumType":[],"service":[],"extension":[],"syntax":"proto3"}"#
+        );
+        // No declaration reads as proto2, as protoc has it.
+        assert!(read_json("message M {}", Format::Proto).ends_with(r#""syntax":"proto2"}"#));
+    }
+
+    /// What proto's crate refuses outside its grammar's parse: braces
+    /// nested past its limit, counted before the parse, and a version it
+    /// does not know, found in the tree after it; each as aless words a
+    /// load error, with no position, since the crate gives none.
+    #[test]
+    fn proto_refuses_what_its_crate_refuses() {
+        let cap = tabnas_proto::MAX_NESTING_DEPTH;
+        let nested = |n: usize| format!("{}{}", "message M {".repeat(n), "}".repeat(n));
+        assert!(parse(&nested(cap), Format::Proto).is_ok());
+        let e = parse(&nested(cap + 1), Format::Proto).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: nested deeper than the proto grammar reads"
+        );
+        assert!(e.hint.contains("more than 100 levels deep"), "{}", e.hint);
+        assert_eq!((e.line, e.col), (0, 0));
+        let e = parse("syntax = \"proto5\";\nmessage M {}\n", Format::Proto).unwrap_err();
+        assert_eq!(e.code, "version");
+        assert_eq!(e.message, "version: unknown syntax version \"proto5\"");
+        assert!(
+            e.plain_report()
+                .starts_with("[proto/version]: version: unknown syntax version \"proto5\""),
+            "{}",
+            e.plain_report()
+        );
+        assert!(!e.is_io() && !e.is_too_large() && !e.is_timeout());
+    }
+
+    /// An expression reads as its S-expressions (the schema `expr`): an
+    /// operation the list of its operator's source text and its terms, a
+    /// group `(`'s, as the crate's own fixtures compare them, not the
+    /// descriptions its arena holds. Past the grammar's limits the parse
+    /// is too deep, in words that fit a long expression as a deep one.
+    #[test]
+    fn expr_reads_as_its_s_expressions() {
+        assert_eq!(read_json("1+2*3", Format::Expr), r#"["+",1,["*",2,3]]"#);
+        assert_eq!(
+            read_json("a: (1+2)*3, b: [-4, x]", Format::Expr),
+            r#"{"a":["*",["(",["+",1,2]],3],"b":[["-",4],"x"]}"#
+        );
+        let sum = |ops: usize| vec!["1"; ops + 1].join("+");
+        let limit = tabnas_expr::NODE_LIMIT;
+        assert!(parse(&sum(limit), Format::Expr).is_ok());
+        let e = parse(&sum(limit + 1), Format::Expr).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: an expression larger or deeper than the expr grammar reads"
+        );
+        assert!(e.hint.contains("127 operations"), "{}", e.hint);
+    }
+
+    /// A version file ends with a line break, which the grammar, taking no
+    /// whitespace at all, would refuse: aless reads the version without
+    /// one, and only one.
+    #[test]
+    fn a_version_reads_without_its_line_break() {
+        let version = r#"{"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}"#;
+        for src in [
+            "1.2.3-rc.1",
+            "1.2.3-rc.1\n",
+            "1.2.3-rc.1\r\n",
+            "\u{feff}1.2.3-rc.1\n",
+        ] {
+            assert_eq!(read_json(src, Format::Semver), version, "{src:?}");
+        }
+        for src in ["1.2.3\n\n", " 1.2.3", "v1.2.3\n", "1.2\n"] {
+            assert!(parse(src, Format::Semver).is_err(), "{src:?}");
+        }
+    }
+
+    /// CSS reads as its syntax tree (`css-ast`) and PGN as its database of
+    /// games (`pgn-database`), each as its grammar builds it; PGN's reports
+    /// carry the engine's colour codes whatever standard output is, as
+    /// every other grammar's do.
+    #[test]
+    fn css_and_pgn_read_as_their_grammars_build_them() {
+        assert_eq!(
+            read_json("a { color: red }", Format::Css),
+            r#"{"type":"stylesheet","rules":[{"type":"rule","selectors":["a"],"declarations":[{"type":"declaration","property":"color","value":"red"}]}]}"#
+        );
+        let games = read_json("[White \"a\"]\n\n1. e4 1-0\n\n1. d4 *\n", Format::Pgn);
+        assert!(
+            games.starts_with(r#"[{"tags":{"White":"a"},"moves":[{"san":"e4""#),
+            "{games}"
+        );
+        assert!(games.ends_with(r#""result":"*"}]"#), "{games}");
+        assert!(
+            make_parser(Format::Pgn)
+                .unwrap()
+                .unwrap()
+                .options
+                .color
+                .active
+        );
+        let e = parse("1. e4 Zz9", Format::Pgn).unwrap_err();
+        assert_eq!(e.code, "unexpected");
+        assert!(e.message.contains("not chess notation"), "{}", e.message);
     }
 
     #[test]

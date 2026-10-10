@@ -32,9 +32,13 @@
 //! one, where alchemy says the source's events reach it whole
 //! ([`Front::Tree`]). What a target cannot carry is a declared convention,
 //! not a refusal: each adapter's sentences join the render's own in the
-//! loss note. The one refusal is a schema-only target's (a schema and no
-//! embed), which writes only the tree its own documents read as, and which
-//! a program that makes that tree can write ([`schema_only`]).
+//! loss note. The one refusal composing makes is a schema-only target's (a
+//! tree's render with a schema and no embed: CSS, proto, PGN), which writes
+//! only the tree its own documents read as, and which a program that makes
+//! that tree can write ([`schema_only`]). An embed may refuse a tree as it
+//! runs, as a render may refuse a value: a version's (semver's) takes only
+//! a tree that is a version, and refuses any other with
+//! `TARGET_VALUE_UNREPRESENTABLE` before the render writes anything.
 //!
 //! Under `--alchemy`, the program's output takes the source's place
 //! ([`compose_program`]): its JSON events are a tree and its table is
@@ -95,6 +99,12 @@ fn crates() -> Vec<Descriptor> {
         descriptor!("tabnas-xml", tabnas_xml),
         descriptor!("tabnas-zon", tabnas_zon),
         descriptor!("tabnas-markdown", tabnas_markdown),
+        descriptor!("tabnas-feed", tabnas_feed),
+        descriptor!("tabnas-css", tabnas_css),
+        descriptor!("tabnas-proto", tabnas_proto),
+        descriptor!("tabnas-chess", tabnas_chess),
+        descriptor!("tabnas-expr", tabnas_expr),
+        descriptor!("tabnas-semver", tabnas_semver),
     ]
     .into_iter()
     .flatten()
@@ -152,11 +162,18 @@ pub fn render_names() -> Vec<&'static str> {
     names
 }
 
-/// Why `--render` refuses a name: a format aless reads and has no render
-/// for, or a name it does not know at all.
+/// Why `--render` refuses a name: one that names a format by an extension
+/// or an alias, whose render goes by the format's name; a format aless
+/// reads and has no render for; or a name it does not know at all.
 pub fn refusal(name: &str) -> String {
     let writes = names();
     match Format::from_name(name) {
+        Some(format) if part(format.name()).is_some() => format!(
+            "--render {}: {} is read as {format}, whose render is --render {format}; --render \
+             writes {writes}",
+            name.trim(),
+            name.trim()
+        ),
         Some(format) => format!(
             "--render {}: aless reads {} but has no render for it; --render writes {writes}",
             name.trim(),
@@ -511,15 +528,63 @@ mod tests {
             ],
             "JSON declares its one loss"
         );
+        // The trees with schemas of their own: an embed from a plain tree
+        // into an expression's, a version's and a feed's; none into the
+        // three that write only the trees their own documents read as.
+        for (id, schema, root, embed) in [
+            ("expr", "expr", Root::Any, Some("expr-embed")),
+            ("semver", "semver", Root::Object, Some("semver-embed")),
+            ("feed", "feed", Root::Object, Some("feed-embed")),
+            ("css", "css-ast", Root::Object, None),
+            ("proto", "proto-descriptor", Root::Object, None),
+            ("pgn", "pgn-database", Root::Array, None),
+        ] {
+            let p = part(id).unwrap_or_else(|| panic!("{id}'s manifest names its render"));
+            assert_eq!(p.reads, vec![Shape::Tree], "{id}");
+            assert_eq!(p.writes, Shape::Tree, "{id}");
+            assert_eq!(p.root, root, "{id}");
+            assert_eq!(p.schema.as_deref(), Some(schema), "{id}");
+            assert!(p.lift.is_none(), "{id}");
+            assert_eq!(p.embed.as_ref().map(|e| e.entry.as_str()), embed, "{id}");
+            let Render::Alc(alc) = &p.render else {
+                panic!("{id} renders through its own file");
+            };
+            assert_eq!(alc.entry, format!("{id}-render"), "{id}");
+            assert!(!p.loss.is_empty(), "{id} declares its loss");
+            assert_eq!(records(p), Records::Any, "{id}");
+        }
+        assert_eq!(
+            part("pgn").map(|p| match &p.render {
+                Render::Alc(alc) => alc.file.as_str(),
+                _ => "",
+            }),
+            Some("tabnas-chess/alchemy/render.alc"),
+            "PGN's id is its manifest's languageId, its crate tabnas-chess"
+        );
         assert_eq!(id_of("yaml"), Some("yaml"));
-        assert_eq!(id_of("feed"), None, "feed's manifest names no render");
+        assert_eq!(id_of("feed"), Some("feed"));
         assert_eq!(id_of("tsv"), None, "TSV is written as csv");
+        assert_eq!(id_of("chess"), None, "PGN goes by its languageId");
         assert_eq!(
             names(),
-            "csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon"
+            "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
+             semver, toml, xml, yaml or zon"
         );
         assert_eq!(source_part(Format::Tsv).map(|p| p.id.as_str()), Some("csv"));
-        assert_eq!(source_part(Format::Feed), None);
+        for format in [
+            Format::Feed,
+            Format::Css,
+            Format::Proto,
+            Format::Pgn,
+            Format::Expr,
+            Format::Semver,
+        ] {
+            assert_eq!(
+                source_part(format).map(|p| p.id.as_str()),
+                Some(format.name()),
+                "{format} reads as its own part describes"
+            );
+        }
         assert_eq!(source_part(Format::Text), None);
         assert_eq!(
             source_part(Format::Markdown).map(|p| p.id.as_str()),
@@ -529,21 +594,26 @@ mod tests {
 
     #[test]
     fn a_name_with_no_render_is_refused_by_what_it_is() {
+        let writes = "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, \
+                      pgn, proto, semver, toml, xml, yaml or zon";
         assert_eq!(
-            refusal("rss"),
-            "--render rss: aless reads feed but has no render for it; --render writes csv, ini, \
-             json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon"
+            refusal("tsv"),
+            format!(
+                "--render tsv: aless reads tsv but has no render for it; --render writes {writes}"
+            )
         );
         assert_eq!(
             refusal("yml"),
-            "--render yml: aless reads yaml but has no render for it; --render writes csv, ini, \
-             json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon",
-            "an extension names the format it reads, not the render"
+            format!("--render yml: yml is read as yaml, whose render is --render yaml; --render writes {writes}"),
+            "an extension names the format it reads, and a render goes by the format's name"
+        );
+        assert_eq!(
+            refusal("rss"),
+            format!("--render rss: rss is read as feed, whose render is --render feed; --render writes {writes}")
         );
         assert_eq!(
             refusal("docx"),
-            "--render writes csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, \
-             yaml or zon, not docx"
+            format!("--render writes {writes}, not docx")
         );
     }
 
@@ -616,6 +686,33 @@ mod tests {
             route(md, "xml", &o),
             (None, vec![Adapter::Embed], Some(true))
         );
+        // A plain tree into a schema's through its embed: an expression's
+        // and a feed's take any, a version's only a version (at run time).
+        for id in ["expr", "semver", "feed"] {
+            assert_eq!(
+                route(json, id, &o),
+                (None, vec![Adapter::Embed], Some(true)),
+                "{id}"
+            );
+        }
+        // A document of the target's own schema needs no embed, and passes
+        // through the root adapter its render needs, its root being that
+        // kind already; a schema-only target takes only such a document.
+        for (id, root) in [
+            ("css", Some(Adapter::WrapObject("items".into()))),
+            ("proto", Some(Adapter::WrapObject("items".into()))),
+            ("pgn", Some(Adapter::WrapArray)),
+            ("semver", Some(Adapter::WrapObject("items".into()))),
+            ("feed", Some(Adapter::WrapObject("items".into()))),
+            ("expr", None),
+        ] {
+            let own = source_part(Format::from_name(id).unwrap());
+            assert_eq!(
+                route(own, id, &o),
+                (None, root.into_iter().collect(), Some(true)),
+                "{id}"
+            );
+        }
         // Below the root a value is a plain tree, whatever the document.
         assert_eq!(
             route(None, "markdown", &o),
@@ -636,24 +733,41 @@ mod tests {
     }
 
     /// Every pair composes into a program that writes text: each source
-    /// part, and a plain tree, into each render.
+    /// part, and a plain tree, into each render; but a schema-only target
+    /// (a tree's render with a schema and no embed: css, proto, pgn), which
+    /// takes only a source of its own schema, and refuses any other with
+    /// the program route.
     #[test]
     fn every_composition_compiles_and_writes_text() {
         let sources: Vec<Option<&Part>> = std::iter::once(None)
             .chain(parts().iter().map(Some))
             .collect();
+        let mut refused = Vec::new();
         for source in &sources {
             for target in parts() {
-                let c = compose(*source, target, &options()).unwrap_or_else(|f| {
-                    panic!(
-                        "{} into {}: {f}",
-                        source.map_or("tree", |p| &p.id),
+                let name = source.map_or("tree", |p| &p.id);
+                // A records render reads rows, whatever the schema.
+                let own_only = target.writes == Shape::Tree
+                    && target.schema.is_some()
+                    && target.embed.is_none();
+                if own_only && source.and_then(|p| p.schema.as_ref()) != target.schema.as_ref() {
+                    let fail = compose(*source, target, &options())
+                        .expect_err("a schema-only target refuses another schema");
+                    assert!(
+                        schema_only(&fail, target, name).is_some(),
+                        "{name} into {}: {fail}",
                         target.id
-                    )
-                });
+                    );
+                    refused.push(format!("{name}->{}", target.id));
+                    continue;
+                }
+                let c = compose(*source, target, &options())
+                    .unwrap_or_else(|f| panic!("{name} into {}: {f}", target.id));
                 assert_eq!(c.program.output(), Output::Text, "{}", target.id);
             }
         }
+        // Three schema-only targets, and every source but their own.
+        assert_eq!(refused.len(), 3 * sources.len() - 3, "{refused:?}");
     }
 
     /// Under `--alchemy`, the program's output stands where the source's

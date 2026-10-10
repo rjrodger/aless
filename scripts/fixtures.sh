@@ -7,10 +7,10 @@
 # into every format and reads it back; tests/yaml_render.rs reads
 # tabnas/yaml's spec and its vendored YAML Test Suite. The crates ship only
 # their rs/ directories, so this clones each grammar repository whose crate
-# carries translation parts at the tag of the version Cargo.lock pins,
-# under target/fixtures/<repository>/<version> (a second run reuses a
-# checkout, and `cargo clean` removes them), and prints the lines that
-# name them:
+# carries translation parts (tabnas/chess is PGN's) at the tag of the
+# version Cargo.lock pins, under target/fixtures/<repository>/<version> (a
+# second run reuses a checkout, and `cargo clean` removes them), and prints
+# the lines that name them:
 #
 #   eval "$(scripts/fixtures.sh)"    # then cargo test --locked
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPOSITORIES="csv ini json json5 jsonc jsonic jsonl markdown toml xml yaml zon"
+REPOSITORIES="chess css csv expr feed ini json json5 jsonc jsonic jsonl markdown proto semver toml xml yaml zon"
 
 # The version Cargo.lock pins for a crate.
 locked() {

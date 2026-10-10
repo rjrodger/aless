@@ -13,7 +13,7 @@ The benefit is that position is a property of every format at once, including a 
 
 ## Exact, and best effort
 
-The alignment is exact wherever the tree's values are the tokens' values: the JSON family, TOML, INI, CSV and TSV, and ZON. It is a best effort where a grammar builds values the source does not spell out. Markdown's syntax tree, XML's element records and parts of YAML make nodes whose text is not one token's text, and a value assembled from several tokens matches none of them.
+The alignment is exact wherever the tree's values are the tokens' values: the JSON family, TOML, INI, CSV and TSV, and ZON. It is a best effort where a grammar builds values the source does not spell out. Markdown's syntax tree, XML's element records, CSS's and PGN's trees, an expression's operators and parts of YAML make nodes whose text is not one token's text, and a value assembled from several tokens matches none of them. A `.proto` file's descriptor is the loosest: it is derived from the file rather than read from it, its statements regrouped and its labels, types and indexes made by the reader, so only its first values, the package and the imports, are placed reliably.
 
 A node the alignment cannot place has no position, and says so: its `line` and `col` are `null`. It does not inherit its parent's, since a wrong position is worse than none for a caller that jumps to it.
 

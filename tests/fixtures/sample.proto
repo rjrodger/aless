@@ -1,0 +1,15 @@
+syntax = "proto3";
+package demo;
+import "google/protobuf/timestamp.proto";
+import public "other.proto";
+message Person {
+  string name = 1;          // a line comment
+  optional int32 age = 2;   /* a block comment */
+  repeated string tags = 3;
+  map<string, int32> scores = 4;
+  oneof contact { string email = 5; string phone = 6; }
+  message Address { string city = 1; }
+  enum Kind { UNKNOWN = 0; ADMIN = 1; }
+}
+enum Status { reserved 2, 9 to 11; UNKNOWN = 0; ACTIVE = 1; }
+service Dir { rpc Find (Person) returns (stream Person); }

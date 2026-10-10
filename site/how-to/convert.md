@@ -3,7 +3,7 @@ title: Convert a file to another format
 description: Write a document, or the records in it, as CSV, YAML, TOML, a Markdown table or any other format aless can write, streamed as it reads.
 order: 7
 ---
-`--render FORMAT` writes the value aless read as another format. Every format it reads can be written as every format it has a writer for: `csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml` and `zon`. The examples convert [`books.json`](/examples/books.json), a list of three books.
+`--render FORMAT` writes the value aless read as another format. Every format it reads can be written as every format it has a writer for that can hold it: `csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml`, `zon`, `feed` (an Atom feed) and `expr` take any document, and `css`, `proto`, `pgn` and `semver` only their own kind ([below](#formats-that-hold-only-their-own-kind)). The examples convert [`books.json`](/examples/books.json), a list of three books.
 
 ## Records as CSV
 
@@ -83,7 +83,19 @@ $ aless --render toml --key tags --path '.[0].tags' books.json 2>/dev/null
 "tags" = [ "examples", "reference" ]
 ```
 
-JSON Lines and the record formats wrap the other way: a value that is not an array is written as the one element of an array.
+JSON Lines and the record formats wrap the other way: a value that is not an array is written as the one element of an array. An Atom feed writes any document through the feed's embedding, each member or element an entry that carries its value, and an expression writes one as it is, an array whose first element is an operator in infix.
+
+## Formats that hold only their own kind
+
+Four formats have no convention for a document of another kind. CSS, `.proto` and PGN write only the tree their own documents read as, a stylesheet's syntax tree, a FileDescriptorProto or a database of games, so a conversion into one from anything else is refused before the input is read, with the status 2 and the route that can write one:
+
+```console
+$ aless --render proto --compact books.json; echo $?
+{"error":{"kind":"usage","message":"--render proto: proto writes a proto-descriptor tree, the tree its own documents read as, and books.json is not one; a program that makes one can write it: --alchemy FILE --render proto"}}
+2
+```
+
+That route is a [program](/how-to/alchemy.html) whose output is the tree the format reads as. A semantic version takes any document that is a version, an object with a `major`, a `minor` and a `patch`, and refuses any other with the code `TARGET_VALUE_UNREPRESENTABLE` and the status 1, before writing anything.
 
 ## Read what was not kept
 

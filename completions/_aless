@@ -10,7 +10,7 @@ _aless() {
     '--find=[the entries whose "key"\: value text matches]:REGEX: ' \
     '--where[the start'\''s entry\: its path and position]' \
     '--check[parse each FILE and report on each]' \
-    '--render=[the value written as FORMAT, streamed]:FORMAT:(csv ini json json5 jsonc jsonic jsonl markdown toml xml yaml zon)' \
+    '--render=[the value written as FORMAT, streamed]:FORMAT:(css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon)' \
     '--alchemy=[run the alchemy program in FILE]:FILE:_files' \
     '--alchemy-expr=[the same, the program on the command line]:TEXT: ' \
     '--explain[the program'\''s plan as JSON, and no run]' \
@@ -19,9 +19,9 @@ _aless() {
     '--limit=[at most N entries (default 200; 0 for all)]:N: ' \
     '--compact[JSON on one line, an error'\''s too]' \
     '--max-output=[cap a program'\''s output (default 1G)]:SIZE: ' \
-    '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
-    '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
-    '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text)' \
+    '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn expr semver text)' \
+    '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn expr semver text)' \
+    '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn expr semver text)' \
     '*--grammar=[a format of your own, from an ABNF grammar]:NAME=FILE:_files' \
     '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
     '--depth=[list N levels down; the viewer folds deeper]:N: ' \
