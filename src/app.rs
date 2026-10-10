@@ -2227,8 +2227,9 @@ PANES  (aless --panes out[,program], or :vsplit)
   ancestor and then the node closest to its old source line; folds that
   still exist are kept, and the focus stays on the same screen row.
   Formats: json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon
-  markdown feed text, and the NAME of any --grammar (by extension or whole
-  file name; --kind or :open ... FORMAT to force).
+  markdown feed css proto pgn expr semver text, and the NAME of any
+  --grammar (by extension or whole file name; --kind or :open ... FORMAT
+  to force; expr and semver have no extension of their own).
 "#;
     HELP.lines().map(str::to_string).collect()
 }

@@ -10,8 +10,36 @@ bumps the version renames `Unreleased` to the version and its date
 
 ## Unreleased
 
+### Added
+
+- Five formats more, read by the crates that carry their translation
+  parts (admin ADR-27): CSS (`.css`, tabnas-css), Protocol Buffers'
+  `.proto` files (`.proto`, tabnas-proto, read as their
+  FileDescriptorProto in the JSON form protoc writes), PGN chess games
+  (`.pgn`, tabnas-chess, named `pgn` as its manifest names it),
+  arithmetic expressions (`-k expr`, tabnas-expr, each operation an array
+  of its operator and its terms) and semantic versions (`-k semver`,
+  tabnas-semver, read without the line break a file holding one ends
+  with). A `.css`, `.proto` or `.pgn` file, read as plain text before,
+  is read as its format.
+- `--render` writes each of them, and Atom feeds through tabnas-feed
+  0.6.16's render: `css`, `proto`, `pgn`, `expr`, `semver` and `feed`.
+  An expression takes any document as it is and a feed any through its
+  embedding. CSS, `.proto` and PGN write only the tree their own
+  documents read as, and refuse any other document before reading it,
+  as a `usage` error that names the route that can write one, a program
+  that makes that tree (`--alchemy FILE --render proto`); a version takes
+  only a tree that is a version, and refuses any other with
+  `TARGET_VALUE_UNREPRESENTABLE` before writing anything.
+- `whole` in `--render`'s loss note and in an error carrying `loss`: why
+  a TOML or INI source is read whole before anything is written, in its
+  format's own sentence (alchemy 0.2.6, tabnas-toml 0.5.17, tabnas-ini 0.5.19).
+
 ### Changed
 
+- `--render` given a format's extension rather than its name
+  (`--render rss`, `--render yml`) names the format's render
+  (`--render feed`), where it said the format had none.
 - `--render` reads JSON Lines, CSV and TSV a record at a time under
   `--path` too, as it does at the root: the path's value is
   taken from the records as they pass, and the rest of the file is read
@@ -19,6 +47,10 @@ bumps the version renames `Unreleased` to the version and its date
   either. What is written is what reading the file whole writes; a record
   the grammar refuses after the value was written fails the run with
   `output: "partial"`, as a refusal at the root does.
+- `--render` and `--alchemy` write an XML document's records as the parse
+  proceeds, as they do the JSON family's (tabnas-transduce 0.2.7,
+  tabnas-xml 0.7.17), where they waited for the parse to end: a failure
+  part way leaves every record before it written, with `output: "partial"`.
 
 ### Fixed
 

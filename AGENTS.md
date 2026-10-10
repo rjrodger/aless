@@ -65,8 +65,9 @@ from jless. This file is the guide for any agent working here;
   JSONTestSuite's in the default run, every repository's `test/spec/*.tsv`
   in the ignored run CI makes in the `matrix` profile) and
   `tests/yaml_render.rs` (tabnas/yaml's spec and the vendored YAML Test
-  Suite). They come from checkouts of the twelve grammar repositories with
-  translation parts at the tags of the versions `Cargo.lock` pins:
+  Suite). They come from checkouts of the eighteen grammar repositories
+  with translation parts (PGN's is tabnas/chess) at the tags of the
+  versions `Cargo.lock` pins:
   `scripts/fixtures.sh` clones them under `target/fixtures/` and prints
   the export lines, `TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`, and CI
   runs it before the tests. The tests fail when the variables are unset,
