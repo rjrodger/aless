@@ -460,11 +460,13 @@ $ aless --render csv broken.json
 }
 ```
 
-**Streaming, honestly.** JSON Lines, CSV and TSV with the rows at the
-root are read from the file a record (or a chunk of records) at a time,
-so the file is never in memory whole and `--max-size` does not apply to
-it; the transducer's own limits per record do (a line over
-`max_record_bytes`, 64 MB, fails). Every other format is parsed whole by
+**Streaming, honestly.** JSON Lines, CSV and TSV are read from the file
+a record (or a chunk of records) at a time, at the root and below it
+(`--path .[3]` takes the fourth record as it passes, and the rest of the
+file is read to its end the same way, to validate it), so the file is
+never in memory whole and `--max-size` does not apply to it; the
+transducer's own limits per record do (a line over `max_record_bytes`,
+64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
 JSON family, jsonic, YAML, ZON and Markdown the records are streamed out

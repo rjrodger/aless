@@ -354,7 +354,7 @@ fn job(name: &str, from: Format, what: What) -> Job {
 
 /// The input as aless's plan for the format reads it.
 fn input(from: Format, text: &str) -> Input<'_> {
-    match export::plan(from, true).expect("a format with a grammar") {
+    match export::plan(from).expect("a format with a grammar") {
         Plan::Lines => {
             let reader: Box<dyn BufRead + Send> = Box::new(Cursor::new(text.as_bytes().to_vec()));
             Input::Lines(reader)
@@ -1060,7 +1060,7 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
     for (id, doc) in sources {
         let from = format(id);
         assert!(
-            !matches!(export::plan(from, true), Some(Plan::Materialize)),
+            !matches!(export::plan(from), Some(Plan::Materialize)),
             "{id} streams"
         );
         let composition =

@@ -954,6 +954,32 @@ fn render_csv_exports_the_records_at_a_path() {
         String::from_utf8_lossy(&out.stdout),
         "\"name\",\"age\",\"city\"\r\n\"ada\",\"36\",\"london\"\r\n\"lin\",\"28\",\"helsinki\"\r\n"
     );
+    // Below the root too: --path takes its value from the records as they
+    // pass, so the file is never read whole, and --max-size does not apply
+    // to it there either.
+    for file in ["tests/fixtures/sample.csv", "tests/fixtures/sample.jsonl"] {
+        let out = aless(
+            &[
+                "--render",
+                "json",
+                "--compact",
+                "--path",
+                ".[1]",
+                "--max-size",
+                "10",
+                file,
+            ],
+            None,
+        );
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let whole = aless(&["--json", "--compact", "--path", ".[1]", file], None);
+        assert_eq!(json(&out.stdout), json(&whole.stdout), "{file}");
+    }
     // Standard input too, with -k saying the format.
     let out = aless(
         &["-k", "jsonl", "--render", "csv"],

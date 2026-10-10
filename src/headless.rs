@@ -405,7 +405,7 @@ fn export(
         Start::At(..) => return Err(Failure::usage(RENDER_TAKES_NO_AT)),
     };
     let (source, name, origin, format) = streamed_source(req)?;
-    let Some(plan) = export::plan(format, path.is_empty()) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no records to export: name its format with -k, \
              such as -k jsonl or -k csv"
@@ -520,7 +520,7 @@ fn translate(
                 .map(|()| loss_note(part, &loss, &adapters, &name, req.compact));
         }
     };
-    let Some(plan) = export::plan(format, path.is_empty()) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no values to write as {id}: name its format with \
              -k, such as -k jsonl or -k csv"
@@ -735,7 +735,7 @@ fn run_program(
         _ => None,
     };
     let (source, name, origin, format) = streamed_source(req)?;
-    let Some(plan) = export::plan(format, true) else {
+    let Some(plan) = export::plan(format) else {
         return Err(Failure::usage(format!(
             "{name} is plain text, which has no values for a program to read: name its format \
              with -k, such as -k jsonl or -k csv"

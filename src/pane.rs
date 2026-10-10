@@ -360,7 +360,7 @@ fn render_within(
     timeout: Option<Duration>,
     max: usize,
 ) -> Result<Rendered, String> {
-    let Some(plan) = export::plan(format, true) else {
+    let Some(plan) = export::plan(format) else {
         return Err(format!(
             "{name} is plain text, which has no values to write: open it with -k to name its format"
         ));

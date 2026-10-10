@@ -757,7 +757,7 @@ mod tests {
             let source = source_part(format);
             let target = part(native.name()).unwrap();
             let composition = compose(source, target, &options()).unwrap();
-            let plan = export::plan(format, true).unwrap();
+            let plan = export::plan(format).unwrap();
             let input = || match plan {
                 export::Plan::Lines => {
                     let reader: Box<dyn BufRead + Send> =

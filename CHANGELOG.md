@@ -8,6 +8,18 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## Unreleased
+
+### Changed
+
+- `--render` reads JSON Lines, CSV and TSV a record at a time under
+  `--path` too, as it does at the root: the path's value is
+  taken from the records as they pass, and the rest of the file is read
+  the same way to its end, so `--max-size` does not apply below the root
+  either. What is written is what reading the file whole writes; a record
+  the grammar refuses after the value was written fails the run with
+  `output: "partial"`, as a refusal at the root does.
+
 ## [0.2.0] - 2026-10-10
 
 ### Changed
