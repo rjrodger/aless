@@ -587,6 +587,50 @@ mod tests {
         assert!(kinds(&two, &crlf, 5).contains(&("true".into(), "keyword")));
     }
 
+    /// The newer formats need no registering: the bundled registry knows
+    /// each by the name aless gives it (proto, css and expr by their
+    /// package's, pgn and semver by their own `languageId`), with a clean
+    /// lex stream, so each is coloured as its grammar lexes it.
+    #[test]
+    fn the_newer_formats_are_coloured_as_their_grammars_lex_them() {
+        for (format, text) in [
+            (Format::Css, "a { color: red }\n"),
+            (
+                Format::Proto,
+                "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
+            ),
+            (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
+            (Format::Expr, "a: 1+2*3\n"),
+            (Format::Semver, "1.2.3-rc.1"),
+        ] {
+            let grammar = Grammar::Format(format);
+            assert!(grammar.entry(Registry::bundled()).is_some(), "{format}");
+            assert!(grammar.colourable(), "{format}");
+            assert!(paint(grammar, text, None).is_some(), "{format}");
+        }
+        let proto = "syntax = \"proto3\";\n";
+        let p = paint(Grammar::Format(Format::Proto), proto, None).unwrap();
+        assert!(
+            kinds(&p, proto, 0).contains(&("\"proto3\"".into(), "string")),
+            "{:?}",
+            kinds(&p, proto, 0)
+        );
+        let pgn = "[Event \"e\"]\n";
+        let p = paint(Grammar::Format(Format::Pgn), pgn, None).unwrap();
+        assert!(
+            kinds(&p, pgn, 0).contains(&("\"e\"".into(), "string")),
+            "{:?}",
+            kinds(&p, pgn, 0)
+        );
+        let expr = "a: 1+2\n";
+        let p = paint(Grammar::Format(Format::Expr), expr, None).unwrap();
+        assert!(
+            kinds(&p, expr, 0).contains(&("1".into(), "number")),
+            "{:?}",
+            kinds(&p, expr, 0)
+        );
+    }
+
     #[test]
     fn what_is_never_coloured() {
         let too_long = " ".repeat(MAX_BYTES + 1);
