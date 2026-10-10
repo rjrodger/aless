@@ -1239,13 +1239,16 @@ The engine (`tabnas`, the `tabnas-parser` package) and the grammar
 crates come from crates.io, each a version requirement in `Cargo.toml`
 pinned by `Cargo.lock`.
 
-One test reaches past the published crates: `tests/yaml_render.rs` reads
-tabnas-yaml's own fixtures (its `test/spec` and the vendored YAML Test
-Suite), which the crate does not ship. It takes them from a checkout of
-tabnas/yaml at the tag of the tabnas-yaml version `Cargo.lock` pins,
-named by `TABNAS_YAML_DIR`; `scripts/yaml-fixtures.sh` clones one and
-prints the line that sets it, and the test fails without it, or with a
-checkout of another version.
+Two tests reach past the published crates. `tests/translate_matrix.rs`
+writes every document of every format's own fixture corpus into every
+format `--render` writes, through aless's own routes, and reads it back
+under the target's declared conventions; `tests/yaml_render.rs` reads
+tabnas-yaml's `test/spec` and its vendored YAML Test Suite. The crates do
+not ship those fixtures, so both take them from checkouts of the grammar
+repositories at the tags of the versions `Cargo.lock` pins, named by
+`TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`; `scripts/fixtures.sh` clones
+them and prints the lines that set both, and the tests fail without
+them, or with a checkout of another version.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
@@ -1259,8 +1262,9 @@ text. The other dependencies: crossterm (terminal), ratatui
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-eval "$(scripts/yaml-fixtures.sh)"    # tabnas/yaml's fixtures, which tests/yaml_render.rs reads
+eval "$(scripts/fixtures.sh)"         # the grammar repositories' fixtures, which the matrix and tests/yaml_render.rs read
 cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
+cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture   # every format's fixtures into every format
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 cargo package --locked                # the crate builds from exactly the files it publishes
 scripts/generate.sh                   # man/ and completions/, after an option or the help changes

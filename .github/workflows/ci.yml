@@ -34,13 +34,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      # tests/yaml_render.rs reads tabnas/yaml's own fixtures, which the
-      # published crate does not ship: a checkout at the tag of the locked
-      # tabnas-yaml version, cloned here and named in TABNAS_YAML_DIR for
-      # the steps after this one.
-      - name: tabnas/yaml fixtures
+      # tests/translate_matrix.rs and tests/yaml_render.rs read the grammar
+      # repositories' own fixtures, which the published crates do not
+      # ship: checkouts at the tags of the locked versions, cloned here
+      # and named in TABNAS_FIXTURES_DIR and TABNAS_YAML_DIR for the steps
+      # after this one.
+      - name: The grammar repositories' fixtures
         shell: bash
-        run: scripts/yaml-fixtures.sh
+        run: scripts/fixtures.sh
 
       - name: Format
         if: runner.os == 'Linux'
@@ -54,6 +55,15 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+      # Every document of every format's own fixture corpus written into
+      # every format --render writes, and read back under the target's
+      # declared conventions: thousands of documents, in the optimised
+      # matrix profile, on one platform. --nocapture shows the line the
+      # test prints every 25 documents, so the step is never silent.
+      - name: Translation matrix (every format's fixtures)
+        if: runner.os == 'Linux'
+        run: cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture
 
       - name: Terminal smoke test (pty)
         if: runner.os != 'Windows'

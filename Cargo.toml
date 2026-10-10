@@ -14,8 +14,9 @@ categories = ["command-line-utilities"]
 # What the published crate carries: the sources, the licence files, and
 # every file the README links to (the docs, the agent skill, the man page
 # and the completions, the example grammars and programs). The tests stay
-# in the repository: one of them reads a checkout of tabnas/yaml
-# (TABNAS_YAML_DIR), which a crate cannot ship.
+# in the repository: two of them read checkouts of the grammar
+# repositories (TABNAS_FIXTURES_DIR, TABNAS_YAML_DIR), which a crate cannot
+# ship.
 include = [
     "/src",
     "/LICENSE",
@@ -49,10 +50,11 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
 # The tabnas engine and grammars, from crates.io. The engine's package is
-# tabnas-parser; its library keeps the name `tabnas`. tests/yaml_render.rs
-# reads tabnas-yaml's own fixtures, which the published crate does not
-# ship, from a checkout of tabnas/yaml at the locked version's tag:
-# TABNAS_YAML_DIR names it, and scripts/yaml-fixtures.sh clones it.
+# tabnas-parser; its library keeps the name `tabnas`. tests/translate_matrix.rs
+# and tests/yaml_render.rs read the grammar repositories' own fixtures,
+# which the published crates do not ship, from checkouts at the locked
+# versions' tags: TABNAS_FIXTURES_DIR and TABNAS_YAML_DIR name them, and
+# scripts/fixtures.sh clones them.
 tabnas = { package = "tabnas-parser", version = "0.12.11" }
 tabnas-json = "0.5.17"
 tabnas-jsonl = "0.1.16"
@@ -110,3 +112,12 @@ strip = true
 # the release profile above, unchanged.
 [profile.dist]
 inherits = "release"
+
+# The translation matrix over every format's fixtures
+# (tests/translate_matrix.rs, run with --ignored): optimised as the release
+# build is, without the link-time work a test binary does not repay.
+[profile.matrix]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false

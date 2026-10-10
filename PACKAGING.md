@@ -53,10 +53,11 @@ for the owner submitting it to one. How a release is made is in
 
 ## Testing
 
-- **One test target needs the network.** `tests/yaml_render.rs` reads
-  tabnas/yaml's own fixtures from a checkout of that repository at the
-  locked version's tag (`TABNAS_YAML_DIR`; `scripts/yaml-fixtures.sh`
-  clones it). A sandboxed build can run everything else:
+- **Two test targets need the network.** `tests/translate_matrix.rs` and
+  `tests/yaml_render.rs` read the grammar repositories' own fixtures from
+  checkouts at the locked versions' tags (`TABNAS_FIXTURES_DIR` and
+  `TABNAS_YAML_DIR`; `scripts/fixtures.sh` clones them). A sandboxed
+  build can run everything else:
 
   ```bash
   cargo test --locked --lib --bins --test agent --test app_flow --test formats --test render_memory
