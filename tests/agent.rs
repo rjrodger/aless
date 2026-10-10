@@ -3045,6 +3045,54 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A source whose documents are read whole says why beside the loss:
+/// `whole` in the loss note is the sentence its format's manifest gives,
+/// TOML's tables and INI's sections being open to additions until the
+/// document ends.
+#[test]
+fn render_says_why_a_toml_or_ini_source_is_read_whole() {
+    for (file, manifest) in [
+        ("tests/fixtures/sample.toml", tabnas_toml::manifest_text()),
+        ("tests/fixtures/sample.ini", tabnas_ini::manifest_text()),
+    ] {
+        let sentence = &json(manifest.as_bytes())["translate"]["whole"];
+        assert!(
+            sentence.as_str().is_some_and(|s| !s.is_empty()),
+            "{file}: {sentence}"
+        );
+        let out = aless(&["--render", "json", "--compact", file], None);
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let note = json(&out.stderr);
+        assert_eq!(note["warning"]["kind"], "loss", "{file}");
+        assert_eq!(note["warning"]["file"], file, "{file}");
+        assert_eq!(&note["warning"]["whole"], sentence, "{file}");
+    }
+}
+
+/// A source that streams says nothing of being read whole: a JSON
+/// document's loss note has no `whole`.
+#[test]
+fn render_from_json_has_no_whole() {
+    let out = aless(
+        &[
+            "--render",
+            "json",
+            "--compact",
+            "tests/fixtures/sample.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["kind"], "loss", "{note}");
+    assert!(note["warning"].get("whole").is_none(), "{note}");
+}
+
 /// `--render yaml` writes the value at the start as YAML, through
 /// tabnas-yaml's own render: CSV's records as a sequence of mappings,
 /// every string and key double-quoted, and the render's loss declaration

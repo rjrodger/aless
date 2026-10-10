@@ -31,6 +31,9 @@ bumps the version renames `Unreleased` to the version and its date
   that makes that tree (`--alchemy FILE --render proto`); a version takes
   only a tree that is a version, and refuses any other with
   `TARGET_VALUE_UNREPRESENTABLE` before writing anything.
+- `whole` in `--render`'s loss note and in an error carrying `loss`: why
+  a TOML or INI source is read whole before anything is written, in its
+  format's own sentence (alchemy 0.2.6, tabnas-toml 0.5.17, tabnas-ini 0.5.19).
 
 ### Changed
 

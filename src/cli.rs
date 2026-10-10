@@ -918,7 +918,10 @@ const TOPICS: &[Topic] = &[
                 adapters naming each step that ran between the source and the render \
                 (wrap-object, wrap-array, embed, the inferred table, records), and adapter \
                 the one between a tree and a table, the inferred table or records, their \
-                sentences in loss after the format's own. Status 0 is success whatever \
+                sentences in loss after the format's own. Where the source's format says \
+                why its documents are read whole before anything is written (TOML, INI), \
+                whole is that sentence; a value below the root, a program's output and a \
+                document of any other format have none. Status 0 is success whatever \
                 standard error holds.",
             ),
         ],
@@ -1011,7 +1014,8 @@ const TOPICS: &[Topic] = &[
                 "An io, too_large or timeout error about a --grammar file adds grammar, \
                 with file the grammar file and format null. An error met while --render \
                 was writing (transduce, parse, timeout, or the render's own alchemy one) \
-                adds loss, the sentences its warning gives on success. --compact puts an \
+                adds loss, the sentences its warning gives on success, and whole where the \
+                warning has it. --compact puts an \
                 error on one line. The README's \"Scripts and \
                 agents\" section has every case at length.",
             ),

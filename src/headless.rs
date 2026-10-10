@@ -288,9 +288,8 @@ pub fn run_to(req: &Request, mut stdin: Stdin<'_>, out: Stdout) -> Output {
             note = loss;
             (String::new(), status::OK)
         }),
-        Op::Render(renderer) => {
-            export(req, *renderer, None, &mut stdin, out).map(|()| (String::new(), status::OK))
-        }
+        Op::Render(renderer) => export(req, *renderer, None, None, &mut stdin, out)
+            .map(|()| (String::new(), status::OK)),
         Op::Alchemy {
             program,
             render,
@@ -389,13 +388,14 @@ fn single(req: &Request, stdin: &mut Stdin<'_>) -> Result<(String, i32), Failure
 }
 
 /// `--render`: the input streamed through the transducer to `out`. A
-/// failure met while it was writing carries `loss` when it is given
-/// ([`Failure::with_loss`]); one met before (the command, an input that
-/// could not be opened) never does.
+/// failure met while it was writing carries `loss` when it is given, and
+/// `whole` with it when that is given too ([`Failure::with_loss`]); one
+/// met before (the command, an input that could not be opened) never does.
 fn export(
     req: &Request,
     renderer: Renderer,
     loss: Option<&[String]>,
+    whole: Option<&str>,
     stdin: &mut Stdin<'_>,
     out: Stdout,
 ) -> Result<(), Failure> {
@@ -459,7 +459,7 @@ fn export(
         ExportError::ReaderGone => unreachable!("handled above"),
     };
     Err(match loss {
-        Some(loss) => f.with_loss(loss),
+        Some(loss) => f.with_loss(loss, whole),
         None => f,
     })
 }
@@ -471,8 +471,9 @@ fn export(
 /// renderers writes the same document (`--render json`, `--render csv`
 /// over a tree), that renderer. A write that succeeds returns the loss
 /// declaration for standard error ([`loss_note`]); a failure met while it
-/// was writing carries the same sentences as `loss`
-/// ([`Failure::with_loss`]), on either path alike. A schema-only target
+/// was writing carries the same sentences as `loss`, and the source part's
+/// `whole` where it gives one ([`Failure::with_loss`]), on either path
+/// alike. A schema-only target
 /// refuses a document of another tree before reading it, as a usage
 /// error that names the route that can write it.
 fn translate(
@@ -509,14 +510,18 @@ fn translate(
             }
         })?;
     let loss = translation.loss().to_vec();
+    // Why the source's documents are read whole before anything is
+    // written, where its part says so (TOML's and INI's): said beside the
+    // loss, by the note and by a failure that carries it.
+    let whole = source_part.and_then(|p| p.whole.as_deref());
     let composition = match translation {
         translate::Translation::Composed(composition) => composition,
         // One of aless's own renderers over the events as they are.
         translate::Translation::Native {
             renderer, adapters, ..
         } => {
-            return export(req, renderer, Some(&loss), stdin, out)
-                .map(|()| loss_note(part, &loss, &adapters, &name, req.compact));
+            return export(req, renderer, Some(&loss), whole, stdin, out)
+                .map(|()| loss_note(part, &loss, whole, &adapters, &name, req.compact));
         }
     };
     let Some(plan) = export::plan(format) else {
@@ -554,6 +559,7 @@ fn translate(
             return Ok(loss_note(
                 part,
                 &loss,
+                whole,
                 &composition.adapters,
                 &name,
                 req.compact,
@@ -561,7 +567,7 @@ fn translate(
         }
         Err(e) => e,
     };
-    Err(translation_failure(req, &name, format, part, failure)?.with_loss(&loss))
+    Err(translation_failure(req, &name, format, part, failure)?.with_loss(&loss, whole))
 }
 
 /// The file a compile failure of a composition is placed in: the one the
@@ -627,10 +633,15 @@ fn translation_failure(
 /// document written that way does not keep, each adapter's among them
 /// when one ran: every adapter that ran is named in `adapters`, in order,
 /// and the one between the two shapes, the inferred table or `records`,
-/// as `adapter`. Nothing, for a write that declares no loss.
+/// as `adapter`. `whole` is why the source's documents are read whole
+/// before anything is written, the sentence its part gives (TOML's and
+/// INI's), when the translation has a source part that gives one: never
+/// below the root, which no source part describes, nor for a program's
+/// output. Nothing, for a write that declares no loss.
 fn loss_note(
     part: &Part,
     loss: &[String],
+    whole: Option<&str>,
     adapters: &[translate::Adapter],
     file: &str,
     compact: bool,
@@ -654,6 +665,9 @@ fn loss_note(
     }
     if !adapters.is_empty() {
         warning["adapters"] = json!(adapters.iter().map(|a| a.name()).collect::<Vec<_>>());
+    }
+    if let Some(whole) = whole {
+        warning["whole"] = json!(whole);
     }
     render(&json!({ "warning": warning }), compact)
 }
@@ -767,8 +781,10 @@ fn run_program(
     let failure = match result {
         Ok(()) | Err(ExportError::ReaderGone) => {
             let note = match &composition {
+                // The program's output stands in the source's place: no
+                // source part, so no `whole`.
                 Some((part, composition)) => {
-                    loss_note(part, &loss, &composition.adapters, &name, req.compact)
+                    loss_note(part, &loss, None, &composition.adapters, &name, req.compact)
                 }
                 None => String::new(),
             };
@@ -817,7 +833,7 @@ fn run_program(
     // Met while a format's render was writing: its loss, as `--render`
     // carries it.
     Err(match composition {
-        Some(_) => failed.with_loss(&loss),
+        Some(_) => failed.with_loss(&loss, None),
         None => failed,
     })
 }
@@ -1701,11 +1717,15 @@ impl Failure {
     /// A failure met while a format's render was writing (`--render`, or
     /// a program's output through `--render`) carries `loss`, the
     /// sentences the render's warning gives on a write that succeeds; an
-    /// empty list for a format that declares none (JSON). Only such a
-    /// failure: a `usage` or `not_found` error, and one met before the
-    /// writing began, keep the shapes the README gives them.
-    fn with_loss(mut self, loss: &[String]) -> Failure {
+    /// empty list for a write that declares none. It carries `whole` as
+    /// that warning does, where the translation's source part gives one.
+    /// Only such a failure: a `usage` or `not_found` error, and one met
+    /// before the writing began, keep the shapes the README gives them.
+    fn with_loss(mut self, loss: &[String], whole: Option<&str>) -> Failure {
         self.error.insert("loss".into(), json!(loss));
+        if let Some(whole) = whole {
+            self.error.insert("whole".into(), whole.into());
+        }
         self
     }
 
@@ -3424,6 +3444,60 @@ mod tests {
             assert_eq!(e["kind"], json!("transduce"), "{id}: {e}");
             assert!(e["loss"].is_array(), "{id}: {e}");
         }
+    }
+
+    /// `whole`, why a source's documents are read whole before anything is
+    /// written, is the sentence the translation's source part gives (TOML's
+    /// and INI's): in the loss note on success and in a failure that
+    /// carries `loss` alike, through aless's own renderer (`json`) as
+    /// through a composed render (`yaml`). A source whose part gives none
+    /// (JSON), a value below the root, which no source part describes, and
+    /// a program's output, which stands in the source's place, have none.
+    #[test]
+    fn whole_says_why_the_source_was_read_whole() {
+        let note = |r: &Request, src: &str| -> Value {
+            let out = with_stdin(r, src);
+            assert_eq!(out.status, status::OK, "{}", out.stderr);
+            json_of(&out.stderr)["warning"].clone()
+        };
+        for (format, doc, below, broken) in [
+            (Format::Toml, "a = 1\n[t]\nb = 2\n", ".t", "a = \n"),
+            (Format::Ini, "a = 1\n[t]\nb = 2\n", ".t", "[t\n"),
+        ] {
+            let sentence = translate::source_part(format)
+                .and_then(|p| p.whole.clone())
+                .unwrap_or_else(|| panic!("{format}: its part says why it is read whole"));
+            for id in ["json", "yaml"] {
+                let mut r = req(Op::Render(Renderer::from_name(id).unwrap()));
+                r.kind = Some(format);
+                let w = note(&r, doc);
+                assert_eq!(w["kind"], json!("loss"), "{format} {id}: {w}");
+                assert_eq!(w["whole"], json!(sentence), "{format} {id}: {w}");
+                let out = with_stdin(&r, broken);
+                assert_ne!(out.status, status::OK, "{format} {id}: {}", out.stdout);
+                let e = &json_of(&out.stderr)["error"];
+                assert!(e["loss"].is_array(), "{format} {id}: {e}");
+                assert_eq!(e["whole"], json!(sentence), "{format} {id}: {e}");
+                let mut inside = r.clone();
+                inside.start = Start::Path(below.into());
+                let w = note(&inside, doc);
+                assert!(w.get("whole").is_none(), "{format} {id}: {w}");
+                let mut program = req(Op::Alchemy {
+                    program: ProgramArg::Expr("def export [input] input".into()),
+                    render: Renderer::from_name(id),
+                    explain: false,
+                });
+                program.kind = Some(format);
+                let w = note(&program, doc);
+                assert!(w.get("whole").is_none(), "{format} {id}: {w}");
+            }
+        }
+        let w = note(
+            &req(Op::Render(Renderer::from_name("yaml").unwrap())),
+            RECORDS,
+        );
+        assert_eq!(w["kind"], json!("loss"), "{w}");
+        assert!(w.get("whole").is_none(), "{w}");
     }
 
     /// A grammar from the command line is a format like any other here:

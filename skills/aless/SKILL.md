@@ -157,8 +157,11 @@ keep (YAML: comments, anchors and aliases, tags, styles, several
 documents; CSV: types and the null/missing difference; JSON: NaN and the
 infinities as `null`), `adapters` names every step that ran between the
 source and the render (`wrap-object`, `wrap-array`, `embed`, `the
-inferred table`, `records`), and `adapter` the one between a tree and a
-table, the inferred table or `records`. Exit status 0 is success
+inferred table`, `records`), `adapter` the one between a tree and a
+table, the inferred table or `records`, and `whole`, where the source's
+format says why its documents are read whole before anything is written
+(TOML, INI), that sentence: never below the root, nor for a program's
+output. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
@@ -349,7 +352,8 @@ any input still being read when the time ran out.
 An error met while `--render FORMAT` was writing, `--render json` and
 `csv` included (a `transduce`, `parse` such as `too_deep`, or `timeout`
 error, or the render's own `alchemy` one), also carries `loss`, the
-sentences its warning gives on success. A
+sentences its warning gives on success, and `whole` where the warning
+has it. A
 `usage` or `not_found` error never does, nor does one met before the
 writing began, such as an input that cannot be read.
 

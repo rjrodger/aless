@@ -114,7 +114,7 @@ $ aless --render yaml books.json 2>&1 >/dev/null
 }
 ```
 
-The status is 0 all the same. When a conversion wraps the root or reshapes the value between a tree and a table, the note's `adapters` names each step (`wrap-object`, `wrap-array`, `the inferred table` or `records`), and their sentences follow the format's own in `loss`. CSV's list matters most: every value is written as text, so a number read back from CSV is a string:
+The status is 0 all the same. When a conversion wraps the root or reshapes the value between a tree and a table, the note's `adapters` names each step (`wrap-object`, `wrap-array`, `the inferred table` or `records`), and their sentences follow the format's own in `loss`. A TOML or INI document is read whole before anything is written, since a later header can add to a table or name a section again, and the note from one says so in `whole`, in the format's own words. CSV's list matters most: every value is written as text, so a number read back from CSV is a string:
 
 ```console
 $ aless --render csv books.json 2>/dev/null > books.csv; aless --json --compact --path '.[0]' books.csv

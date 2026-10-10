@@ -528,6 +528,15 @@ mod tests {
             ],
             "JSON declares its one loss"
         );
+        // Why a format's documents are read whole before anything is
+        // written, where its manifest says: TOML's and INI's alone, the two
+        // the README, the reference and the skill name.
+        let whole: Vec<&str> = parts()
+            .iter()
+            .filter(|p| p.whole.is_some())
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(whole, ["toml", "ini"]);
         // The trees with schemas of their own: an embed from a plain tree
         // into an expression's, a version's and a feed's; none into the
         // three that write only the trees their own documents read as.
@@ -967,6 +976,7 @@ mod tests {
                 text: "def x-render [input] (json input)".into(),
             }),
             loss: Vec::new(),
+            whole: None,
         };
         let fail = translation(source_part(Format::Json), &target, &options()).unwrap_err();
         assert_eq!(fail.code, Code::TargetValueUnrepresentable);
@@ -1050,6 +1060,7 @@ mod tests {
                 text: "def x-render [input]\n  (nope input)".into(),
             }),
             loss: Vec::new(),
+            whole: None,
         };
         let fail = compose(None, &broken, &options()).unwrap_err();
         assert!(fail.message.starts_with("unknown_name"), "{fail}");

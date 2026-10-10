@@ -62,8 +62,8 @@ tabnas-jsonic = "0.7.9"
 tabnas-jsonc = "0.5.14"
 tabnas-json5 = "0.5.15"
 tabnas-yaml = "0.5.23"
-tabnas-toml = "0.5.16"
-tabnas-ini = "0.5.18"
+tabnas-toml = "0.5.17"
+tabnas-ini = "0.5.19"
 tabnas-csv = "0.6.6"
 tabnas-xml = "0.7.16"
 tabnas-zon = "0.5.16"
@@ -85,7 +85,7 @@ tabnas-render = "0.2.4"
 # transducer's routers and the renderers, which aless passes in, and run
 # over any document the grammars read. The two crates above take their
 # shared types from it; it depends on neither.
-tabnas-alchemy = "0.2.5"
+tabnas-alchemy = "0.2.6"
 # Colour for a pane's text: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
 # feature is on: aless supplies the parsers, and needs neither the

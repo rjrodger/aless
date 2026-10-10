@@ -599,6 +599,19 @@ read. The sentences come from the format's manifest:
 {"warning": {"kind": "loss", "message": "the document was written as yaml, which does not keep everything a document can hold", "file": "tests/fixtures/sample.csv", "render": "yaml", "loss": ["Comments are not kept.", "Anchors and aliases are not kept: an alias is written as a copy of the value it names.", "Tags are not kept.", "Styles are not kept: every string and key is written double-quoted, and every collection in block style.", "A stream of several documents is written as one document, a sequence of them."]}}
 ```
 
+Where a source's format says why its documents are read whole before
+anything is written, the warning says it too, as `whole`, in the
+format's own sentence: TOML's (a later header can add to a table) and
+INI's (a later header can name a section again). An error that carries
+`loss` carries it as well. A value below the root (`--path`) is written
+as a plain tree, whatever its document, and has none; nor has a
+program's output, or a document of a format that says nothing of the
+kind:
+
+```
+{"warning": {"kind": "loss", "message": "the document was written as json, which does not keep everything a document can hold", "file": "tests/fixtures/sample.toml", "render": "json", "loss": ["JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null."], "whole": "A table may be added to after the tables that follow it, by a later header, dotted key or array of tables, so a document's tree is complete only at its end: it is read whole before anything is written."}}
+```
+
 **A tree, each key once.** A render that writes from a tree takes a
 tree's events, each key once per object, and writes what it is given, so
 the stream is checked on its way in (the transducer's `TreeContract`). A
