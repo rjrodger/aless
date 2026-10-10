@@ -161,7 +161,9 @@ table, the inferred table or `records`. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
-`output: "partial"`. `--render` with a format that has no render (`rss`)
+`output: "partial"`. JSON Lines from standard input, read a record at a
+time and never again, keeps the refusal (`output: "none"`); from a file,
+it is read again whole, within `--max-size`. `--render` with a format that has no render (`rss`)
 is a usage error that lists the ones that do.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)

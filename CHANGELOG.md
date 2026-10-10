@@ -8,7 +8,7 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
-## [0.2.0] - 2026-10-10
+## Unreleased
 
 ### Changed
 
@@ -19,6 +19,15 @@ bumps the version renames `Unreleased` to the version and its date
   either. What is written is what reading the file whole writes; a record
   the grammar refuses after the value was written fails the run with
   `output: "partial"`, as a refusal at the root does.
+
+### Fixed
+
+- A JSON Lines record that repeats a member (`{"a":1,"a":2}`), which its
+  stream holds twice, was refused with `DUPLICATE_MEMBER` at the root
+  though nothing had been written. A file is now read again whole, within
+  `--max-size`, and its value written, the last of the two as `--json`
+  reads it, at the root and below it. Standard input, which cannot be read
+  again, keeps the refusal, with `output: "none"`.
 
 ## [0.2.0] - 2026-10-10
 

@@ -478,7 +478,11 @@ document part-way (a jsonic implicit list whose first element is a
 container, a YAML stream of several documents or a `<<` merge key, a
 repeated member the grammar merges), aless falls back once to parsing it
 whole and streaming its value, provided nothing has been written yet;
-otherwise the refusal is reported with `output: "partial"`. `--timeout`
+otherwise the refusal is reported with `output: "partial"`. A JSON Lines
+record that repeats a member is refused so too, its stream holding the
+member twice: before anything was written, a file is read again whole,
+within `--max-size`, and its value written; standard input, which cannot
+be read again, keeps the refusal. `--timeout`
 stops either kind at the deadline, with `output` saying whether records
 had already been written.
 
@@ -580,7 +584,9 @@ member the parse streams twice (JSON's `{"a":1,"a":2}`, whose value
 keeps the last) is refused with `DUPLICATE_MEMBER`, and a stream no tree
 has with `STREAMABILITY_UNKNOWN`. Either way aless falls back once to
 the parsed value, as `--json` reads it, when nothing has been written;
-otherwise the refusal is reported with `output: "partial"`.
+otherwise the refusal is reported with `output: "partial"`. JSON Lines
+from standard input, read a record at a time and never again, keeps the
+refusal, with `output: "none"`.
 
 The output of each render reads back as the same value in a reader of
 its format; where a format's own reader misreads a shape its render
