@@ -1570,7 +1570,7 @@ fn every_fixture_of_every_format_translates_into_every_format() {
 #[test]
 fn ten_times_the_records_leave_what_a_render_retains_flat() {
     type Doc = fn(usize) -> String;
-    let sources: [(&str, Doc); 10] = [
+    let sources: [(&str, Doc); 11] = [
         ("jsonl", |n| {
             (0..n)
                 .map(|i| format!("{{\"n\": {i}, \"s\": \"row {i}\"}}\n"))
@@ -1622,6 +1622,12 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
         ("markdown", |n| {
             let rows: String = (0..n).map(|i| format!("| {i} | row {i} |\n")).collect();
             format!("| n | s |\n| --- | --- |\n{rows}")
+        }),
+        ("xml", |n| {
+            let rows: String = (0..n)
+                .map(|i| format!("<row><n>{i}</n><s>row {i}</s></row>"))
+                .collect();
+            format!("<rows>{rows}</rows>")
         }),
     ];
     let yaml = target("yaml");

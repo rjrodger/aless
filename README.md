@@ -473,11 +473,11 @@ transducer's own limits per record do (a line over `max_record_bytes`,
 64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
-JSON family, jsonic, YAML, ZON and Markdown the records are streamed out
-as the parse proceeds, and the exported array is not kept behind them
-(except in YAML, jsonic and Markdown, whose grammars may still refer to
-it); for the rest they are streamed out after the parse, from the value
-it built. Where one of those grammars refuses to stream a particular
+JSON family, jsonic, YAML, ZON, Markdown and XML the records are
+streamed out as the parse proceeds, and the exported array is not kept
+behind them (except in YAML, jsonic and Markdown, whose grammars may
+still refer to it); for the rest they are streamed out after the parse,
+from the value it built. Where one of those grammars refuses to stream a particular
 document part-way (a jsonic implicit list whose first element is a
 container, a YAML stream of several documents or a `<<` merge key, a
 repeated member the grammar merges), aless falls back once to parsing it

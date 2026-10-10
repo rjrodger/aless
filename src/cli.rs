@@ -1079,9 +1079,9 @@ const TOPICS: &[Topic] = &[
             Block::Text(
                 "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
                 record at a time, whatever their size, so --max-size does not apply to \
-                them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON and \
-                Markdown write their records as the parse proceeds, and the other formats \
-                after it. A document a grammar refuses to stream part-way is read whole \
+                them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, \
+                Markdown and XML write their records as the parse proceeds, and the other \
+                formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\".",
             ),

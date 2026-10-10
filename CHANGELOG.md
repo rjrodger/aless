@@ -47,6 +47,10 @@ bumps the version renames `Unreleased` to the version and its date
   either. What is written is what reading the file whole writes; a record
   the grammar refuses after the value was written fails the run with
   `output: "partial"`, as a refusal at the root does.
+- `--render` and `--alchemy` write an XML document's records as the parse
+  proceeds, as they do the JSON family's (tabnas-transduce 0.2.7,
+  tabnas-xml 0.7.17), where they waited for the parse to end: a failure
+  part way leaves every record before it written, with `output: "partial"`.
 
 ### Fixed
 

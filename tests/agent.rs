@@ -1075,6 +1075,63 @@ fn whole_records_reach_standard_output_before_the_error() {
     assert_eq!(out.stdout, b"[1");
 }
 
+/// A large XML document streams as the JSON family's do: its records
+/// leave as the parse proceeds, so a failure at the document's end finds
+/// every record before it already on standard output, with `output`
+/// partial, as a JSON document's does. TOML is parsed whole before
+/// anything is written, and has written nothing when its parse fails.
+#[test]
+fn a_large_xml_document_streams_as_the_json_familys_do() {
+    let rows = 5_000;
+    let body: String = (0..rows)
+        .map(|i| format!("<row><n>{i}</n></row>"))
+        .collect();
+    let xml = [
+        "-k",
+        "xml",
+        "--render",
+        "json",
+        "--compact",
+        "--path",
+        ".children",
+    ];
+    let out = aless(&xml, Some(&format!("<rows>{body}</rows>")));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stdout).as_array().map(Vec::len), Some(rows));
+    // The same rows, then a close tag that names another element: the
+    // parse fails at the very end, every row already written.
+    let out = aless(&xml, Some(&format!("<rows>{body}</other>")));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"), "{e}");
+    assert_eq!(e["output"], json!("partial"), "{e}");
+    let written = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(written.matches("{\"name\":\"row\"").count(), rows);
+    // JSON, the same way.
+    let items: Vec<String> = (0..rows).map(|i| format!("{{\"n\":{i}}}")).collect();
+    let out = aless(
+        &["--render", "json", "--compact"],
+        Some(&format!("[{},{{\"n\":]", items.join(","))),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("partial"));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout)
+            .matches("{\"n\":")
+            .count(),
+        rows
+    );
+    // TOML: parsed whole, so nothing is written before its failure.
+    let tables: String = (0..rows).map(|i| format!("[[row]]\nn = {i}\n")).collect();
+    let out = aless(
+        &["-k", "toml", "--render", "json", "--compact"],
+        Some(&format!("{tables}[[row]]\nn = \n")),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("none"));
+    assert!(out.stdout.is_empty());
+}
+
 /// A writer that goes quiet part way, past `--timeout`: the records it
 /// had written whole are on standard output before the `timeout` error,
 /// with `output` partial, on every path (aless#17).

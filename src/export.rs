@@ -132,7 +132,10 @@ pub enum Plan {
 /// are built (a value promoted into an implicit list, repeated members
 /// merged), and Markdown builds its tree imperatively, appending to nodes
 /// it already inserted; whether either reads a streamed array back is not
-/// established, so neither is pruned. The rest keep the memory saving.
+/// established, so neither is pruned. The rest keep the memory saving,
+/// XML among them: its rules only append to an element's children, in a
+/// list of one owner until the element closes, which tabnas-xml keeps so
+/// that pruning empties the list the element stores.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -2277,7 +2280,13 @@ mod tests {
         for f in [Format::Jsonl, Format::Csv, Format::Tsv] {
             assert_eq!(plan(f), Some(Plan::Lines), "{f}");
         }
-        for f in [Format::Json, Format::Json5, Format::Jsonc, Format::Zon] {
+        for f in [
+            Format::Json,
+            Format::Json5,
+            Format::Jsonc,
+            Format::Zon,
+            Format::Xml,
+        ] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
         // Verified, but they may read a streamed container back.
@@ -2290,7 +2299,6 @@ mod tests {
         for f in [
             Format::Toml,
             Format::Ini,
-            Format::Xml,
             Format::Feed,
             Format::Css,
             Format::Proto,

@@ -422,7 +422,7 @@ For those, pipe `--json` into jq.
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);
   the records leave as the parse proceeds for the JSON family, jsonic,
-  YAML, ZON and Markdown, and after it for the rest. A document one of
+  YAML, ZON, Markdown and XML, and after it for the rest. A document one of
   those grammars refuses to stream part-way (a jsonic implicit list, a
   YAML `---` stream or `<<` merge key) is parsed whole and exported all
   the same, when nothing has been written yet. So for a huge export,
