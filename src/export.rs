@@ -132,7 +132,10 @@ pub enum Plan {
 /// are built (a value promoted into an implicit list, repeated members
 /// merged), and Markdown builds its tree imperatively, appending to nodes
 /// it already inserted; whether either reads a streamed array back is not
-/// established, so neither is pruned. The rest keep the memory saving.
+/// established, so neither is pruned. The rest keep the memory saving,
+/// XML among them: its rules only append to an element's children, in a
+/// list of one owner until the element closes, which tabnas-xml keeps so
+/// that pruning empties the list the element stores.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -537,6 +540,10 @@ enum Outcome {
     Failed(Fail),
     /// The grammar panicked; this is what it said.
     Panicked(String),
+    /// The format's crate refused the document outside its grammar's
+    /// parse, before it or in reading its value (proto's braces, or the
+    /// version a file declares), worded as the loader words it.
+    Refused(Box<LoadError>),
 }
 
 impl Outcome {
@@ -675,9 +682,18 @@ fn run<S: Sink + Send + 'static>(
                     load::MAX_RULE_DEPTH,
                     move || notify.abort(),
                 );
-                // Without its byte-order mark, as the loader reads it: the
-                // same lines and columns.
-                let text = load::parser_text(text);
+                // Without its byte-order mark, and a version without its
+                // file's line break, as the loader reads it: the same lines
+                // and columns.
+                let text = load::parse_text(text, format);
+                if let Err(e) = load::check_text(format, text) {
+                    return Ran {
+                        outcome: Outcome::Refused(Box::new(e)),
+                        stop: Some(stop),
+                        verdict: None,
+                        from_sink: false,
+                    };
+                }
                 match mode {
                     SourceMode::Materialize => {
                         materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
@@ -800,6 +816,19 @@ fn materialize<S: Sink>(
             from_sink: false,
         };
     }
+    // The tree the format's schema names, where its crate builds one from
+    // the grammar's value, as the loader reads it.
+    let value = match load::read_as(format, value) {
+        Ok(value) => value,
+        Err(e) => {
+            return Ran {
+                outcome: Outcome::Refused(Box::new(e)),
+                stop: Some(stop),
+                verdict: None,
+                from_sink: false,
+            }
+        }
+    };
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
     let outcome = ValueSource(&value).run(&mut guarded);
     let scope = guarded.into_inner();
@@ -908,6 +937,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
         Outcome::Panicked(what) => {
             return load(load::grammar_failed(job.format, &what).with_origin(&job.origin))
         }
+        Outcome::Refused(error) => return load((*error).with_origin(&job.origin)),
         Outcome::Failed(fail) => fail,
     };
     // The scope's word on the path comes first: it stopped the run itself,
@@ -2250,14 +2280,32 @@ mod tests {
         for f in [Format::Jsonl, Format::Csv, Format::Tsv] {
             assert_eq!(plan(f), Some(Plan::Lines), "{f}");
         }
-        for f in [Format::Json, Format::Json5, Format::Jsonc, Format::Zon] {
+        for f in [
+            Format::Json,
+            Format::Json5,
+            Format::Jsonc,
+            Format::Zon,
+            Format::Xml,
+        ] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
         // Verified, but they may read a streamed container back.
         for f in [Format::Yaml, Format::Jsonic, Format::Markdown] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: false }), "{f}");
         }
-        for f in [Format::Toml, Format::Ini, Format::Xml, Format::Feed] {
+        // Parsed whole, then walked: the imperative grammars, and those no
+        // differential suite has verified, which build a tree of a schema's
+        // from their parse (proto's descriptor, expr's S-expressions).
+        for f in [
+            Format::Toml,
+            Format::Ini,
+            Format::Feed,
+            Format::Css,
+            Format::Proto,
+            Format::Pgn,
+            Format::Expr,
+            Format::Semver,
+        ] {
             assert_eq!(plan(f), Some(Plan::Materialize), "{f}");
         }
         assert_eq!(plan(Format::Text), None);
@@ -2265,11 +2313,67 @@ mod tests {
         // manifests name aless's own renderers.
         assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Part("csv")));
         assert_eq!(Renderer::from_name("json"), Some(Renderer::Part("json")));
-        assert_eq!(Renderer::from_name("rss"), None);
+        assert_eq!(
+            Renderer::from_name("rss"),
+            None,
+            "a render goes by its format's name"
+        );
+        assert_eq!(Renderer::from_name("feed"), Some(Renderer::Part("feed")));
+        assert_eq!(Renderer::from_name("pgn"), Some(Renderer::Part("pgn")));
         assert_eq!(Renderer::from_name(" YAML "), Some(Renderer::Part("yaml")));
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
         assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
         assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
+    }
+
+    /// A document is exported as the loader reads it: a .proto file as
+    /// its descriptor, an expression as its S-expressions, a version
+    /// without its file's line break; and what a format's crate refuses
+    /// outside its grammar's parse fails as the loader fails it, before
+    /// anything is written.
+    #[test]
+    fn a_document_is_exported_as_the_loader_reads_it() {
+        let written = |format: Format, path: &str, text: &str| {
+            let (r, out) = run_text(&job(format, Renderer::Json, path), text);
+            r.unwrap_or_else(|e| panic!("{format} {text:?}: {e:?}"));
+            out
+        };
+        assert_eq!(
+            written(
+                Format::Proto,
+                ".messageType[0].name",
+                "message M { int32 a = 1; }"
+            ),
+            "\"M\"\n"
+        );
+        assert_eq!(
+            written(Format::Expr, ".", "1+2*3"),
+            "[\"+\",1,[\"*\",2,3]]\n"
+        );
+        assert_eq!(written(Format::Semver, ".minor", "1.2.3\n"), "2\n");
+        let refused = |text: &str| match run_text(&job(Format::Proto, Renderer::Json, "."), text) {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty(), "{text:?}");
+                error
+            }
+            other => panic!("{text:?}: {other:?}"),
+        };
+        let deep = format!("{}{}", "message M {".repeat(101), "}".repeat(101));
+        let e = refused(&deep);
+        assert_eq!(e.code, "too_deep");
+        assert!(
+            e.plain_report().contains("--> (stdin)"),
+            "{}",
+            e.plain_report()
+        );
+        let e = refused("syntax = \"proto9\";");
+        assert_eq!(e.code, "version");
+        assert!(
+            e.plain_report()
+                .starts_with("[proto/version]: version: unknown syntax version"),
+            "{}",
+            e.plain_report()
+        );
     }
 
     #[test]

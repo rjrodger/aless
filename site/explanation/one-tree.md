@@ -3,7 +3,7 @@ title: One tree for every format
 description: Why aless reads every format into the same kind of tree, what each format becomes, and what the single model gives up.
 order: 1
 ---
-aless reads JSON, YAML, TOML, INI, CSV, XML, Markdown, feeds and a dozen other formats, and shows every one of them the same way. That is possible because it does not show the formats. It shows one kind of value, which every format is read into: objects with their keys in source order, arrays, strings, numbers, true, false and null. That is JSON's data model, and it is the only thing the viewer, the search, the paths and the command line's outputs ever deal with.
+aless reads JSON, YAML, TOML, INI, CSV, XML, Markdown, feeds, stylesheets, chess games and a dozen other formats, and shows every one of them the same way. That is possible because it does not show the formats. It shows one kind of value, which every format is read into: objects with their keys in source order, arrays, strings, numbers, true, false and null. That is JSON's data model, and it is the only thing the viewer, the search, the paths and the command line's outputs ever deal with.
 
 ## What each format becomes
 
@@ -16,6 +16,11 @@ The JSON family maps onto that model as it is, and so does most of YAML and TOML
 | XML | element records: `name`, `localName`, `attributes` and `children`, with text as strings among the children |
 | Markdown | its syntax tree: a `type` and `children` for each block and inline node |
 | RSS, Atom | one Atom-shaped object, whichever of the two the feed was |
+| CSS | its syntax tree: a `type` for each rule, declaration, comment and at-rule |
+| `.proto` | its FileDescriptorProto, as protoc writes one in JSON, rather than the syntax its grammar parses |
+| PGN | an array of games, each its tags, its moves and its result |
+| an expression | its value, each operation an array of its operator and its terms: `1+2*3` is `["+", 1, ["*", 2, 3]]` |
+| a version | its `major`, `minor`, `patch`, `prerelease` and `build` |
 | plain text | an array of its lines |
 | a grammar of yours | what its annotations build |
 

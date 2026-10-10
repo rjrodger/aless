@@ -23,11 +23,13 @@ pub const TAGLINE: &str = "JSON, YAML, TOML, CSV, XML, INI, Markdown and more as
 
 /// What aless does, in a paragraph: the man page's DESCRIPTION.
 const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, \
-    TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS or Atom feeds, and any line-oriented \
-    format an ABNF grammar describes, as one tree. In a terminal it shows the tree in a \
-    jless-style viewer, with tabs, panes, search and a watch mode that reloads a changed \
-    file and keeps your place. Without one it prints JSON on standard output for scripts \
-    and agents, and writes any of those formats as any other.";
+    TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
+    .proto files, PGN chess games, expressions and semantic versions, and any \
+    line-oriented format an ABNF grammar describes, as one tree. In a terminal it shows \
+    the tree in a jless-style viewer, with tabs, panes, search and a watch mode that \
+    reloads a changed file and keeps your place. Without one it prints JSON on standard \
+    output for scripts and agents, and writes any of those formats as any other that \
+    has a render and can hold the document.";
 
 /// Where an option belongs, and what giving it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,8 +218,13 @@ pub const OPTIONS: &[Opt] = &[
             {renders}. What FORMAT cannot hold is written by the convention its crate \
             declares rather than refused (NaN and the infinities as null in json; a \
             root TOML or INI cannot have as the one member --key names), and what it \
-            does not keep is said in a warning on standard error, on success too. Takes \
-            --path, not --at. With --alchemy it names the format the program's table or \
+            does not keep is said in a warning on standard error, on success too. Three \
+            write only the tree their own documents read as, and have no convention for \
+            another: css, proto and pgn take a document of their own format, and any \
+            other is a usage error before anything is read, naming the route that writes \
+            one, --alchemy FILE --render FORMAT with a program that makes that tree. \
+            semver writes only a document that is a version, and refuses any other \
+            before writing anything. Takes --path, not --at. With --alchemy it names the format the program's table or \
             JSON events are written as.",
     },
     Opt {
@@ -830,8 +837,9 @@ const TOPICS: &[Topic] = &[
                     "line, col",
                     "where the node starts, from 1, columns in characters: at its key \
                     when it has one, else at its value. Exact for the JSON family, TOML, \
-                    INI, CSV and ZON, best-effort for YAML, XML and Markdown, and null \
-                    when unknown",
+                    INI, CSV and ZON, best-effort for YAML, XML, Markdown, CSS, PGN and \
+                    expressions, loose for a .proto file's descriptor, and null when \
+                    unknown",
                 ),
                 (
                     "length",
@@ -910,7 +918,10 @@ const TOPICS: &[Topic] = &[
                 adapters naming each step that ran between the source and the render \
                 (wrap-object, wrap-array, embed, the inferred table, records), and adapter \
                 the one between a tree and a table, the inferred table or records, their \
-                sentences in loss after the format's own. Status 0 is success whatever \
+                sentences in loss after the format's own. Where the source's format says \
+                why its documents are read whole before anything is written (TOML, INI), \
+                whole is that sentence; a value below the root, a program's output and a \
+                document of any other format have none. Status 0 is success whatever \
                 standard error holds.",
             ),
         ],
@@ -1003,7 +1014,8 @@ const TOPICS: &[Topic] = &[
                 "An io, too_large or timeout error about a --grammar file adds grammar, \
                 with file the grammar file and format null. An error met while --render \
                 was writing (transduce, parse, timeout, or the render's own alchemy one) \
-                adds loss, the sentences its warning gives on success. --compact puts an \
+                adds loss, the sentences its warning gives on success, and whole where the \
+                warning has it. --compact puts an \
                 error on one line. The README's \"Scripts and \
                 agents\" section has every case at length.",
             ),
@@ -1067,9 +1079,9 @@ const TOPICS: &[Topic] = &[
             Block::Text(
                 "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
                 record at a time, whatever their size, so --max-size does not apply to \
-                them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON and \
-                Markdown write their records as the parse proceeds, and the other formats \
-                after it. A document a grammar refuses to stream part-way is read whole \
+                them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, \
+                Markdown and XML write their records as the parse proceeds, and the other \
+                formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\".",
             ),
@@ -1077,7 +1089,9 @@ const TOPICS: &[Topic] = &[
                 "A document nested deeper than aless reads fails as a parse error with the \
                 code too_deep: past about 1,000 levels, or sooner where the grammar has a \
                 limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
-                INI and ZON, 256 for XML, 512 for JSONC).",
+                INI, ZON and expressions, an expression of 127 operations too, 256 for \
+                XML, 512 for JSONC, 768 open rules for CSS, and braces 100 deep for a \
+                .proto file, counted before it is parsed).",
             ),
             Block::Text(
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
@@ -1322,19 +1336,31 @@ fn format_note(format: Format) -> &'static str {
         Format::Tsv => " (as csv)",
         Format::Markdown => " (its syntax tree)",
         Format::Feed => " (normalised to an Atom shape)",
+        Format::Css => " (its syntax tree)",
+        Format::Proto => " (its FileDescriptorProto, as protoc writes one in JSON)",
+        Format::Pgn => " (chess games, each its tags and moves)",
+        Format::Expr => {
+            " (jsonic with arithmetic, an operation the list of its operator and terms)"
+        }
+        Format::Semver => " (a version: its major, minor, patch, prerelease and build)",
         Format::Text => " (and every extension no format claims)",
         _ => "",
     }
 }
 
-/// The formats and their extensions, as terms.
+/// The formats and their extensions, as terms; a format that has none is
+/// named with -k.
 fn format_terms() -> Vec<(String, String)> {
     Format::ALL
         .iter()
         .map(|f| {
+            let extensions = match f.extensions() {
+                [] => format!("none, -k {}", f.name()),
+                list => list.join(" "),
+            };
             (
                 f.name().to_string(),
-                format!("{}{}", f.extensions().join(" "), format_note(*f)),
+                format!("{extensions}{}", format_note(*f)),
             )
         })
         .collect()

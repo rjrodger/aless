@@ -6,11 +6,11 @@ _aless() {
     COMPREPLY=()
     case "$prev" in
         --render)
-            COMPREPLY=($(compgen -W "csv ini json json5 jsonc jsonic jsonl markdown toml xml yaml zon" -- "$cur"))
+            COMPREPLY=($(compgen -W "css csv expr feed ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon" -- "$cur"))
             return 0
             ;;
         --kind|--format|-k)
-            COMPREPLY=($(compgen -W "json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed text" -- "$cur"))
+            COMPREPLY=($(compgen -W "json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn expr semver text" -- "$cur"))
             return 0
             ;;
         --mode|-m)

@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown and RSS/Atom, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN and a version from documents of their own kind), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -129,8 +129,9 @@ is 0.
 
 Write any of those formats as any format that has a render, streamed the
 same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
-`markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`
-or `csv`:
+`markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`,
+`csv`, `feed` (Atom), `expr`, or, from documents of their own kind,
+`css`, `proto`, `pgn` and `semver`:
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
@@ -156,15 +157,36 @@ keep (YAML: comments, anchors and aliases, tags, styles, several
 documents; CSV: types and the null/missing difference; JSON: NaN and the
 infinities as `null`), `adapters` names every step that ran between the
 source and the render (`wrap-object`, `wrap-array`, `embed`, `the
-inferred table`, `records`), and `adapter` the one between a tree and a
-table, the inferred table or `records`. Exit status 0 is success
+inferred table`, `records`), `adapter` the one between a tree and a
+table, the inferred table or `records`, and `whole`, where the source's
+format says why its documents are read whole before anything is written
+(TOML, INI), that sentence: never below the root, nor for a program's
+output. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
 `output: "partial"`. JSON Lines from standard input, read a record at a
 time and never again, keeps the refusal (`output: "none"`); from a file,
-it is read again whole, within `--max-size`. `--render` with a format that has no render (`rss`)
-is a usage error that lists the ones that do.
+it is read again whole, within `--max-size`. `--render` with a format
+that has no render (`tsv`) is a usage error that lists the ones that do,
+and so is one that names a format by an extension (`rss`), which names
+the format's render (`feed`) instead.
+
+Four renders take only their own kind of tree. `--render css`, `proto`
+and `pgn` write only the tree their own documents read as; given any
+other document (or a value below the root), they exit 2 with a `usage`
+error before reading the input, naming the route that can write one: a
+program that makes that tree, `--alchemy FILE --render proto`.
+`--render semver` writes only a tree that is a version (an object with
+`major`, `minor`, `patch`, and optionally `prerelease` and `build`); any
+other exits 1 with a `transduce` error, `code`
+`TARGET_VALUE_UNREPRESENTABLE`, `output: "none"`, `file` the version's
+embedding and `input` the document. A version's text ends with no line
+break. An expression (`-k expr`; `--render expr`) is read as
+S-expressions, `1+2*3` as `["+",1,["*",2,3]]`, and written back in
+infix; a version (`-k semver`) as `{major, minor, patch, prerelease,
+build}`, its file's one line break not part of it; a `.proto` file as
+its FileDescriptorProto, as protoc writes one in JSON.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
@@ -253,7 +275,8 @@ An **entry** describes one node:
 - `line` and `col` count from 1, columns in characters, and point where
   the node starts: at its key if it has one, else at its value. They are
   exact for the JSON family, TOML, INI, CSV and ZON, best-effort for
-  YAML, XML and Markdown, and `null` when unknown.
+  YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
+  file's descriptor, and `null` when unknown.
 - A container has `length`, its item count. A scalar has `value`.
   Strings over 200 characters are cut, and get `"truncated": true` and
   their full `length`.
@@ -329,7 +352,8 @@ any input still being read when the time ran out.
 An error met while `--render FORMAT` was writing, `--render json` and
 `csv` included (a `transduce`, `parse` such as `too_deep`, or `timeout`
 error, or the render's own `alchemy` one), also carries `loss`, the
-sentences its warning gives on success. A
+sentences its warning gives on success, and `whole` where the warning
+has it. A
 `usage` or `not_found` error never does, nor does one met before the
 writing began, such as an input that cannot be read.
 
@@ -388,7 +412,9 @@ For those, pipe `--json` into jq.
 - A document nested deeper than aless reads fails with code `too_deep`
   rather than crashing: past about 1,000 levels, or sooner where the
   grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
-  YAML, TOML, INI and ZON, 256 for XML, 512 for JSONC. A `--grammar`
+  YAML, TOML, INI, ZON and expressions (and 127 operations in one
+  expression), 256 for XML, 512 for JSONC, 768 open rules for CSS, and
+  braces 100 deep for a `.proto` file, counted before it is parsed. A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.
@@ -396,7 +422,7 @@ For those, pipe `--json` into jq.
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);
   the records leave as the parse proceeds for the JSON family, jsonic,
-  YAML, ZON and Markdown, and after it for the rest. A document one of
+  YAML, ZON, Markdown and XML, and after it for the rest. A document one of
   those grammars refuses to stream part-way (a jsonic implicit list, a
   YAML `---` stream or `<<` merge key) is parsed whole and exported all
   the same, when nothing has been written yet. So for a huge export,

@@ -22,7 +22,7 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as o
  bookshelf-openapi.yaml .paths["/api/shelf"]             yaml · watching · 19:3
 ```
 
-aless opens a file in a terminal as a tree you can fold, move through with the keys of [jless](https://jless.io), search, and copy paths and values from. It reads JSON, JSON5, JSONC, JSON Lines, jsonic, YAML, TOML, INI, CSV, TSV, XML, RSS and Atom, ZON, Markdown and plain text into the same tree, and any other format an ABNF grammar describes. It watches the files it shows, and when one changes on disk it reloads it and keeps your place.
+aless opens a file in a terminal as a tree you can fold, move through with the keys of [jless](https://jless.io), search, and copy paths and values from. It reads JSON, JSON5, JSONC, JSON Lines, jsonic, YAML, TOML, INI, CSV, TSV, XML, RSS and Atom, ZON, Markdown, CSS, Protocol Buffers' `.proto` files, PGN chess games, arithmetic expressions, semantic versions and plain text into the same tree, and any other format an ABNF grammar describes. It watches the files it shows, and when one changes on disk it reloads it and keeps your place.
 
 Without a terminal, aless prints JSON instead of drawing a screen: an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, a report on whether files parse, or the whole document in another format. That is the interface for shell scripts, CI jobs and AI agents, and it never waits for a key.
 

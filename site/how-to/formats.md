@@ -16,6 +16,15 @@ aless -k jsonl --paths --depth 1 events.log
 
 `-k` applies to every file on the command line. In the viewer, `:format yaml` reads the focused tab again as YAML, and `:open PATH FORMAT` opens a file as the format you name.
 
+Two formats have no extension of their own, so `-k` is the only way to read them: a semantic version, read without the line break its file ends with, and an arithmetic expression, each operation an array of its operator and its terms:
+
+```console
+$ printf '1.4.0-rc.1\n' | aless -k semver --json --compact
+{"major":1,"minor":4,"patch":0,"prerelease":["rc",1],"build":[]}
+$ printf 'total: 2*(3+4)\n' | aless -k expr --json --compact
+{"total":["*",2,["(",["+",3,4]]]}
+```
+
 ## Read standard input
 
 aless reads standard input when it is not a terminal, as JSON unless `-k` says otherwise:

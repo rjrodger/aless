@@ -9,8 +9,8 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
     $prev = if ($wordToComplete -eq '') { $words[-1] } else { $words[-2] }
     $values = $null
     switch -CaseSensitive ($prev) {
-        { $_ -cin '--render' } { $values = @('csv', 'ini', 'json', 'json5', 'jsonc', 'jsonic', 'jsonl', 'markdown', 'toml', 'xml', 'yaml', 'zon') }
-        { $_ -cin '--kind', '--format', '-k' } { $values = @('json', 'jsonl', 'jsonic', 'jsonc', 'json5', 'yaml', 'toml', 'ini', 'csv', 'tsv', 'xml', 'zon', 'markdown', 'feed', 'text') }
+        { $_ -cin '--render' } { $values = @('css', 'csv', 'expr', 'feed', 'ini', 'json', 'json5', 'jsonc', 'jsonic', 'jsonl', 'markdown', 'pgn', 'proto', 'semver', 'toml', 'xml', 'yaml', 'zon') }
+        { $_ -cin '--kind', '--format', '-k' } { $values = @('json', 'jsonl', 'jsonic', 'jsonc', 'json5', 'yaml', 'toml', 'ini', 'csv', 'tsv', 'xml', 'zon', 'markdown', 'feed', 'css', 'proto', 'pgn', 'expr', 'semver', 'text') }
         { $_ -cin '--mode', '-m' } { $values = @('data', 'line') }
         { $_ -cin '--panes' } { $values = @('out', 'program', 'out,program') }
         { $_ -cin '--generate' } { $values = @('man', 'complete-bash', 'complete-zsh', 'complete-fish', 'complete-powershell', 'skill') }

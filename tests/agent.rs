@@ -25,6 +25,17 @@ fn fixture_files() -> Vec<String> {
     files
 }
 
+/// The arguments that read `file` as its format: none for a fixture whose
+/// extension implies one, and `-k NAME` for one of a format that declares
+/// no extension (`sample.expr`, `sample.semver`), whose extension spells
+/// the format's name.
+fn kind_of(file: &str) -> Vec<&str> {
+    match Path::new(file).extension().and_then(|e| e.to_str()) {
+        Some(name @ ("expr" | "semver")) => vec!["-k", name],
+        _ => Vec::new(),
+    }
+}
+
 /// Run aless with `args`, and `stdin` piped in (none: standard input is
 /// closed, as it is for most agent tool calls).
 fn aless(args: &[&str], stdin: Option<&str>) -> Output {
@@ -745,6 +756,72 @@ fn nesting_too_deep_to_parse_fails_cleanly() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A document of one of the newer formats nested past what its reader
+/// takes is the same `too_deep` parse error, read as by the viewer or
+/// written by `--render`, never an abort. A `.proto` file is refused before
+/// it is parsed when its braces nest past the 100 levels tabnas-proto's
+/// preflight counts, since a value built past them can abort the process
+/// as it is dropped; CSS stops at its grammar's 768 open rules, a feed at
+/// XML's 256 open elements, an expression at 127 operations, and PGN's
+/// variations, which have no limit of their own, at aless's cap.
+#[test]
+fn the_newer_formats_nested_too_deep_fail_cleanly() {
+    let n = 20_000;
+    let dir = std::env::temp_dir().join(format!("aless-deeper-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, kind, text) in [
+        (
+            "deep.proto",
+            "proto",
+            format!(
+                "syntax = \"proto3\";\n{}{}\n",
+                "message M { ".repeat(n),
+                "}".repeat(n)
+            ),
+        ),
+        ("deep.css", "css", "a{".repeat(n) + &"}".repeat(n)),
+        (
+            "deep.rss",
+            "feed",
+            format!(
+                "<rss version=\"2.0\"><channel>{}{}</channel></rss>\n",
+                "<a>".repeat(n),
+                "</a>".repeat(n)
+            ),
+        ),
+        (
+            "deep.expr",
+            "expr",
+            format!("{}1{}\n", "(".repeat(n), ")".repeat(n)),
+        ),
+        ("long.expr", "expr", vec!["1"; n].join("+") + "\n"),
+        (
+            "deep.pgn",
+            "pgn",
+            format!("1. e4 {}{} *\n", "(1. d4 ".repeat(n), ")".repeat(n)),
+        ),
+    ] {
+        let deep = dir.join(name);
+        std::fs::write(&deep, text).unwrap();
+        let file = deep.to_str().unwrap();
+        for mode in [
+            vec!["-k", kind, "--json", file],
+            vec!["-k", kind, "--render", "json", file],
+            vec!["-k", kind, "--render", kind, file],
+        ] {
+            let out = aless(&mode, None);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(code(&out), 1, "{name} {mode:?}: {stderr}");
+            assert!(out.stdout.is_empty(), "{name} {mode:?}");
+            let e = &json(&out.stderr)["error"];
+            assert_eq!(e["kind"], json!("parse"), "{name} {mode:?}: {e}");
+            assert_eq!(e["code"], json!("too_deep"), "{name} {mode:?}: {e}");
+            assert_eq!(e["format"], json!(kind), "{name} {mode:?}: {e}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn help_leads_with_the_agent_interface() {
     let out = aless(&["--help"], None);
@@ -1064,6 +1141,63 @@ fn whole_records_reach_standard_output_before_the_error() {
     assert_eq!(out.stdout, b"[1");
 }
 
+/// A large XML document streams as the JSON family's do: its records
+/// leave as the parse proceeds, so a failure at the document's end finds
+/// every record before it already on standard output, with `output`
+/// partial, as a JSON document's does. TOML is parsed whole before
+/// anything is written, and has written nothing when its parse fails.
+#[test]
+fn a_large_xml_document_streams_as_the_json_familys_do() {
+    let rows = 5_000;
+    let body: String = (0..rows)
+        .map(|i| format!("<row><n>{i}</n></row>"))
+        .collect();
+    let xml = [
+        "-k",
+        "xml",
+        "--render",
+        "json",
+        "--compact",
+        "--path",
+        ".children",
+    ];
+    let out = aless(&xml, Some(&format!("<rows>{body}</rows>")));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stdout).as_array().map(Vec::len), Some(rows));
+    // The same rows, then a close tag that names another element: the
+    // parse fails at the very end, every row already written.
+    let out = aless(&xml, Some(&format!("<rows>{body}</other>")));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"), "{e}");
+    assert_eq!(e["output"], json!("partial"), "{e}");
+    let written = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(written.matches("{\"name\":\"row\"").count(), rows);
+    // JSON, the same way.
+    let items: Vec<String> = (0..rows).map(|i| format!("{{\"n\":{i}}}")).collect();
+    let out = aless(
+        &["--render", "json", "--compact"],
+        Some(&format!("[{},{{\"n\":]", items.join(","))),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("partial"));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout)
+            .matches("{\"n\":")
+            .count(),
+        rows
+    );
+    // TOML: parsed whole, so nothing is written before its failure.
+    let tables: String = (0..rows).map(|i| format!("[[row]]\nn = {i}\n")).collect();
+    let out = aless(
+        &["-k", "toml", "--render", "json", "--compact"],
+        Some(&format!("{tables}[[row]]\nn = \n")),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("none"));
+    assert!(out.stdout.is_empty());
+}
+
 /// A writer that goes quiet part way, past `--timeout`: the records it
 /// had written whole are on standard output before the `timeout` error,
 /// with `output` partial, on every path (aless#17).
@@ -1156,14 +1290,20 @@ fn render_json_agrees_with_json_for_every_fixture() {
         .collect();
     assert!(files.len() >= 16, "{files:?}");
     for file in &files {
-        let streamed = aless(&["--render", "json", file], None);
+        let streamed = aless(
+            &[kind_of(file), vec!["--render", "json", file]].concat(),
+            None,
+        );
         assert_eq!(
             code(&streamed),
             0,
             "{file}: {}",
             String::from_utf8_lossy(&streamed.stderr)
         );
-        let whole = aless(&["--json", "--compact", file], None);
+        let whole = aless(
+            &[kind_of(file), vec!["--json", "--compact", file]].concat(),
+            None,
+        );
         assert_eq!(
             normal(json(&streamed.stdout)),
             normal(json(&whole.stdout)),
@@ -2497,14 +2637,20 @@ fn alchemy_echo_agrees_with_json_for_every_fixture() {
             "def export [input] input",
             "def export [input] (json input)",
         ] {
-            let streamed = aless(&["--alchemy-expr", program, file], None);
+            let streamed = aless(
+                &[kind_of(file), vec!["--alchemy-expr", program, file]].concat(),
+                None,
+            );
             assert_eq!(
                 code(&streamed),
                 0,
                 "{file} {program}: {}",
                 String::from_utf8_lossy(&streamed.stderr)
             );
-            let whole = aless(&["--json", "--compact", file], None);
+            let whole = aless(
+                &[kind_of(file), vec!["--json", "--compact", file]].concat(),
+                None,
+            );
             assert_eq!(
                 normal(json(&streamed.stdout)),
                 normal(json(&whole.stdout)),
@@ -3022,6 +3168,54 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A source whose documents are read whole says why beside the loss:
+/// `whole` in the loss note is the sentence its format's manifest gives,
+/// TOML's tables and INI's sections being open to additions until the
+/// document ends.
+#[test]
+fn render_says_why_a_toml_or_ini_source_is_read_whole() {
+    for (file, manifest) in [
+        ("tests/fixtures/sample.toml", tabnas_toml::manifest_text()),
+        ("tests/fixtures/sample.ini", tabnas_ini::manifest_text()),
+    ] {
+        let sentence = &json(manifest.as_bytes())["translate"]["whole"];
+        assert!(
+            sentence.as_str().is_some_and(|s| !s.is_empty()),
+            "{file}: {sentence}"
+        );
+        let out = aless(&["--render", "json", "--compact", file], None);
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let note = json(&out.stderr);
+        assert_eq!(note["warning"]["kind"], "loss", "{file}");
+        assert_eq!(note["warning"]["file"], file, "{file}");
+        assert_eq!(&note["warning"]["whole"], sentence, "{file}");
+    }
+}
+
+/// A source that streams says nothing of being read whole: a JSON
+/// document's loss note has no `whole`.
+#[test]
+fn render_from_json_has_no_whole() {
+    let out = aless(
+        &[
+            "--render",
+            "json",
+            "--compact",
+            "tests/fixtures/sample.json",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["kind"], "loss", "{note}");
+    assert!(note["warning"].get("whole").is_none(), "{note}");
+}
+
 /// `--render yaml` writes the value at the start as YAML, through
 /// tabnas-yaml's own render: CSV's records as a sequence of mappings,
 /// every string and key double-quoted, and the render's loss declaration
@@ -3093,7 +3287,10 @@ fn every_fixture_renders_as_yaml() {
         .collect();
     assert!(files.len() >= 16, "{files:?}");
     for file in &files {
-        let out = aless(&["--render", "yaml", "--compact", file], None);
+        let out = aless(
+            &[kind_of(file), vec!["--render", "yaml", "--compact", file]].concat(),
+            None,
+        );
         assert_eq!(
             code(&out),
             0,
@@ -3148,20 +3345,47 @@ fn render_yaml_holds_a_stream_to_a_trees_events() {
 }
 
 /// `--render` says what it writes: a format aless reads and has no render
-/// for, a name it does not know, a format's own render after a program,
-/// and plain text are each refused as usage, before anything is written.
+/// for, a format named by its extension, a name it does not know, a
+/// format's own render after a program, plain text, and a document of
+/// another tree into a format that writes only its own are each refused
+/// as usage, before anything is written.
 #[test]
 fn render_refuses_what_it_cannot_write() {
     for (args, message) in [
         (
+            vec!["--render", "tsv", "tests/fixtures/sample.tsv"],
+            "--render tsv: aless reads tsv but has no render for it; --render writes css, csv, \
+             expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, \
+             toml, xml, yaml or zon",
+        ),
+        (
             vec!["--render", "rss", "tests/fixtures/sample.rss"],
-            "--render rss: aless reads feed but has no render for it; --render writes csv, ini, \
-             json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, yaml or zon",
+            "--render rss: rss is read as feed, whose render is --render feed; --render writes \
+             css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
+             semver, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "docx", "tests/fixtures/nested.json"],
-            "--render writes csv, ini, json, json5, jsonc, jsonic, jsonl, markdown, toml, xml, \
-             yaml or zon, not docx",
+            "--render writes css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, \
+             markdown, pgn, proto, semver, toml, xml, yaml or zon, not docx",
+        ),
+        (
+            vec!["--render", "proto", "tests/fixtures/nested.json"],
+            "--render proto: proto writes a proto-descriptor tree, the tree its own documents \
+             read as, and tests/fixtures/nested.json is not one; a program that makes one can \
+             write it: --alchemy FILE --render proto",
+        ),
+        (
+            vec![
+                "--render",
+                "pgn",
+                "--path",
+                ".[0]",
+                "tests/fixtures/sample.pgn",
+            ],
+            "--render pgn: pgn writes a pgn-database tree, the tree its own documents read as, \
+             and tests/fixtures/sample.pgn is not one; a program that makes one can write it: \
+             --alchemy FILE --render pgn",
         ),
         (
             vec![
@@ -3207,15 +3431,22 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
         ("jsonic", "tests/fixtures/sample.jsonic"),
         ("json", "tests/fixtures/sample.json"),
         ("csv", "tests/fixtures/sample.csv"),
+        ("css", "tests/fixtures/sample.css"),
+        ("proto", "tests/fixtures/sample.proto"),
+        ("pgn", "tests/fixtures/sample.pgn"),
+        ("expr", "tests/fixtures/sample.expr"),
+        ("semver", "tests/fixtures/sample.semver"),
     ] {
-        let written = aless(&["--render", id, file], None);
+        let written = aless(&[kind_of(file), vec!["--render", id, file]].concat(), None);
         assert_eq!(
             code(&written),
             0,
             "{id}: {}",
             String::from_utf8_lossy(&written.stderr)
         );
-        assert!(written.stdout.ends_with(b"\n"), "{id}");
+        // A version's text ends with no line break, which its reader would
+        // take for a character no version has.
+        assert_eq!(written.stdout.ends_with(b"\n"), id != "semver", "{id}");
         let note = json(&written.stderr);
         assert_eq!(note["warning"]["kind"], "loss", "{id}");
         assert_eq!(note["warning"]["render"], id, "{id}");
@@ -3228,13 +3459,93 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
             "{id}: {}",
             String::from_utf8_lossy(&back.stderr)
         );
-        let original = aless(&["--json", "--compact", file], None);
+        let original = aless(
+            &[kind_of(file), vec!["--json", "--compact", file]].concat(),
+            None,
+        );
         assert_eq!(
             String::from_utf8_lossy(&back.stdout),
             String::from_utf8_lossy(&original.stdout),
             "{id}: {text}"
         );
     }
+}
+
+/// The formats whose trees have schemas of their own. A plain tree is an
+/// expression's tree as it is, and a feed's through its embedding; a
+/// version's only when it is a version, any other refused before anything
+/// is written; and a format that writes only its own documents' tree
+/// (CSS, proto, PGN) takes another tree from a program that makes one,
+/// the route its refusal names.
+#[test]
+fn render_into_a_schema_embeds_refuses_or_takes_a_program() {
+    let out = aless(
+        &["--render", "expr", "--compact"],
+        Some("{\"a\": [\"+\", 1, 2], \"b\": -3}"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "{\"a\":1+2,\"b\":-3}\n"
+    );
+    assert_eq!(json(&out.stderr)["warning"]["adapters"], json!(["embed"]));
+    let out = aless(
+        &["--render", "semver"],
+        Some("{\"major\": 1, \"minor\": 2, \"patch\": 3, \"prerelease\": \"rc.1\"}"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1.2.3-rc.1");
+    let out = aless(&["--render", "semver", "--compact"], Some("{\"a\": 1}"));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stdout.is_empty(),
+        "nothing is written before the refusal"
+    );
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["kind"], "transduce");
+    assert_eq!(error["code"], "TARGET_VALUE_UNREPRESENTABLE");
+    assert_eq!(error["output"], "none");
+    assert_eq!(error["input"], "-");
+    assert_eq!(error["file"], "tabnas-semver/alchemy/embed.alc");
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("the document is not a version: it has no major;")),
+        "{error}"
+    );
+    assert!(
+        error["loss"].as_array().is_some_and(|l| !l.is_empty()),
+        "{error}"
+    );
+    let out = aless(
+        &["--render", "feed", "--compact"],
+        Some("[{\"title\": \"one\"}, 2]"),
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let atom = String::from_utf8_lossy(&out.stdout);
+    assert!(atom.contains("<title type=\"text\">one</title>"), "{atom}");
+    assert!(
+        atom.contains("<content type=\"text\">2</content>"),
+        "{atom}"
+    );
+    // A program that makes a stylesheet's tree, here the document's own,
+    // writes it as CSS.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "css",
+            "tests/fixtures/sample.css",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("/* base */\n\nbody {\n  margin: 0;\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 /// A tree reaches a render that writes from records through the inferred
