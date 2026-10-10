@@ -19,6 +19,7 @@ complete -c aless -l grammar -r -F -d 'a format of your own, from an ABNF gramma
 complete -c aless -l grammar-expr -x -d 'the same, the grammar on the command line'
 complete -c aless -l depth -x -d 'list N levels down; the viewer folds deeper'
 complete -c aless -l indent -x -d 'indentation per level (default 2)'
+complete -c aless -l key -x -d 'member a root is written under (items)'
 complete -c aless -l max-size -x -d 'refuse an input over SIZE (default 64M)'
 complete -c aless -l timeout -x -d 'stop a parse past SECONDS (default none)'
 complete -c aless -l no-watch -d 'do not reload files when they change'

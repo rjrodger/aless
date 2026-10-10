@@ -8,6 +8,33 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## Unreleased
+
+### Changed
+
+- `--render` composes every conversion through alchemy's `translate`
+  (admin ADR-27), from the parts each format's crate declares: what a
+  format cannot hold is written by the convention its manifest declares,
+  never refused. A null in TOML is left out; NaN and the infinities are
+  `null` in `--render json`, as in `--json`, and their names in CSV; a
+  root TOML or INI cannot have is the one member of a table, and one JSON
+  Lines, CSV or Markdown cannot have the one element of an array; a
+  Markdown document with no table is the empty table; XML writes any
+  document as the element tree its embedding declares.
+- `--render csv` and every records format take rows of every kind: an
+  array row's cells are its positions, a scalar row is one cell named
+  `value`, and a row of another kind than the first has a cell where the
+  first row's columns find one. A table of no columns is the empty
+  document.
+- The loss warning names every step that ran in `adapters`; `adapter`
+  still names the one between a tree and a table. JSON declares its one
+  loss, so `--render json` writes the warning too.
+
+### Added
+
+- `--key NAME`: the member a root is written under when the format's
+  document must be a table (`items` by default).
+
 ## [0.1.1] - 2026-10-09
 
 The first release with prebuilt binaries. 0.1.0 went to crates.io alone,

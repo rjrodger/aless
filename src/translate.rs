@@ -1,210 +1,84 @@
 //! `--render <FORMAT>` for any format a crate ships a render for: the
-//! translation registry and the host's composition (tabnas/transduce's
+//! registry of the formats' translation parts, and how aless runs the
+//! translation alchemy composes from them (admin ADR-27; tabnas/transduce's
 //! `docs/translation.md`).
 //!
 //! A format that can be written says so in its manifest,
 //! `tabnas.plugin.json`, whose `translate` object names the shapes it
 //! reads as (`tree`, or `records` through a lift, in order of preference),
-//! the shape its render writes from, the files that hold its lift and its
-//! render (or, for a render alchemy carries, its name, `json` or `csv`),
-//! and the sentences that say what a written document does not keep. The
-//! format's Rust crate hands over one structural descriptor: the manifest,
-//! and each part's explicit entry point and optional source text
-//! (`translate()`). Nothing is copied here: this module reads each crate's
-//! manifest once, keyed by its `languageId`, and `--render` names that id.
+//! the shape its render writes from, the root that render needs, the
+//! schema its events carry when they are not a plain tree, the files that
+//! hold its lift, its embed and its render (or, for a render alchemy
+//! carries, its name, `json` or `csv`), and the sentences that say what a
+//! written document does not keep. The format's Rust crate hands over one
+//! structural descriptor, `translate()`: the manifest, and each part's
+//! entry point and source text. aless reads each crate's descriptor once
+//! into alchemy's [`Part`], keyed by its `languageId`, and `--render`
+//! names that id. Nothing is copied here, and nothing here knows a format
+//! by name but JSON Lines, whose render writes a record a line
+//! ([`records`]).
 //!
-//! A file-backed lift or render is a library of alchemy definitions with no
-//! `export`; the crate's descriptor names its entry point. aless composes the
-//! translation the design's table says, `render ∘ adapt ∘ lift`
-//! ([`compose`]): when the target writes from a shape the source reads as,
-//! the source's events reach the render in that shape (through the
-//! source's lift when the shape is its first and a lift exists, as they
-//! are otherwise) and nothing stands between; otherwise one of two adapters
-//! runs, from the source's first read shape to the target's write shape. A
-//! tree becomes records through the inferred table (the policy `--render
-//! csv` has: the root is an array and its elements are the rows, behind
-//! the same row check), and records become a tree through the library's
-//! `records` (one object per row, keyed by the column labels). The
-//! composed program is linked through alchemy's `compile_sources` with a
-//! one-line main and run the way `--alchemy` runs a program ([`run`],
-//! through [`export::run_program`]): the input read as the format's plan
-//! says, the parse pruned behind the value at the start, the deadline and
-//! the transducer's limits on the whole run.
+//! alchemy composes the translation ([`tabnas_alchemy::translate`]): the
+//! source's lift, where the target writes from records and the source
+//! reads as records first; for a target that writes from a tree, the embed
+//! into its schema, or the root adapter its render needs (`wrap-object`,
+//! the root as the one member `--key` names, or `wrap-array`); for one
+//! that writes from records, a tree's rows through the inferred table, the
+//! root an array; then the target's render. aless links the composition
+//! with alchemy's `compile_sources` and runs it the way `--alchemy` runs a
+//! program ([`run`], through [`export::run_program`]): the input read as
+//! the format's plan says, the deadline and the transducer's limits on the
+//! whole run, and a tree's contract in front of a render that writes from
+//! one, where alchemy says the source's events reach it whole
+//! ([`Front::Tree`]). What a target cannot carry is a declared convention,
+//! not a refusal: each adapter's sentences join the render's own in the
+//! loss note. The one refusal is a schema-only target's (a schema and no
+//! embed), which writes only the tree its own documents read as, and which
+//! a program that makes that tree can write ([`schema_only`]).
 //!
-//! Under `--alchemy`, the program's output shape takes the source's place
-//! ([`compose_program`]): JSON events are a tree and a table is records,
-//! and the same table decides the adapter; the program is linked under
-//! the name `program-export` (alchemy's `Source::export_as`) and the main
-//! calls it, so a program's rows reach a tree's render through `records`,
+//! Under `--alchemy`, the program's output takes the source's place
+//! ([`compose_program`]): its JSON events are a tree and its table is
+//! records, so a program's rows reach a tree's render through `records`,
 //! and its events a records render through the inferred table, in one
-//! plan. A program that renders its own text takes no render, as before.
+//! plan.
 //!
-//! JSON and CSV are aless's built-ins, the render crate's renderers
-//! `--render` has always run ([`Renderer::Json`], [`Renderer::Csv`]). A
-//! manifest that names one of them (JSON's own, JSON5's, JSONC's and
-//! jsonic's name `json`; CSV's names `csv`) is a format written by that
-//! renderer under its own id, with its own loss declaration
-//! ([`Part::builtin`]).
-//!
-//! A render that writes from a tree takes a tree's events, each key once
-//! per object, which a walked value keeps by construction; a parse
-//! streamed as it proceeds may hand on a member its grammar reads twice,
-//! or a stream no tree has, so the run holds the stream to the contract
-//! (the transducer's `TreeContract`) and falls back to the parsed value,
-//! as `--json` reads it, when nothing had been written yet. A render that
-//! writes from records has the row check in front instead, as `--render
-//! csv` has, when the rows come from the source.
+//! Two routes run on aless's own renderers instead ([`translation`]),
+//! the paths `--render json` and `--render csv` have always taken, each
+//! writing what the composed route writes: JSON over a source's events as
+//! they are (alchemy's [`Native::Json`]), which keeps `--compact` and
+//! `--indent` and writes a number that is not finite as null, as the
+//! composed `json` does; and CSV over a tree's rows, its root made an
+//! array, which runs the table without the interpreted `wrap-array` stage
+//! and writes a number that is not finite as its word and a table of no
+//! columns as the empty document, as the composed `csv` does.
 
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
-use serde_json::Value;
+pub use tabnas_alchemy::translate::{Adapter, Front, Native, Options, Part, Render, Root, Shape};
+use tabnas_alchemy::translate::{Composition as Composed, Descriptor, PartText};
 use tabnas_alchemy::{Output, Program, Source};
 use tabnas_render::WriteOut;
-use tabnas_transduce::{Duplicates, Fail, Limits, Metrics, Sink, TreeContract};
+use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink, TreeContract};
 
-use crate::alchemy::compile_sources;
-use crate::export::{self, ExportError, Input, Job, Records, Renderer, Rows};
+use crate::alchemy::{renderers, routers};
+use crate::export::{self, ExportError, Input, Job, Records, Renderer};
 use crate::load::Format;
 
-/// A shape a format reads as or writes from: the manifest's `reads` and
-/// `writes`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shape {
-    /// A document's events, as every format reads.
-    Tree,
-    /// A table's rows.
-    Records,
-}
-
-impl Shape {
-    fn parse(name: &str) -> Option<Shape> {
-        match name {
-            "tree" => Some(Shape::Tree),
-            "records" => Some(Shape::Records),
-            _ => None,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Shape::Tree => "tree",
-            Shape::Records => "records",
-        }
-    }
-}
-
-/// How a format is written: an alchemy render its crate hands over, or
-/// one alchemy carries, which aless runs as its own renderer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Render {
-    /// A library of definitions, named in diagnostics by its crate and the
-    /// path the manifest names, and the explicit entry point the crate gives.
-    Alc {
-        file: String,
-        entry: &'static str,
-        text: &'static str,
-    },
-    /// alchemy's `json`: the JSON renderer `--render json` runs.
-    Json,
-    /// alchemy's `csv`: the CSV renderer `--render csv` runs.
-    Csv,
-}
-
-/// A format's lift: from its events to its first read shape's protocol.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Lift {
-    pub file: String,
-    pub entry: &'static str,
-    pub text: &'static str,
-}
-
-/// A format's translation parts, as its manifest names them and its crate
-/// hands them over.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Part {
-    /// The manifest's `languageId`, which `--render` names.
-    pub id: String,
-    /// What the format reads as, in order of preference; never empty.
-    pub reads: Vec<Shape>,
-    /// What the render writes from.
-    pub writes: Shape,
-    /// The lift, where the events do not carry the first read shape.
-    pub lift: Option<Lift>,
-    pub render: Render,
-    /// What a written document does not keep, a sentence each, as the
-    /// manifest says it.
-    pub loss: Vec<String>,
-}
-
-impl Part {
-    /// Where the records of what the render writes end, for a run that
-    /// fails part way ([`Records`]): alchemy's CSV and JSON write records
-    /// the pipe can see, and JSON Lines a record a line; another format's
-    /// render writes text of its own shape.
-    pub fn records(&self) -> Records {
-        match self.render {
-            Render::Csv => Records::Csv,
-            Render::Json => Records::Json,
-            Render::Alc { .. } if self.id == "jsonl" => Records::Lines,
-            Render::Alc { .. } => Records::Any,
-        }
-    }
-
-    /// The render's explicit entry point.
-    pub fn render_entry(&self) -> &'static str {
-        match self.render {
-            Render::Alc { entry, .. } => entry,
-            Render::Json => "json",
-            Render::Csv => "csv",
-        }
-    }
-
-    /// The built-in renderer that writes this format, when its manifest
-    /// names a render alchemy carries rather than one of its own.
-    pub fn builtin(&self) -> Option<Renderer> {
-        match self.render {
-            Render::Json => Some(Renderer::Json),
-            Render::Csv => Some(Renderer::Csv),
-            Render::Alc { .. } => None,
-        }
-    }
-}
-
-/// One translation part in the package-local structural interface, normalized
-/// from a grammar crate's otherwise-independent public type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CratePart {
-    entry: &'static str,
-    source: Option<&'static str>,
-}
-
-/// One crate aless reads: its name and normalized structural descriptor.
-struct Crate {
-    name: &'static str,
-    manifest: &'static str,
-    lift: Option<CratePart>,
-    render: Option<CratePart>,
-}
-
-/// Each crate aless reads whose manifest may name translation parts.
-fn crates() -> Vec<Crate> {
+/// Each crate aless reads whose manifest may name translation parts, as
+/// alchemy's structural descriptor.
+fn crates() -> Vec<Descriptor> {
     // Every grammar deliberately owns its interface types. This macro is the
     // narrow host adapter: it reads the same fields from each package-local
-    // value and immediately normalizes them into aless's private type.
+    // value and immediately normalizes them into alchemy's descriptor.
     macro_rules! descriptor {
         ($name:literal, $module:ident) => {
-            $module::translate().map(|parts| Crate {
-                name: $name,
-                manifest: parts.manifest,
-                lift: parts.lift.map(|part| CratePart {
-                    entry: part.entry,
-                    source: part.source,
-                }),
-                render: parts.render.map(|part| CratePart {
-                    entry: part.entry,
-                    source: part.source,
-                }),
+            $module::translate().map(|parts| Descriptor {
+                package: $name.to_string(),
+                manifest: parts.manifest.to_string(),
+                lift: parts.lift.map(|p| PartText::new(p.entry, p.source)),
+                embed: parts.embed.map(|p| PartText::new(p.entry, p.source)),
+                render: parts.render.map(|p| PartText::new(p.entry, p.source)),
             })
         };
     }
@@ -227,109 +101,12 @@ fn crates() -> Vec<Crate> {
     .collect()
 }
 
-/// The part a crate's manifest describes, or `None` when it names no
-/// `translate` object, or one this host cannot take: a shape it does not
-/// know, a lift or a render the crate does not hand over, a render that
-/// is neither an alchemy file nor a name alchemy carries.
-fn read_part(
-    krate: &str,
-    manifest: &str,
-    lift: Option<CratePart>,
-    render: Option<CratePart>,
-) -> Option<Part> {
-    let manifest: Value = serde_json::from_str(manifest).ok()?;
-    let id = manifest.get("languageId")?.as_str()?;
-    let translate = manifest.get("translate")?;
-    let reads: Vec<Shape> = match translate.get("reads")? {
-        Value::String(one) => vec![Shape::parse(one)?],
-        Value::Array(list) => list
-            .iter()
-            .map(|v| v.as_str().and_then(Shape::parse))
-            .collect::<Option<Vec<Shape>>>()?,
-        _ => return None,
-    };
-    if reads.is_empty() {
-        return None;
-    }
-    let writes = Shape::parse(translate.get("writes")?.as_str()?)?;
-    let render_part = render?;
-    if render_part.entry.is_empty() {
-        return None;
-    }
-    let render = match translate.get("render")?.as_str()? {
-        "json"
-            if render_part
-                == (CratePart {
-                    entry: "json",
-                    source: None,
-                }) =>
-        {
-            Render::Json
-        }
-        "csv"
-            if render_part
-                == (CratePart {
-                    entry: "csv",
-                    source: None,
-                }) =>
-        {
-            Render::Csv
-        }
-        path if path.ends_with(".alc") => Render::Alc {
-            file: format!("{krate}/{path}"),
-            entry: render_part.entry,
-            text: render_part.source?,
-        },
-        _ => return None,
-    };
-    let lift_path = match translate.get("lift") {
-        Some(Value::String(path)) => Some(path.as_str()),
-        Some(_) => return None,
-        None => None,
-    };
-    let lift = match (lift_path, lift) {
-        (Some(path), Some(part))
-            if path.ends_with(".alc") && !part.entry.is_empty() && part.source.is_some() =>
-        {
-            Some(Lift {
-                file: format!("{krate}/{path}"),
-                entry: part.entry,
-                text: part.source?,
-            })
-        }
-        (Some(_), _) => return None,
-        (None, None) => None,
-        _ => return None,
-    };
-    let loss = translate
-        .get("loss")
-        .and_then(Value::as_array)
-        .map(|lines| {
-            lines
-                .iter()
-                .filter_map(|l| l.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Part {
-        id: id.to_string(),
-        reads,
-        writes,
-        lift,
-        render,
-        loss,
-    })
-}
-
-/// Every part the crates hand over, read once.
+/// Every part the crates hand over, read once. A crate whose manifest
+/// names no `translate` object (a format read and not written), or one
+/// alchemy cannot take, gives none.
 fn parts() -> &'static [Part] {
     static PARTS: OnceLock<Vec<Part>> = OnceLock::new();
-    PARTS.get_or_init(|| {
-        crates()
-            .into_iter()
-            .filter_map(|c| read_part(c.name, c.manifest, c.lift, c.render))
-            .collect()
-    })
+    PARTS.get_or_init(|| crates().iter().filter_map(Part::from_descriptor).collect())
 }
 
 /// The part `--render` names by its id.
@@ -344,7 +121,7 @@ pub fn id_of(name: &str) -> Option<&'static str> {
 
 /// The part that describes how a source format reads, when one does: TSV
 /// reads as CSV's; a grammar from the command line, plain text and a
-/// format with no `translate` object have none, and read as a tree.
+/// format with no `translate` object have none, and read as a plain tree.
 pub fn source_part(format: Format) -> Option<&'static Part> {
     let id = match format {
         Format::Tsv => "csv",
@@ -394,62 +171,41 @@ pub fn main_name(part: &Part) -> String {
     format!("--render {}", part.id)
 }
 
-/// The name a program is linked under when its output feeds a render.
-pub const PROGRAM_EXPORT: &str = "program-export";
-
-/// The adapter a composition runs between the source's shape and the
-/// render's, when the two differ.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Adapter {
-    /// A tree's rows as records: the inferred table, the policy `--render
-    /// csv` has.
-    InferredTable,
-    /// Records as a tree: one object per row, keyed by the column labels.
-    Records,
+/// Where the records of what `part`'s render writes end, for a run that
+/// fails part way ([`Records`]): alchemy's CSV and JSON write records the
+/// pipe can see, and JSON Lines a record a line; another format's render
+/// writes text of its own shape.
+pub fn records(part: &Part) -> Records {
+    match &part.render {
+        Render::Csv => Records::Csv,
+        Render::Json => Records::Json,
+        Render::Alc(_) if part.id == "jsonl" => Records::Lines,
+        Render::Alc(_) => Records::Any,
+    }
 }
 
-impl Adapter {
-    /// The adapter's name, as the loss note gives it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Adapter::InferredTable => "the inferred table",
-            Adapter::Records => "records",
-        }
-    }
+/// The adapter between the two shapes among `adapters`, the inferred table
+/// or `records`, which the loss note names as `adapter`.
+pub fn shape_adapter(adapters: &[Adapter]) -> Option<&Adapter> {
+    adapters
+        .iter()
+        .find(|a| matches!(a, Adapter::InferredTable | Adapter::Records))
+}
 
-    /// What the adapter loses, the host's sentences, printed only when it
-    /// runs.
-    pub fn loss(self) -> Vec<String> {
-        match self {
-            Adapter::InferredTable => vec![
-                "The rows are the elements of the array at the start: an object row's members \
-                 are its cells, and a scalar row is one cell named value."
-                    .to_string(),
-                "The columns are the first row's members: a member a later row adds is not \
-                 written, a member it lacks is written empty, and a member repeated in a row \
-                 keeps its last value."
-                    .to_string(),
-            ],
-            Adapter::Records => vec![
-                "Each row is written as an object keyed by the column labels: a cell the row \
-                 lacks is an absent member, and of two columns with one label the last gives \
-                 the member."
-                    .to_string(),
-            ],
-        }
+/// The usage error for a target that refuses the source's tree, or `None`
+/// for any other failure: a schema-only format (a schema and no embed)
+/// writes only the tree its own documents read as, which a program that
+/// makes one can give it. `name` is the input's.
+pub fn schema_only(fail: &Fail, target: &Part, name: &str) -> Option<String> {
+    if fail.code != Code::TargetValueUnrepresentable || !fail.message.starts_with("schema_only:") {
+        return None;
     }
-
-    /// The expression that adapts `inner`, a stream in the source's
-    /// shape, to the render's.
-    fn apply(self, inner: &str) -> String {
-        match self {
-            Adapter::InferredTable => format!(
-                "(table-from-json (record (entry :columns :infer) (entry :rows (path \
-                 each-index))) {inner})"
-            ),
-            Adapter::Records => format!("(records {inner})"),
-        }
-    }
+    let schema = target.schema.as_deref().unwrap_or(&target.id);
+    Some(format!(
+        "--render {id}: {id} writes a {schema} tree, the tree its own documents read as, and \
+         {name} is not one; a program that makes one can write it: --alchemy FILE --render {id}",
+        id = target.id
+    ))
 }
 
 /// A translation ready to run: the composed program, and what stands in
@@ -457,91 +213,45 @@ impl Adapter {
 #[derive(Debug)]
 pub struct Composition {
     pub program: Program,
-    /// The render writes from a tree and the source's events are one: the
-    /// stream is held to a tree's contract.
+    /// The render writes from a tree and the source's events reach it
+    /// whole: the stream is held to a tree's contract.
     pub tree: bool,
-    /// The render writes from records the inferred table takes from the
-    /// source's events: the row check stands in front, as `--render csv`
-    /// has it.
-    pub rows: bool,
-    pub adapter: Option<Adapter>,
-}
-
-impl Composition {
-    /// The sentences a run prints: the render's loss declaration, and the
-    /// adapter's when one runs.
-    pub fn loss(&self, part: &Part) -> Vec<String> {
-        let mut loss = part.loss.clone();
-        if let Some(adapter) = self.adapter {
-            loss.extend(adapter.loss());
-        }
-        loss
-    }
-}
-
-/// How a source in `reads` shapes, lifted by `lift` when it has one,
-/// reaches a render that writes from `writes`: the expression over
-/// `input` that the main exports, and the adapter it runs, if any.
-fn route(
-    reads: &[Shape],
-    lift: Option<&str>,
-    writes: Shape,
-    input: &str,
-) -> (String, Option<Adapter>) {
-    let first = reads[0];
-    let lifted = match lift {
-        Some(entry) => format!("({entry} {input})"),
-        None => input.to_string(),
-    };
-    if writes == first {
-        // The first shape, through the lift when there is one.
-        return (lifted, None);
-    }
-    if reads.contains(&writes) {
-        // Another shape the format reads as: its events as they are.
-        return (input.to_string(), None);
-    }
-    let adapter = match (first, writes) {
-        (Shape::Tree, Shape::Records) => Adapter::InferredTable,
-        (Shape::Records, Shape::Tree) => Adapter::Records,
-        _ => unreachable!("two shapes that differ are these two"),
-    };
-    (adapter.apply(&lifted), Some(adapter))
+    /// What runs between the source's events and the render, in order.
+    pub adapters: Vec<Adapter>,
+    /// The render's loss declaration, then each adapter's.
+    pub loss: Vec<String>,
 }
 
 /// How `--render ID` writes a source: through one of aless's own renderers
-/// when the source's events reach it as they are (the JSON renderer over
-/// a tree, the CSV renderer's inferred table over a tree's rows, the paths
-/// `--render json` and `--render csv` have always run), or through a
-/// composed program otherwise.
+/// ([`translation`]), or through the composed program.
 #[derive(Debug)]
 pub enum Translation {
     Native {
         renderer: Renderer,
-        /// The adapter the renderer runs natively: the inferred table,
-        /// for CSV over a tree.
-        adapter: Option<Adapter>,
+        /// What the renderer's route runs, as the composition names it:
+        /// the inferred table and its root, for CSV.
+        adapters: Vec<Adapter>,
+        loss: Vec<String>,
     },
     Composed(Composition),
 }
 
 impl Translation {
-    /// The adapter the translation runs, if any.
-    pub fn adapter(&self) -> Option<Adapter> {
+    /// What runs between the source's events and the render, in order.
+    pub fn adapters(&self) -> &[Adapter] {
         match self {
-            Translation::Native { adapter, .. } => *adapter,
-            Translation::Composed(c) => c.adapter,
+            Translation::Native { adapters, .. } => adapters,
+            Translation::Composed(c) => &c.adapters,
         }
     }
 
-    /// The sentences a run prints: the render's loss declaration, and the
-    /// adapter's when one runs.
-    pub fn loss(&self, part: &Part) -> Vec<String> {
-        let mut loss = part.loss.clone();
-        if let Some(adapter) = self.adapter() {
-            loss.extend(adapter.loss());
+    /// The sentences a run prints: the render's loss declaration, then
+    /// each adapter's.
+    pub fn loss(&self) -> &[String] {
+        match self {
+            Translation::Native { loss, .. } => loss,
+            Translation::Composed(c) => &c.loss,
         }
-        loss
     }
 
     /// The composition, when the translation is one.
@@ -553,205 +263,90 @@ impl Translation {
     }
 }
 
-/// The CSV options a composed `csv` runs under: the standard options with
-/// the export's policy for an absent member, an empty field, as the
-/// native CSV export and the markdown render have it.
-const CSV_OPTIONS: &str = "(record (entry :delimiter \",\") (entry :newline \"\\r\\n\") \
-                           (entry :header true) (entry :null-text \"\") (entry :missing \"\"))";
+/// Link alchemy's composition into a program, `program` linked under
+/// `program-export` when the composition is over its output. A part that
+/// does not compile is a failure naming its file, never a panic.
+fn compiled(composed: Composed, program: Option<Source<'_>>) -> Result<Composition, Fail> {
+    let linked = composed.compile(program, routers(), renderers())?;
+    Ok(Composition {
+        program: linked,
+        tree: composed.front == Front::Tree,
+        adapters: composed.adapters,
+        loss: composed.loss,
+    })
+}
 
-/// The inferred table's row policy, applied in the plan to a program's
-/// events where the host's row check ([`Rows`]) stands in front of a
-/// source's: the root is an array whose elements are the rows, an object
-/// row passes as it is, a scalar row becomes an object of one member,
-/// `value`, and an array row, a mixture of rows or a root that is not an
-/// array is refused with the reason, before anything is written. Linked
-/// under this name, which its refusals carry.
-const INFERRED_ROWS_FILE: &str = "aless/inferred-rows.alc";
-const INFERRED_ROWS: &str = include_str!("inferred-rows.alc");
+/// Whether a composition is the one aless's own CSV export runs: alchemy's
+/// `csv` over the inferred table of a tree whose root is made an array,
+/// with no part of a format's own linked (a lifted source's rows go
+/// through its lift, composed).
+fn native_csv(target: &Part, composed: &Composed) -> bool {
+    target.render == Render::Csv
+        && composed.sources.is_empty()
+        && composed.adapters == [Adapter::WrapArray, Adapter::InferredTable]
+}
 
-/// The render a composed program calls for `target`, and the source it
-/// links when the render is a part's own: alchemy's `json`, its `csv`
-/// under the export's options, or the part's entry.
-fn render_of(target: &Part) -> (String, Option<Source<'_>>) {
-    match &target.render {
-        Render::Json => ("json".to_string(), None),
-        Render::Csv => (format!("csv {CSV_OPTIONS}"), None),
-        Render::Alc { file, text, .. } => (
-            target.render_entry().to_string(),
-            Some(Source::new(file, text)),
-        ),
+/// How `--render ID` writes a source `source` describes (a plain tree when
+/// it has none, or below the root): the route alchemy composes, run by one
+/// of aless's own renderers where that writes the same document (JSON over
+/// the source's events as they are; CSV over a tree's rows, its root made
+/// an array), and linked into one program otherwise.
+pub fn translation(
+    source: Option<&Part>,
+    target: &Part,
+    options: &Options,
+) -> Result<Translation, Fail> {
+    let composed = tabnas_alchemy::translate::compose(source, target, options, &main_name(target))?;
+    let native = match composed.native {
+        Some(Native::Json) => Some(Renderer::Json),
+        None if native_csv(target, &composed) => Some(Renderer::Csv),
+        None => None,
+    };
+    match native {
+        Some(renderer) => Ok(Translation::Native {
+            renderer,
+            adapters: composed.adapters,
+            loss: composed.loss,
+        }),
+        None => compiled(composed, None).map(Translation::Composed),
     }
 }
 
-/// How `--render ID` writes a source `source` describes (a tree when it
-/// has no part). The route the shapes decide ([`route`]) is run by aless's
-/// own renderer when it can run it as it is: JSON over a tree's events as
-/// they are, CSV's inferred table over a tree's rows. Otherwise the
-/// target's render (a part's own, or alchemy's `json` or `csv`), the
-/// source's lift when the route takes it, and one line that exports the
-/// composed expression are linked into one program. A part that does not
-/// compile is a failure naming its file, never a panic.
-pub fn translation(source: Option<&Part>, target: &Part) -> Result<Translation, Fail> {
-    let tree = [Shape::Tree];
-    let reads = source.map_or(&tree[..], |p| &p.reads[..]);
-    let lift = source.and_then(|p| p.lift.as_ref());
-    let (inner, adapter) = route(reads, lift.map(|part| part.entry), target.writes, "input");
-    let as_is = inner == "input";
-    match &target.render {
-        Render::Json if as_is => {
-            return Ok(Translation::Native {
-                renderer: Renderer::Json,
-                adapter: None,
-            })
-        }
-        Render::Csv if reads[0] == Shape::Tree && lift.is_none() => {
-            return Ok(Translation::Native {
-                renderer: Renderer::Csv,
-                adapter: Some(Adapter::InferredTable),
-            })
-        }
-        _ => {}
-    }
-    let (render, render_source) = render_of(target);
-    let main = format!("def export [input] ({render} {inner})");
-    let main_name = main_name(target);
-    let mut sources = Vec::new();
-    if let Some(source) = render_source {
-        sources.push(source);
-    }
-    if let Some(l) = lift {
-        sources.push(Source::new(&l.file, l.text));
-    }
-    sources.push(Source::new(&main_name, &main));
-    let program = compile_sources(&sources)?;
-    // The source's events are a tree's: held to the contract unless the
-    // inferred table reads them as rows, which has the row check instead.
-    let rows = adapter == Some(Adapter::InferredTable);
-    Ok(Translation::Composed(Composition {
-        program: with_policies(program, adapter)?,
-        tree: !rows,
-        rows,
-        adapter,
-    }))
+/// The composed program for a source, whichever renderer [`translation`]
+/// would choose: the tests' and the YAML round trip's way in.
+pub fn compose(
+    source: Option<&Part>,
+    target: &Part,
+    options: &Options,
+) -> Result<Composition, Fail> {
+    compiled(
+        tabnas_alchemy::translate::compose(source, target, options, &main_name(target))?,
+        None,
+    )
 }
 
-/// [`translation`] where it composes a program: the tests' and the YAML
-/// round trip's way in.
-pub fn compose(source: Option<&Part>, target: &Part) -> Result<Composition, Fail> {
-    match translation(source, target)? {
-        Translation::Composed(c) => Ok(c),
-        Translation::Native { renderer, .. } => Err(Fail::new(
-            tabnas_transduce::Code::DslTypeError,
-            format!(
-                "{} is written by aless's own {} renderer over these events, not by a composed \
-                 program",
-                target.id,
-                renderer.name()
-            ),
-        )),
-    }
-}
-
-/// The program `--alchemy PROGRAM --render ID` runs when the render is
-/// composed over the program's output ([`program_translation`]): the
-/// user's program linked under [`PROGRAM_EXPORT`], its output shape
-/// standing where the source's would (JSON events a tree, a table
-/// records), and the target's render over it through the route the shapes
-/// decide. `output` is what the program compiled alone answers; a program
-/// that renders its own text is the caller's to refuse.
+/// The program `--alchemy PROGRAM --render ID` runs: the user's program
+/// linked under `program-export`, its output standing where a source's
+/// events would (JSON events a plain tree, a table records), and the
+/// target's render over it through the route alchemy composes. `output` is
+/// what the program compiled alone answers; one that renders its own text
+/// is refused (`render_of_text`), as is one with no `export`.
 pub fn compose_program(
     program: Source<'_>,
     output: Output,
     target: &Part,
+    options: &Options,
 ) -> Result<Composition, Fail> {
-    let reads = match output {
-        Output::JsonEvents => [Shape::Tree],
-        Output::TableRows => [Shape::Records],
-        Output::Text => {
-            return Err(Fail::new(
-                tabnas_transduce::Code::DslTypeError,
-                "render_of_text: the program renders its own text, which no render takes",
-            ))
-        }
-    };
-    let output = format!("({PROGRAM_EXPORT} input)");
-    let (inner, adapter) = route(&reads, None, target.writes, &output);
-    // The inferred table takes a program's events through the row policy
-    // the host's check applies to a source's, in the plan, since no sink
-    // of the host's stands between two stages of one.
-    let (inner, policy) = match adapter {
-        Some(Adapter::InferredTable) => (
-            Adapter::InferredTable.apply(&format!("(inferred-rows {output})")),
-            Some(Source::new(INFERRED_ROWS_FILE, INFERRED_ROWS)),
-        ),
-        _ => (inner, None),
-    };
-    let (render, render_source) = render_of(target);
-    let main = format!("def export [input] ({render} {inner})");
-    let main_name = main_name(target);
-    let mut sources = Vec::new();
-    if let Some(source) = render_source {
-        sources.push(source);
-    }
-    if let Some(source) = policy {
-        sources.push(source);
-    }
-    sources.push(program.export_as(PROGRAM_EXPORT));
-    sources.push(Source::new(&main_name, &main));
-    let program = compile_sources(&sources)?;
-    // The program's events are not the source's: the tree contract stands
-    // in front of the source's events only, the row policy is in the plan
-    // (`inferred-rows`), and the rest of the program's output meets the
-    // transducer's own refusals.
-    Ok(Composition {
-        program: with_policies(program, adapter)?,
-        tree: false,
-        rows: false,
-        adapter,
-    })
-}
-
-/// How `--alchemy PROGRAM --render ID` writes the program's output, as
-/// [`translation`] decides it for a source: through one of aless's own
-/// renderers when the output reaches it as it is (JSON over the program's
-/// events; CSV over its table; and JSON over its table, whose rows the
-/// renderer writes as `records` does, named as that adapter), or through
-/// the render composed over the output ([`compose_program`]), CSV over
-/// the program's events through the inferred table among them. `output`
-/// is what the program compiled alone answers; a program that renders its
-/// own text is the caller's to refuse.
-pub fn program_translation(
-    program: Source<'_>,
-    output: Output,
-    target: &Part,
-) -> Result<Translation, Fail> {
-    let native = match (&target.render, output) {
-        (Render::Json, Output::JsonEvents) => Some((Renderer::Json, None)),
-        (Render::Json, Output::TableRows) => Some((Renderer::Json, Some(Adapter::Records))),
-        (Render::Csv, Output::TableRows) => Some((Renderer::Csv, None)),
-        _ => None,
-    };
-    match native {
-        Some((renderer, adapter)) => Ok(Translation::Native { renderer, adapter }),
-        None => compose_program(program, output, target).map(Translation::Composed),
-    }
-}
-
-/// The policies an adapter runs under: the inferred table keeps a repeated
-/// member's last value, as `--render csv` and `--json` do, rather than
-/// refusing the row.
-fn with_policies(program: Program, adapter: Option<Adapter>) -> Result<Program, Fail> {
-    match adapter {
-        Some(Adapter::InferredTable) => program.with_duplicates(Duplicates::LastWins),
-        _ => Ok(program),
-    }
+    let composed =
+        tabnas_alchemy::translate::compose_program(output, target, options, &main_name(target))?;
+    compiled(composed, Some(program))
 }
 
 /// Run a composition over `input`, writing the document to `out`, through
 /// the plumbing a program runs on ([`export::run_program`]), from the
-/// value at the job's path. The tree contract or the row check stands in
-/// front as the composition says; `metrics` collects what the program's
-/// stages report, the high-water mark of what they retain among it.
+/// value at the job's path. A tree's contract stands in front where the
+/// composition says; `metrics` collects what the program's stages report,
+/// the high-water mark of what they retain among it.
 pub fn run(
     job: &Job,
     composition: &Composition,
@@ -781,9 +376,7 @@ pub fn run(
             .with_abort(abort)
             .sink_out(Box::new(out), None, &limits, metrics.clone())
             .map_err(|fail| ExportError::Program(Box::new(fail)))?;
-        let sink: Box<dyn Sink + Send> = if composition.rows {
-            Box::new(Rows::new(sink))
-        } else if composition.tree {
+        let sink: Box<dyn Sink + Send> = if composition.tree {
             Box::new(TreeContract::new(sink))
         } else {
             Box::new(sink)
@@ -797,53 +390,126 @@ mod tests {
     use super::*;
     use crate::export::What;
     use std::io::BufRead;
+    use std::sync::Mutex;
+    use tabnas_alchemy::translate::Alc;
 
-    /// Every format whose crate ships parts is in the registry with the
-    /// shapes its manifest declares, and the names `--render` takes list
-    /// them all.
+    /// A writer the test reads back after the run took it.
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Shared {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    fn job(name: &str, format: Format, what: What, compact: bool) -> Job {
+        Job {
+            name: name.into(),
+            origin: name.into(),
+            format,
+            what,
+            path: Vec::new(),
+            compact,
+            indent: 2,
+            timeout: None,
+            started: None,
+            max_output: None,
+        }
+    }
+
+    fn options() -> Options {
+        Options::default()
+    }
+
+    /// Every format whose crate ships parts is in the registry with what
+    /// its manifest declares, and the names `--render` takes list them all.
     #[test]
     fn the_registry_has_every_crates_parts() {
-        let tree_renders = ["yaml", "toml", "ini", "xml", "zon", "jsonl"];
-        for id in tree_renders {
+        let own = [
+            ("yaml", Root::Any),
+            ("toml", Root::Object),
+            ("ini", Root::Object),
+            ("xml", Root::Any),
+            ("zon", Root::Any),
+            ("jsonl", Root::Array),
+            ("json5", Root::Any),
+        ];
+        for (id, root) in own {
             let p = part(id).unwrap_or_else(|| panic!("{id}'s manifest names its render"));
             assert_eq!(p.reads, vec![Shape::Tree], "{id}");
             assert_eq!(p.writes, Shape::Tree, "{id}");
+            assert_eq!(p.root, root, "{id}");
             assert!(p.lift.is_none(), "{id}");
-            let Render::Alc { file, entry, text } = &p.render else {
+            let Render::Alc(alc) = &p.render else {
                 panic!("{id} renders through its own file");
             };
-            assert_eq!(file, &format!("tabnas-{id}/alchemy/render.alc"));
-            assert_eq!(*entry, format!("{id}-render"), "{id}");
-            assert!(text.contains(&format!("def {}-render [", id)), "{id}");
-            assert!(p.builtin().is_none(), "{id}");
+            assert_eq!(alc.file, format!("tabnas-{id}/alchemy/render.alc"));
+            assert_eq!(alc.entry, format!("{id}-render"), "{id}");
+            assert!(alc.text.contains(&format!("def {id}-render [")), "{id}");
+            assert_eq!(
+                records(p),
+                if id == "jsonl" {
+                    Records::Lines
+                } else {
+                    Records::Any
+                }
+            );
         }
-        for id in ["json", "json5", "jsonc", "jsonic"] {
+        let xml = part("xml").unwrap();
+        assert_eq!(xml.schema.as_deref(), Some("xml-element"));
+        let embed = xml.embed.as_ref().expect("XML embeds a plain tree");
+        assert_eq!(embed.file, "tabnas-xml/alchemy/embed.alc");
+        assert_eq!(embed.entry, "xml-embed");
+        assert!(embed.text.contains("def xml-embed ["));
+        for id in ["json", "jsonc", "jsonic"] {
             let p = part(id).unwrap_or_else(|| panic!("{id}'s manifest names json"));
             assert_eq!(p.reads, vec![Shape::Tree], "{id}");
             assert_eq!(p.writes, Shape::Tree, "{id}");
+            assert_eq!(p.root, Root::Any, "{id}");
             assert_eq!(p.render, Render::Json, "{id}");
-            assert_eq!(p.builtin(), Some(Renderer::Json), "{id}");
+            assert_eq!(records(p), Records::Json, "{id}");
         }
         let csv = part("csv").expect("csv's manifest names csv");
         assert_eq!(csv.reads, vec![Shape::Tree]);
         assert_eq!(csv.writes, Shape::Records);
-        assert_eq!(csv.builtin(), Some(Renderer::Csv));
+        assert_eq!(csv.root, Root::Array);
+        assert_eq!(csv.render, Render::Csv);
+        assert_eq!(records(csv), Records::Csv);
         let md = part("markdown").expect("markdown's manifest names its parts");
         assert_eq!(md.reads, vec![Shape::Records, Shape::Tree]);
         assert_eq!(md.writes, Shape::Records);
+        assert_eq!(md.root, Root::Array);
+        assert_eq!(md.schema.as_deref(), Some("markdown-ast"));
         let lift = md.lift.as_ref().expect("a lift");
         assert_eq!(lift.file, "tabnas-markdown/alchemy/lift.alc");
         assert_eq!(lift.entry, "markdown-lift");
         assert!(lift.text.contains("def markdown-lift ["));
-        assert_eq!(md.render_entry(), "markdown-render");
+        assert!(matches!(&md.render, Render::Alc(alc) if alc.entry == "markdown-render"));
         assert!(part("yaml")
             .unwrap()
             .loss
             .iter()
             .any(|l| l.starts_with("Comments")));
-        assert!(
-            part("json").unwrap().loss.is_empty(),
-            "JSON declares no loss"
+        assert_eq!(
+            part("json").unwrap().loss,
+            vec![
+                "JSON has no spelling for Infinity or NaN, so a number that is not finite is \
+                 written as null."
+                    .to_string()
+            ],
+            "JSON declares its one loss"
         );
         assert_eq!(id_of("yaml"), Some("yaml"));
         assert_eq!(id_of("feed"), None, "feed's manifest names no render");
@@ -881,273 +547,339 @@ mod tests {
         );
     }
 
-    /// A manifest that names no translate object, a shape or a render this
-    /// host cannot take, or a part the crate does not hand over, gives no
-    /// part; one that names `json` or `csv` is a built-in's.
+    /// The routes the parts decide: a tree's render takes a tree's events
+    /// as they are, through the root adapter its render needs or the embed
+    /// into its schema; a records render takes a lifted format's rows
+    /// through its lift, and a tree's through the inferred table, its root
+    /// an array; JSON over events as they are, and CSV over a tree's rows,
+    /// run on aless's own renderers.
     #[test]
-    fn a_manifest_this_host_cannot_take_gives_no_part() {
-        let text = "def x-render [input] input";
-        let render = Some(CratePart {
-            entry: "not-derived-from-x-render",
-            source: Some(text),
-        });
-        for manifest in [
-            r#"{"languageId": "x"}"#,
-            r#"{"languageId": "x", "translate": {"reads": "tree"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "text", "render": "x.alc"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": "blob", "writes": "tree", "render": "x.alc"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": [], "writes": "tree", "render": "x.alc"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.txt"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.alc", "lift": "l.alc"}}"#,
-            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "x.alc", "lift": 1}}"#,
-            "not json",
-        ] {
-            assert_eq!(read_part("x", manifest, None, render), None, "{manifest}");
+    fn the_route_is_the_one_the_parts_decide() {
+        let route = |source: Option<&Part>, id: &str, options: &Options| {
+            let t = translation(source, part(id).unwrap(), options)
+                .unwrap_or_else(|f| panic!("{id}: {f}"));
+            let tree = t.composed().map(|c| c.tree);
+            let native = match &t {
+                Translation::Native { renderer, .. } => Some(*renderer),
+                Translation::Composed(_) => None,
+            };
+            (native, t.adapters().to_vec(), tree)
+        };
+        let json = source_part(Format::Json);
+        let md = source_part(Format::Markdown);
+        let o = options();
+        assert_eq!(route(json, "yaml", &o), (None, vec![], Some(true)));
+        assert_eq!(route(json, "json5", &o), (None, vec![], Some(true)));
+        assert_eq!(
+            route(json, "toml", &o),
+            (None, vec![Adapter::WrapObject("items".into())], Some(true))
+        );
+        assert_eq!(
+            route(json, "ini", &Options { key: "rows".into() }),
+            (None, vec![Adapter::WrapObject("rows".into())], Some(true)),
+            "--key names the member"
+        );
+        assert_eq!(
+            route(json, "jsonl", &o),
+            (None, vec![Adapter::WrapArray], Some(true))
+        );
+        assert_eq!(
+            route(json, "xml", &o),
+            (None, vec![Adapter::Embed], Some(true))
+        );
+        assert_eq!(
+            route(json, "markdown", &o),
+            (
+                None,
+                vec![Adapter::WrapArray, Adapter::InferredTable],
+                Some(false)
+            )
+        );
+        assert_eq!(
+            route(json, "csv", &o),
+            (
+                Some(Renderer::Csv),
+                vec![Adapter::WrapArray, Adapter::InferredTable],
+                None
+            )
+        );
+        for id in ["json", "jsonc", "jsonic"] {
+            assert_eq!(route(json, id, &o), (Some(Renderer::Json), vec![], None));
+            assert_eq!(route(md, id, &o), (Some(Renderer::Json), vec![], None));
         }
+        // A lifted format: its rows through its lift into a records render,
+        // its own tree into a tree's, embedded into a schema's.
+        assert_eq!(route(md, "markdown", &o), (None, vec![], Some(false)));
+        assert_eq!(route(md, "csv", &o), (None, vec![], Some(false)));
+        assert_eq!(route(md, "yaml", &o), (None, vec![], Some(true)));
         assert_eq!(
-            read_part(
-                "x",
-                r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "tree", "render": "alchemy/render.alc"}}"#,
-                None,
-                None,
-            ),
-            None,
-            "a render the crate does not hand over"
+            route(md, "xml", &o),
+            (None, vec![Adapter::Embed], Some(true))
         );
-        let part = read_part(
-            "tabnas-x",
-            r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "records", "render": "csv"}}"#,
-            None,
-            Some(CratePart {
-                entry: "csv",
-                source: None,
-            }),
-        )
-        .unwrap();
-        assert_eq!(part.render, Render::Csv);
-        assert_eq!(part.builtin(), Some(Renderer::Csv));
-        assert!(part.loss.is_empty());
+        // Below the root a value is a plain tree, whatever the document.
         assert_eq!(
-            read_part(
-                "tabnas-x",
-                r#"{"languageId": "x", "translate": {"reads": "tree", "writes": "records", "render": "csv"}}"#,
-                None,
-                Some(CratePart {
-                    entry: "x-render",
-                    source: Some(text),
-                }),
-            ),
-            None,
-            "a built-in render must be handed over as that explicit entry without source"
-        );
-        let part = read_part(
-            "tabnas-x",
-            r#"{"languageId": "x", "translate": {"reads": ["records", "tree"], "writes": "records", "lift": "alchemy/lift.alc", "render": "alchemy/render.alc", "loss": ["A.", 1]}}"#,
-            Some(CratePart {
-                entry: "bespoke-lift",
-                source: Some("def bespoke-lift [input] input"),
-            }),
-            Some(CratePart {
-                entry: "bespoke-render",
-                source: Some(text),
-            }),
-        )
-        .unwrap();
-        assert_eq!(part.reads, vec![Shape::Records, Shape::Tree]);
-        assert_eq!(
-            part.lift.as_ref().unwrap().file,
-            "tabnas-x/alchemy/lift.alc"
-        );
-        assert_eq!(part.lift.as_ref().unwrap().entry, "bespoke-lift");
-        assert_eq!(part.render_entry(), "bespoke-render");
-        assert_eq!(part.loss, vec!["A.".to_string()]);
-    }
-
-    /// The design's table: a tree's render takes a tree's events as they
-    /// are; a records render takes a format's first shape through its
-    /// lift; a tree reaches a records render through the inferred table,
-    /// with the row check in front; a lifted format whose second shape is
-    /// the render's takes its events as they are.
-    #[test]
-    fn the_route_follows_the_designs_table() {
-        let tree = [Shape::Tree];
-        let md = [Shape::Records, Shape::Tree];
-        assert_eq!(
-            route(&tree, None, Shape::Tree, "input"),
-            ("input".to_string(), None)
-        );
-        assert_eq!(
-            route(&md, Some("markdown-lift"), Shape::Records, "input"),
-            ("(markdown-lift input)".to_string(), None)
-        );
-        assert_eq!(
-            route(&md, Some("markdown-lift"), Shape::Tree, "input"),
-            ("input".to_string(), None),
-            "a shape the format reads as, after its first: the events as they are"
-        );
-        assert_eq!(
-            route(&tree, None, Shape::Records, "input"),
+            route(None, "markdown", &o),
             (
-                "(table-from-json (record (entry :columns :infer) (entry :rows (path each-index))) input)".to_string(),
-                Some(Adapter::InferredTable)
+                None,
+                vec![Adapter::WrapArray, Adapter::InferredTable],
+                Some(false)
             )
         );
+        let t = translation(json, part("csv").unwrap(), &o).unwrap();
+        let csv = part("csv").unwrap();
         assert_eq!(
-            route(
-                &[Shape::Records],
-                None,
-                Shape::Tree,
-                "(program-export input)"
-            ),
-            (
-                "(records (program-export input))".to_string(),
-                Some(Adapter::Records)
-            )
+            t.loss().len(),
+            csv.loss.len() + Adapter::WrapArray.loss().len() + Adapter::InferredTable.loss().len(),
+            "the adapters' loss is printed"
         );
+        assert_eq!(shape_adapter(t.adapters()), Some(&Adapter::InferredTable));
     }
 
-    /// Every composition over the source's events compiles to a text
-    /// program, with what stands in front decided by the shapes.
+    /// Every pair composes into a program that writes text: each source
+    /// part, and a plain tree, into each render.
     #[test]
     fn every_composition_compiles_and_writes_text() {
-        let yaml = part("yaml").unwrap();
-        let json = source_part(Format::Json);
-        let c = compose(json, yaml).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.program.output(), Output::Text);
-        assert!(c.tree && !c.rows && c.adapter.is_none());
-        assert_eq!(c.loss(yaml), yaml.loss);
-        // A tree into a records render: the inferred table, the row check.
-        let md = part("markdown").unwrap();
-        let c = compose(json, md).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.program.output(), Output::Text);
-        assert!(c.rows && !c.tree);
-        assert_eq!(c.adapter, Some(Adapter::InferredTable));
-        assert_eq!(c.loss(md).len(), md.loss.len() + 2);
-        // A lifted format into its own render: no adapter, the contract.
-        let c = compose(Some(md), md).unwrap_or_else(|f| panic!("{f}"));
-        assert!(c.tree && !c.rows && c.adapter.is_none());
-        // A lifted format into a tree's render: its tree as it is.
-        let c = compose(Some(md), yaml).unwrap_or_else(|f| panic!("{f}"));
-        assert!(c.tree && !c.rows && c.adapter.is_none());
-        // Every render of its own, from a tree.
-        for id in ["toml", "ini", "xml", "zon", "jsonl", "yaml", "markdown"] {
-            let target = part(id).unwrap();
-            let c =
-                compose(source_part(Format::Toml), target).unwrap_or_else(|f| panic!("{id}: {f}"));
-            assert_eq!(c.program.output(), Output::Text, "{id}");
+        let sources: Vec<Option<&Part>> = std::iter::once(None)
+            .chain(parts().iter().map(Some))
+            .collect();
+        for source in &sources {
+            for target in parts() {
+                let c = compose(*source, target, &options()).unwrap_or_else(|f| {
+                    panic!(
+                        "{} into {}: {f}",
+                        source.map_or("tree", |p| &p.id),
+                        target.id
+                    )
+                });
+                assert_eq!(c.program.output(), Output::Text, "{}", target.id);
+            }
         }
-        // A built-in's renderer runs when the events reach it as they are:
-        // JSON over a tree, CSV's inferred table over a tree's rows; a
-        // lifted format reaches CSV through its lift, composed.
-        assert!(matches!(
-            translation(json, part("json5").unwrap()),
-            Ok(Translation::Native {
-                renderer: Renderer::Json,
-                adapter: None
-            })
-        ));
-        assert!(matches!(
-            translation(json, part("csv").unwrap()),
-            Ok(Translation::Native {
-                renderer: Renderer::Csv,
-                adapter: Some(Adapter::InferredTable)
-            })
-        ));
-        assert!(matches!(
-            translation(Some(md), part("json").unwrap()),
-            Ok(Translation::Native {
-                renderer: Renderer::Json,
-                ..
-            })
-        ));
-        let csv = part("csv").unwrap();
-        let c = compose(Some(md), csv).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.program.output(), Output::Text);
-        assert!(c.tree && !c.rows && c.adapter.is_none());
-        assert!(compose(json, part("json5").unwrap()).is_err());
-        let t = translation(json, csv).unwrap();
-        assert_eq!(
-            t.loss(csv).len(),
-            csv.loss.len() + 2,
-            "the adapter's loss is printed"
-        );
-        assert!(t.composed().is_none());
     }
 
     /// Under `--alchemy`, the program's output stands where the source's
     /// events would: its events into a tree's render as they are, its
     /// table through `records`; its table into a records render as it is,
-    /// its events through the inferred table.
+    /// its events through the inferred table. Nothing stands in front of a
+    /// program's own events.
     #[test]
     fn a_programs_output_is_composed_by_its_shape() {
-        let yaml = part("yaml").unwrap();
-        let md = part("markdown").unwrap();
         let events = Source::new("p.alc", "def export [input] input");
         let table = Source::new(
             "t.alc",
             "def export [input] (table-from-json (record (entry :columns :infer) (entry :rows (path each-index))) input)",
         );
-        let c = compose_program(events, Output::JsonEvents, yaml).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.program.output(), Output::Text);
-        assert!(c.adapter.is_none() && !c.tree && !c.rows);
-        let c = compose_program(table, Output::TableRows, yaml).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.adapter, Some(Adapter::Records));
-        let c = compose_program(table, Output::TableRows, md).unwrap_or_else(|f| panic!("{f}"));
-        assert!(c.adapter.is_none());
-        let c = compose_program(events, Output::JsonEvents, md).unwrap_or_else(|f| panic!("{f}"));
-        assert_eq!(c.adapter, Some(Adapter::InferredTable));
-        // Through aless's own renderers when the output reaches them as it
-        // is (JSON over events; CSV over a table; JSON over a table, as
-        // records), composed otherwise: CSV over events goes through the
-        // inferred table, as --render csv reads a tree.
+        let shape = |program: Source<'_>, output: Output, id: &str| {
+            let c = compose_program(program, output, part(id).unwrap(), &options())
+                .unwrap_or_else(|f| panic!("{id}: {f}"));
+            assert_eq!(c.program.output(), Output::Text, "{id}");
+            assert!(!c.tree, "{id}");
+            c.adapters
+        };
+        assert_eq!(shape(events, Output::JsonEvents, "yaml"), vec![]);
+        assert_eq!(shape(events, Output::JsonEvents, "json"), vec![]);
+        assert_eq!(
+            shape(events, Output::JsonEvents, "toml"),
+            vec![Adapter::WrapObject("items".into())]
+        );
+        assert_eq!(
+            shape(events, Output::JsonEvents, "csv"),
+            vec![Adapter::WrapArray, Adapter::InferredTable]
+        );
+        assert_eq!(
+            shape(events, Output::JsonEvents, "markdown"),
+            vec![Adapter::WrapArray, Adapter::InferredTable]
+        );
+        assert_eq!(
+            shape(table, Output::TableRows, "yaml"),
+            vec![Adapter::Records]
+        );
+        assert_eq!(
+            shape(table, Output::TableRows, "json"),
+            vec![Adapter::Records]
+        );
+        assert_eq!(shape(table, Output::TableRows, "csv"), vec![]);
+        assert_eq!(shape(table, Output::TableRows, "markdown"), vec![]);
         let json = part("json").unwrap();
-        let csv = part("csv").unwrap();
-        assert!(matches!(
-            program_translation(events, Output::JsonEvents, json),
-            Ok(Translation::Native {
-                renderer: Renderer::Json,
-                adapter: None
-            })
-        ));
-        assert!(matches!(
-            program_translation(events, Output::JsonEvents, part("json5").unwrap()),
-            Ok(Translation::Native {
-                renderer: Renderer::Json,
-                adapter: None
-            })
-        ));
-        assert!(matches!(
-            program_translation(table, Output::TableRows, json),
-            Ok(Translation::Native {
-                renderer: Renderer::Json,
-                adapter: Some(Adapter::Records)
-            })
-        ));
-        assert!(matches!(
-            program_translation(table, Output::TableRows, csv),
-            Ok(Translation::Native {
-                renderer: Renderer::Csv,
-                adapter: None
-            })
-        ));
-        let t =
-            program_translation(events, Output::JsonEvents, csv).unwrap_or_else(|f| panic!("{f}"));
-        let c = t.composed().expect("CSV over events is composed");
-        assert_eq!(c.adapter, Some(Adapter::InferredTable));
-        assert_eq!(c.program.output(), Output::Text);
-        assert_eq!(t.loss(csv).len(), csv.loss.len() + 2);
-        let t = program_translation(table, Output::TableRows, json).unwrap();
-        assert_eq!(t.loss(json), Adapter::Records.loss());
-        let fail = compose_program(events, Output::Text, yaml).unwrap_err();
+        let c = compose_program(table, Output::TableRows, json, &options()).unwrap();
+        let mut loss = json.loss.clone();
+        loss.extend(Adapter::Records.loss());
+        assert_eq!(c.loss, loss);
+        let fail =
+            compose_program(events, Output::Text, part("yaml").unwrap(), &options()).unwrap_err();
         assert!(fail.message.starts_with("render_of_text"), "{fail}");
         // A program that does not define export is refused by name.
         let fail = compose_program(
             Source::new("n.alc", "def x [a] a"),
             Output::JsonEvents,
-            yaml,
+            part("yaml").unwrap(),
+            &options(),
         )
         .unwrap_err();
         assert!(fail.message.starts_with("no_export: n.alc"), "{fail}");
+    }
+
+    /// The two routes on aless's own renderers write what the composed
+    /// routes write, byte for byte: CSV over a tree's rows (a root of
+    /// every kind, rows of every kind and of mixed kinds, no columns, a
+    /// repeated member, the numbers that are not finite), and JSON over
+    /// the events as they are, compact, as the composed `json` writes.
+    #[test]
+    fn the_native_routes_write_what_the_composed_routes_write() {
+        let documents: &[(Format, &str)] = &[
+            (Format::Json, "[]"),
+            (Format::Json, "{}"),
+            (Format::Json, "[{}]"),
+            (Format::Json, "[{}, {}]"),
+            (Format::Json, "1"),
+            (Format::Json, "\"a, \\\"b\\\"\\nc\""),
+            (Format::Json, "null"),
+            (Format::Json, "{\"a\": 1, \"b\": [1, 2]}"),
+            (Format::Json, "[{\"a\": 1, \"b\": 2}, {\"b\": 3, \"c\": 4}]"),
+            (Format::Json, "[[1, 2], [3], [4, 5, 6]]"),
+            (Format::Json, "[1, \"x\", null, true, 1.50, 1e300, -0]"),
+            (Format::Json, "[{\"a\": [1, {\"b\": 2}]}, {\"a\": {}}]"),
+            (Format::Json, "[{\"a\": 1}, 5, [7, 8]]"),
+            (Format::Json, "[1, {\"a\": 1}, [2]]"),
+            (Format::Json, "[[1], {\"0\": 2, \"1\": 3}, 4]"),
+            (Format::Json, "[{\"a\": 1, \"a\": 2}]"),
+            (Format::Json5, "[Infinity, -Infinity, NaN, 1]"),
+            (
+                Format::Json5,
+                "[{a: Infinity, b: [NaN, 1]}, {a: -Infinity}]",
+            ),
+            (Format::Json5, "{x: NaN}"),
+            (Format::Yaml, "- a: .inf\n  b: x\n- a: 2\n"),
+            (Format::Csv, "a,b\n1,2\n3,\n"),
+            (Format::Jsonl, "{\"a\": 1}\n[2]\n3\n"),
+        ];
+        let write = |format: Format, text: &str, native: Renderer| -> (String, String) {
+            let name = format!("doc.{}", format.name());
+            let source = source_part(format);
+            let target = part(native.name()).unwrap();
+            let composition = compose(source, target, &options()).unwrap();
+            let plan = export::plan(format, true).unwrap();
+            let input = || match plan {
+                export::Plan::Lines => {
+                    let reader: Box<dyn BufRead + Send> =
+                        Box::new(std::io::Cursor::new(text.as_bytes().to_vec()));
+                    Input::Lines(reader)
+                }
+                _ => Input::Text(text),
+            };
+            let composed = Shared::default();
+            let result = run(
+                &job(&name, format, What::Part, true),
+                &composition,
+                records(target),
+                input(),
+                Box::new(composed.clone()),
+                Metrics::new(),
+            );
+            let composed = match result {
+                Ok(()) => composed.text(),
+                Err(e) => format!("{}FAILED {e:?}", composed.text()),
+            };
+            let natively = Shared::default();
+            let result = export::export(
+                &job(&name, format, What::Render(native), true),
+                input(),
+                Box::new(natively.clone()),
+            );
+            let natively = match result {
+                Ok(()) => natively.text(),
+                Err(e) => format!("{}FAILED {e:?}", natively.text()),
+            };
+            (composed, natively)
+        };
+        for (format, text) in documents {
+            for native in [Renderer::Csv, Renderer::Json] {
+                let (composed, natively) = write(*format, text, native);
+                assert!(
+                    !composed.contains("FAILED"),
+                    "{} {text:?} as {}: {composed}",
+                    format.name(),
+                    native.name()
+                );
+                assert_eq!(
+                    natively,
+                    composed,
+                    "{} {text:?} as {}",
+                    format.name(),
+                    native.name()
+                );
+            }
+        }
+    }
+
+    /// `--key` names the member a root that is not an object is written
+    /// under, for a target whose document is a table.
+    #[test]
+    fn the_key_names_the_member_a_root_is_written_under() {
+        let composition = compose(
+            source_part(Format::Json),
+            part("toml").unwrap(),
+            &Options { key: "rows".into() },
+        )
+        .unwrap();
+        let out = Shared::default();
+        run(
+            &job("doc.json", Format::Json, What::Part, false),
+            &composition,
+            Records::Any,
+            Input::Text("[1, 2]"),
+            Box::new(out.clone()),
+            Metrics::new(),
+        )
+        .unwrap();
+        assert_eq!(out.text(), "\"rows\" = [ 1, 2 ]\n");
+    }
+
+    /// A schema-only target writes only its own tree: a document of another
+    /// is refused before any output, with the route that can write it, and
+    /// a program's events are composed with its render.
+    #[test]
+    fn a_schema_only_target_names_the_program_route() {
+        let target = Part {
+            id: "x".into(),
+            reads: vec![Shape::Tree],
+            writes: Shape::Tree,
+            root: Root::Any,
+            schema: Some("x-tree".into()),
+            lift: None,
+            embed: None,
+            render: Render::Alc(Alc {
+                file: "tabnas-x/alchemy/render.alc".into(),
+                entry: "x-render".into(),
+                text: "def x-render [input] (json input)".into(),
+            }),
+            loss: Vec::new(),
+        };
+        let fail = translation(source_part(Format::Json), &target, &options()).unwrap_err();
+        assert_eq!(fail.code, Code::TargetValueUnrepresentable);
+        assert_eq!(
+            schema_only(&fail, &target, "in.json").as_deref(),
+            Some(
+                "--render x: x writes a x-tree tree, the tree its own documents read as, and \
+                 in.json is not one; a program that makes one can write it: --alchemy FILE \
+                 --render x"
+            )
+        );
+        assert_eq!(
+            schema_only(
+                &Fail::new(Code::TargetValueUnrepresentable, "other"),
+                &target,
+                "a"
+            ),
+            None
+        );
+        let c = compose_program(
+            Source::new("p.alc", "def export [input] input"),
+            Output::JsonEvents,
+            &target,
+            &options(),
+        )
+        .unwrap_or_else(|f| panic!("{f}"));
+        assert!(c.adapters.is_empty());
     }
 
     /// CSV to YAML streams: CSV at the root is read a record at a time, and
@@ -1156,28 +888,17 @@ mod tests {
     /// where it was.
     #[test]
     fn ten_times_the_rows_leave_what_the_render_retains_flat() {
-        let composition = compose(source_part(Format::Csv), part("yaml").unwrap()).unwrap();
+        let composition =
+            compose(source_part(Format::Csv), part("yaml").unwrap(), &options()).unwrap();
         let run_rows = |rows: usize| {
             let mut csv = String::from("name,age,city\n");
             for i in 0..rows {
                 csv.push_str(&format!("name {i},{i},city {i}\n"));
             }
-            let job = Job {
-                name: "rows.csv".into(),
-                origin: "rows.csv".into(),
-                format: Format::Csv,
-                what: What::Part,
-                path: Vec::new(),
-                compact: false,
-                indent: 2,
-                timeout: None,
-                started: None,
-                max_output: None,
-            };
             let metrics = Metrics::new();
             let reader: Box<dyn BufRead + Send> = Box::new(std::io::Cursor::new(csv.into_bytes()));
             run(
-                &job,
+                &job("rows.csv", Format::Csv, What::Part, false),
                 &composition,
                 Records::Any,
                 Input::Lines(reader),
@@ -1205,15 +926,18 @@ mod tests {
             id: "x".into(),
             reads: vec![Shape::Tree],
             writes: Shape::Tree,
+            root: Root::Any,
+            schema: None,
             lift: None,
-            render: Render::Alc {
+            embed: None,
+            render: Render::Alc(Alc {
                 file: "tabnas-x/alchemy/render.alc".into(),
-                entry: "x-render",
-                text: "def x-render [input]\n  (nope input)",
-            },
+                entry: "x-render".into(),
+                text: "def x-render [input]\n  (nope input)".into(),
+            }),
             loss: Vec::new(),
         };
-        let fail = compose(None, &broken).unwrap_err();
+        let fail = compose(None, &broken, &options()).unwrap_err();
         assert!(fail.message.starts_with("unknown_name"), "{fail}");
         assert_eq!(fail.file.as_deref(), Some("tabnas-x/alchemy/render.alc"));
         assert_eq!((fail.row, fail.column), (Some(2), Some(4)));

@@ -14,7 +14,7 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         { $_ -cin '--mode', '-m' } { $values = @('data', 'line') }
         { $_ -cin '--panes' } { $values = @('out', 'program', 'out,program') }
         { $_ -cin '--generate' } { $values = @('man', 'complete-bash', 'complete-zsh', 'complete-fish', 'complete-powershell', 'skill') }
-        { $_ -cin '--find', '--alchemy', '--alchemy-expr', '--path', '--at', '--limit', '--max-output', '--grammar', '--grammar-expr', '--depth', '--indent', '--max-size', '--timeout', '--scrolloff' } { return }
+        { $_ -cin '--find', '--alchemy', '--alchemy-expr', '--path', '--at', '--limit', '--max-output', '--grammar', '--grammar-expr', '--depth', '--indent', '--key', '--max-size', '--timeout', '--scrolloff' } { return }
     }
     if ($null -ne $values) {
         $values | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -45,6 +45,7 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         [System.Management.Automation.CompletionResult]::new('--grammar-expr', '--grammar-expr', [System.Management.Automation.CompletionResultType]::ParameterName, 'the same, the grammar on the command line')
         [System.Management.Automation.CompletionResult]::new('--depth', '--depth', [System.Management.Automation.CompletionResultType]::ParameterName, 'list N levels down; the viewer folds deeper')
         [System.Management.Automation.CompletionResult]::new('--indent', '--indent', [System.Management.Automation.CompletionResultType]::ParameterName, 'indentation per level (default 2)')
+        [System.Management.Automation.CompletionResult]::new('--key', '--key', [System.Management.Automation.CompletionResultType]::ParameterName, 'member a root is written under (items)')
         [System.Management.Automation.CompletionResult]::new('--max-size', '--max-size', [System.Management.Automation.CompletionResultType]::ParameterName, 'refuse an input over SIZE (default 64M)')
         [System.Management.Automation.CompletionResult]::new('--timeout', '--timeout', [System.Management.Automation.CompletionResultType]::ParameterName, 'stop a parse past SECONDS (default none)')
         [System.Management.Automation.CompletionResult]::new('--no-watch', '--no-watch', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not reload files when they change')

@@ -20,7 +20,7 @@ use tabnas_transduce::{Code, Fail, JsonEvent, Metrics};
 
 use crate::alchemy::{self, ProgramArg};
 use crate::doc::{Doc, Key, Kind, NodeId, NO_NODE};
-use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Records, Renderer, What};
+use crate::export::{self, ExportError, Input, Job, Nearest, Plan, Renderer, What};
 use crate::fmt;
 use crate::grammar::GrammarError;
 use crate::load::{self, Format, Limits, LoadError, Loaded};
@@ -171,6 +171,9 @@ pub struct Request {
     /// Stop a program that writes more than this many bytes; `None` for
     /// no limit.
     pub max_output: Option<u64>,
+    /// The member a root that is not an object is written under, for a
+    /// `--render` target whose document is a table (`--key`).
+    pub key: String,
     /// When the run started, for a time limit that covers reading its
     /// input too (see [`load::Limits::started`]); `None` to count from the
     /// start of the parse.
@@ -191,7 +194,15 @@ impl Request {
             max_size: Limits::DEFAULT.max_size,
             timeout: Limits::DEFAULT.timeout,
             max_output: Some(load::DEFAULT_MAX_OUTPUT),
+            key: translate::Options::default().key,
             started: None,
+        }
+    }
+
+    /// What a translation is composed under: the member `--key` names.
+    pub fn translate_options(&self) -> translate::Options {
+        translate::Options {
+            key: self.key.clone(),
         }
     }
 
@@ -454,14 +465,17 @@ fn export(
     })
 }
 
-/// `--render ID` for a format a crate ships a render for: the render
-/// composed with the source's lift and the adapter the shapes need
-/// ([`translate::compose`]) and run over the value at the start, as a
-/// program runs ([`translate::run`]); or, for a format written by one of
-/// aless's own renderers (`--render json5`), that renderer. A write that
-/// succeeds returns the loss declaration for standard error
-/// ([`loss_note`]); a failure met while it was writing carries the same
-/// sentences as `loss` ([`Failure::with_loss`]), on either path alike.
+/// `--render ID` for a format a crate ships a render for: the translation
+/// alchemy composes from the source's parts and the target's
+/// ([`translate::translation`]), run over the value at the start as a
+/// program runs ([`translate::run`]), or, where one of aless's own
+/// renderers writes the same document (`--render json`, `--render csv`
+/// over a tree), that renderer. A write that succeeds returns the loss
+/// declaration for standard error ([`loss_note`]); a failure met while it
+/// was writing carries the same sentences as `loss`
+/// ([`Failure::with_loss`]), on either path alike. A schema-only target
+/// refuses a document of another tree before reading it, as a usage
+/// error that names the route that can write it.
 fn translate(
     req: &Request,
     id: &str,
@@ -476,25 +490,34 @@ fn translate(
     };
     let (source, name, origin, format) = streamed_source(req)?;
     // The source's parts stand at the root only: its lift reads a whole
-    // document, so a value below the root is a tree whatever the document
-    // was (a Markdown file's table is its rows at the root, and --path
-    // into the file selects nodes of its tree, rows by their own shape).
+    // document, so a value below the root is a plain tree whatever the
+    // document was (a Markdown file's table is its rows at the root, and
+    // --path into the file selects nodes of its tree, rows by their own
+    // shape).
     let source_part = if path.is_empty() {
         translate::source_part(format)
     } else {
         None
     };
     // The composition first: a part that does not compile is a failure
-    // naming its file, said before the input is read.
-    let translation = translate::translation(source_part, part)
-        .map_err(|fail| Failure::alchemy(part_file(part, &fail), &fail))?;
-    let loss = translation.loss(part);
+    // naming its file, and a target that cannot take this document is the
+    // command's mistake, each said before the input is read.
+    let translation =
+        translate::translation(source_part, part, &req.translate_options()).map_err(|fail| {
+            match translate::schema_only(&fail, part, &name) {
+                Some(message) => Failure::usage(message),
+                None => Failure::alchemy(part_file(part, &fail), &fail),
+            }
+        })?;
+    let loss = translation.loss().to_vec();
     let composition = match translation {
         translate::Translation::Composed(composition) => composition,
         // One of aless's own renderers over the events as they are.
-        translate::Translation::Native { renderer, adapter } => {
+        translate::Translation::Native {
+            renderer, adapters, ..
+        } => {
             return export(req, renderer, Some(&loss), stdin, out)
-                .map(|()| loss_note(part, &loss, adapter, &name, req.compact));
+                .map(|()| loss_note(part, &loss, &adapters, &name, req.compact));
         }
     };
     let Some(plan) = export::plan(format, path.is_empty()) else {
@@ -516,7 +539,7 @@ fn translate(
         max_output: None,
     };
     let metrics = Metrics::new();
-    let records = part.records();
+    let records = translate::records(part);
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
         Opened::Text(text) => translate::run(
             &job,
@@ -540,7 +563,7 @@ fn translate(
             return Ok(loss_note(
                 part,
                 &loss,
-                composition.adapter,
+                &composition.adapters,
                 &name,
                 req.compact,
             ))
@@ -556,7 +579,7 @@ fn translate(
 fn part_file<'a>(part: &'a Part, fail: &'a tabnas_transduce::Fail) -> &'a str {
     match (&fail.file, &part.render) {
         (Some(file), _) => file,
-        (None, translate::Render::Alc { file, .. }) => file,
+        (None, translate::Render::Alc(alc)) => &alc.file,
         (None, _) => &part.id,
     }
 }
@@ -610,13 +633,14 @@ fn translation_failure(
 /// What a write through a format's render leaves on standard error when
 /// it succeeds: `{"warning": {"kind": "loss", "message", "file",
 /// "render", "loss"}}`, the loss declaration, whose sentences say what a
-/// document written that way does not keep, the adapter's among them when
-/// one ran, named as `adapter`. Nothing, for a write that declares no
-/// loss.
+/// document written that way does not keep, each adapter's among them
+/// when one ran: every adapter that ran is named in `adapters`, in order,
+/// and the one between the two shapes, the inferred table or `records`,
+/// as `adapter`. Nothing, for a write that declares no loss.
 fn loss_note(
     part: &Part,
     loss: &[String],
-    adapter: Option<translate::Adapter>,
+    adapters: &[translate::Adapter],
     file: &str,
     compact: bool,
 ) -> String {
@@ -634,8 +658,11 @@ fn loss_note(
         "render": part.id,
         "loss": loss,
     });
-    if let Some(adapter) = adapter {
+    if let Some(adapter) = translate::shape_adapter(adapters) {
         warning["adapter"] = json!(adapter.name());
+    }
+    if !adapters.is_empty() {
+        warning["adapters"] = json!(adapters.iter().map(|a| a.name()).collect::<Vec<_>>());
     }
     render(&json!({ "warning": warning }), compact)
 }
@@ -676,18 +703,17 @@ fn run_program(
             String::new(),
         ));
     }
-    // A format's render over the program's output, as --render chooses it
-    // for a source ([`translate::program_translation`]): one of aless's own
-    // renderers when the output reaches it as it is, with the adapter it
-    // runs natively named, or the render composed over the output, the
-    // program linked under another name, in one plan.
-    let (part, translation) = match render {
+    // A format's render over the program's output: the program linked
+    // under another name, its output in a source's place, and the route
+    // alchemy composes from there to the render, in one plan.
+    let composition = match render {
         Some(Renderer::Part(id)) => {
             let part = translate::part(id).expect("--render names a part the registry has");
-            let translation = translate::program_translation(
+            let composition = translate::compose_program(
                 tabnas_alchemy::Source::new(&file, &text),
                 compiled.output(),
                 part,
+                &req.translate_options(),
             )
             .map_err(|fail| {
                 let in_program = fail.file.as_deref() == Some(file.as_str());
@@ -704,16 +730,9 @@ fn run_program(
                 }
                 f
             })?;
-            (Some(part), Some(translation))
+            Some((part, composition))
         }
-        _ => (None, None),
-    };
-    let (composition, render, adapter) = match &translation {
-        Some(translate::Translation::Composed(c)) => (Some(c), None, c.adapter),
-        Some(translate::Translation::Native { renderer, adapter }) => {
-            (None, Some(*renderer), *adapter)
-        }
-        None => (None, render, None),
+        _ => None,
     };
     let (source, name, origin, format) = streamed_source(req)?;
     let Some(plan) = export::plan(format, true) else {
@@ -736,25 +755,31 @@ fn run_program(
         started: req.limits_for(&source).started,
         max_output: req.max_output,
     };
-    let run = |input: Input<'_>| match composition {
-        Some(composition) => {
-            let records = part.map_or(Records::Any, Part::records);
-            translate::run(&job, composition, records, input, out, Metrics::new())
-        }
+    let run = |input: Input<'_>| match &composition {
+        Some((part, composition)) => translate::run(
+            &job,
+            composition,
+            translate::records(part),
+            input,
+            out,
+            Metrics::new(),
+        ),
         None => alchemy::run(&job, &compiled, render, input, out),
     };
     let result = match open_input(req, &source, &name, format, plan, stdin)? {
         Opened::Text(text) => run(Input::Text(&text)),
         Opened::Lines(reader) => run(Input::Lines(reader)),
     };
-    let loss = match (part, &translation) {
-        (Some(part), Some(t)) => t.loss(part),
-        _ => Vec::new(),
+    let loss = match &composition {
+        Some((_, composition)) => composition.loss.clone(),
+        None => Vec::new(),
     };
     let failure = match result {
         Ok(()) | Err(ExportError::ReaderGone) => {
-            let note = match part {
-                Some(part) => loss_note(part, &loss, adapter, &name, req.compact),
+            let note = match &composition {
+                Some((part, composition)) => {
+                    loss_note(part, &loss, &composition.adapters, &name, req.compact)
+                }
                 None => String::new(),
             };
             return Ok((String::new(), note));
@@ -801,7 +826,7 @@ fn run_program(
     };
     // Met while a format's render was writing: its loss, as `--render`
     // carries it.
-    Err(match part {
+    Err(match composition {
         Some(_) => failed.with_loss(&loss),
         None => failed,
     })
@@ -3228,18 +3253,17 @@ mod tests {
             e.get("row").is_none(),
             "the transducer's row is aless's line"
         );
-        // Records that are not records.
-        let e = json_of(&with_stdin(&r, r#"{"a": 1}"#).stderr);
-        assert_eq!(e["error"]["code"], json!("INPUT_INVALID"));
-        assert!(
-            e["error"]["message"].as_str().unwrap().contains("--path"),
-            "{e}"
-        );
-        assert_eq!(e["error"]["path"], json!("."));
+        // A value that is not an array is its one record, and a later
+        // record of another kind than the first has a field where the
+        // first record's columns find one.
+        let out = with_stdin(&r, r#"{"a": 1}"#);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "\"a\"\r\n\"1\"\r\n");
         let mut deep = r.clone();
         deep.start = Start::Path(".rows".into());
-        let e = json_of(&with_stdin(&deep, r#"{"rows": [{"a": 1}, 2]}"#).stderr);
-        assert_eq!(e["error"]["path"], json!(".rows[1]"));
+        let out = with_stdin(&deep, r#"{"rows": [{"a": 1}, 2]}"#);
+        assert_eq!(out.status, status::OK, "{}", out.stderr);
+        assert_eq!(out.stdout, "\"a\"\r\n\"1\"\r\n\"\"\r\n");
         // A limit of the transducer's is status 5, and says which limit.
         let wide: String = (0..10_001).map(|i| format!("\"k{i}\":1,")).collect();
         let e = json_of(&with_stdin(&r, &format!("[{{{}}}]", wide.trim_end_matches(','))).stderr);
@@ -3358,13 +3382,14 @@ mod tests {
             let e = error(&missing, None);
             assert_eq!(e["kind"], json!("io"), "{id}: {e}");
             assert!(e.get("loss").is_none(), "{id}: {e}");
-            // An input that fails part way: met while writing. JSON
-            // declares no loss, so its list is empty.
+            // An input that fails part way: met while writing, so the
+            // render's loss rides along (JSON's, that a number that is not
+            // finite is written as null, among them).
             let e = error(&r, Some(broken));
             assert_eq!(e["kind"], json!("transduce"), "{id}: {e}");
             assert_eq!(e["output"], json!("partial"), "{id}: {e}");
             let loss = e["loss"].as_array().unwrap_or_else(|| panic!("{id}: {e}"));
-            assert_eq!(loss.is_empty(), id == "json", "{id}: {e}");
+            assert!(!loss.is_empty(), "{id}: {e}");
             // A program's output through the same render, the same way.
             let program = |files: Vec<PathBuf>| {
                 let mut p = req(Op::Alchemy {

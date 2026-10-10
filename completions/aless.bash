@@ -25,12 +25,12 @@ _aless() {
             COMPREPLY=($(compgen -W "man complete-bash complete-zsh complete-fish complete-powershell skill" -- "$cur"))
             return 0
             ;;
-        --find|--alchemy|--alchemy-expr|--path|--at|--limit|--max-output|--grammar|--grammar-expr|--depth|--indent|--max-size|--timeout|--scrolloff)
+        --find|--alchemy|--alchemy-expr|--path|--at|--limit|--max-output|--grammar|--grammar-expr|--depth|--indent|--key|--max-size|--timeout|--scrolloff)
             return 0
             ;;
     esac
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--json --paths --find --where --check --render --alchemy --alchemy-expr --explain --path --at --limit --compact --max-output --kind --format -k --grammar --grammar-expr --depth --indent --max-size --timeout --no-watch --watch --mode -m --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --panes --stacked --help -h --version -V --generate" -- "$cur"))
+        COMPREPLY=($(compgen -W "--json --paths --find --where --check --render --alchemy --alchemy-expr --explain --path --at --limit --compact --max-output --kind --format -k --grammar --grammar-expr --depth --indent --key --max-size --timeout --no-watch --watch --mode -m --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --panes --stacked --help -h --version -V --generate" -- "$cur"))
     fi
     return 0
 }

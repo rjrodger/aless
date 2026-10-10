@@ -39,7 +39,7 @@ use std::sync::Arc;
 use tabnas_alchemy::effects::{self, RendererProfile};
 use tabnas_alchemy::shared::{Renderers, Routers};
 use tabnas_alchemy::value::Val;
-use tabnas_alchemy::{Output, Program, Source};
+use tabnas_alchemy::{Output, Program};
 use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink};
 
@@ -104,27 +104,21 @@ pub fn compile(text: &str, file: &str) -> Result<Program, Fail> {
     tabnas_alchemy::compile(text, file, routers(), renderers())
 }
 
-/// Compile a program linked from several sources
-/// ([`tabnas_alchemy::compile_sources`]): a format's parts and the main
-/// that calls them, or a program composed into a format's render.
-pub fn compile_sources(sources: &[Source<'_>]) -> Result<Program, Fail> {
-    tabnas_alchemy::compile_sources(sources, routers(), renderers())
-}
-
-/// The stages a program's sinks are built from. alchemy implements
-/// neither and depends on neither crate: its host passes transduce's
-/// routers and render's renderers in, and aless is that host.
-fn routers() -> Arc<dyn Routers<Val>> {
+/// The stages a program's sinks are built from, a translation's among
+/// them ([`crate::translate`]). alchemy implements neither and depends on
+/// neither crate: its host passes transduce's routers and render's
+/// renderers in, and aless is that host.
+pub(crate) fn routers() -> Arc<dyn Routers<Val>> {
     Arc::new(tabnas_transduce::routers())
 }
 
-fn renderers() -> Arc<dyn Renderers> {
+pub(crate) fn renderers() -> Arc<dyn Renderers> {
     Arc::new(tabnas_render::renderers())
 }
 
 /// A compiled program with the text it was compiled from, kept together:
 /// a host that links the program again (a format's render over its
-/// output, [`crate::translate::program_translation`]) links the text it
+/// output, [`crate::translate::compose_program`]) links the text it
 /// compiled, never a later reading of the file, so the program that runs
 /// is the one whose output shape chose the composition.
 pub struct Compiled {

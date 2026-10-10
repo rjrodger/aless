@@ -256,7 +256,9 @@ fn every_yaml_fixture_written_as_yaml_reads_back_as_the_same_value() {
             .iter()
             .map(|chunk| {
                 scope.spawn(move || {
-                    let program = translate::compose(Some(yaml), yaml).unwrap_or_else(|f| panic!("{f}"));
+                    let program =
+                        translate::compose(Some(yaml), yaml, &translate::Options::default())
+                            .unwrap_or_else(|f| panic!("{f}"));
                     let (mut same, mut unread) = (0, 0);
                     let mut differ: Vec<String> = Vec::new();
                     for (name, text) in chunk.iter() {

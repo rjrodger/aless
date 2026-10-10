@@ -52,9 +52,9 @@ use tabnas::Tabnas;
 use tabnas_render::{CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut};
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
-    capability, AbortFlag, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
+    capability, AbortFlag, Cell, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
     ParserSource, Prune, Schema, Selector, Sink, Source, SourceMode, TableBinding, TableEvent,
-    TableFromJson, TableSink, ValueSource,
+    TableFromJson, TableSink, TreeContract, ValueSource,
 };
 
 use crate::fmt;
@@ -304,19 +304,26 @@ fn export_staged(
                 indent: (!job.compact).then_some(job.indent),
                 trailing_newline: true,
             };
+            // The composed `json`'s route, natively: the events held to a
+            // tree's contract, as a render that writes from a tree takes
+            // them (a member a streamed parse hands on twice is refused,
+            // and the export falls back to the parsed value, which keeps
+            // the last, when nothing has been written), and a number that
+            // is not finite, which JSON has no spelling for, written as
+            // null, as every manifest that names `json` declares.
             attempt(job, input, &written, &broken, &stage, |_| {
                 Ok(Scope::new(
                     job.path.clone(),
-                    JsonRenderer::new(pipe(), options.clone()),
+                    TreeContract::new(NullNonFinite(JsonRenderer::new(pipe(), options.clone()))),
                 ))
             })
         }
         Renderer::Csv => {
+            // The composed `csv`'s options (alchemy's `CSV_OPTIONS`): the
+            // export is lossy where the standard profile is, an absent
+            // member and a null both read as an empty field, since failing
+            // a whole export for a member one row lacks would serve nobody.
             let options = CsvOptions {
-                // The default export is lossy where the standard profile
-                // is: an absent member and a null both read as an empty
-                // field. Failing a whole export for a member one row lacks
-                // would serve nobody.
                 missing: MissingText::Text("".into()),
                 ..CsvOptions::default()
             };
@@ -324,7 +331,9 @@ fn export_staged(
                 let csv = CsvRenderer::new(pipe(), options.clone())
                     .map_err(|f| ExportError::Transduce(Box::new(f)))?;
                 // The rows are the elements of the array the scope re-roots
-                // the stream at, so the binding selects the root's elements.
+                // the stream at, a root of another kind made the one
+                // element of one, so the binding selects the root's
+                // elements, whatever their kind.
                 let binding = TableBinding {
                     schema: Schema::Infer,
                     rows: Selector::root().each_index(),
@@ -336,10 +345,10 @@ fn export_staged(
                     // export agrees with `--json` rather than failing.
                     Duplicates::LastWins,
                     Metrics::new(),
-                    EmptyOk::new(csv),
+                    NonFiniteCells(NoColumns::new(csv)),
                 )
                 .map_err(|f| ExportError::Transduce(Box::new(f)))?;
-                Ok(Scope::new(job.path.clone(), Rows::new(table)))
+                Ok(Scope::new(job.path.clone(), WrapArray::new(table)))
             })
         }
     }
@@ -1730,164 +1739,211 @@ fn scalar_value(ev: &JsonEvent<'_>) -> Value {
     }
 }
 
-// ----- the rows --------------------------------------------------------------
+// ----- the root array --------------------------------------------------------
 
-/// The rows of a CSV export: the elements of the array the stream is
-/// rooted at, each an object (its members are the columns) or each a
-/// scalar (one column, `value`).
-///
-/// Anything else is the input's fault, said with its path: a root that is
-/// not an array (the message names `--path`), a row that is an array, and
-/// a row of the other kind than the first. A scalar row is wrapped as
-/// `{"value": …}` so the table transducer's inferred schema has its one
-/// column.
-pub(crate) struct Rows<S> {
+/// The root of a CSV export's rows: an array as it is, its elements the
+/// rows, and an object or a scalar as the one element of one. alchemy's
+/// `wrap-array` does this in the composed `csv`'s plan, an interpreted
+/// step per event; this is the same adapter natively, with the same
+/// refusals for a stream that is no tree's (each `PROTOCOL_ORDER_ERROR`,
+/// with the library's text), which a scope's one whole value never is.
+/// The table transducer takes rows of every kind, inferring the columns
+/// from the first: an object's members, an array's positions, or one
+/// column `value` for a scalar.
+pub(crate) struct WrapArray<S> {
     inner: S,
-    /// Containers open in the re-rooted stream.
-    depth: usize,
-    started: bool,
-    kind: Option<RowKind>,
-    /// Rows begun.
-    rows: usize,
+    state: Wrap,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RowKind {
-    Objects,
-    Scalars,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wrap {
+    /// No event yet.
+    Start,
+    /// An array root, passing through.
+    Pass,
+    /// An object root, wrapped, with this many containers open in it.
+    Open(usize),
+    /// A wrapped root has closed.
+    Done,
 }
 
-impl<S: Sink> Rows<S> {
-    pub(crate) fn new(inner: S) -> Rows<S> {
-        Rows {
+impl<S: Sink> WrapArray<S> {
+    pub(crate) fn new(inner: S) -> WrapArray<S> {
+        WrapArray {
             inner,
-            depth: 0,
-            started: false,
-            kind: None,
-            rows: 0,
+            state: Wrap::Start,
         }
     }
 
-    fn row(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
-        let index = self.rows;
-        self.rows += 1;
-        let at = format!("[{index}]");
-        let kind = kind_of_event(&ev);
-        let wanted = if ev == JsonEvent::ObjectStart {
-            RowKind::Objects
-        } else if ev == JsonEvent::ArrayStart {
-            return Err(Fail::input(format!(
-                "row {at} is an array; a row is an object (its members are the columns) or a \
-                 scalar (one column, \"value\")"
-            ))
-            .at_path(at));
-        } else {
-            RowKind::Scalars
-        };
-        match self.kind {
-            None => self.kind = Some(wanted),
-            Some(first) if first != wanted => {
-                let (this, that) = match wanted {
-                    RowKind::Objects => ("an object".to_string(), "a scalar"),
-                    RowKind::Scalars => (with_article(kind), "an object"),
-                };
-                return Err(Fail::input(format!(
-                    "row {at} is {this}, but the first row was {that}; every row is an object \
-                     with the columns as its members, or every row is a scalar"
-                ))
-                .at_path(at));
-            }
-            Some(_) => {}
-        }
-        match wanted {
-            RowKind::Objects => {
-                self.depth += 1;
-                self.inner.event(ev)
-            }
-            RowKind::Scalars => {
-                for wrapped in [JsonEvent::ObjectStart, JsonEvent::Key("value"), ev] {
-                    if self.inner.event(wrapped)? == Flow::Stop {
-                        return Ok(Flow::Stop);
-                    }
-                }
-                self.inner.event(JsonEvent::ObjectEnd)
+    /// Hand `events` on in order, stopping where the sink stops.
+    fn emit(&mut self, events: &[JsonEvent<'_>]) -> Result<Flow, Fail> {
+        for ev in events {
+            if self.inner.event(*ev)? == Flow::Stop {
+                return Ok(Flow::Stop);
             }
         }
+        Ok(Flow::Continue)
     }
 }
 
-impl<S: Sink> Sink for Rows<S> {
+impl<S: Sink> Sink for WrapArray<S> {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
-        if !self.started {
-            self.started = true;
-            if ev == JsonEvent::ArrayStart {
-                self.depth = 1;
-                return self.inner.event(ev);
-            }
-            return Err(Fail::input(format!(
-                "the value to export is {}, not an array of records; give --path to an array \
-                 whose elements are the rows (--paths --depth 2 shows the arrays)",
-                with_article(kind_of_event(&ev))
-            ))
-            .at_path("."));
-        }
-        match self.depth {
-            0 => self.inner.event(ev),
-            1 => match ev {
-                JsonEvent::ArrayEnd => {
-                    self.depth = 0;
-                    self.inner.event(ev)
-                }
-                JsonEvent::End | JsonEvent::Key(_) | JsonEvent::ObjectEnd => {
-                    // The scope hands over one whole value, so these do
-                    // not arrive at a row boundary.
-                    Err(Fail::protocol("an event out of place between rows"))
-                }
-                _ => self.row(ev),
-            },
-            _ => {
-                if ev.is_start() {
-                    self.depth += 1;
-                } else if ev.is_end() {
-                    self.depth -= 1;
-                }
+        match (self.state, ev) {
+            (Wrap::Start, ev @ JsonEvent::ArrayStart) => {
+                self.state = Wrap::Pass;
                 self.inner.event(ev)
             }
+            (Wrap::Start, ev @ JsonEvent::ObjectStart) => {
+                self.state = Wrap::Open(1);
+                self.emit(&[JsonEvent::ArrayStart, ev])
+            }
+            (Wrap::Start, JsonEvent::End) => Err(Fail::protocol(
+                "the events hold no value, where a tree's hold one",
+            )),
+            (Wrap::Start, JsonEvent::Key(_) | JsonEvent::ArrayEnd | JsonEvent::ObjectEnd) => Err(
+                Fail::protocol("the events begin with an end or a key, which a tree's never do"),
+            ),
+            (Wrap::Start, scalar) => {
+                self.state = Wrap::Done;
+                self.emit(&[JsonEvent::ArrayStart, scalar, JsonEvent::ArrayEnd])
+            }
+            (Wrap::Pass, ev) => self.inner.event(ev),
+            (Wrap::Open(_), JsonEvent::End) => Err(Fail::protocol(
+                "the events ended inside a container, which a tree's never do",
+            )),
+            (Wrap::Open(open), ev @ (JsonEvent::ArrayStart | JsonEvent::ObjectStart)) => {
+                self.state = Wrap::Open(open + 1);
+                self.inner.event(ev)
+            }
+            (Wrap::Open(1), ev @ (JsonEvent::ArrayEnd | JsonEvent::ObjectEnd)) => {
+                self.state = Wrap::Done;
+                self.emit(&[ev, JsonEvent::ArrayEnd])
+            }
+            (Wrap::Open(open), ev @ (JsonEvent::ArrayEnd | JsonEvent::ObjectEnd)) => {
+                self.state = Wrap::Open(open - 1);
+                self.inner.event(ev)
+            }
+            (Wrap::Open(_), ev) => self.inner.event(ev),
+            (Wrap::Done, ev @ JsonEvent::End) => self.inner.event(ev),
+            (Wrap::Done, _) => Err(Fail::protocol(
+                "the events hold more after the root value, which a tree's never do",
+            )),
         }
     }
 }
 
-// ----- the empty table -------------------------------------------------------
+// ----- the numbers that are not finite ---------------------------------------
 
-/// A table with no columns and no rows (an empty array of records) is an
-/// empty export, not a failure: the renderer never sees its schema. One
-/// with rows but no columns (`[{}]`) has no CSV form, and the renderer
-/// says so.
-struct EmptyOk<S> {
-    inner: S,
-    held: bool,
-}
+/// A number that is not finite as null, for the JSON renderer, which JSON
+/// has no spelling for: the composed `json`'s `:non-finite :null`.
+pub(crate) struct NullNonFinite<S>(pub(crate) S);
 
-impl<S: TableSink> EmptyOk<S> {
-    fn new(inner: S) -> EmptyOk<S> {
-        EmptyOk { inner, held: false }
+impl<S: Sink> Sink for NullNonFinite<S> {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        match ev {
+            JsonEvent::Number(n) if !n.value.is_finite() => self.0.event(JsonEvent::Null),
+            ev => self.0.event(ev),
+        }
     }
 }
 
-impl<S: TableSink> TableSink for EmptyOk<S> {
+/// A number cell that is not finite as its word, `Infinity`, `-Infinity`
+/// or `NaN`, for the CSV renderer, since every CSV cell is text: the
+/// composed `csv`'s `:non-finite :literal`. One inside a nested array or
+/// object is already the null of that cell's compact JSON text.
+struct NonFiniteCells<S>(S);
+
+impl<S: TableSink> TableSink for NonFiniteCells<S> {
     fn table_event(&mut self, ev: TableEvent<'_>) -> Result<Flow, Fail> {
         match ev {
-            TableEvent::Schema([]) => {
-                self.held = true;
+            TableEvent::Row(cells)
+                if cells
+                    .iter()
+                    .any(|c| matches!(c, Cell::Number { value, .. } if !value.is_finite())) =>
+            {
+                let cells: Vec<Cell> = cells
+                    .iter()
+                    .map(|c| match c {
+                        Cell::Number { value, .. } if !value.is_finite() => {
+                            Cell::String(fmt::number(*value).into())
+                        }
+                        c => c.clone(),
+                    })
+                    .collect();
+                self.0.table_event(TableEvent::Row(&cells))
+            }
+            ev => self.0.table_event(ev),
+        }
+    }
+}
+
+// ----- the table of no columns -----------------------------------------------
+
+/// A table of no columns (an empty document, or rows of no members) is the
+/// empty document, as the composed `csv`'s `:no-columns :empty` writes it:
+/// its schema, its rows (each of no cells) and its end go no further, and
+/// the renderer, which refuses such a schema, writes nothing. A table of
+/// columns passes as it came. The table it keeps back is held to the
+/// protocol as alchemy holds it, with the same texts: a row of any cell, a
+/// second schema, and anything after the end are `PROTOCOL_ORDER_ERROR`.
+struct NoColumns<S> {
+    inner: S,
+    kept: Kept,
+}
+
+/// Where [`NoColumns`] is in its table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kept {
+    /// No schema has come.
+    Before,
+    /// A table of columns, which the renderer holds to the protocol.
+    Passed,
+    /// A table of no columns, kept back: the rows it has had.
+    Rows(u64),
+    /// The kept-back table has ended.
+    Ended,
+}
+
+impl<S: TableSink> NoColumns<S> {
+    fn new(inner: S) -> NoColumns<S> {
+        NoColumns {
+            inner,
+            kept: Kept::Before,
+        }
+    }
+}
+
+impl<S: TableSink> TableSink for NoColumns<S> {
+    fn table_event(&mut self, ev: TableEvent<'_>) -> Result<Flow, Fail> {
+        match (self.kept, ev) {
+            (Kept::Before, TableEvent::Schema([])) => {
+                self.kept = Kept::Rows(0);
                 Ok(Flow::Continue)
             }
-            TableEvent::Row(_) if self.held => {
-                self.held = false;
-                self.inner.table_event(TableEvent::Schema(&[]))?;
+            (Kept::Before, ev @ TableEvent::Schema(_)) => {
+                self.kept = Kept::Passed;
                 self.inner.table_event(ev)
             }
-            TableEvent::End if self.held => Ok(Flow::Continue),
-            _ => self.inner.table_event(ev),
+            (Kept::Before | Kept::Passed, ev) => self.inner.table_event(ev),
+            (Kept::Rows(_), TableEvent::Schema(_)) => Err(Fail::protocol("a second schema")),
+            (Kept::Rows(rows), TableEvent::Row(cells)) if !cells.is_empty() => {
+                Err(Fail::protocol(format!(
+                    "row {} has {} cells; the schema has 0 columns",
+                    rows + 1,
+                    cells.len()
+                )))
+            }
+            (Kept::Rows(rows), TableEvent::Row(_)) => {
+                self.kept = Kept::Rows(rows + 1);
+                Ok(Flow::Continue)
+            }
+            (Kept::Rows(_), TableEvent::End) => {
+                self.kept = Kept::Ended;
+                Ok(Flow::Continue)
+            }
+            (Kept::Ended, TableEvent::Schema(_)) => Err(Fail::protocol("a schema after the end")),
+            (Kept::Ended, TableEvent::Row(_)) => Err(Fail::protocol("a row after the end")),
+            (Kept::Ended, TableEvent::End) => Err(Fail::protocol("a second end")),
         }
     }
 }
@@ -2363,43 +2419,40 @@ mod tests {
         assert_eq!(load::catch_grammar(|| panic!("x")).unwrap_err(), "x");
     }
 
+    /// An array root passes as it is, and an object or a scalar root is the
+    /// one element of an array, as alchemy's `wrap-array` makes it; a
+    /// stream that is no tree's is refused with the library's text.
     #[test]
-    fn rows_wrap_scalars_and_refuse_the_rest() {
-        let through = |json: &str| {
-            let mut rows = Rows::new(Vec::new());
-            let r = replay(&events(json), &mut rows);
-            r.map(|_| rows.inner)
+    fn wrap_array_makes_any_root_an_array() {
+        let through = |evs: Vec<OwnedJsonEvent>| {
+            let mut wrap = WrapArray::new(Vec::new());
+            let r = replay(&evs, &mut wrap);
+            r.map(|_| wrap.inner)
         };
-        assert_eq!(
-            through(r#"[1, "x", null]"#).unwrap(),
-            events(r#"[{"value": 1}, {"value": "x"}, {"value": null}]"#)
-        );
-        assert_eq!(
-            through(r#"[{"a": [1]}, {"b": {}}]"#).unwrap(),
-            events(r#"[{"a": [1]}, {"b": {}}]"#)
-        );
-        assert_eq!(through("[]").unwrap(), events("[]"));
-        let e = through(r#"{"a": 1}"#).unwrap_err();
-        assert_eq!(e.code, Code::InputInvalid);
-        assert!(e.message.contains("--path"), "{}", e.message);
-        assert_eq!(e.path.as_deref(), Some("."));
-        let e = through(r#"[{"a": 1}, [2]]"#).unwrap_err();
-        assert_eq!(e.path.as_deref(), Some("[1]"));
-        assert!(e.message.contains("is an array"), "{}", e.message);
-        let e = through(r#"[{"a": 1}, 2]"#).unwrap_err();
-        assert!(
+        for (root, wrapped) in [
+            (r#"[1, "x", null]"#, r#"[1, "x", null]"#),
+            (r#"[{"a": [1]}, [2]]"#, r#"[{"a": [1]}, [2]]"#),
+            ("[]", "[]"),
+            (r#"{"a": {"b": [1, {}]}}"#, r#"[{"a": {"b": [1, {}]}}]"#),
+            ("{}", "[{}]"),
+            ("1", "[1]"),
+            ("null", "[null]"),
+        ] {
+            assert_eq!(through(events(root)).unwrap(), events(wrapped), "{root}");
+        }
+        let refused = |evs: Vec<OwnedJsonEvent>| {
+            let e = through(evs).unwrap_err();
+            assert_eq!(e.code, Code::ProtocolOrderError);
             e.message
-                .contains("is a number, but the first row was an object"),
-            "{}",
-            e.message
-        );
-        let e = through(r#"[2, {"a": 1}]"#).unwrap_err();
-        assert!(
-            e.message
-                .contains("is an object, but the first row was a scalar"),
-            "{}",
-            e.message
-        );
+        };
+        assert!(refused(vec![OwnedJsonEvent::End]).contains("hold no value"));
+        assert!(refused(vec![OwnedJsonEvent::ObjectEnd]).contains("begin with an end"));
+        let mut more = events("1");
+        more.insert(1, OwnedJsonEvent::Null);
+        assert!(refused(more).contains("more after the root value"));
+        let mut open = events("{}");
+        open.remove(1);
+        assert!(refused(open).contains("ended inside a container"));
     }
 
     #[test]
@@ -2412,16 +2465,37 @@ mod tests {
         let (r, out) = run_text(&j, "[1, 2]");
         r.unwrap();
         assert_eq!(out, "\"value\"\r\n\"1\"\r\n\"2\"\r\n");
-        // An empty array exports as nothing.
-        let (r, out) = run_text(&j, "[]");
-        r.unwrap();
-        assert_eq!(out, "");
-        // Rows with no columns have no CSV form.
-        let (r, _) = run_text(&j, "[{}]");
-        match r.unwrap_err() {
-            ExportError::Transduce(f) => assert_eq!(f.code, Code::TargetValueUnrepresentable),
-            other => panic!("{other:?}"),
+        // A table of no columns, an empty array or rows of no members, is
+        // the empty document.
+        for empty in ["[]", "[{}]", "[{}, {}]", "{}"] {
+            let (r, out) = run_text(&j, empty);
+            r.unwrap();
+            assert_eq!(out, "", "{empty}");
         }
+        // A root of another kind is the one row of an array; an array row's
+        // cells are its positions; a later row of another kind has a cell
+        // where the first row's columns find one, and a member named "0"
+        // is not a position.
+        let (r, out) = run_text(&j, r#"{"a": 1, "b": [2]}"#);
+        r.unwrap();
+        assert_eq!(out, "\"a\",\"b\"\r\n\"1\",\"[2]\"\r\n");
+        let (r, out) = run_text(&j, r#"[[1, 2], [3], {"0": 4}]"#);
+        r.unwrap();
+        assert_eq!(
+            out,
+            "\"0\",\"1\"\r\n\"1\",\"2\"\r\n\"3\",\"\"\r\n\"\",\"\"\r\n"
+        );
+        let (r, out) = run_text(&j, r#"[1, {"a": 1}]"#);
+        r.unwrap();
+        assert_eq!(out, "\"value\"\r\n\"1\"\r\n\"{\"\"a\"\":1}\"\r\n");
+        // A number that is not finite is its word.
+        let j5 = job(Format::Json5, Renderer::Csv, ".");
+        let (r, out) = run_text(&j5, "[{a: Infinity, b: [NaN]}, {a: -Infinity}]");
+        r.unwrap();
+        assert_eq!(
+            out,
+            "\"a\",\"b\"\r\n\"Infinity\",\"[null]\"\r\n\"-Infinity\",\"\"\r\n"
+        );
         // JSON Lines, a record at a time, lexemes kept.
         let j = job(Format::Jsonl, Renderer::Csv, ".");
         let (r, out) = run_lines(&j, "{\"n\": 1e2}\n\n{\"n\": 2}\n");
@@ -2525,19 +2599,27 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(out, "\"v\"\r\n\"1\"\r\n");
-        // A row failure's path is made absolute. The header and a row
-        // were whole when the failure came, so they are on the output,
-        // and the output is partial: whole rows, never part of one.
+        // A row failure's path is made absolute: a first row wider than
+        // the transducer's column limit, refused at that row before
+        // anything is written.
+        let wide = format!(
+            "{{{}}}",
+            (0..10_001)
+                .map(|i| format!("\"k{i}\": {i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         let j = job(Format::Json, Renderer::Csv, ".a.b");
-        let (r, out) = run_text(&j, r#"{"a": {"b": [{"x": 1}, [2]]}}"#);
+        let (r, out) = run_text(&j, &format!("{{\"a\": {{\"b\": [{wide}]}}}}"));
         match r.unwrap_err() {
             ExportError::Transduce(f) => {
-                assert_eq!(f.path.as_deref(), Some(".a.b[1]"));
-                assert!(f.committed_output);
+                assert_eq!(f.code, Code::ResourceLimitExceeded);
+                assert_eq!(f.path.as_deref(), Some(".a.b[0]"));
+                assert!(!f.committed_output);
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(out, "\"x\"\r\n\"1\"\r\n");
+        assert_eq!(out, "");
         assert_eq!(
             absolute(
                 Fail::input("x").at_path("column \"a\", row 1"),
@@ -2547,14 +2629,14 @@ mod tests {
             .as_deref(),
             Some("column \"a\", row 1")
         );
-        // At the root, a row's path is jq's too: `.[1]`, not `[1]`.
+        // At the root, a row's path is jq's too: `.[0]`, not `[0]`.
         let root = job(Format::Json, Renderer::Csv, ".");
-        let (r, out) = run_text(&root, r#"[{"x": 1}, [2]]"#);
+        let (r, out) = run_text(&root, &format!("[{wide}]"));
         match r.unwrap_err() {
-            ExportError::Transduce(f) => assert_eq!(f.path.as_deref(), Some(".[1]")),
+            ExportError::Transduce(f) => assert_eq!(f.path.as_deref(), Some(".[0]")),
             other => panic!("{other:?}"),
         }
-        assert_eq!(out, "\"x\"\r\n\"1\"\r\n");
+        assert_eq!(out, "");
         let at = |p: &str, base: &[Seg]| absolute(Fail::input("x").at_path(p), base).path;
         assert_eq!(at("[0].a", &[]).as_deref(), Some(".[0].a"));
         assert_eq!(at(".", &[]).as_deref(), Some("."));
@@ -2660,17 +2742,13 @@ mod tests {
             r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
             assert_eq!(out, "\"a\"\r\n\"1\"\r\n\"2\"\r\n", "{format}");
         }
-        // A root that really is an object still fails, once for a grammar
-        // that could not have wrapped it and twice over for one that could.
+        // A root that really is an object is its one row, for a grammar
+        // that could not have wrapped it and for one that could.
         for format in [Format::Json, Format::Jsonic] {
             let j = job(format, Renderer::Csv, ".");
-            match run_text(&j, r#"{"a": 1}"#).0.unwrap_err() {
-                ExportError::Transduce(f) => {
-                    assert_eq!(f.code, Code::InputInvalid, "{format}");
-                    assert!(f.message.contains("--path"), "{format}: {}", f.message);
-                }
-                other => panic!("{format}: {other:?}"),
-            }
+            let (r, out) = run_text(&j, r#"{"a": 1}"#);
+            r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
+            assert_eq!(out, "\"a\"\r\n\"1\"\r\n", "{format}");
         }
         // A jsonic source can refuse the stream only once it has streamed
         // the first value whole, so the stage holds that value, however
@@ -3119,16 +3197,43 @@ mod tests {
         assert_eq!(origin(0, 0), (0, 0, at("(stdin)")));
     }
 
+    /// A table of no columns goes no further than this stage, whatever rows
+    /// of no cells it has, and is still held to the protocol; a table of
+    /// columns passes as it came.
     #[test]
-    fn an_empty_schema_is_held_back() {
-        use tabnas_transduce::Table;
-        let mut t = EmptyOk::new(Table::default());
-        t.table_event(TableEvent::Schema(&[])).unwrap();
-        t.table_event(TableEvent::End).unwrap();
-        assert!(!t.inner.ended, "nothing reached the renderer");
-        let mut t = EmptyOk::new(Table::default());
+    fn a_table_of_no_columns_is_kept_back() {
+        use tabnas_transduce::{PublicColumn, Table};
+        let mut t = NoColumns::new(Table::default());
         t.table_event(TableEvent::Schema(&[])).unwrap();
         t.table_event(TableEvent::Row(&[])).unwrap();
-        assert!(t.inner.columns.is_empty() && t.inner.rows.len() == 1);
+        t.table_event(TableEvent::Row(&[])).unwrap();
+        t.table_event(TableEvent::End).unwrap();
+        assert!(!t.inner.ended, "nothing reached the renderer");
+        assert!(t.inner.rows.is_empty());
+        let e = t.table_event(TableEvent::End).unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (Code::ProtocolOrderError, "a second end")
+        );
+        let mut t = NoColumns::new(Table::default());
+        t.table_event(TableEvent::Schema(&[])).unwrap();
+        let e = t.table_event(TableEvent::Row(&[Cell::Null])).unwrap_err();
+        assert_eq!(e.message, "row 1 has 1 cells; the schema has 0 columns");
+        let mut t = NoColumns::new(Table::default());
+        let column = PublicColumn::new("a");
+        t.table_event(TableEvent::Schema(std::slice::from_ref(&column)))
+            .unwrap();
+        t.table_event(TableEvent::Row(&[Cell::Null])).unwrap();
+        t.table_event(TableEvent::End).unwrap();
+        assert!(t.inner.ended && t.inner.rows.len() == 1);
+    }
+
+    /// The JSON renderer is handed a number that is not finite as null.
+    #[test]
+    fn json_writes_a_number_that_is_not_finite_as_null() {
+        let j = job(Format::Json5, Renderer::Json, ".");
+        let (r, out) = run_text(&j, "{a: Infinity, b: [NaN, -Infinity, 1]}");
+        r.unwrap();
+        assert_eq!(out, "{\"a\":null,\"b\":[null,null,1]}\n");
     }
 }

@@ -26,6 +26,7 @@ _aless() {
     '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
     '--depth=[list N levels down; the viewer folds deeper]:N: ' \
     '--indent=[indentation per level (default 2)]:N: ' \
+    '--key=[member a root is written under (items)]:NAME: ' \
     '--max-size=[refuse an input over SIZE (default 64M)]:SIZE: ' \
     '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
     '--no-watch[do not reload files when they change]' \

@@ -208,15 +208,17 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "the value written as FORMAT, streamed",
         detail: "The value at the start written as FORMAT, streamed as the input is \
-            read: csv, its records (the elements of the array at the start; the lines \
-            of JSON Lines; the records of CSV and TSV) under a header row, every field \
-            quoted, CRLF line ends; json, the value as --json writes it, but with each \
-            number spelled as in the source where that is JSON, and NaN and the \
-            infinities refused; or any format whose crate carries a render. FORMAT is \
-            one of {renders}. Every format but json declares what it does not keep in a \
-            warning on standard error, on success too. Takes --path, not --at. With \
-            --alchemy it names the format the program's table or JSON events are \
-            written as.",
+            read: csv, its records (the elements of the array at the start, a value of \
+            another kind its one record; the lines of JSON Lines; the records of CSV and \
+            TSV) under a header row, every field quoted, CRLF line ends; json, the value \
+            as --json writes it, but with each number spelled as in the source where \
+            that is JSON; or any format whose crate carries a render. FORMAT is one of \
+            {renders}. What FORMAT cannot hold is written by the convention its crate \
+            declares rather than refused (NaN and the infinities as null in json; a \
+            root TOML or INI cannot have as the one member --key names), and what it \
+            does not keep is said in a warning on standard error, on success too. Takes \
+            --path, not --at. With --alchemy it names the format the program's table or \
+            JSON events are written as.",
     },
     Opt {
         short: None,
@@ -379,6 +381,19 @@ pub const OPTIONS: &[Opt] = &[
         summary: "indentation per level (default 2)",
         detail: "Indent --json and --render json N spaces a level, and the viewer's \
             tree (default 2; at most 16).",
+    },
+    Opt {
+        short: None,
+        long: "--key",
+        also: &[],
+        arg: Some(("NAME", Value::Text)),
+        section: Section::Both,
+        repeats: false,
+        summary: "member a root is written under (items)",
+        detail: "The member --render writes a value under when FORMAT's document must \
+            be a table and the value is not an object (toml, ini): an array or a scalar \
+            at the start is written as the one member NAME (default items). The \
+            viewer's output pane takes it too.",
     },
     Opt {
         short: None,
@@ -889,11 +904,14 @@ const TOPICS: &[Topic] = &[
                 --depth.",
             ),
             Block::Text(
-                "A --render that succeeds, in any format but json, also writes a warning \
-                on standard error that says what the format does not keep: {\"warning\": \
-                {\"kind\": \"loss\", \"message\", \"file\", \"render\", \"loss\": [sentence, \
-                ...]}}, with adapter naming the inferred table or records when one stood \
-                between the shapes. Status 0 is success whatever standard error holds.",
+                "A --render that succeeds also writes a warning on standard error that says \
+                what the format does not keep: {\"warning\": {\"kind\": \"loss\", \
+                \"message\", \"file\", \"render\", \"loss\": [sentence, ...]}}, with \
+                adapters naming each step that ran between the source and the render \
+                (wrap-object, wrap-array, embed, the inferred table, records), and adapter \
+                the one between a tree and a table, the inferred table or records, their \
+                sentences in loss after the format's own. Status 0 is success whatever \
+                standard error holds.",
             ),
         ],
     },
@@ -985,8 +1003,8 @@ const TOPICS: &[Topic] = &[
                 "An io, too_large or timeout error about a --grammar file adds grammar, \
                 with file the grammar file and format null. An error met while --render \
                 was writing (transduce, parse, timeout, or the render's own alchemy one) \
-                adds loss, the sentences its warning gives on success: an empty list for \
-                json. --compact puts an error on one line. The README's \"Scripts and \
+                adds loss, the sentences its warning gives on success. --compact puts an \
+                error on one line. The README's \"Scripts and \
                 agents\" section has every case at length.",
             ),
         ],
@@ -1065,8 +1083,8 @@ const TOPICS: &[Topic] = &[
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
                 as the nearest one, and --json writes NaN and the infinities as null. \
                 --render json keeps a number as the source spelled it where that is JSON, \
-                and refuses NaN and the infinities (transduce \
-                TARGET_VALUE_UNREPRESENTABLE, status 1).",
+                and writes NaN and the infinities as null too, the loss JSON declares; \
+                --render csv writes them as their names.",
             ),
         ],
     },
