@@ -17,7 +17,7 @@ $ aless --render csv books.json 2>/dev/null
 "The Index","C. Cataloguer","2021","[]"
 ```
 
-Every field is quoted, a nested array or object is written as its JSON text, and the lines end in CRLF. For records deeper in a document, start at them with `--path`, as in `aless --render csv --path .response.items api.json`.
+Every field is quoted, a nested array or object is written as its JSON text, and the lines end in CRLF. A value that is not an array is written as one row, and a row of another kind than the first has a field only where the first row's columns find one. For records deeper in a document, start at them with `--path`, as in `aless --render csv --path .response.items api.json`.
 
 ## A document as YAML, TOML or a table
 
@@ -53,12 +53,37 @@ $ aless --render toml --path '.[0]' books.json 2>/dev/null
 $ aless --render markdown books.json 2>/dev/null
 | title | author | year | tags |
 | --- | --- | --- | --- |
-| A Book of Examples | A. N. Author | 1999 | ["examples","reference"] |
-| Shelves and How to Fill Them | B. Bookworm | 2012 | ["furniture"] |
-| The Index | C. Cataloguer | 2021 | [] |
+| A Book of Examples | A. N. Author | 1999 | \["examples","reference"\] |
+| Shelves and How to Fill Them | B. Bookworm | 2012 | \["furniture"\] |
+| The Index | C. Cataloguer | 2021 | \[\] |
 ```
 
-Strings and keys are quoted wherever the format quotes, so nothing reads back as another kind of value. A shape a format cannot hold, such as a null in TOML, fails with the `INPUT_INVALID` code and the status 1 rather than being written wrongly.
+Strings and keys are quoted wherever the format quotes, and a character that would start Markdown's inline markup is escaped, so nothing reads back as another kind of value.
+
+## What a format cannot hold
+
+A conversion does not fail because the target format has no way to say something. Each format declares a convention for what it cannot hold, and aless writes by it: a null in TOML is left out, NaN and the infinities are `null` in JSON and their names in CSV, and XML writes any document as the element tree its embedding declares, keeping each value's kind in a `type` attribute:
+
+```console
+$ aless --render xml --path '.[2]' books.json 2>/dev/null
+<document type="object"><member name="title">The Index</member><member name="author">C. Cataloguer</member><member type="number" name="year">2021</member><member type="array" name="tags"/></document>
+```
+
+A document whose root a format cannot have is wrapped. A TOML or INI document is a table, so an array or a scalar is written as the one member of a table, named `items`:
+
+```console
+$ aless --render toml --path '.[0].tags' books.json 2>/dev/null
+"items" = [ "examples", "reference" ]
+```
+
+`--key` names that member instead:
+
+```console
+$ aless --render toml --key tags --path '.[0].tags' books.json 2>/dev/null
+"tags" = [ "examples", "reference" ]
+```
+
+JSON Lines and the record formats wrap the other way: a value that is not an array is written as the one element of an array.
 
 ## Read what was not kept
 
@@ -77,7 +102,7 @@ $ aless --render yaml books.json 2>&1 >/dev/null
 }
 ```
 
-The status is 0 all the same. CSV's list matters most: every value is written as text, so a number read back from CSV is a string:
+The status is 0 all the same. When a conversion wraps the root or reshapes the value between a tree and a table, the note's `adapters` names each step (`wrap-object`, `wrap-array`, `the inferred table` or `records`), and their sentences follow the format's own in `loss`. CSV's list matters most: every value is written as text, so a number read back from CSV is a string:
 
 ```console
 $ aless --render csv books.json 2>/dev/null > books.csv; aless --json --compact --path '.[0]' books.csv

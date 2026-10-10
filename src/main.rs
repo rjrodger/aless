@@ -211,6 +211,7 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             "-R" | "--no-relative-line-numbers" => args.opts.relative = false,
             "--scrolloff" => args.opts.scrolloff = number(value()?)?,
             "--indent" => args.opts.indent = number(value()?)?.min(16),
+            "--key" => args.opts.key = value()?,
             "--hidden" => args.opts.show_hidden = true,
             "--ascii" => args.opts.ascii = true,
             "--no-color" | "--no-colour" => args.opts.color = false,
@@ -612,6 +613,7 @@ fn print_headless(args: Args) -> i32 {
     req.limit = args.limit.unwrap_or(headless::DEFAULT_LIMIT);
     req.compact = args.compact;
     req.indent = args.opts.indent;
+    req.key = args.opts.key.clone();
     req.max_size = args.max_size;
     req.timeout = args.timeout;
     req.max_output = args.max_output;

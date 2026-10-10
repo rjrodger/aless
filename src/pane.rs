@@ -319,9 +319,11 @@ pub struct Rendered {
 /// same run `--render` or `--alchemy` makes, with its plan for the format
 /// (line by line for JSON Lines and CSV), so what the pane shows is what
 /// the command would print, JSON indented by `indent` as `--indent`
-/// gives it. `program` is the compiled program a [`Through::Program`]
-/// runs, with the text it was compiled from, which a format's render over
-/// its output links again. A failure is the message the pane shows.
+/// gives it, a translation composed under `options` as `--key` gives
+/// them. `program` is the compiled program a [`Through::Program`] runs,
+/// with the text it was compiled from, which a format's render over its
+/// output links again. A failure is the message the pane shows.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     name: &str,
     source: &str,
@@ -329,6 +331,7 @@ pub fn render(
     through: &Through,
     program: Option<&Compiled>,
     indent: usize,
+    options: &translate::Options,
     timeout: Option<Duration>,
 ) -> Result<Rendered, String> {
     render_within(
@@ -338,6 +341,7 @@ pub fn render(
         through,
         program,
         indent,
+        options,
         timeout,
         MAX_OUTPUT_BYTES,
     )
@@ -352,6 +356,7 @@ fn render_within(
     through: &Through,
     program: Option<&Compiled>,
     indent: usize,
+    options: &translate::Options,
     timeout: Option<Duration>,
     max: usize,
 ) -> Result<Rendered, String> {
@@ -360,25 +365,47 @@ fn render_within(
             "{name} is plain text, which has no values to write: open it with -k to name its format"
         ));
     };
+    // A format's render, as --render writes the document: the translation
+    // the parts decide, which one of aless's own renderers may run, or the
+    // composition over the program's output.
+    let mut composed: Option<(&translate::Part, translate::Composition)> = None;
     let (what, out_format) = match through {
         Through::Render(Renderer::Part(id)) => {
             let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
-            let translation = translate::translation(translate::source_part(format), part)
-                .map_err(|fail| fail.to_string())?;
+            let translation = translate::translation(translate::source_part(format), part, options)
+                .map_err(|fail| {
+                    translate::schema_only(&fail, part, name).unwrap_or_else(|| fail.to_string())
+                })?;
             match translation {
                 translate::Translation::Native { renderer, .. } => {
                     (What::Render(renderer), format_of(Renderer::Part(id)))
                 }
-                translate::Translation::Composed(_) => (What::Part, format_of(Renderer::Part(id))),
+                translate::Translation::Composed(c) => {
+                    composed = Some((part, c));
+                    (What::Part, format_of(Renderer::Part(id)))
+                }
             }
         }
         Through::Render(r) => (What::Render(*r), format_of(*r)),
-        Through::Program { render, .. } => {
-            let program = &program.ok_or("the program did not compile")?.program;
-            crate::alchemy::check_render(program, *render)?;
+        Through::Program { render, arg } => {
+            let compiled = program.ok_or("the program did not compile")?;
+            crate::alchemy::check_render(&compiled.program, *render)?;
+            // The text the pane compiled is linked again, never a later
+            // reading of the file.
+            if let Some(Renderer::Part(id)) = render {
+                let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
+                let c = translate::compose_program(
+                    tabnas_alchemy::Source::new(&arg.name(), &compiled.source),
+                    compiled.program.output(),
+                    part,
+                    options,
+                )
+                .map_err(|fail| fail.to_string())?;
+                composed = Some((part, c));
+            }
             // A renderer given writes its own format; without one, a
             // table is CSV and events are JSON, the program's defaults.
-            let out = match (program.output(), render) {
+            let out = match (compiled.program.output(), render) {
                 (Output::Text, _) => Format::Text,
                 (_, Some(r)) => format_of(*r),
                 (Output::TableRows, None) => Format::Csv,
@@ -386,7 +413,7 @@ fn render_within(
             };
             (
                 What::Program {
-                    rows: program.row_selector().cloned(),
+                    rows: compiled.program.row_selector().cloned(),
                 },
                 out,
             )
@@ -419,45 +446,19 @@ fn render_within(
         }
         _ => Input::Text(source),
     };
-    let composed_part = matches!(job.what, What::Part);
-    let result = match through {
-        Through::Render(Renderer::Part(id)) if composed_part => {
-            let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
-            let composed = translate::compose(translate::source_part(format), part)
-                .map_err(|fail| fail.to_string())?;
-            translate::run(&job, &composed, part.records(), input, out, Metrics::new())
-        }
-        Through::Render(_) => export::export(&job, input, out),
-        Through::Program { render, arg } => {
+    let result = match (&composed, through) {
+        (Some((part, composition)), _) => translate::run(
+            &job,
+            composition,
+            translate::records(part),
+            input,
+            out,
+            Metrics::new(),
+        ),
+        (None, Through::Render(_)) => export::export(&job, input, out),
+        (None, Through::Program { render, .. }) => {
             let compiled = program.ok_or("the program did not compile")?;
-            match render {
-                // A format's render over the program's output, as --render
-                // chooses it for a source: the text the pane compiled is
-                // linked again, never a later reading of the file.
-                Some(Renderer::Part(id)) => {
-                    let part = translate::part(id).ok_or_else(|| format!("no render for {id}"))?;
-                    let translation = translate::program_translation(
-                        tabnas_alchemy::Source::new(&arg.name(), &compiled.source),
-                        compiled.program.output(),
-                        part,
-                    )
-                    .map_err(|fail| fail.to_string())?;
-                    match translation {
-                        translate::Translation::Composed(composed) => translate::run(
-                            &job,
-                            &composed,
-                            part.records(),
-                            input,
-                            out,
-                            Metrics::new(),
-                        ),
-                        translate::Translation::Native { renderer, .. } => {
-                            crate::alchemy::run(&job, &compiled.program, Some(renderer), input, out)
-                        }
-                    }
-                }
-                other => crate::alchemy::run(&job, &compiled.program, *other, input, out),
-            }
+            crate::alchemy::run(&job, &compiled.program, *render, input, out)
         }
     };
     let cut = cut.load(Ordering::Relaxed);
@@ -620,6 +621,7 @@ mod tests {
             &Through::default(),
             None,
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -634,6 +636,7 @@ mod tests {
             &Through::Render(Renderer::Csv),
             None,
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -648,6 +651,7 @@ mod tests {
             &Through::Render(Renderer::Part("yaml")),
             None,
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -660,6 +664,7 @@ mod tests {
             &Through::default(),
             None,
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap_err();
@@ -677,7 +682,17 @@ mod tests {
             render: None,
         };
         let text = program(r#"def export [input] "hi""#);
-        let out = render("t.json", "1", Format::Json, &through, Some(&text), 2, None).unwrap();
+        let out = render(
+            "t.json",
+            "1",
+            Format::Json,
+            &through,
+            Some(&text),
+            2,
+            &translate::Options::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!((out.text.as_str(), out.format), ("hi", Format::Text));
         let events = program("def export [input] input");
         let out = render(
@@ -687,6 +702,7 @@ mod tests {
             &through,
             Some(&events),
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -702,6 +718,7 @@ mod tests {
             &through,
             Some(&events),
             2,
+            &translate::Options::default(),
             None,
         );
         assert!(failed.is_err(), "{failed:?}");
@@ -724,6 +741,7 @@ mod tests {
             &with(Renderer::Part("json")),
             Some(&table),
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -736,6 +754,7 @@ mod tests {
             &with(Renderer::Part("csv")),
             Some(&events),
             2,
+            &translate::Options::default(),
             None,
         )
         .unwrap();
@@ -747,8 +766,18 @@ mod tests {
     fn the_output_is_cut_at_its_cap() {
         let long = format!("[{}]", vec!["\"xxxxxxxx\""; 100].join(","));
         let through = Through::default();
-        let out =
-            render_within("big.json", &long, Format::Json, &through, None, 2, None, 64).unwrap();
+        let out = render_within(
+            "big.json",
+            &long,
+            Format::Json,
+            &through,
+            None,
+            2,
+            &translate::Options::default(),
+            None,
+            64,
+        )
+        .unwrap();
         assert!(out.cut);
         assert_eq!(out.text.len(), 64);
         let whole = render_within(
@@ -758,6 +787,7 @@ mod tests {
             &through,
             None,
             2,
+            &translate::Options::default(),
             None,
             1 << 20,
         );

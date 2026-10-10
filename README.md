@@ -193,6 +193,7 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--limit N` | at most N entries (default 200, 0 for all) |
 | `--compact` | JSON on one line, an error's too |
 | `--indent N` | `--json` and `--render json` indented N spaces a level (default 2) |
+| `--key NAME` | the member `--render` writes a value under when the format's document must be a table and the value is not an object (`toml`, `ini`; default `items`) |
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise; `--format` is another name for it |
 | `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
@@ -388,19 +389,21 @@ member both written as the empty string (so the two cannot be told apart:
 this default export is lossy there, as the profile is), a nested container
 written as compact JSON text in its cell, and a number as the source
 spelled it where the source provides its lexeme (the JSON family, YAML,
-ZON and JSON Lines). An empty array exports as nothing. What the CSV
-does not keep is declared on standard error on a write that succeeds, as
-every format's render declares it ([Writing any
-format](#writing-any-format)); JSON declares no loss, so `--render json`
-writes nothing there. `--render json`
+ZON and JSON Lines). A value that is not an array is exported as its
+one row, and a row of another kind than the first (an array, whose
+positions are its cells, or a scalar, one cell named `value`) has a field
+only where the first row's columns find one. An empty array, and rows of
+no members, export as nothing. NaN and the infinities are written as
+their names. What the CSV does not keep is declared on standard error on
+a write that succeeds, as every format's render declares it ([Writing
+any format](#writing-any-format)), JSON's included. `--render json`
 takes `--compact` and `--indent` as `--json` does, and writes the value
-`--json` writes, but for two things. A number keeps the spelling it has in
-the source wherever that spelling is JSON: `1.0` stays `1.0`, where
+`--json` writes, but for one thing: a number keeps the spelling it has in
+the source wherever that spelling is JSON, so `1.0` stays `1.0`, where
 `--json` writes `1`, and an integer beyond 2^53 keeps every digit, where
 `--json` writes the nearest 64-bit float. NaN and the infinities, which
-JSON cannot hold, `--json` writes as `null`, and `--render json` refuses,
-a `transduce` error with the code `TARGET_VALUE_UNREPRESENTABLE` and
-status 1, what came before it written. Two things a stream
+JSON cannot hold, both write as `null`, the convention JSON declares in
+its loss note. Two things a stream
 cannot do, since the input is read once, front to back: `--at` is not
 accepted, and `[-1]` on an array (counting from the end) is a usage error,
 though on an object it is the key `-1`, as everywhere. A document that
@@ -506,33 +509,40 @@ aless -k jsonl --render zon < events.log        # stdin, a record at a time
 ```
 
 **How a translation is put together** is the design in tabnas/transduce's
-[`docs/translation.md`](https://github.com/tabnas/transduce/blob/main/docs/translation.md),
-and the parts come from each format's own repository. A format's
-manifest, `tabnas.plugin.json`, says what it reads as (a tree, every
-format's events; or records first, through a lift, for a Markdown
-table), what its render writes from (a tree, or records), and what a
-written document does not keep. aless composes `render ∘ adapt ∘ lift`
-from them. When the target writes from a shape the source reads as, the
-source's events reach the render in that shape and nothing stands
-between: CSV to YAML runs YAML's render over CSV's events. Otherwise one
-of two adapters runs: a tree reaches a render that writes from records
-through the inferred table, the policy `--render csv` has (the root is an
-array and its elements are the rows, behind the same row check), and
-records reach a render that writes from a tree through `records` (one
-object per row, keyed by the column labels). JSON's and CSV's renders are
-alchemy's own, which aless runs natively: `--render json` and `--render
-csv` are what they always were, and a Markdown table reaches CSV through
-its lift.
+[`docs/translation.md`](https://github.com/tabnas/transduce/blob/main/docs/translation.md)
+(admin ADR-27), and the parts come from each format's own repository. A
+format's manifest, `tabnas.plugin.json`, says what it reads as (a tree,
+every format's events; or records first, through a lift, for a Markdown
+table), what its render writes from (a tree, or records), the root that
+render needs (an object for TOML and INI, an array for JSON Lines and the
+record formats), the schema its events carry when they are not a plain
+tree (XML's element tree, with an embed from a plain one), and what a
+written document does not keep. alchemy's `translate` composes the
+program from them, and aless runs it: the source's lift, where the target
+writes from records and the source reads as records first; for a target
+that writes from a tree, the embed into its schema or the root adapter
+its render needs (`wrap-object`, the root as the one member `--key`
+names, `items` by default, or `wrap-array`); for one that writes from
+records, a tree's rows through the inferred table, the root an array;
+then the render. CSV to YAML runs YAML's render over CSV's events as
+they are; a program's table reaches a render that writes from a tree
+through `records` (one object per row, keyed by the column labels).
+JSON's and CSV's renders are alchemy's own, which aless runs on its own
+renderers where they write the same bytes: JSON over a source's events,
+keeping `--compact` and `--indent`, and CSV over a tree's rows.
 
 The output is in each format's always-quoted profile where the format
 has quoting, as the CSV export is: YAML's strings and keys double-quoted,
 TOML's keys quoted and its tables inline, ZON's field names in the
 `.@"name"` form, so that nothing reads back as another kind. A number is
 written as the source spelled it where the source provides its lexeme,
-and by its value otherwise; what a format cannot carry (a null in TOML, a
-root that is not an array in JSON Lines, a document with no table for
-Markdown) is a typed `INPUT_INVALID` that says so, before anything is
-written where the shape is decided before any.
+and by its value otherwise. What a format cannot carry is written by the
+convention its manifest declares, never refused: a null in TOML is left
+out, a root TOML or INI cannot have is the one member `--key` names, a
+root JSON Lines or a record format cannot have is the one element of an
+array, a Markdown document with no table is the empty table, and any
+document is XML's element tree through its embedding, each value's kind
+in a `type` attribute.
 
 ```
 $ aless --render yaml tests/fixtures/sample.csv
@@ -546,13 +556,14 @@ $ aless --render yaml tests/fixtures/sample.csv
 
 **What a write does not keep** is declared rather than hidden. On a write
 that succeeds, standard output holds the document alone and standard
-error a JSON warning with the render's loss declaration, the adapter's
-sentences after it when one ran (named as `adapter`); a format that
-declares no loss (JSON) writes nothing there. An error met while it was
-writing (a `transduce`, `parse` or `timeout` error, or the render's own
-`alchemy` one) carries the same sentences as `loss`, an empty list for
-JSON, whether the render is one of aless's own (`json`, `csv`) or one
-run as a program; a `usage` or `not_found` error carries none, and nor
+error a JSON warning with the render's loss declaration, and each
+adapter's sentences after it when one ran: every adapter in `adapters`,
+in order, and the one between a tree and a table (the inferred table or
+`records`) as `adapter`. A write whose render and adapters declare no
+loss writes nothing there. An error met while it was writing (a
+`transduce`, `parse` or `timeout` error, or the render's own `alchemy`
+one) carries the same sentences as `loss`, whether the render is one of
+aless's own (`json`, `csv`) or one run as a program; a `usage` or `not_found` error carries none, and nor
 does one met before the writing began, such as an input that cannot be
 read. The sentences come from the format's manifest:
 
@@ -596,11 +607,9 @@ that has a render writes the program's output as that format, its output
 shape standing where the source's would ([Writing any
 format](#writing-any-format)): a table reaches YAML as a sequence of
 mappings, JSON events reach a Markdown table through the inferred table
-under the row policy `--render csv` has (a scalar row is one cell named
-`value`; an array row, a mixture of rows or a root that is not an array
-is refused with the reason), and the loss warning names the adapter that
-stood between as it does for a source, `records` for a table written as
-JSON among them.
+as a source's events do (the root made an array, and rows of every
+kind), and the loss warning names the adapters that stood between as it
+does for a source, `records` for a table written as JSON among them.
 The JSON a program renders is compact, one document on one line. The program does the selecting, so
 `--path` and `--at` are not accepted, and neither is any other output
 option; `--render` given for a program that renders its own text is a
@@ -1230,13 +1239,16 @@ The engine (`tabnas`, the `tabnas-parser` package) and the grammar
 crates come from crates.io, each a version requirement in `Cargo.toml`
 pinned by `Cargo.lock`.
 
-One test reaches past the published crates: `tests/yaml_render.rs` reads
-tabnas-yaml's own fixtures (its `test/spec` and the vendored YAML Test
-Suite), which the crate does not ship. It takes them from a checkout of
-tabnas/yaml at the tag of the tabnas-yaml version `Cargo.lock` pins,
-named by `TABNAS_YAML_DIR`; `scripts/yaml-fixtures.sh` clones one and
-prints the line that sets it, and the test fails without it, or with a
-checkout of another version.
+Two tests reach past the published crates. `tests/translate_matrix.rs`
+writes every document of every format's own fixture corpus into every
+format `--render` writes, through aless's own routes, and reads it back
+under the target's declared conventions; `tests/yaml_render.rs` reads
+tabnas-yaml's `test/spec` and its vendored YAML Test Suite. The crates do
+not ship those fixtures, so both take them from checkouts of the grammar
+repositories at the tags of the versions `Cargo.lock` pins, named by
+`TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`; `scripts/fixtures.sh` clones
+them and prints the lines that set both, and the tests fail without
+them, or with a checkout of another version.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
 way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
@@ -1250,8 +1262,9 @@ text. The other dependencies: crossterm (terminal), ratatui
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-eval "$(scripts/yaml-fixtures.sh)"    # tabnas/yaml's fixtures, which tests/yaml_render.rs reads
+eval "$(scripts/fixtures.sh)"         # the grammar repositories' fixtures, which the matrix and tests/yaml_render.rs read
 cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
+cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture   # every format's fixtures into every format
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 cargo package --locked                # the crate builds from exactly the files it publishes
 scripts/generate.sh                   # man/ and completions/, after an option or the help changes

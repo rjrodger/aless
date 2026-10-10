@@ -55,7 +55,7 @@ impl Write for Shared {
 /// directory `TABNAS_YAML_DIR` names, a relative one taken from this
 /// crate's root. The published crate ships only its `rs/` directory, so
 /// the fixtures are the repository's, at the tag of the tabnas-yaml
-/// version Cargo.lock pins: `scripts/yaml-fixtures.sh` clones it and
+/// version Cargo.lock pins: `scripts/fixtures.sh` clones it and
 /// names it, and CI runs that before the tests. Without the variable, or
 /// with a checkout of another version, this fails rather than reading no
 /// fixtures or the wrong ones.
@@ -63,7 +63,7 @@ fn yaml_checkout() -> PathBuf {
     let dir = std::env::var_os("TABNAS_YAML_DIR").unwrap_or_else(|| {
         panic!(
             "TABNAS_YAML_DIR is not set: it names a checkout of tabnas/yaml at the tag of the \
-             tabnas-yaml version Cargo.lock pins; `eval \"$(scripts/yaml-fixtures.sh)\"` clones \
+             tabnas-yaml version Cargo.lock pins; `eval \"$(scripts/fixtures.sh)\"` clones \
              one and sets it"
         )
     });
@@ -256,7 +256,9 @@ fn every_yaml_fixture_written_as_yaml_reads_back_as_the_same_value() {
             .iter()
             .map(|chunk| {
                 scope.spawn(move || {
-                    let program = translate::compose(Some(yaml), yaml).unwrap_or_else(|f| panic!("{f}"));
+                    let program =
+                        translate::compose(Some(yaml), yaml, &translate::Options::default())
+                            .unwrap_or_else(|f| panic!("{f}"));
                     let (mut same, mut unread) = (0, 0);
                     let mut differ: Vec<String> = Vec::new();
                     for (name, text) in chunk.iter() {

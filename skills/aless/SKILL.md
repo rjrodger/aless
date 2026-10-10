@@ -109,21 +109,23 @@ aless -k jsonl --render csv < events.log                        # stdin, a recor
 ```
 
 `--render json` writes what `--json` writes, indented the same way
-(`--indent N`, `--compact`), but for two things. A number keeps the
-spelling it has in the source wherever that spelling is JSON: `1.0` stays
-`1.0` (`--json` writes `1`), and an integer beyond 2^53 keeps every digit,
-where `--json` writes the nearest 64-bit float. NaN and the infinities,
-which JSON cannot hold, `--json` writes as `null`, while `--render json`
-stops there with a `transduce` error, `TARGET_VALUE_UNREPRESENTABLE`,
-exit 1.
+(`--indent N`, `--compact`), but for one thing: a number keeps the
+spelling it has in the source wherever that spelling is JSON, so `1.0`
+stays `1.0` (`--json` writes `1`), and an integer beyond 2^53 keeps every
+digit, where `--json` writes the nearest 64-bit float. NaN and the
+infinities, which JSON cannot hold, both write as `null`.
 
 The rows are the elements of the array at `--path` (the root when no
-path is given); for JSON Lines the lines, for CSV and TSV the records.
-The columns are the first row's members, in its order; a member a later
-row lacks is an empty field, as is `null`; a nested value is compact JSON
-text in its cell. Every field is quoted, records end in CRLF, and a header
-row comes first. Use `--paths --depth 2` first to find the array to
-export. Standard output is CSV bytes, not JSON, when the status is 0.
+path is given; a value that is not an array is the one row); for JSON
+Lines the lines, for CSV and TSV the records. The columns are the first
+row's members, in its order (an array row's positions, `0`, `1` and so
+on; a scalar row's one column, `value`); a member a later row lacks is an
+empty field, as is `null`, and a member a later row adds is not written;
+a nested value is compact JSON text in its cell, and NaN and the
+infinities are their names. Every field is quoted, records end in CRLF,
+and a header row comes first. Use `--paths --depth 2` first to find the
+array to export. Standard output is CSV bytes, not JSON, when the status
+is 0.
 
 Write any of those formats as any format that has a render, streamed the
 same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
@@ -141,17 +143,22 @@ Each format is written in its always-quoted profile (every YAML string
 and key double-quoted, every TOML key quoted and every table inline, ZON
 field names as `.@"name"`), so nothing reads back as another kind;
 numbers as the source spelled them, `.inf` and `.nan` where a format
-spells them. A source whose shape the target cannot carry (a null in
-TOML, a root that is not an array in JSON Lines, no table in Markdown)
-fails typed with `INPUT_INVALID` and a message that says why. On success
-standard output holds the document alone, and standard error holds
-`{"warning": {"kind": "loss", "message", "file", "render", "loss"}}`,
-where `loss` lists what a document written this way does not keep
-(YAML: comments, anchors and aliases, tags, styles, several documents;
-CSV: types and the null/missing difference) and `adapter` names the
-inferred table or `records` when one ran between the shapes; JSON
-declares no loss and prints nothing. Exit status 0 is success whatever
-standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
+spells them. What the target cannot carry is written by the convention
+its manifest declares, never refused: a null in TOML is left out, a
+root TOML or INI cannot have is the one member `--key NAME` names
+(`items` by default), a root JSON Lines or a record format cannot have
+is the one element of an array, a Markdown document with no table is
+the empty table, and XML writes any document as an element tree. On
+success standard output holds the document alone, and standard error
+holds `{"warning": {"kind": "loss", "message", "file", "render",
+"loss"}}`, where `loss` lists what a document written this way does not
+keep (YAML: comments, anchors and aliases, tags, styles, several
+documents; CSV: types and the null/missing difference; JSON: NaN and the
+infinities as `null`), `adapters` names every step that ran between the
+source and the render (`wrap-object`, `wrap-array`, `embed`, `the
+inferred table`, `records`), and `adapter` the one between a tree and a
+table, the inferred table or `records`. Exit status 0 is success
+whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
 `output: "partial"`. `--render` with a format that has no render (`rss`)
@@ -259,7 +266,7 @@ What each option prints:
 | `--where` | `{file, format, …entry}` |
 | `--check` | `{ok, files: [{file, format, ok, error}]}` |
 | `--render csv` | CSV text: a header row, then one record per row, all fields quoted, CRLF |
-| `--render json` | the value itself, streamed, indented as `--json` is, each number spelled as in the source where that is JSON; NaN and the infinities, which `--json` writes as `null`, fail it (`TARGET_VALUE_UNREPRESENTABLE`, exit 1) |
+| `--render json` | the value itself, streamed, indented as `--json` is, each number spelled as in the source where that is JSON; NaN and the infinities `null`, as `--json` writes them; `{"warning": {"kind": "loss", …}}` on standard error |
 | `--render yaml` | the value as one YAML document, streamed; `{"warning": {"kind": "loss", …}}` on standard error |
 | `--alchemy FILE` | what the program exports: text as it is, a table as CSV (`--render json`: JSON records), JSON events as JSON |
 | `--alchemy FILE --explain` | `{entry, output, protocol, chain, retention, …}`, the program's plan report |
@@ -305,9 +312,7 @@ buffer; a record half written is dropped, unless it is longer than 16 MB,
 which is written as it comes (a JSON one to the end of one of its own
 values). A program's own text is written an item at a time, and a `json`
 or `csv` render in the program a record at a time; another format's
-render (`--render yaml`) may stop inside a record. `INPUT_INVALID` with a
-message that names `--path` means the value is not an array of records:
-point `--path` at one. `DUPLICATE_MEMBER` means a key on the exported
+render (`--render yaml`) may stop inside a record. `DUPLICATE_MEMBER` means a key on the exported
 path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
 refuses rather than export a different one. `[-1]` on an array is a usage
@@ -322,7 +327,7 @@ any input still being read when the time ran out.
 An error met while `--render FORMAT` was writing, `--render json` and
 `csv` included (a `transduce`, `parse` such as `too_deep`, or `timeout`
 error, or the render's own `alchemy` one), also carries `loss`, the
-sentences its warning gives on success (an empty list for JSON). A
+sentences its warning gives on success. A
 `usage` or `not_found` error never does, nor does one met before the
 writing began, such as an input that cannot be read.
 
@@ -367,9 +372,9 @@ For those, pipe `--json` into jq.
 - Numbers are 64-bit floats: integers beyond 2^53 lose precision in
   `--json` and in entries (`--render json` keeps their digits), so
   compare large IDs as text with `--find` rather than as numbers.
-- `--json` writes NaN and the infinities as `null`, and `--render json`
-  refuses them (`TARGET_VALUE_UNREPRESENTABLE`, exit 1). Entries write
-  them as `"NaN"`, `"Infinity"` and `"-Infinity"`, with kind `number`.
+- `--json` and `--render json` write NaN and the infinities as `null`,
+  and `--render csv` as their names. Entries write them as `"NaN"`,
+  `"Infinity"` and `"-Infinity"`, with kind `number`.
 - Unknown extensions are read as plain text: an array of lines. Use `-k`
   to name the format, or `--grammar` to give the format one.
 - Big files are costly. aless reads and parses the whole input before it

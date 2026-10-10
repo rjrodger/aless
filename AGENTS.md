@@ -16,8 +16,9 @@ from jless. This file is the guide for any agent working here;
   ```bash
   cargo fmt --all --check
   cargo clippy --all-targets --locked -- -D warnings
-  eval "$(scripts/yaml-fixtures.sh)"                # tabnas/yaml's fixtures, for tests/yaml_render.rs
+  eval "$(scripts/fixtures.sh)"                     # the grammar repositories' fixtures, for the matrix and tests/yaml_render.rs
   cargo test --locked
+  cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture   # linux: every format's fixtures into every format, a line per 25 documents
   python3 scripts/pty-smoke.py target/debug/aless   # unix: drives the real binary in a pty, and checks it refuses without one
   cargo package --locked                            # linux: the crate builds from exactly the files it publishes
   ```
@@ -57,14 +58,20 @@ from jless. This file is the guide for any agent working here;
     skill and the changelog, which `--generate skill` and the man page
     read), and a new file the README links to joins the list. CI's
     `cargo package` checks the build.
-- **`tests/yaml_render.rs` reads tabnas/yaml's own fixtures** (`test/spec`
-  and the vendored YAML Test Suite), which the published crate does not
-  ship. They come from a checkout of tabnas/yaml at the tag of the
-  tabnas-yaml version `Cargo.lock` pins, named by `TABNAS_YAML_DIR`:
-  `scripts/yaml-fixtures.sh` clones it under `target/yaml-fixtures/` and
-  prints the export line, and CI runs it before the tests. The test fails
-  when the variable is unset, and when the checkout's version is not the
-  locked one, so the fixtures still move with the pin.
+- **Two tests read the grammar repositories' own fixtures**, which the
+  published crates do not ship: `tests/translate_matrix.rs` (every
+  document of every format's corpus written into every format and read
+  back under the target's declared conventions: aless's fixtures and
+  JSONTestSuite's in the default run, every repository's `test/spec/*.tsv`
+  in the ignored run CI makes in the `matrix` profile) and
+  `tests/yaml_render.rs` (tabnas/yaml's spec and the vendored YAML Test
+  Suite). They come from checkouts of the twelve grammar repositories with
+  translation parts at the tags of the versions `Cargo.lock` pins:
+  `scripts/fixtures.sh` clones them under `target/fixtures/` and prints
+  the export lines, `TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`, and CI
+  runs it before the tests. The tests fail when the variables are unset,
+  and when a checkout's version is not the locked one, so the fixtures
+  move with the pins.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,

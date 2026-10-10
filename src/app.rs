@@ -212,6 +212,9 @@ pub struct Options {
     pub relative: bool,
     pub ascii: bool,
     pub indent: usize,
+    /// The member the output pane's render writes a root under when its
+    /// format's document must be a table (`--key`).
+    pub key: String,
     /// Fold new documents to this depth (`None`: everything expanded).
     pub depth: Option<u32>,
     pub color: bool,
@@ -237,6 +240,7 @@ impl Default for Options {
             relative: false,
             ascii: false,
             indent: 2,
+            key: crate::translate::Options::default().key,
             depth: None,
             color: true,
             show_hidden: false,
@@ -710,6 +714,9 @@ impl App {
                 &through,
                 compiled,
                 self.output_indent,
+                &crate::translate::Options {
+                    key: self.opts.key.clone(),
+                },
                 load::Limits::current().timeout,
             )
         };
