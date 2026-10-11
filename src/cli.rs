@@ -24,12 +24,12 @@ pub const TAGLINE: &str = "JSON, YAML, TOML, CSV, XML, INI, Markdown and more as
 /// What aless does, in a paragraph: the man page's DESCRIPTION.
 const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, \
     TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
-    .proto files, PGN chess games, C source, expressions and semantic versions, and any \
-    line-oriented format an ABNF grammar describes, as one tree. In a terminal it shows \
-    the tree in a jless-style viewer, with tabs, panes, search and a watch mode that \
-    reloads a changed file and keeps your place. Without one it prints JSON on standard \
-    output for scripts and agents, and writes any of those formats as any other that \
-    has a render and can hold the document.";
+    .proto files, PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions \
+    and semantic versions, and any line-oriented format an ABNF grammar describes, as one \
+    tree. In a terminal it shows the tree in a jless-style viewer, with tabs, panes, \
+    search and a watch mode that reloads a changed file and keeps your place. Without one \
+    it prints JSON on standard output for scripts and agents, and writes any of those \
+    formats as any other that has a render and can hold the document.";
 
 /// Where an option belongs, and what giving it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,11 +218,15 @@ pub const OPTIONS: &[Opt] = &[
             {renders}. What FORMAT cannot hold is written by the convention its crate \
             declares rather than refused (NaN and the infinities as null in json; a \
             root TOML or INI cannot have as the one member --key names), and what it \
-            does not keep is said in a warning on standard error, on success too. Four \
+            does not keep is said in a warning on standard error, on success too. Seven \
             write only the tree their own documents read as, and have no convention for \
-            another: css, proto, pgn and c take a document of their own format, and any \
-            other is a usage error before anything is read, naming the route that writes \
-            one, --alchemy FILE --render FORMAT with a program that makes that tree. \
+            another: css, proto, pgn and c take a document of their own format, abnf, ebnf \
+            and gbnf a grammar in any of the three, each read as the grammar spec its \
+            compiler writes, and any other is a usage error before anything is read, \
+            naming the route that writes one, --alchemy FILE --render FORMAT with a \
+            program that makes that tree. A notation's render refuses a spec it cannot \
+            write in its notation (an action, a terminal none of its forms matches) before \
+            writing anything. \
             semver writes only a document that is a version, and refuses any other \
             before writing anything. Takes --path, not --at. With --alchemy it names the format the program's table or \
             JSON events are written as.",
@@ -839,7 +843,8 @@ const TOPICS: &[Topic] = &[
                     when it has one, else at its value. Exact for the JSON family, TOML, \
                     INI, CSV and ZON, and for C's tokens, from the places its syntax tree \
                     records, best-effort for YAML, XML, Markdown, CSS, PGN and expressions, \
-                    loose for a .proto file's descriptor, and null when unknown",
+                    loose for a .proto file's descriptor, and null when unknown, as \
+                    throughout a grammar's spec, which its compiler writes",
                 ),
                 (
                     "length",
@@ -1091,9 +1096,12 @@ const TOPICS: &[Topic] = &[
                 limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
                 INI, ZON and expressions, an expression of 127 operations too, 256 for \
                 XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
-                file, counted before it is parsed, and for C an expression of 127 \
+                file, counted before it is parsed, for C an expression of 127 \
                 operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
-                values a byte of the file written out, its reader repeating subtrees).",
+                values a byte of the file written out, its reader repeating subtrees, and \
+                for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
+                512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
+                128 deep).",
             ),
             Block::Text(
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
@@ -1346,6 +1354,9 @@ fn format_note(format: Format) -> &'static str {
         }
         Format::Semver => " (a version: its major, minor, patch, prerelease and build)",
         Format::C => " (its concrete syntax tree, every token with its place)",
+        Format::Abnf | Format::Ebnf | Format::Gbnf => {
+            " (the grammar spec its compiler writes, the three notations' one schema)"
+        }
         Format::Text => " (and every extension no format claims)",
         _ => "",
     }

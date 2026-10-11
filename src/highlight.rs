@@ -650,6 +650,13 @@ mod tests {
         let too_long = " ".repeat(MAX_BYTES + 1);
         assert_eq!(paint(Grammar::Format(Format::Json), &too_long, None), None);
         assert_eq!(paint(Grammar::Format(Format::Text), "a", None), None);
+        // A grammar's compiler lexes it with a parser of its own, which it
+        // does not hand over: the registry knows the three notations, and
+        // aless has nothing to colour them with.
+        for format in [Format::Abnf, Format::Ebnf, Format::Gbnf] {
+            assert!(Grammar::Format(format).entry(Registry::bundled()).is_some());
+            assert_eq!(paint(Grammar::Format(format), "a = \"x\"\n", None), None);
+        }
         let registry = Registry::from_json(
             r#"{"count": 1, "entries": [
                 {"name": "@tabnas/json", "languageId": "json", "lexStream": "speculative"}

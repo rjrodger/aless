@@ -75,10 +75,14 @@ tabnas-proto = "0.6.7"
 tabnas-css = "0.5.14"
 tabnas-chess = "0.1.14"
 tabnas-c = "0.5.14"
-# The ABNF compiler behind --grammar and --grammar-expr: a custom grammar's
-# text becomes a GrammarSpec at startup. It emits through tabnas-bnf, the
-# compiler the BNF-family front-ends share.
-tabnas-abnf = "0.4.20"
+# The grammar notations, each read as the grammar spec its compiler writes
+# (the schema grammar-spec the three share) and written by its render.
+# The ABNF compiler is also behind --grammar and --grammar-expr: a custom
+# grammar's text becomes a GrammarSpec at startup. Each emits through
+# tabnas-bnf, the compiler the BNF-family front-ends share.
+tabnas-abnf = "0.4.22"
+tabnas-ebnf = "0.1.16"
+tabnas-gbnf = "0.1.18"
 # The streaming transducer and its renderers, behind `--render`.
 tabnas-transduce = "0.2.7"
 tabnas-render = "0.2.4"

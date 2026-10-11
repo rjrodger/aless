@@ -3,7 +3,7 @@ title: Convert a file to another format
 description: Write a document, or the records in it, as CSV, YAML, TOML, a Markdown table or any other format aless can write, streamed as it reads.
 order: 7
 ---
-`--render FORMAT` writes the value aless read as another format. Every format it reads can be written as every format it has a writer for that can hold it: `csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml`, `zon`, `feed` (an Atom feed) and `expr` take any document, and `css`, `proto`, `pgn`, `c` and `semver` only their own kind ([below](#formats-that-hold-only-their-own-kind)). The examples convert [`books.json`](/examples/books.json), a list of three books.
+`--render FORMAT` writes the value aless read as another format. Every format it reads can be written as every format it has a writer for that can hold it: `csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml`, `zon`, `feed` (an Atom feed) and `expr` take any document, and `css`, `proto`, `pgn`, `c`, `abnf`, `ebnf`, `gbnf` and `semver` only their own kind ([below](#formats-that-hold-only-their-own-kind)). The examples convert [`books.json`](/examples/books.json), a list of three books.
 
 ## Records as CSV
 
@@ -87,7 +87,7 @@ JSON Lines and the record formats wrap the other way: a value that is not an arr
 
 ## Formats that hold only their own kind
 
-Five formats have no convention for a document of another kind. CSS, `.proto`, PGN and C write only the tree their own documents read as, a stylesheet's syntax tree, a FileDescriptorProto, a database of games or a C syntax tree, so a conversion into one from anything else is refused before the input is read, with the status 2 and the route that can write one:
+Eight formats have no convention for a document of another kind. CSS, `.proto`, PGN and C write only the tree their own documents read as, a stylesheet's syntax tree, a FileDescriptorProto, a database of games or a C syntax tree, and ABNF, EBNF and GBNF the grammar spec a grammar in any of the three reads as, so a grammar converts from one notation to another. A conversion into one of them from anything else is refused before the input is read, with the status 2 and the route that can write one:
 
 ```console
 $ aless --render proto --compact books.json; echo $?
@@ -95,7 +95,7 @@ $ aless --render proto --compact books.json; echo $?
 2
 ```
 
-That route is a [program](/how-to/alchemy.html) whose output is the tree the format reads as. A semantic version takes any document that is a version, an object with a `major`, a `minor` and a `patch`, and refuses any other with the code `TARGET_VALUE_UNREPRESENTABLE` and the status 1, before writing anything.
+That route is a [program](/how-to/alchemy.html) whose output is the tree the format reads as. A semantic version takes any document that is a version, an object with a `major`, a `minor` and a `patch`, and refuses any other with the code `TARGET_VALUE_UNREPRESENTABLE` and the status 1, before writing anything. A grammar notation refuses the same way a spec its notation cannot say: an action, such as the ones the annotations of [`hosts.abnf`](/examples/hosts.abnf) make, or a terminal none of its forms matches.
 
 ## Read what was not kept
 

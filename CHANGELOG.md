@@ -33,10 +33,29 @@ bumps the version renames `Unreleased` to the version and its date
   chain of subscripts or member accesses doubles the tree written out at
   each level, and 40 member accesses in one expression would otherwise
   hold more values than a machine can.
+- Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.22), EBNF (`.ebnf`,
+  tabnas-ebnf 0.1.16) and GBNF (`.gbnf`, tabnas-gbnf 0.1.18), each read
+  as the grammar spec its compiler writes, `options` and `rule`s with
+  the rules the compiler adds, and written by `--render abnf`, `ebnf` and
+  `gbnf` (admin ADR-27, phase 4's second batch). The three write one
+  schema, so a grammar in one notation is written in another; any other
+  document is the `usage` error that names the program route, and a spec
+  the target notation cannot say (an action, a terminal none of its
+  forms matches) is `TARGET_VALUE_UNREPRESENTABLE` before anything is
+  written. A grammar's compiler keeps no places, so no node of its spec
+  has a position, and the compiler's own limits are `too_deep` errors:
+  groups and options nested about 500 levels in ABNF, 130 in EBNF and
+  128 in GBNF, and elements nested 128 levels. The compile runs on the
+  parse's thread, or within `--timeout` on a thread of its own, which
+  aless stops waiting for when the time is up. `aless --check` on a
+  grammar file now says whether it compiles; such a file, read as plain
+  text before, is read as its spec. `--grammar` reads its grammar as
+  before.
 
 ### Changed
 
 - tabnas-expr 0.5.17, a version move.
+- tabnas-abnf 0.4.22, from 0.4.20, the compiler behind `--grammar` too.
 
 ## [0.3.0] - 2026-10-10
 

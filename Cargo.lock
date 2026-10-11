@@ -28,8 +28,10 @@ dependencies = [
  "tabnas-chess",
  "tabnas-css",
  "tabnas-csv",
+ "tabnas-ebnf",
  "tabnas-expr",
  "tabnas-feed",
+ "tabnas-gbnf",
  "tabnas-ini",
  "tabnas-json",
  "tabnas-json5",
@@ -1132,9 +1134,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-abnf"
-version = "0.4.20"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0047a58ec2b8c1dc2e94c9aec0ca58199b785ddd3c472fad02159feabc6882b"
+checksum = "dc6b56dd622d2729364be0635f5729b8ce92768a487a1788d1a6623612ff5f2f"
 dependencies = [
  "indexmap",
  "regex",
@@ -1219,6 +1221,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-ebnf"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cb820a8e8c206ce19cf5ac4b1aacee98d78186cc79b98d2471e6059367363a8"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-expr"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1240,6 +1255,19 @@ dependencies = [
  "serde_json",
  "tabnas-parser",
  "tabnas-xml",
+]
+
+[[package]]
+name = "tabnas-gbnf"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68af85b4ba11d1bc9861b545d1114661740a2be21291a90833c607fb65aaba58"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
 ]
 
 [[package]]

@@ -43,6 +43,14 @@ pub enum Format {
     Pgn,
     /// C source, by tabnas-c: its concrete syntax tree.
     C,
+    /// A grammar in ABNF (RFC 5234), by tabnas-abnf: the grammar spec its
+    /// compiler writes for it, of the schema the three notations share.
+    Abnf,
+    /// A grammar in W3C EBNF, by tabnas-ebnf, read as [`Format::Abnf`] is.
+    Ebnf,
+    /// A grammar in llama.cpp's GBNF, by tabnas-gbnf, read as
+    /// [`Format::Abnf`] is.
+    Gbnf,
     Expr,
     Semver,
     Text,
@@ -53,7 +61,7 @@ pub enum Format {
 impl Format {
     /// The built-in formats. A custom grammar is not among them: the
     /// registry lists those ([`grammar::registered`]).
-    pub const ALL: [Format; 21] = [
+    pub const ALL: [Format; 24] = [
         Format::Json,
         Format::Jsonl,
         Format::Jsonic,
@@ -72,6 +80,9 @@ impl Format {
         Format::Proto,
         Format::Pgn,
         Format::C,
+        Format::Abnf,
+        Format::Ebnf,
+        Format::Gbnf,
         Format::Expr,
         Format::Semver,
         Format::Text,
@@ -97,6 +108,9 @@ impl Format {
             Format::Proto => "proto",
             Format::Pgn => "pgn",
             Format::C => "c",
+            Format::Abnf => "abnf",
+            Format::Ebnf => "ebnf",
+            Format::Gbnf => "gbnf",
             Format::Expr => "expr",
             Format::Semver => "semver",
             Format::Text => "text",
@@ -109,6 +123,16 @@ impl Format {
     /// built-in format.
     pub fn is_custom(self) -> bool {
         matches!(self, Format::Custom(_))
+    }
+
+    /// Whether a document of this format is a grammar in a notation (ABNF,
+    /// EBNF, GBNF), read as the grammar spec its compiler writes for it
+    /// ([`compile_notation`]) rather than by a parse aless drives: the
+    /// compiler parses it with a parser of its own, which takes no guard of
+    /// aless's and lexes no tokens aless sees, so a grammar has no source
+    /// positions and no colours.
+    pub fn is_notation(self) -> bool {
+        matches!(self, Format::Abnf | Format::Ebnf | Format::Gbnf)
     }
 
     /// Whether the document is a list of records keyed by a header row,
@@ -170,6 +194,9 @@ impl Format {
             Format::Proto => &["proto"],
             Format::Pgn => &["pgn"],
             Format::C => &["c", "h"],
+            Format::Abnf => &["abnf"],
+            Format::Ebnf => &["ebnf"],
+            Format::Gbnf => &["gbnf"],
             Format::Expr | Format::Semver => &[],
             Format::Text => &["txt", "text", "log"],
             Format::Custom(_) => &[],
@@ -816,8 +843,10 @@ impl LoadError {
     }
 
     /// A refusal a format's crate made of the document outside its
-    /// grammar's parse (proto's check of the version a file declares), in
-    /// the engine's layout under `[<format>/<code>]`, with no position.
+    /// grammar's parse (proto's check of the version a file declares, a
+    /// grammar notation's compiler's refusal that names no place), in the
+    /// engine's layout under `[<format>/<code>]`, with no position, and
+    /// the hint unless it is empty.
     pub(crate) fn refused(
         format: Format,
         code: &str,
@@ -828,7 +857,11 @@ impl LoadError {
         e.report = e
             .report
             .replacen(&format!("[aless/{code}]"), &format!("[{format}/{code}]"), 1);
-        e.with_hint(hint)
+        if hint.is_empty() {
+            e
+        } else {
+            e.with_hint(hint)
+        }
     }
 
     /// Whether the input could not be read at all, as opposed to read and
@@ -1405,7 +1438,10 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         // parse builds the tree in this thread's arena, which
         // [`parse_value`] realizes.
         Format::C => tabnas_c::make(),
-        Format::Text => return Ok(None),
+        // A grammar's compiler parses it with a parser of its own
+        // ([`compile_notation`]), and has none to hand over to drive, to
+        // colour with or to align with.
+        Format::Text | Format::Abnf | Format::Ebnf | Format::Gbnf => return Ok(None),
         Format::Custom(id) => {
             let Some(g) = grammar::get(id) else {
                 return Err(grammar_failed(format, "the grammar is not registered"));
@@ -1627,6 +1663,268 @@ pub(crate) fn unplaced_c_cancel(format: Format, e: &tabnas::TabnasError) -> bool
     format == Format::C && e.code == "cancel" && e.pos == 0 && e.src.is_empty()
 }
 
+/// The grammar spec a grammar document's compiler writes for it: what a
+/// document of ABNF, EBNF or GBNF is read as (the schema `grammar-spec`,
+/// which the three share). It is the pure-data spec, with the tree
+/// builders every compiled grammar carries, as each crate says a host
+/// reads one, which is the text its TypeScript compiler writes: ABNF's
+/// [`tabnas_abnf::abnf_compile`]'s, with `recognition` off (`builtins`
+/// and `marks` on), EBNF's and GBNF's conversions with `builtins` on, each
+/// lowered to pure data by [`tabnas_abnf::to_pure_spec`], as tabnas-bnf's
+/// `compile_spec` lowers it before writing it as text.
+///
+/// Each compiler bounds the grammar it reads: its parse refuses groups
+/// nested past a limit of its own (2,048 open rules for ABNF, some 500
+/// groups; 520 for EBNF and 512 for GBNF, some 130), and its emitter
+/// elements nested past 128, and a repetition that would be written out
+/// past 8,192 copies, each before anything that deep or that large is
+/// built. It runs where it is called, uninterrupted
+/// ([`compile_notation_by`] bounds the wait).
+pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Value, LoadError> {
+    use tabnas_abnf::AbnfConvertOptions as Convert;
+    let builtins = Convert {
+        builtins: true,
+        ..Convert::default()
+    };
+    let spec = match format {
+        Format::Abnf => tabnas_abnf::abnf_convert(
+            src,
+            Some(&Convert {
+                marks: true,
+                ..builtins
+            }),
+        )
+        .map_err(Refusal::from),
+        Format::Ebnf => tabnas_ebnf::ebnf_convert(src, Some(&builtins)).map_err(Refusal::from),
+        Format::Gbnf => {
+            tabnas_gbnf::gbnf_convert(src, Some(&tabnas_gbnf::GbnfConvertOptions::new(builtins)))
+                .map_err(Refusal::from)
+        }
+        other => return Err(grammar_failed(other, "it is no grammar notation")),
+    };
+    let pure = spec
+        .and_then(|spec| tabnas_abnf::to_pure_spec(&spec).map_err(|e| Refusal::message(e.message)));
+    match pure {
+        Ok(json) => Ok(tabnas::Value::from_json(&json)),
+        Err(refusal) => Err(refusal.load_error(format, src)),
+    }
+}
+
+/// [`compile_notation`] within `deadline`. A compile cannot be stopped
+/// part way, so with a deadline it runs on a thread of its own, with the
+/// stack a parse has, and past the deadline aless stops waiting for it and
+/// leaves the thread to itself, as it does a grammar's from the command
+/// line; with none it runs here, on the parse's thread. A panic in the
+/// compiler is a `grammar` error, as one in a parse is.
+pub(crate) fn compile_notation_by(
+    format: Format,
+    src: &str,
+    deadline: Option<Deadline>,
+) -> Result<tabnas::Value, LoadError> {
+    let caught = |outcome: Result<Result<tabnas::Value, LoadError>, String>| {
+        outcome.unwrap_or_else(|panic| Err(grammar_failed(format, &panic)))
+    };
+    let Some(deadline) = deadline else {
+        return caught(catch_grammar(|| compile_notation(format, src)));
+    };
+    let (send, compiled) = mpsc::channel();
+    let text = src.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("aless-notation".into())
+        .stack_size(PARSE_STACK)
+        .spawn(move || {
+            let _ = send.send(catch_grammar(|| compile_notation(format, &text)));
+        });
+    match spawned {
+        Ok(_) => {
+            let left = deadline.at.saturating_duration_since(Instant::now());
+            match compiled.recv_timeout(left) {
+                Ok(outcome) => caught(outcome),
+                Err(RecvTimeoutError::Timeout) => Err(LoadError::compile_timed_out(deadline.limit)),
+                Err(RecvTimeoutError::Disconnected) => {
+                    Err(grammar_failed(format, "the compiler gave no answer"))
+                }
+            }
+        }
+        // No thread to be had: compile here, timed. It cannot be stopped,
+        // so one that ends past the deadline is late whatever it gave.
+        Err(_) => {
+            let outcome = caught(catch_grammar(|| compile_notation(format, src)));
+            let now = Instant::now();
+            if now >= deadline.at {
+                let took = deadline.limit + now.saturating_duration_since(deadline.at);
+                return Err(LoadError::compile_finished_late(deadline.limit, took));
+            }
+            outcome
+        }
+    }
+}
+
+/// What a grammar notation's compiler refused a document for, whichever
+/// notation it is: its message (prefixed with the notation's name), the
+/// place the refusal names, when it names one, and the engine's code,
+/// when the engine refused the text.
+#[derive(Debug)]
+struct Refusal {
+    message: String,
+    line: Option<usize>,
+    col: Option<usize>,
+    code: Option<String>,
+}
+
+impl Refusal {
+    /// A refusal that names no place.
+    fn message(message: String) -> Refusal {
+        Refusal {
+            message,
+            line: None,
+            col: None,
+            code: None,
+        }
+    }
+
+    /// A refusal of the compiler's, at the range of the grammar's text it
+    /// names, when it names one.
+    fn spanned(message: String, span: Option<tabnas_abnf::SrcSpan>) -> Refusal {
+        Refusal {
+            message,
+            line: span.and_then(|sp| sp.r),
+            col: span.and_then(|sp| sp.c),
+            code: None,
+        }
+    }
+
+    /// A refusal of the notation's parse: the engine's, with its code, or
+    /// the front-end's own, with none.
+    fn parsed(
+        message: String,
+        line: Option<usize>,
+        col: Option<usize>,
+        code: Option<String>,
+    ) -> Refusal {
+        Refusal {
+            message,
+            line,
+            col,
+            code,
+        }
+    }
+
+    /// The refusal as aless reports a load error of `format`, a document
+    /// whose text is `src`. Nesting past what the compiler reads is
+    /// `too_deep`, as any grammar's limit is; the engine's refusal of the
+    /// text keeps the engine's code, and any other refusal of the
+    /// compiler's is `compile`. Each is placed where the refusal says, in
+    /// the engine's layout, with the line quoted; without a place it has
+    /// none.
+    fn load_error(self, format: Format, src: &str) -> LoadError {
+        let plain = strip_ansi(&self.message);
+        let detail = plain
+            .strip_prefix(&format!("{format}: "))
+            .unwrap_or(&plain)
+            .to_string();
+        // The engine's own report, which the front-end quotes after its
+        // place: `parse error at line 1, column 5: [tabnas/unexpected]: …`.
+        let detail = match (&self.code, detail.find("]: ")) {
+            (Some(_), Some(at)) if detail.starts_with("parse error") => {
+                detail[at + 3..].to_string()
+            }
+            _ => detail,
+        };
+        let deep =
+            detail.contains("nests too deeply") || detail.contains("nests elements more than");
+        let code = match (&self.code, deep) {
+            (_, true) => "too_deep".to_string(),
+            (Some(code), false) => code.clone(),
+            (None, false) => "compile".to_string(),
+        };
+        let hint = if deep {
+            format!(
+                "The {format} compiler bounds how deep a grammar nests, and refused this one \
+                 before building anything that deep.\nSplit a deeply nested rule into named \
+                 rules."
+            )
+        } else if self.code.is_some() {
+            String::new()
+        } else {
+            format!(
+                "The document is read as the grammar spec the {format} compiler writes for it, \
+                 and the compiler refused it."
+            )
+        };
+        match self.line.zip(self.col) {
+            Some((line, col)) if line > 0 && col > 0 => {
+                let pos = offset_of(src, line, col);
+                let token: String = src[pos..].chars().take(1).collect();
+                let mut e = tabnas::TabnasError::new(code, token, src, pos, line, col);
+                e.tag = format.name().to_string();
+                e.detail = detail;
+                if !hint.is_empty() || self.code.is_none() {
+                    e.hint = hint;
+                }
+                LoadError::from_tabnas(&e, None)
+            }
+            _ => LoadError::refused(format, &code, format!("{code}: {detail}"), &hint),
+        }
+    }
+}
+
+impl From<tabnas_abnf::AbnfError> for Refusal {
+    fn from(e: tabnas_abnf::AbnfError) -> Refusal {
+        use tabnas_abnf::AbnfError;
+        match e {
+            AbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            AbnfError::Emit(e) => Refusal::spanned(e.message, e.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+impl From<tabnas_ebnf::EbnfError> for Refusal {
+    fn from(e: tabnas_ebnf::EbnfError) -> Refusal {
+        use tabnas_ebnf::EbnfError;
+        match e {
+            EbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            EbnfError::Compile(c) => Refusal::spanned(c.message, c.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+impl From<tabnas_gbnf::GbnfError> for Refusal {
+    fn from(e: tabnas_gbnf::GbnfError) -> Refusal {
+        use tabnas_gbnf::GbnfError;
+        match e {
+            GbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            GbnfError::Compile(c) => Refusal::spanned(c.message, c.sp),
+            GbnfError::Emit(e) => Refusal::spanned(e.message, e.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+/// The byte offset of the 1-based `line` and `col` (counted in characters)
+/// in `src`, or the nearest place there is: a column past its line's end
+/// is that end, a line past the last is the source's end.
+fn offset_of(src: &str, line: usize, col: usize) -> usize {
+    let Some(start) = src
+        .split_inclusive('\n')
+        .take(line - 1)
+        .map(str::len)
+        .try_fold(0usize, |at, n| Some(at + n))
+        .filter(|at| *at <= src.len() && (line == 1 || src[..*at].ends_with('\n')))
+    else {
+        return src.len();
+    };
+    let rest = &src[start..];
+    let end = rest.find('\n').unwrap_or(rest.len());
+    start
+        + rest[..end]
+            .char_indices()
+            .nth(col - 1)
+            .map_or(end, |(i, _)| i)
+}
+
 /// A refusal of proto's own, outside its grammar's parse, as aless reports
 /// a load error: nesting past its braces (`too_deep`), a declaration of a
 /// version it does not know (`version`); an engine error as the engine
@@ -1767,6 +2065,15 @@ pub(crate) fn parse_until(
         return Ok(Doc::from_lines(&lines(src)));
     }
     let src = parse_text(src, format);
+    if format.is_notation() {
+        // The grammar spec has no source positions, nor its nodes a place.
+        return on_parse_thread(
+            timeout,
+            started,
+            || {},
+            |deadline| compile_notation_by(format, src, deadline).map(|v| Doc::from_value(&v)),
+        );
+    }
     on_parse_thread(
         timeout,
         started,
@@ -3286,7 +3593,13 @@ mod tests {
             };
             assert_eq!(run(bounded), run(unbounded), "{what}");
         };
-        for format in Format::ALL.iter().copied().filter(|f| *f != Format::Text) {
+        // A grammar's compiler parses it with a parser of its own, which
+        // aless has no way to bound.
+        for format in Format::ALL
+            .iter()
+            .copied()
+            .filter(|f| *f != Format::Text && !f.is_notation())
+        {
             let make = || make_parser(format).unwrap().unwrap();
             // A sequence well past the bound, nested once.
             let items = |item: &dyn Fn(usize) -> String, sep: &str| {
@@ -3353,6 +3666,9 @@ mod tests {
             let path = entry.unwrap().path();
             let format = match fixture_format(&path) {
                 Some(Format::Text) | None => continue,
+                // A grammar is its compiler's to parse, with a parser
+                // aless does not make.
+                Some(format) if format.is_notation() => continue,
                 Some(format) => format,
             };
             let src = std::fs::read_to_string(&path).unwrap();
@@ -3430,7 +3746,7 @@ mod tests {
 
     #[test]
     fn every_format_parses_its_sample() {
-        let samples: [(Format, &str); 20] = [
+        let samples: [(Format, &str); 23] = [
             (Format::Json, "{\"a\": [1, 2]}"),
             (Format::Jsonl, "{\"a\": 1}\n{\"a\": 2}\n"),
             (Format::Jsonic, "a: 1, b: {c: x}"),
@@ -3455,6 +3771,9 @@ mod tests {
             ),
             (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
             (Format::C, "#define N 2\nint x = N;\nint f(void) { return x; }\n"),
+            (Format::Abnf, "greet = \"hi\" / \"hello\"\n"),
+            (Format::Ebnf, "Greet ::= \"hi\" | \"hello\"\n"),
+            (Format::Gbnf, "root ::= \"hi\" | \"hello\"\n"),
             (Format::Expr, "a: 1+2*3, b: (4)\n"),
             (Format::Semver, "1.2.3-rc.1+build.5\n"),
         ];
@@ -3467,11 +3786,140 @@ mod tests {
         for (format, src) in samples {
             let doc = parse(src, format).unwrap_or_else(|e| panic!("{format}: {e}"));
             assert!(doc.len() > 1, "{format} produced a scalar-only document");
-            assert!(
+            // A grammar's spec is its compiler's writing, and places nothing.
+            assert_eq!(
                 doc.nodes.iter().any(|n| n.line > 0),
-                "{format}: no node carries a source line"
+                !format.is_notation(),
+                "{format}: which nodes carry a source line"
             );
         }
+    }
+
+    /// A grammar in a notation reads as the pure-data spec its compiler
+    /// writes for it, as each crate says a host reads one: its rules, the
+    /// start wrapper the compiler adds, the tree builders every compiled
+    /// grammar carries, and the tokens; ABNF's literals matching either
+    /// case, as RFC 5234 has them. The three read one schema.
+    #[test]
+    fn a_grammar_reads_as_the_spec_its_compiler_writes() {
+        let spec = |src: &str, format: Format| -> serde_json::Value {
+            serde_json::from_str(&read_json(src, format)).unwrap()
+        };
+        let abnf = spec("greet = \"hi\" / \"hello\"\n", Format::Abnf);
+        let rules: Vec<&String> = abnf["rule"].as_object().unwrap().keys().collect();
+        assert_eq!(rules, ["greet", "__start__"]);
+        assert_eq!(abnf["options"]["rule"]["start"], "__start__");
+        assert_eq!(abnf["options"]["match"]["token"]["#HI"], "@~/^hi/i");
+        assert_eq!(abnf["rule"]["greet"]["open"][0]["a"], "@node$");
+        assert_eq!(abnf["rule"]["greet"]["open"][0]["g"], "abnf");
+        let ebnf = spec(
+            "Doc ::= Greet\nGreet ::= \"hi\" | \"hello\"\n",
+            Format::Ebnf,
+        );
+        let rules: Vec<&String> = ebnf["rule"].as_object().unwrap().keys().collect();
+        assert_eq!(rules, ["Doc", "Greet", "__start__"]);
+        let gbnf = spec(
+            "root ::= greet\ngreet ::= \"hi\" | \"hello\"\n",
+            Format::Gbnf,
+        );
+        assert_eq!(gbnf["options"]["tokenSet"]["IGNORE"], serde_json::json!([]));
+        assert_eq!(gbnf["rule"]["greet"]["open"][0]["g"], "gbnf");
+    }
+
+    /// What a notation's compiler refuses is a load error of aless's: a
+    /// grammar nested past the compiler's own limit is `too_deep`, with no
+    /// place, or the rule's where the refusal names one; the engine's
+    /// refusal of the text keeps the engine's code, placed; any other of
+    /// the compiler's is `compile`, placed where it says, and quoted in the
+    /// engine's layout under the notation's name.
+    #[test]
+    fn a_grammars_refusals_are_load_errors() {
+        for (format, src) in [
+            (
+                Format::Abnf,
+                format!("a = {}\"x\"{}\n", "(".repeat(20_000), ")".repeat(20_000)),
+            ),
+            (
+                Format::Ebnf,
+                format!("a ::= {}\"x\"{}\n", "(".repeat(20_000), ")".repeat(20_000)),
+            ),
+            (
+                Format::Gbnf,
+                format!(
+                    "root ::= {}\"x\"{}\n",
+                    "(".repeat(20_000),
+                    ")".repeat(20_000)
+                ),
+            ),
+        ] {
+            let e = parse(&src, format).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{format}: {e}");
+            assert_eq!((e.line, e.col), (0, 0), "{format}");
+            assert!(e.message.contains("nests too deeply"), "{format}: {e}");
+            assert!(
+                e.plain_report()
+                    .starts_with(&format!("[{format}/too_deep]: ")),
+                "{}",
+                e.plain_report()
+            );
+        }
+        let e = parse(
+            &format!("a = {}\"x\"{}\n", "(".repeat(200), ")".repeat(200)),
+            Format::Abnf,
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("more than 128 deep"), "{e}");
+        let e = parse("greet = \"hi\"\na = \"\u{1}\"\n", Format::Abnf).unwrap_err();
+        assert_eq!(
+            (e.code.as_str(), e.line, e.col),
+            ("unprintable", 2, 6),
+            "{e}"
+        );
+        assert!(
+            e.plain_report().starts_with("[abnf/unprintable]: "),
+            "{}",
+            e.plain_report()
+        );
+        let e = parse("a = b\n", Format::Abnf).unwrap_err();
+        assert_eq!(e.code, "compile");
+        assert_eq!(e.message, "compile: rule 'a' references unknown rule 'b'");
+        assert_eq!((e.line, e.col), (1, 5));
+        assert!(
+            e.plain_report().contains("  1 | a = b"),
+            "{}",
+            e.plain_report()
+        );
+        let e = parse("a ::= \"x\"\n", Format::Gbnf).unwrap_err();
+        assert_eq!(e.code, "compile");
+        assert!(e.message.contains("no 'root' rule"), "{e}");
+        let e = parse("\n", Format::Ebnf).unwrap_err();
+        assert_eq!(e.message, "compile: no productions found");
+        assert_eq!((e.line, e.col), (0, 0));
+        assert!(!e.is_io() && !e.is_too_large() && !e.is_timeout());
+    }
+
+    /// A compile cannot be stopped part way: past the deadline aless stops
+    /// waiting for it, and says so as a grammar's compile that ran past
+    /// --timeout, where without one it runs to its end.
+    #[test]
+    fn a_grammars_compile_is_waited_for_within_the_deadline() {
+        let rules: String = (0..2_000)
+            .map(|i| format!("r{i} = \"x{i}\" r{}\n", i + 1))
+            .chain(std::iter::once("r2000 = \"y\"\n".to_string()))
+            .collect();
+        let started = Instant::now();
+        let e = parse_within(&rules, Format::Abnf, Some(Duration::from_millis(50))).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar took longer than 0.05 s to compile"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "it stopped waiting"
+        );
+        assert!(parse("r0 = \"x\"\n", Format::Abnf).is_ok());
     }
 
     /// The value as aless reads it, as compact JSON.

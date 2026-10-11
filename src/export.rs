@@ -661,6 +661,25 @@ fn run<S: Sink + Send + 'static>(
                     },
                 }
             }
+            // A grammar is compiled by its notation's compiler, as the
+            // loader compiles it, and the spec it writes walked; the
+            // compile cannot be stopped part way, so the deadline bounds
+            // the wait for it, and the alarm the walk.
+            Input::Text(text) if format.is_notation() => {
+                let text = load::parse_text(text, format);
+                match load::compile_notation_by(format, text, deadline) {
+                    Ok(value) => {
+                        parsed.store(true, Ordering::Relaxed);
+                        walk(&value, scope, &abort, None)
+                    }
+                    Err(e) => Ran {
+                        outcome: Outcome::Refused(Box::new(e)),
+                        stop: None,
+                        verdict: None,
+                        from_sink: false,
+                    },
+                }
+            }
             Input::Text(text) => {
                 let mut parser = match load::make_parser(format) {
                     Ok(parser) => parser.expect("plain text is refused before a run"),
@@ -842,12 +861,24 @@ fn materialize<S: Sink>(
             }
         }
     };
+    walk(&value, scope, abort, Some(stop))
+}
+
+/// Walk a value into `scope`: the transducer's `Materialize` mode once the
+/// value is in hand, under the source limits and the abort flag the alarm
+/// raises at the deadline.
+fn walk<S: Sink>(
+    value: &tabnas::Value,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    stop: Option<Arc<Stop>>,
+) -> Ran {
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
-    let outcome = ValueSource(&value).run(&mut guarded);
+    let outcome = ValueSource(value).run(&mut guarded);
     let scope = guarded.into_inner();
     Ran {
         outcome: Outcome::of(outcome),
-        stop: Some(stop),
+        stop,
         verdict: scope.verdict(),
         from_sink: scope.sink_failed,
     }
@@ -2309,7 +2340,8 @@ mod tests {
         // Parsed whole, then walked: the imperative grammars, and those no
         // differential suite has verified, which build a tree of a schema's
         // from their parse (proto's descriptor, expr's S-expressions, C's
-        // syntax tree, realized from its arena).
+        // syntax tree, realized from its arena), and a grammar, the spec its
+        // compiler writes.
         for f in [
             Format::Toml,
             Format::Ini,
@@ -2318,6 +2350,9 @@ mod tests {
             Format::Proto,
             Format::Pgn,
             Format::C,
+            Format::Abnf,
+            Format::Ebnf,
+            Format::Gbnf,
             Format::Expr,
             Format::Semver,
         ] {
@@ -2422,6 +2457,25 @@ mod tests {
         assert_eq!((e.line, e.col), (0, 0));
         assert!(
             e.plain_report().contains("--> (stdin)"),
+            "{}",
+            e.plain_report()
+        );
+        // A grammar as the spec its compiler writes, and refused as the
+        // loader refuses it, placed where its compiler says.
+        assert_eq!(
+            written(Format::Gbnf, ".options.rule.start", "root ::= \"a\"\n"),
+            "\"__start__\"\n"
+        );
+        let e = match run_text(&job(Format::Abnf, Renderer::Json, "."), "a = b\n") {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty());
+                error
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((e.code.as_str(), e.line, e.col), ("compile", 1, 5), "{e}");
+        assert!(
+            e.plain_report().contains("--> (stdin):1:5"),
             "{}",
             e.plain_report()
         );

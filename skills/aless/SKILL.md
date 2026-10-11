@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN, C and a version from documents of their own kind), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, grammars in ABNF, EBNF and GBNF, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN, C and a version from documents of their own kind, and ABNF, EBNF and GBNF from a grammar in any of the three), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -131,7 +131,8 @@ Write any of those formats as any format that has a render, streamed the
 same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
 `markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`,
 `csv`, `feed` (Atom), `expr`, or, from documents of their own kind,
-`css`, `proto`, `pgn`, `c` and `semver`:
+`css`, `proto`, `pgn`, `c` and `semver`, and `abnf`, `ebnf` and `gbnf`
+from a grammar in any of the three:
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
@@ -172,11 +173,17 @@ that has no render (`tsv`) is a usage error that lists the ones that do,
 and so is one that names a format by an extension (`rss`), which names
 the format's render (`feed`) instead.
 
-Five renders take only their own kind of tree. `--render css`, `proto`,
-`pgn` and `c` write only the tree their own documents read as; given any
-other document (or a value below the root), they exit 2 with a `usage`
-error before reading the input, naming the route that can write one: a
-program that makes that tree, `--alchemy FILE --render proto`.
+Eight renders take only their own kind of tree. `--render css`, `proto`,
+`pgn` and `c` write only the tree their own documents read as, and
+`abnf`, `ebnf` and `gbnf` the grammar spec a grammar in any of the three
+reads as (so a grammar converts between them); given any other document
+(or a value below the root), they exit 2 with a `usage` error before
+reading the input, naming the route that can write one: a program that
+makes that tree, `--alchemy FILE --render proto`. A notation's render
+refuses a spec it cannot say (an action, such as an annotation of a
+`--grammar` grammar makes, or a terminal none of its forms matches) as
+semver's does below, exit 1, `TARGET_VALUE_UNREPRESENTABLE`, `output:
+"none"`, `file` its own render.
 `--render semver` writes only a tree that is a version (an object with
 `major`, `minor`, `patch`, and optionally `prerelease` and `build`); any
 other exits 1 with a `transduce` error, `code`
@@ -191,6 +198,10 @@ its FileDescriptorProto, as protoc writes one in JSON; a C file (`.c`,
 and `trivia`, each token `tname`, `src` and `span`, with members such as
 `operand` that repeat subtrees `children` holds. C is read as plain C23
 following no `#include`, so a header's typedef is not known for a type.
+A grammar (`.abnf`, `.ebnf`, `.gbnf`) is read as the grammar spec its
+compiler writes, `{options, rule, v, meta}`, each rule its `open` and
+`close` alternates, with no positions; `--check` on one says whether it
+compiles. To read a file with a grammar, name it with `--grammar`.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
@@ -282,7 +293,7 @@ An **entry** describes one node:
   (from the places its tree records; what the reader adds, a kind, a
   token's name, a span's numbers, has none), best-effort for YAML, XML,
   Markdown, CSS, PGN and expressions, loose for a `.proto` file's
-  descriptor, and `null` when unknown.
+  descriptor, and `null` when unknown, as throughout a grammar's spec.
 - A container has `length`, its item count. A scalar has `value`.
   Strings over 200 characters are cut, and get `"truncated": true` and
   their full `length`.
@@ -426,7 +437,12 @@ For those, pipe `--json` into jq.
   no `line` when the parse stopped between tokens; and a C tree of more
   than 256 values a byte of the file written out (a million at least),
   which its reader's repeated subtrees make of a chain of subscripts or
-  member accesses a few levels deep, also with no `line`. A `--grammar`
+  member accesses a few levels deep, also with no `line`; and a grammar
+  in ABNF, EBNF or GBNF at its compiler's limits, groups and options
+  nested about 500 levels in ABNF, 130 in EBNF and 128 in GBNF (no
+  `line`), and elements nested 128 levels (the rule's `line`). A grammar's
+  compile cannot be stopped part way: past `--timeout` aless stops
+  waiting for it (`timeout`, exit 6). A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.

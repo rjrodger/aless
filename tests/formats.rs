@@ -46,9 +46,12 @@ fn every_fixture_loads() {
         }
         let loaded = result.unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(loaded.doc.len() > 1, "{name}: only a root");
-        assert!(
+        // A grammar reads as the spec its compiler writes, which places
+        // nothing, and says so: no node has a position.
+        assert_eq!(
             loaded.doc.nodes.iter().any(|n| n.line > 0),
-            "{name}: no positions recovered"
+            !loaded.format.is_notation(),
+            "{name}: which nodes have positions"
         );
         seen.push(loaded.format);
     }
@@ -72,6 +75,9 @@ fn every_fixture_loads() {
         Format::Proto,
         Format::Pgn,
         Format::C,
+        Format::Abnf,
+        Format::Ebnf,
+        Format::Gbnf,
         Format::Expr,
         Format::Semver,
         Format::Text,
@@ -80,7 +86,7 @@ fn every_fixture_loads() {
     }
     assert_eq!(
         Format::ALL.len(),
-        21,
+        24,
         "a format added to ALL needs a fixture, and its place in the list above"
     );
 }
