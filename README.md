@@ -1320,7 +1320,9 @@ down:
   about ten seconds), and rules whose alternatives start with one another
   in a cycle multiply (nine such rules, 300 bytes, took 17 seconds), as a
   grammar from the command line does. Past `--timeout` aless stops
-  waiting for the compile and reports the `timeout`.
+  waiting for the compile and reports the `timeout`, and while that
+  compile runs on it starts no other grammar's, which reports the same
+  `timeout` at once.
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file

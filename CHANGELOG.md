@@ -49,7 +49,9 @@ bumps the version renames `Unreleased` to the version and its date
   groups and options nested about 500 levels in ABNF, 130 in EBNF and
   128 in GBNF, and elements nested 128 levels. The compile runs on the
   parse's thread, or within `--timeout` on a thread of its own, which
-  aless stops waiting for when the time is up. `aless --check` on a
+  aless stops waiting for when the time is up; while a compile it stopped
+  waiting for runs on, no other starts, and a later grammar in the run is
+  the same `timeout` at once. `aless --check` on a
   grammar file now says whether it compiles; such a file, read as plain
   text before, is read as its spec. `--grammar` reads its grammar as
   before.

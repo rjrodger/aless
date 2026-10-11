@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -971,6 +971,24 @@ impl LoadError {
         Self::compile_late(limit).with_hint(&hint)
     }
 
+    /// A grammar not compiled, since a compile aless stopped waiting for
+    /// is still running ([`compile_notation_by`]): the time is up for it
+    /// before it starts.
+    pub(crate) fn compile_behind(limit: Duration) -> LoadError {
+        let message = format!(
+            "timeout: the grammar was not compiled within {} s: a compile aless stopped \
+             waiting for is still running",
+            seconds(limit)
+        );
+        let hint = format!(
+            "A compiler cannot be interrupted, so aless starts no other while one it stopped \
+             waiting for still runs.\nPass a larger --timeout, or --timeout 0 for no limit, or \
+             read the slow grammar on its own. {}",
+            Self::SLOW_GRAMMARS
+        );
+        LoadError::tagged("timeout", message).with_hint(&hint)
+    }
+
     /// A grammar whose compile ended past the time limit on the caller's
     /// thread, the one place it can run when no thread of its own can be
     /// started: it cannot be stopped there, so it ran to its end, and the
@@ -1728,12 +1746,35 @@ pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Valu
     }
 }
 
+/// How many grammar compiles aless stopped waiting for still run. While
+/// any does, [`compile_notation_by`] starts no other with a deadline, so a
+/// run leaves one behind, or as many as it started at the same moment.
+static ABANDONED_COMPILES: AtomicUsize = AtomicUsize::new(0);
+
+/// Where a compile [`compile_notation_by`] started stands: running, given
+/// up on by the thread that waited for it, or done, whichever of the last
+/// two comes first; each side reads and writes it under its lock.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Compile {
+    Running,
+    Abandoned,
+    Done,
+}
+
 /// [`compile_notation`] within `deadline`. A compile cannot be stopped
 /// part way, so with a deadline it runs on a thread of its own, with the
 /// stack a parse has, and past the deadline aless stops waiting for it and
 /// leaves the thread to itself, as it does a grammar's from the command
 /// line; with none it runs here, on the parse's thread. A panic in the
 /// compiler is a `grammar` error, as one in a parse is.
+///
+/// What a compile left to itself holds (its thread, its stack, its copy of
+/// the text, what it builds) is held until it ends, so while one runs no
+/// other compile with a deadline starts: it is the same `timeout` at once
+/// ([`LoadError::compile_behind`]), and a `--check` of many slow grammars
+/// leaves one compile behind it, not one each. When no thread can be had
+/// the grammar is not compiled at all (a `grammar` error), since a compile
+/// on this thread could not be held to the deadline.
 pub(crate) fn compile_notation_by(
     format: Format,
     src: &str,
@@ -1745,35 +1786,51 @@ pub(crate) fn compile_notation_by(
     let Some(deadline) = deadline else {
         return caught(catch_grammar(|| compile_notation(format, src)));
     };
+    if ABANDONED_COMPILES.load(Ordering::SeqCst) > 0 {
+        return Err(LoadError::compile_behind(deadline.limit));
+    }
+    let state = Arc::new(Mutex::new(Compile::Running));
+    let theirs = state.clone();
     let (send, compiled) = mpsc::channel();
     let text = src.to_string();
     let spawned = std::thread::Builder::new()
         .name("aless-notation".into())
         .stack_size(PARSE_STACK)
         .spawn(move || {
-            let _ = send.send(catch_grammar(|| compile_notation(format, &text)));
+            let outcome = catch_grammar(|| compile_notation(format, &text));
+            drop(text);
+            let mut state = theirs.lock().unwrap_or_else(|e| e.into_inner());
+            if *state == Compile::Abandoned {
+                // Nothing waits for it: let the outcome go, and the next
+                // compile start.
+                drop(outcome);
+                ABANDONED_COMPILES.fetch_sub(1, Ordering::SeqCst);
+            } else {
+                let _ = send.send(outcome);
+            }
+            *state = Compile::Done;
         });
-    match spawned {
-        Ok(_) => {
-            let left = deadline.at.saturating_duration_since(Instant::now());
-            match compiled.recv_timeout(left) {
-                Ok(outcome) => caught(outcome),
-                Err(RecvTimeoutError::Timeout) => Err(LoadError::compile_timed_out(deadline.limit)),
-                Err(RecvTimeoutError::Disconnected) => {
-                    Err(grammar_failed(format, "the compiler gave no answer"))
-                }
+    if spawned.is_err() {
+        return Err(grammar_failed(
+            format,
+            "no thread could be had for its compiler, which cannot be stopped part way, so \
+             it was not compiled where --timeout could not hold it",
+        ));
+    }
+    let left = deadline.at.saturating_duration_since(Instant::now());
+    match compiled.recv_timeout(left) {
+        Ok(outcome) => caught(outcome),
+        Err(RecvTimeoutError::Timeout) => {
+            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+            // Done in the meantime is done late: the time is the outcome.
+            if *state == Compile::Running {
+                *state = Compile::Abandoned;
+                ABANDONED_COMPILES.fetch_add(1, Ordering::SeqCst);
             }
+            Err(LoadError::compile_timed_out(deadline.limit))
         }
-        // No thread to be had: compile here, timed. It cannot be stopped,
-        // so one that ends past the deadline is late whatever it gave.
-        Err(_) => {
-            let outcome = caught(catch_grammar(|| compile_notation(format, src)));
-            let now = Instant::now();
-            if now >= deadline.at {
-                let took = deadline.limit + now.saturating_duration_since(deadline.at);
-                return Err(LoadError::compile_finished_late(deadline.limit, took));
-            }
-            outcome
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(grammar_failed(format, "the compiler gave no answer"))
         }
     }
 }
@@ -3919,7 +3976,10 @@ mod tests {
 
     /// A compile cannot be stopped part way: past the deadline aless stops
     /// waiting for it, and says so as a grammar's compile that ran past
-    /// --timeout, where without one it runs to its end.
+    /// --timeout, where without one it runs to its end. While a compile
+    /// left to itself runs, no other with a deadline starts: it is the same
+    /// timeout at once, so a run of many slow grammars leaves one compile
+    /// behind, not one each; once that compile ends, compiles start again.
     #[test]
     fn a_grammars_compile_is_waited_for_within_the_deadline() {
         let rules: String = (0..2_000)
@@ -3937,7 +3997,24 @@ mod tests {
             started.elapsed() < Duration::from_secs(10),
             "it stopped waiting"
         );
-        assert!(parse("r0 = \"x\"\n", Format::Abnf).is_ok());
+        let small = "r0 = \"x\"\n";
+        let ample = Some(Duration::from_secs(600));
+        let e = parse_within(small, Format::Abnf, ample).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar was not compiled within 600 s: a compile aless stopped waiting \
+             for is still running"
+        );
+        assert_eq!(ABANDONED_COMPILES.load(Ordering::SeqCst), 1);
+        // With no deadline nothing is left behind, so nothing waits.
+        assert!(parse(small, Format::Abnf).is_ok());
+        let until = Instant::now() + Duration::from_secs(600);
+        while ABANDONED_COMPILES.load(Ordering::SeqCst) > 0 {
+            assert!(Instant::now() < until, "the compile left behind ends");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(parse_within(small, Format::Abnf, ample).is_ok());
     }
 
     /// The value as aless reads it, as compact JSON.
