@@ -3,8 +3,9 @@
 A [jless](https://jless.io)-style terminal viewer for **every format the
 [tabnas](https://github.com/tabnas) parsers read** — JSON, JSON Lines,
 jsonic, JSONC, JSON5, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown,
-RSS/Atom feeds, CSS, `.proto` files, PGN chess games, expressions and
-semantic versions, and any text format you describe with an ABNF grammar
+RSS/Atom feeds, CSS, `.proto` files, PGN chess games, C source,
+expressions and semantic versions, and any text format you describe with
+an ABNF grammar
 ([Custom grammars](#custom-grammars)) — with **tabs** for several files
 at once and a **watch mode** that reloads a file when it changes while
 **keeping your place**.
@@ -220,9 +221,10 @@ shell, whose globbing would take `[0]`.
   boolean or null.
 - `line` and `col` count from 1, columns in characters, and give where
   the node starts in the source: at its key when it has one, else at its
-  value. They are exact for the JSON family, TOML, INI, CSV and ZON,
-  best-effort for YAML, XML, Markdown, CSS, PGN and expressions, loose
-  for a `.proto` file's descriptor, and `null` when unknown.
+  value. They are exact for the JSON family, TOML, INI, CSV and ZON, and
+  for C's tokens, from the places its syntax tree records; best-effort
+  for YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
+  file's descriptor, and `null` when unknown.
 - A container has `length`, its item count; a scalar has `value`. A
   string over 200 characters is cut to 200, with `"truncated": true` and
   its full `length`. Numbers are 64-bit floats, so an integer beyond
@@ -342,8 +344,12 @@ A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
 TOML, INI, ZON and expressions, an expression of 127 operations too, 256
-for XML, 512 for JSONC, 768 open rules for CSS, and braces 100 deep for a
-`.proto` file, counted before it is parsed). For a grammar from the
+for XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a
+`.proto` file, counted before it is parsed, and C's own: an expression of
+127 operations, 1,024 open rules and a syntax tree 256 levels deep, and a
+tree of more than 256 values a byte of the file written out, which its
+reader's repeated subtrees make of a few levels of nesting). For a
+grammar from the
 command line the 1,000 levels are measured on the value it built, once
 the parse is done, and the error then has no `line` ([Custom
 grammars](#custom-grammars)).
@@ -497,7 +503,7 @@ the render the format's crate carries: a library in the
 [alchemy](https://github.com/tabnas/alchemy) language, which aless links
 with a one-line program and runs as it runs `--alchemy`, streamed as the
 input is read. Every format aless reads can be written as every format
-that has a render and can hold it (four hold only their own kind of
+that has a render and can hold it (five hold only their own kind of
 tree, below), so it is a translation: CSV's records become a YAML
 sequence of mappings, a JSON document a TOML table, a Markdown table a
 CSV file. The input is read as `--render json` reads it: JSON Lines, CSV
@@ -506,7 +512,7 @@ over the whole run. A format's lift reads a whole document, so it runs
 at the root only: below the root, `--path` selects a value of the
 document's tree, rows or a tree by its own shape (a Markdown file's
 table is its rows at the root, and `--path` into the file selects its
-nodes). The formats with a render today are `css`, `csv`, `expr`,
+nodes). The formats with a render today are `c`, `css`, `csv`, `expr`,
 `feed` (Atom), `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
 `markdown`, `pgn`, `proto`, `semver`, `toml`, `xml`, `yaml` and `zon`;
 `--render` with any other name is a usage error that lists them, and one
@@ -530,7 +536,8 @@ table), what its render writes from (a tree, or records), the root that
 render needs (an object for TOML and INI, an array for JSON Lines and the
 record formats), the schema its events carry when they are not a plain
 tree (XML's element tree, a feed, an expression, a version, CSS's syntax
-tree, a `.proto` file's descriptor, a PGN database), with an embed from
+tree, a `.proto` file's descriptor, a PGN database, C's syntax tree),
+with an embed from
 a plain tree where the format has one, and what a written document does
 not keep. alchemy's `translate` composes the
 program from them, and aless runs it: the source's lift, where the target
@@ -560,12 +567,13 @@ document is XML's element tree through its embedding, each value's kind
 in a `type` attribute, an Atom feed through the feed's (each value an
 entry, read back from its categories), or an expression as it is.
 
-Four formats have no convention for another tree, and refuse one before
-anything is written. CSS, `.proto` and PGN write only the tree their
+Five formats have no convention for another tree, and refuse one before
+anything is written. CSS, `.proto`, PGN and C write only the tree their
 own documents read as (a stylesheet's syntax tree, a FileDescriptorProto,
-a database of games): from any other source, `--render css`, `proto` or
-`pgn` is a `usage` error, exit 2, that names the route that can write
-one, a program that makes that tree (`--alchemy FILE --render proto`).
+a database of games, a C syntax tree): from any other source, `--render
+css`, `proto`, `pgn` or `c` is a `usage` error, exit 2, that names the
+route that can write one, a program that makes that tree (`--alchemy FILE
+--render proto`).
 `--render semver` writes only a tree that is a version, an object of
 `major`, `minor` and `patch`: any other fails with
 `TARGET_VALUE_UNREPRESENTABLE`, exit 1, `output: "none"`, placed in the
@@ -800,6 +808,7 @@ text, one line per row, so every file is viewable.
 | css | css (its syntax tree) | tabnas-css |
 | proto | proto (its FileDescriptorProto, as protoc writes one in JSON) | tabnas-proto |
 | pgn | pgn (chess games, each its tags and moves) | tabnas-chess |
+| c | c, h (its concrete syntax tree, every token with its place) | tabnas-c |
 | expr | none, `-k expr` (jsonic with arithmetic, an operation the list of its operator and terms) | tabnas-expr |
 | semver | none, `-k semver` (a version: its major, minor, patch, prerelease and build) | tabnas-semver |
 | text | txt, text, log, anything else | — |
@@ -810,8 +819,15 @@ crate builds, not the syntax tree its grammar parses; an expression shows
 its operations as S-expressions (`1+2*3` is `["+", 1, ["*", 2, 3]]`), as
 the crate's fixtures write them; and a version is read without the line
 break its file ends with, which the grammar, taking no whitespace, would
-refuse. Any other text format can be given a grammar of its own, named on
-the command line: the next section.
+refuse. A C file shows its concrete syntax tree, preprocessor directives
+parsed into it: each node its `kind`, `span`, `children` and `trivia`
+(comments), each token its name (`tname`), text (`src`) and span, and the
+members a node names its parts by (`operand`, `cond`, `declaredName`),
+which repeat subtrees its `children` hold. It is read as plain C23,
+following no `#include`, so a typedef a header declares is not known for
+a type: `size_t x;` is kept as its tokens, with no declaration's
+structure. Any other text format can be given a grammar of its own,
+named on the command line: the next section.
 
 ## Custom grammars
 
@@ -1194,7 +1210,10 @@ best-effort where a grammar synthesises values (Markdown's AST, XML's
 element records, YAML, CSS's and PGN's trees, an expression's operators):
 a node the alignment cannot place shows no position and inherits none. A
 `.proto` file's descriptor is derived rather than read, its statements
-regrouped, so only its first values are placed reliably.
+regrouped, so only its first values are placed reliably. A C syntax tree
+records where each token is, so a token and its text are placed exactly
+where it says, each time the tree repeats it, and what the reader adds (a
+node's kind, a token's name, a span's own numbers) has no position.
 
 ## Modes
 
@@ -1244,7 +1263,12 @@ down:
   with the same error: JSON, JSONL, JSONic, JSON5, YAML, TOML, INI, ZON
   and expressions at 127 levels (an expression at 127 operations, too),
   XML at 256 open elements, JSONC at 512 levels, CSS at 768 open rules,
-  and a `.proto` file's braces at 100, counted before it is parsed.
+  a `.proto` file's braces at 100, counted before it is parsed, and C at
+  its reader's limits (an expression of 127 operations, 1,024 open
+  rules, a syntax tree 256 levels deep). A C tree also stops at 256
+  values a byte of the file written out (a million at least): its reader
+  repeats a node's subtrees under the members that name them, so each
+  level of a chain of subscripts or member accesses doubles it.
   The parse runs on a thread with a 64 MB stack, whatever the platform
   gives the main thread. A grammar from the command line runs under the
   same cap, and its nesting is measured on its value as well, once the

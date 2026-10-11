@@ -33,7 +33,7 @@
 //! ([`Front::Tree`]). What a target cannot carry is a declared convention,
 //! not a refusal: each adapter's sentences join the render's own in the
 //! loss note. The one refusal composing makes is a schema-only target's (a
-//! tree's render with a schema and no embed: CSS, proto, PGN), which writes
+//! tree's render with a schema and no embed: CSS, proto, PGN, C), which writes
 //! only the tree its own documents read as, and which a program that makes
 //! that tree can write ([`schema_only`]). An embed may refuse a tree as it
 //! runs, as a render may refuse a value: a version's (semver's) takes only
@@ -105,6 +105,7 @@ fn crates() -> Vec<Descriptor> {
         descriptor!("tabnas-chess", tabnas_chess),
         descriptor!("tabnas-expr", tabnas_expr),
         descriptor!("tabnas-semver", tabnas_semver),
+        descriptor!("tabnas-c", tabnas_c),
     ]
     .into_iter()
     .flatten()
@@ -547,6 +548,7 @@ mod tests {
             ("css", "css-ast", Root::Object, None),
             ("proto", "proto-descriptor", Root::Object, None),
             ("pgn", "pgn-database", Root::Array, None),
+            ("c", "c", Root::Object, None),
         ] {
             let p = part(id).unwrap_or_else(|| panic!("{id}'s manifest names its render"));
             assert_eq!(p.reads, vec![Shape::Tree], "{id}");
@@ -576,8 +578,8 @@ mod tests {
         assert_eq!(id_of("chess"), None, "PGN goes by its languageId");
         assert_eq!(
             names(),
-            "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
-             semver, toml, xml, yaml or zon"
+            "c, css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, \
+             proto, semver, toml, xml, yaml or zon"
         );
         assert_eq!(source_part(Format::Tsv).map(|p| p.id.as_str()), Some("csv"));
         for format in [
@@ -585,6 +587,7 @@ mod tests {
             Format::Css,
             Format::Proto,
             Format::Pgn,
+            Format::C,
             Format::Expr,
             Format::Semver,
         ] {
@@ -603,8 +606,8 @@ mod tests {
 
     #[test]
     fn a_name_with_no_render_is_refused_by_what_it_is() {
-        let writes = "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, \
-                      pgn, proto, semver, toml, xml, yaml or zon";
+        let writes = "c, css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, \
+                      markdown, pgn, proto, semver, toml, xml, yaml or zon";
         assert_eq!(
             refusal("tsv"),
             format!(
@@ -711,6 +714,7 @@ mod tests {
             ("css", Some(Adapter::WrapObject("items".into()))),
             ("proto", Some(Adapter::WrapObject("items".into()))),
             ("pgn", Some(Adapter::WrapArray)),
+            ("c", Some(Adapter::WrapObject("items".into()))),
             ("semver", Some(Adapter::WrapObject("items".into()))),
             ("feed", Some(Adapter::WrapObject("items".into()))),
             ("expr", None),
@@ -743,9 +747,9 @@ mod tests {
 
     /// Every pair composes into a program that writes text: each source
     /// part, and a plain tree, into each render; but a schema-only target
-    /// (a tree's render with a schema and no embed: css, proto, pgn), which
-    /// takes only a source of its own schema, and refuses any other with
-    /// the program route.
+    /// (a tree's render with a schema and no embed: css, proto, pgn, c),
+    /// which takes only a source of its own schema, and refuses any other
+    /// with the program route.
     #[test]
     fn every_composition_compiles_and_writes_text() {
         let sources: Vec<Option<&Part>> = std::iter::once(None)
@@ -775,8 +779,8 @@ mod tests {
                 assert_eq!(c.program.output(), Output::Text, "{}", target.id);
             }
         }
-        // Three schema-only targets, and every source but their own.
-        assert_eq!(refused.len(), 3 * sources.len() - 3, "{refused:?}");
+        // Four schema-only targets, and every source but their own.
+        assert_eq!(refused.len(), 4 * sources.len() - 4, "{refused:?}");
     }
 
     /// Under `--alchemy`, the program's output stands where the source's

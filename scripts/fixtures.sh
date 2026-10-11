@@ -23,7 +23,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPOSITORIES="chess css csv expr feed ini json json5 jsonc jsonic jsonl markdown proto semver toml xml yaml zon"
+REPOSITORIES="c chess css csv expr feed ini json json5 jsonc jsonic jsonl markdown proto semver toml xml yaml zon"
 
 # The version Cargo.lock pins for a crate.
 locked() {

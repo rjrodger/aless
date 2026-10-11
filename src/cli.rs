@@ -24,7 +24,7 @@ pub const TAGLINE: &str = "JSON, YAML, TOML, CSV, XML, INI, Markdown and more as
 /// What aless does, in a paragraph: the man page's DESCRIPTION.
 const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, \
     TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
-    .proto files, PGN chess games, expressions and semantic versions, and any \
+    .proto files, PGN chess games, C source, expressions and semantic versions, and any \
     line-oriented format an ABNF grammar describes, as one tree. In a terminal it shows \
     the tree in a jless-style viewer, with tabs, panes, search and a watch mode that \
     reloads a changed file and keeps your place. Without one it prints JSON on standard \
@@ -218,9 +218,9 @@ pub const OPTIONS: &[Opt] = &[
             {renders}. What FORMAT cannot hold is written by the convention its crate \
             declares rather than refused (NaN and the infinities as null in json; a \
             root TOML or INI cannot have as the one member --key names), and what it \
-            does not keep is said in a warning on standard error, on success too. Three \
+            does not keep is said in a warning on standard error, on success too. Four \
             write only the tree their own documents read as, and have no convention for \
-            another: css, proto and pgn take a document of their own format, and any \
+            another: css, proto, pgn and c take a document of their own format, and any \
             other is a usage error before anything is read, naming the route that writes \
             one, --alchemy FILE --render FORMAT with a program that makes that tree. \
             semver writes only a document that is a version, and refuses any other \
@@ -837,9 +837,9 @@ const TOPICS: &[Topic] = &[
                     "line, col",
                     "where the node starts, from 1, columns in characters: at its key \
                     when it has one, else at its value. Exact for the JSON family, TOML, \
-                    INI, CSV and ZON, best-effort for YAML, XML, Markdown, CSS, PGN and \
-                    expressions, loose for a .proto file's descriptor, and null when \
-                    unknown",
+                    INI, CSV and ZON, and for C's tokens, from the places its syntax tree \
+                    records, best-effort for YAML, XML, Markdown, CSS, PGN and expressions, \
+                    loose for a .proto file's descriptor, and null when unknown",
                 ),
                 (
                     "length",
@@ -1090,8 +1090,10 @@ const TOPICS: &[Topic] = &[
                 code too_deep: past about 1,000 levels, or sooner where the grammar has a \
                 limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
                 INI, ZON and expressions, an expression of 127 operations too, 256 for \
-                XML, 512 for JSONC, 768 open rules for CSS, and braces 100 deep for a \
-                .proto file, counted before it is parsed).",
+                XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
+                file, counted before it is parsed, and for C an expression of 127 \
+                operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
+                values a byte of the file written out, its reader repeating subtrees).",
             ),
             Block::Text(
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
@@ -1343,6 +1345,7 @@ fn format_note(format: Format) -> &'static str {
             " (jsonic with arithmetic, an operation the list of its operator and terms)"
         }
         Format::Semver => " (a version: its major, minor, patch, prerelease and build)",
+        Format::C => " (its concrete syntax tree, every token with its place)",
         Format::Text => " (and every extension no format claims)",
         _ => "",
     }

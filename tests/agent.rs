@@ -763,7 +763,14 @@ fn nesting_too_deep_to_parse_fails_cleanly() {
 /// preflight counts, since a value built past them can abort the process
 /// as it is dropped; CSS stops at its grammar's 768 open rules, a feed at
 /// XML's 256 open elements, an expression at 127 operations, and PGN's
-/// variations, which have no limit of their own, at aless's cap.
+/// variations, which have no limit of their own, at aless's cap. C stops at
+/// its reader's limits, tabnas-expr's 127 operations in an expression (a
+/// long sum, a long chain of member accesses) and 1,024 open rules (nested
+/// blocks, a run of prefix operators), or tabnas-c's tree of 256 levels (a
+/// conditional that is a whole initializer, which it builds holding
+/// itself); and a chain within those limits whose tree, which the reader
+/// repeats under several members, doubles with each level written out
+/// stops at aless's bound on the tree written out, before it is.
 #[test]
 fn the_newer_formats_nested_too_deep_fail_cleanly() {
     let n = 20_000;
@@ -800,6 +807,32 @@ fn the_newer_formats_nested_too_deep_fail_cleanly() {
             "pgn",
             format!("1. e4 {}{} *\n", "(1. d4 ".repeat(n), ")".repeat(n)),
         ),
+        (
+            "deep.c",
+            "c",
+            format!("void f(void) {{ {}{} }}\n", "{".repeat(n), "}".repeat(n)),
+        ),
+        (
+            "long.c",
+            "c",
+            format!("int x = {};\n", vec!["a"; n].join(" + ")),
+        ),
+        (
+            "chain.c",
+            "c",
+            format!("int f(void) {{ return a{}; }}\n", ".b".repeat(n)),
+        ),
+        (
+            "not.c",
+            "c",
+            format!("int f(void) {{ return {}a; }}\n", "!".repeat(n)),
+        ),
+        (
+            "doubling.c",
+            "c",
+            format!("int f(void) {{ return a{}; }}\n", ".b".repeat(100)),
+        ),
+        ("ternary.c", "c", "int a = b ? c : d;\n".to_string()),
     ] {
         let deep = dir.join(name);
         std::fs::write(&deep, text).unwrap();
@@ -3354,19 +3387,19 @@ fn render_refuses_what_it_cannot_write() {
     for (args, message) in [
         (
             vec!["--render", "tsv", "tests/fixtures/sample.tsv"],
-            "--render tsv: aless reads tsv but has no render for it; --render writes css, csv, \
-             expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, \
-             toml, xml, yaml or zon",
+            "--render tsv: aless reads tsv but has no render for it; --render writes c, css, \
+             csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
+             semver, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "rss", "tests/fixtures/sample.rss"],
             "--render rss: rss is read as feed, whose render is --render feed; --render writes \
-             css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
-             semver, toml, xml, yaml or zon",
+             c, css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, \
+             proto, semver, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "docx", "tests/fixtures/nested.json"],
-            "--render writes css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, \
+            "--render writes c, css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, \
              markdown, pgn, proto, semver, toml, xml, yaml or zon, not docx",
         ),
         (
@@ -3374,6 +3407,12 @@ fn render_refuses_what_it_cannot_write() {
             "--render proto: proto writes a proto-descriptor tree, the tree its own documents \
              read as, and tests/fixtures/nested.json is not one; a program that makes one can \
              write it: --alchemy FILE --render proto",
+        ),
+        (
+            vec!["--render", "c", "tests/fixtures/sample.css"],
+            "--render c: c writes a c tree, the tree its own documents read as, and \
+             tests/fixtures/sample.css is not one; a program that makes one can write it: \
+             --alchemy FILE --render c",
         ),
         (
             vec![
@@ -3434,6 +3473,7 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
         ("css", "tests/fixtures/sample.css"),
         ("proto", "tests/fixtures/sample.proto"),
         ("pgn", "tests/fixtures/sample.pgn"),
+        ("c", "tests/fixtures/sample.c"),
         ("expr", "tests/fixtures/sample.expr"),
         ("semver", "tests/fixtures/sample.semver"),
     ] {
@@ -3475,7 +3515,7 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
 /// expression's tree as it is, and a feed's through its embedding; a
 /// version's only when it is a version, any other refused before anything
 /// is written; and a format that writes only its own documents' tree
-/// (CSS, proto, PGN) takes another tree from a program that makes one,
+/// (CSS, proto, PGN, C) takes another tree from a program that makes one,
 /// the route its refusal names.
 #[test]
 fn render_into_a_schema_embeds_refuses_or_takes_a_program() {
@@ -3543,6 +3583,24 @@ fn render_into_a_schema_embeds_refuses_or_takes_a_program() {
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
     assert!(
         String::from_utf8_lossy(&out.stdout).starts_with("/* base */\n\nbody {\n  margin: 0;\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // And one that makes a C syntax tree, here a file's own, writes it as C.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "c",
+            "tests/fixtures/sample.c",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .starts_with("/* Tiny types module, shaped like a real stdint.h. */\n#ifndef"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );

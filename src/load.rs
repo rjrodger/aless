@@ -41,6 +41,8 @@ pub enum Format {
     Proto,
     /// PGN, chess games, by tabnas-chess: its manifest's `languageId`.
     Pgn,
+    /// C source, by tabnas-c: its concrete syntax tree.
+    C,
     Expr,
     Semver,
     Text,
@@ -51,7 +53,7 @@ pub enum Format {
 impl Format {
     /// The built-in formats. A custom grammar is not among them: the
     /// registry lists those ([`grammar::registered`]).
-    pub const ALL: [Format; 20] = [
+    pub const ALL: [Format; 21] = [
         Format::Json,
         Format::Jsonl,
         Format::Jsonic,
@@ -69,6 +71,7 @@ impl Format {
         Format::Css,
         Format::Proto,
         Format::Pgn,
+        Format::C,
         Format::Expr,
         Format::Semver,
         Format::Text,
@@ -93,6 +96,7 @@ impl Format {
             Format::Css => "css",
             Format::Proto => "proto",
             Format::Pgn => "pgn",
+            Format::C => "c",
             Format::Expr => "expr",
             Format::Semver => "semver",
             Format::Text => "text",
@@ -165,6 +169,7 @@ impl Format {
             Format::Css => &["css"],
             Format::Proto => &["proto"],
             Format::Pgn => &["pgn"],
+            Format::C => &["c", "h"],
             Format::Expr | Format::Semver => &[],
             Format::Text => &["txt", "text", "log"],
             Format::Custom(_) => &[],
@@ -1396,6 +1401,10 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         },
         Format::Expr => tabnas_expr::make(),
         Format::Semver => tabnas_semver::make(),
+        // Plain C23 with the whole preprocessor, the crate's default; its
+        // parse builds the tree in this thread's arena, which
+        // [`parse_value`] realizes.
+        Format::C => tabnas_c::make(),
         Format::Text => return Ok(None),
         Format::Custom(id) => {
             let Some(g) = grammar::get(id) else {
@@ -1449,18 +1458,33 @@ pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
     }
 }
 
-/// What a document of `format` is read as, from the value its grammar's
-/// parse built: that value, for every format but two, whose crates build
-/// the tree their manifests' schemas name from it. proto's is the
-/// FileDescriptorProto (`proto-descriptor`) in the JSON form protoc writes
-/// one in, which [`tabnas_proto::to_descriptor`] builds from the syntax
-/// tree the parse returns, refusing a declaration of a version it does
-/// not know. expr's is its S-expressions (`expr`): each operation a list
-/// of its operator's source text and its terms, as
+/// What a document of `format`, `source_len` bytes long, is read as, from
+/// the value [`parse_value`] built: that value, for every format but
+/// three, whose crates build the tree their manifests' schemas name from
+/// it.
+/// proto's is the FileDescriptorProto (`proto-descriptor`) in the JSON form
+/// protoc writes one in, which [`tabnas_proto::to_descriptor`] builds from
+/// the syntax tree the parse returns, refusing a declaration of a version
+/// it does not know. expr's is its S-expressions (`expr`): each operation a
+/// list of its operator's source text and its terms, as
 /// [`tabnas_expr::simplify`] reads the nodes the parse left in this
 /// thread's arena, so it runs on the parse's thread, before that thread
 /// parses again, which releases them.
-pub(crate) fn read_as(format: Format, value: tabnas::Value) -> Result<tabnas::Value, LoadError> {
+///
+/// C's is its syntax tree (`c`), as the crate realized it, refused when it
+/// holds more values written out than [`c_tree_cap`] allows: the reader
+/// repeats a node's subtrees under the members that name them (`operand`,
+/// `cond` and the like) beside its `children`, sharing each, so the tree it
+/// hands over is small and the tree written out, which the viewer and every
+/// output make of it, doubles with each level of a chain of subscripts or
+/// member accesses, a run of prefix operators, a conditional or a brace
+/// initializer. It is measured before anything is written out, in time
+/// that follows the shared tree.
+pub(crate) fn read_as(
+    format: Format,
+    value: tabnas::Value,
+    source_len: usize,
+) -> Result<tabnas::Value, LoadError> {
     match format {
         Format::Proto => {
             let descriptor =
@@ -1471,8 +1495,136 @@ pub(crate) fn read_as(format: Format, value: tabnas::Value) -> Result<tabnas::Va
             Ok(tabnas::Value::from_json(&json))
         }
         Format::Expr => Ok(tabnas_expr::simplify(&value)),
+        Format::C => {
+            let cap = c_tree_cap(source_len);
+            if written_out(&value, cap) > cap {
+                drop_deep(value);
+                let (message, hint) = too_deep_words(format, Deep::Repeated);
+                return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
+            }
+            Ok(value)
+        }
         _ => Ok(value),
     }
+}
+
+/// How many values a C syntax tree may hold written out, per byte of the
+/// source it was read from: six times what the most expression-laden code
+/// of tabnas-c's own corpus holds (its 100 Csmith programs hold from 3 to
+/// 41 values a byte written out, where a declaration a line holds 8).
+pub const C_TREE_PER_BYTE: u64 = 256;
+
+/// The fewest values [`c_tree_cap`] allows any C document, so that a short
+/// one is not refused for its length: 1,048,576, as [`Deep::Repeated`]'s
+/// hint says.
+pub const C_TREE_FLOOR: u64 = 1 << 20;
+
+/// The most values a C document `source_len` bytes long may hold written
+/// out: [`C_TREE_PER_BYTE`] a byte, and at least [`C_TREE_FLOOR`].
+pub(crate) fn c_tree_cap(source_len: usize) -> u64 {
+    (source_len as u64)
+        .saturating_mul(C_TREE_PER_BYTE)
+        .max(C_TREE_FLOOR)
+}
+
+/// How many values `value` holds written out as a tree, every container
+/// and scalar counted, the root among them: a container shared by several
+/// parents counts once in each. A shared container (one its `Arc` holds
+/// more than once) is measured once and remembered, so the count takes
+/// time that follows the shared tree, however large the tree written out;
+/// it stops as soon as a container passes `cap`, answering that
+/// container's count. Walked with a stack of its own.
+pub(crate) fn written_out(value: &tabnas::Value, cap: u64) -> u64 {
+    use tabnas::Value;
+    /// A container's identity and whether it is shared, and its members.
+    fn container(v: &Value) -> Option<(usize, bool, Vec<&Value>)> {
+        Some(match v {
+            Value::Array(items) => (
+                Arc::as_ptr(items) as *const u8 as usize,
+                Arc::strong_count(items) > 1,
+                items.iter().collect(),
+            ),
+            Value::ListRef(list) => (
+                Arc::as_ptr(list) as *const u8 as usize,
+                Arc::strong_count(list) > 1,
+                list.value.iter().collect(),
+            ),
+            Value::Object(map) => (
+                Arc::as_ptr(map) as *const u8 as usize,
+                Arc::strong_count(map) > 1,
+                map.values().collect(),
+            ),
+            Value::MapRef(map) => (
+                Arc::as_ptr(map) as *const u8 as usize,
+                Arc::strong_count(map) > 1,
+                map.value.values().collect(),
+            ),
+            _ => return None,
+        })
+    }
+    enum Step<'a> {
+        Enter(&'a Value),
+        /// A container's members are measured: its identity, whether it is
+        /// shared, and where its members' counts start.
+        Leave(usize, bool, usize),
+    }
+    let mut known: HashMap<usize, u64> = HashMap::new();
+    let mut counts: Vec<u64> = Vec::new();
+    let mut steps = vec![Step::Enter(value)];
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(v) => match container(v) {
+                None => counts.push(1),
+                Some((id, shared, members)) => {
+                    if let Some(n) = shared.then(|| known.get(&id)).flatten() {
+                        counts.push(*n);
+                        continue;
+                    }
+                    steps.push(Step::Leave(id, shared, counts.len()));
+                    steps.extend(members.into_iter().rev().map(Step::Enter));
+                }
+            },
+            Step::Leave(id, shared, from) => {
+                let n = counts
+                    .drain(from..)
+                    .fold(1u64, |total, n| total.saturating_add(n));
+                if n > cap {
+                    return n;
+                }
+                if shared {
+                    known.insert(id, n);
+                }
+                counts.push(n);
+            }
+        }
+    }
+    counts.pop().unwrap_or(0)
+}
+
+/// Parse `text` with `parser`, which [`make_parser`] made for `format`:
+/// the engine's parse, and for C the crate's own, which realizes the tree
+/// the parse built in this thread's arena into plain values
+/// ([`tabnas_c::parse_with`]), on the parse's thread, before that thread
+/// parses again. It refuses a tree deeper than it realizes
+/// ([`tabnas_c::REALIZE_DEPTH_CAP`]) with the engine's `cancel`, which
+/// [`unplaced_c_cancel`] tells from a cancel that names a place.
+pub(crate) fn parse_value(
+    parser: &Tabnas,
+    format: Format,
+    text: &str,
+) -> Result<tabnas::Value, Box<tabnas::TabnasError>> {
+    match format {
+        Format::C => tabnas_c::parse_with(parser, text),
+        _ => parser.parse(text),
+    }
+    .map_err(Box::new)
+}
+
+/// Whether `e`, a `cancel` from a C parse, names no place: the engine's
+/// for a stop with no token in hand, and tabnas-c's for a tree it could not
+/// realize, are both at offset 0, line 1, column 1, with no token text.
+pub(crate) fn unplaced_c_cancel(format: Format, e: &tabnas::TabnasError) -> bool {
+    format == Format::C && e.code == "cancel" && e.pos == 0 && e.src.is_empty()
 }
 
 /// A refusal of proto's own, outside its grammar's parse, as aless reports
@@ -1734,19 +1886,22 @@ fn parse_guarded(
     check_text(format, src)?;
     // Under a grammar of plain text, a lone `*` is a word and a value; a
     // document of records keyed by a header row (CSV, TSV) is aligned by
-    // column, which its separators and line ends carry.
-    let sink = if format.is_custom() {
-        prov::capture_words(&mut parser)
+    // column, which its separators and line ends carry. A C syntax tree
+    // carries every token's place itself, so its tokens are not kept.
+    let sink = if format == Format::C {
+        None
+    } else if format.is_custom() {
+        Some(prov::capture_words(&mut parser))
     } else if format.keyed_by_header() {
-        prov::capture_cells(&mut parser)
+        Some(prov::capture_cells(&mut parser))
     } else {
-        prov::capture(&mut parser)
+        Some(prov::capture(&mut parser))
     };
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
         let _guard = CatchGuard::enter();
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            parser.parse(src).map_err(Box::new)
+            parse_value(&parser, format, src)
         }))
     };
     let stop = stopped.why();
@@ -1772,18 +1927,24 @@ fn parse_guarded(
                 let (message, hint) = too_deep_words(format, Deep::Value);
                 return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
             }
-            let value = read_as(format, value)?;
+            let value = read_as(format, value, src.len())?;
             let mut doc = Doc::from_value(&value);
             // The engine's tree is not needed past this point; letting it
             // go before the alignment lowers the peak on a large document.
             drop(value);
-            if let Ok(toks) = sink.lock() {
-                // CSV and TSV records are keyed by the header row, which is
-                // lexed once, ahead of every value.
-                if format.keyed_by_header() {
-                    prov::align_records(&mut doc, &toks);
-                } else {
-                    prov::align(&mut doc, &toks);
+            match sink {
+                // C's tokens, at the places its tree says.
+                None => prov::align_spans(&mut doc),
+                Some(sink) => {
+                    if let Ok(toks) = sink.lock() {
+                        // CSV and TSV records are keyed by the header row,
+                        // which is lexed once, ahead of every value.
+                        if format.keyed_by_header() {
+                            prov::align_records(&mut doc, &toks);
+                        } else {
+                            prov::align(&mut doc, &toks);
+                        }
+                    }
                 }
             }
             Ok(doc)
@@ -1808,6 +1969,14 @@ fn parse_guarded(
                  larger --timeout to let it finish, or --timeout 0 for no limit."
             );
             Err(LoadError::from_tabnas(&e, None))
+        }
+        // A C parse stopped with no token in hand (by tabnas-expr's bound
+        // between two tokens, or by tabnas-c, refusing the tree it could
+        // not realize) is stopped nowhere in particular: the engine's
+        // line 1, column 1 is no place in the document.
+        Ok(Err(e)) if e.code == "cancel" && unplaced_c_cancel(format, &e) => {
+            let (message, hint) = too_deep_words(format, Deep::Grammar);
+            Err(LoadError::tagged("too_deep", message).with_hint(&hint))
         }
         // A grammar's own depth limit, lower than aless's: JSON's (and
         // YAML's, INI's and the rest of jsonic's family) is a parse guard
@@ -1882,6 +2051,9 @@ pub(crate) enum Deep {
     /// The format's crate counted the text's braces before the parse, and
     /// they nest past this many levels (proto's).
     Braces(usize),
+    /// A C syntax tree holds more values written out than [`c_tree_cap`]
+    /// allows, its reader repeating subtrees under several members.
+    Repeated,
 }
 
 /// The message and hint of a `too_deep` error, as the loader and the
@@ -1929,6 +2101,26 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 limit = tabnas_expr::NODE_LIMIT
             ),
         ),
+        // C's limits are its reader's: tabnas-expr's bounds on the
+        // expressions it reads (each argument of a call one of the
+        // operations), and tabnas-c's on the tree it realizes, which it
+        // passes on a conditional that is a whole initializer, a tree that
+        // holds itself.
+        Deep::Grammar if format == Format::C => (
+            "too_deep: an expression larger, or code nested deeper, than the c reader reads"
+                .to_string(),
+            format!(
+                "The c reader holds at most {limit} operations in one expression, the \
+                 arguments of a call among them, keeps at most {rules} rules open, and builds \
+                 a syntax tree at most {tree} levels deep; the parse stopped where the document \
+                 passed one of them. It reads a conditional that is a whole initializer, as \
+                 in int a = b ? c : d;, as a tree that holds itself, and refuses it the same \
+                 way.\nSplit a long expression into several.",
+                limit = tabnas_expr::NODE_LIMIT,
+                rules = tabnas_expr::RULE_LIMIT,
+                tree = tabnas_c::REALIZE_DEPTH_CAP
+            ),
+        ),
         Deep::Grammar => (
             format!("too_deep: nested deeper than the {format} grammar reads"),
             format!(
@@ -1942,6 +2134,18 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 "The {format} reader counts a document's braces before it parses it, and \
                  refuses one that nests them more than {levels} levels deep.\nReal documents \
                  nest a few levels at most."
+            ),
+        ),
+        Deep::Repeated => (
+            format!("too_deep: a {format} syntax tree larger written out than aless reads"),
+            format!(
+                "The {format} reader repeats a node's subtrees under the members that name \
+                 them, such as operand and cond, beside its children, so each level of a chain \
+                 of subscripts or member accesses, a run of prefix operators, a conditional or \
+                 a brace initializer doubles the tree written out. aless reads one of at most \
+                 {C_TREE_PER_BYTE} values a byte of its source, and of 1,048,576 at least, \
+                 and stopped before writing out this one.\nReal code nests these a few \
+                 levels at most."
             ),
         ),
     }
@@ -2142,6 +2346,9 @@ mod tests {
         assert_eq!(Format::detect(Path::new("site.css")), Format::Css);
         assert_eq!(Format::detect(Path::new("api/v1.proto")), Format::Proto);
         assert_eq!(Format::detect(Path::new("games.PGN")), Format::Pgn);
+        assert_eq!(Format::detect(Path::new("src/main.c")), Format::C);
+        assert_eq!(Format::detect(Path::new("include/vec.H")), Format::C);
+        assert_eq!(Format::from_name("c"), Some(Format::C));
         // Expressions and versions declare none: -k names them.
         assert!(Format::Expr.extensions().is_empty() && Format::Semver.extensions().is_empty());
         assert_eq!(Format::detect(Path::new("calc.expr")), Format::Text);
@@ -3066,13 +3273,16 @@ mod tests {
             let mut unbounded = make();
             unbounded.options.rule.history = None;
             let run = |p: Tabnas| {
-                p.parse(src)
-                    .map_err(|e| e.to_string())
-                    .and_then(|v| match format {
-                        Some(format) => read_as(format, v).map_err(|e| e.to_string()),
-                        None => Ok(v),
-                    })
-                    .map(|v| v.to_json())
+                match format {
+                    Some(format) => parse_value(&p, format, src),
+                    None => p.parse(src).map_err(Box::new),
+                }
+                .map_err(|e| e.to_string())
+                .and_then(|v| match format {
+                    Some(format) => read_as(format, v, src.len()).map_err(|e| e.to_string()),
+                    None => Ok(v),
+                })
+                .map(|v| v.to_json())
             };
             assert_eq!(run(bounded), run(unbounded), "{what}");
         };
@@ -3117,6 +3327,10 @@ mod tests {
                 Format::Pgn => items(
                     &|i| format!("[Event \"e{i}\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0"),
                     "\n\n",
+                ),
+                Format::C => items(
+                    &|i| format!("int f{i}(int a) {{ return a * {i} + b[{i}].c; }}"),
+                    "\n",
                 ),
                 Format::Expr => format!("[{}]", items(&|i| format!("{i}+{i}*({i}-1)"), ", ")),
                 Format::Semver => format!(
@@ -3216,7 +3430,7 @@ mod tests {
 
     #[test]
     fn every_format_parses_its_sample() {
-        let samples: [(Format, &str); 19] = [
+        let samples: [(Format, &str); 20] = [
             (Format::Json, "{\"a\": [1, 2]}"),
             (Format::Jsonl, "{\"a\": 1}\n{\"a\": 2}\n"),
             (Format::Jsonic, "a: 1, b: {c: x}"),
@@ -3240,6 +3454,7 @@ mod tests {
                 "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
             ),
             (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
+            (Format::C, "#define N 2\nint x = N;\nint f(void) { return x; }\n"),
             (Format::Expr, "a: 1+2*3, b: (4)\n"),
             (Format::Semver, "1.2.3-rc.1+build.5\n"),
         ];
@@ -3381,6 +3596,107 @@ mod tests {
         let e = parse("1. e4 Zz9", Format::Pgn).unwrap_err();
         assert_eq!(e.code, "unexpected");
         assert!(e.message.contains("not chess notation"), "{}", e.message);
+    }
+
+    /// A C file reads as its concrete syntax tree, as tabnas-c realizes it:
+    /// every node its kind, span, children and trivia, every token its
+    /// name, text and span, the subtrees the reader repeats under members
+    /// such as `operand` included.
+    #[test]
+    fn c_reads_as_its_syntax_tree() {
+        let tree = read_json("int x = 1;", Format::C);
+        assert!(
+            tree.starts_with(r#"{"kind":"translation_unit","span":"#),
+            "{tree}"
+        );
+        assert!(
+            tree.contains(r#"{"kind":"token","tname":"KW_INT","src":"int","span":{"start":0,"end":3,"line":1,"col":1}}"#),
+            "{tree}"
+        );
+        // A unary operation's operand is its child too.
+        let doc = parse("int f(void) { return -x; }", Format::C).unwrap();
+        let operand = doc
+            .nodes
+            .iter()
+            .position(|n| n.key.name() == Some("operand"))
+            .expect("an operand");
+        assert!(doc.nodes[operand].is_container());
+    }
+
+    /// C's limits are its reader's, each `too_deep`: tabnas-expr's 127
+    /// operations in one expression and its 1,024 open rules, placed where
+    /// the parse stopped, or nowhere when it stopped between two tokens;
+    /// tabnas-c's tree of 256 levels, which a conditional that is a whole
+    /// initializer passes, holding itself; and aless's bound on the tree
+    /// written out, which the reader's repeated subtrees double with each
+    /// level of a chain of member accesses, refused before anything is
+    /// written out, as quickly as the reader read it.
+    #[test]
+    fn c_is_bounded_by_its_readers_limits_and_the_tree_written_out() {
+        let terms = |n: usize| {
+            (0..n)
+                .map(|i| format!("a{i}"))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
+        assert!(parse(&format!("int x = {};", terms(100)), Format::C).is_ok());
+        let e = parse(&format!("int x = {};", terms(200)), Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: an expression larger, or code nested deeper, than the c reader reads"
+        );
+        assert!(e.hint.contains("127 operations"), "{}", e.hint);
+        assert_eq!(e.line, 1, "{e}");
+        assert!(e.col > 1, "{e}");
+        let blocks = |n: usize| format!("void f(void) {{ {}{} }}", "{".repeat(n), "}".repeat(n));
+        assert!(parse(&blocks(50), Format::C).is_ok());
+        for src in [blocks(300), "int a = b ? c : d;".to_string()] {
+            let e = parse(&src, Format::C).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{src}");
+            assert_eq!((e.line, e.col), (0, 0), "no place: {e}");
+            assert!(e.hint.contains("256 levels"), "{}", e.hint);
+        }
+        let e = parse(&blocks(2000), Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert!(e.line == 1 && e.col > 300, "{e}");
+        // Each member access doubles the tree written out: 12 levels are
+        // read, 40 are refused at once, before the doubling is written out.
+        let members = |n: usize| format!("int f(void) {{ return a{}; }}", ".b".repeat(n));
+        assert!(parse(&members(12), Format::C).is_ok());
+        let started = Instant::now();
+        let e = parse(&members(40), Format::C).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: a c syntax tree larger written out than aless reads"
+        );
+        assert!(e.hint.contains("256 values a byte"), "{}", e.hint);
+        assert_eq!((e.line, e.col), (0, 0));
+    }
+
+    /// A tree written out counts a shared container once in each place,
+    /// measured once; the count stops at the first container past the cap.
+    #[test]
+    fn written_out_counts_a_shared_subtree_in_every_place() {
+        use tabnas::Value;
+        let leaf = Value::array(vec![Value::Number(1.0), Value::Number(2.0)]);
+        let mut level = leaf;
+        for _ in 0..100 {
+            level = Value::array(vec![level.clone(), level]);
+        }
+        // 2^100 leaves written out, from 101 containers: the count stops
+        // at the first level past the cap, the eighth, of 2^10 - 1 values.
+        assert_eq!(written_out(&level, 1_000), 1_023);
+        assert_eq!(written_out(&level, u64::MAX), u64::MAX, "saturated");
+        let small = Value::array(vec![Value::array(vec![]), Value::Null]);
+        assert_eq!(written_out(&small, 1_000), 3);
+        let shared = Value::array(vec![Value::Number(1.0)]);
+        let twice = Value::array(vec![shared.clone(), shared]);
+        assert_eq!(written_out(&twice, 1_000), 5);
+        assert_eq!(c_tree_cap(10), C_TREE_FLOOR);
+        assert_eq!(c_tree_cap(1 << 20), 256 << 20);
     }
 
     #[test]

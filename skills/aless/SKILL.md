@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN and a version from documents of their own kind), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN, C and a version from documents of their own kind), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -131,7 +131,7 @@ Write any of those formats as any format that has a render, streamed the
 same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
 `markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`,
 `csv`, `feed` (Atom), `expr`, or, from documents of their own kind,
-`css`, `proto`, `pgn` and `semver`:
+`css`, `proto`, `pgn`, `c` and `semver`:
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
@@ -172,8 +172,8 @@ that has no render (`tsv`) is a usage error that lists the ones that do,
 and so is one that names a format by an extension (`rss`), which names
 the format's render (`feed`) instead.
 
-Four renders take only their own kind of tree. `--render css`, `proto`
-and `pgn` write only the tree their own documents read as; given any
+Five renders take only their own kind of tree. `--render css`, `proto`,
+`pgn` and `c` write only the tree their own documents read as; given any
 other document (or a value below the root), they exit 2 with a `usage`
 error before reading the input, naming the route that can write one: a
 program that makes that tree, `--alchemy FILE --render proto`.
@@ -186,7 +186,11 @@ break. An expression (`-k expr`; `--render expr`) is read as
 S-expressions, `1+2*3` as `["+",1,["*",2,3]]`, and written back in
 infix; a version (`-k semver`) as `{major, minor, patch, prerelease,
 build}`, its file's one line break not part of it; a `.proto` file as
-its FileDescriptorProto, as protoc writes one in JSON.
+its FileDescriptorProto, as protoc writes one in JSON; a C file (`.c`,
+`.h`) as its concrete syntax tree, each node `kind`, `span`, `children`
+and `trivia`, each token `tname`, `src` and `span`, with members such as
+`operand` that repeat subtrees `children` holds. C is read as plain C23
+following no `#include`, so a header's typedef is not known for a type.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
@@ -274,9 +278,11 @@ An **entry** describes one node:
 - `kind` is one of object, array, string, number, boolean or null.
 - `line` and `col` count from 1, columns in characters, and point where
   the node starts: at its key if it has one, else at its value. They are
-  exact for the JSON family, TOML, INI, CSV and ZON, best-effort for
-  YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
-  file's descriptor, and `null` when unknown.
+  exact for the JSON family, TOML, INI, CSV and ZON, and for C's tokens
+  (from the places its tree records; what the reader adds, a kind, a
+  token's name, a span's numbers, has none), best-effort for YAML, XML,
+  Markdown, CSS, PGN and expressions, loose for a `.proto` file's
+  descriptor, and `null` when unknown.
 - A container has `length`, its item count. A scalar has `value`.
   Strings over 200 characters are cut, and get `"truncated": true` and
   their full `length`.
@@ -413,8 +419,14 @@ For those, pipe `--json` into jq.
   rather than crashing: past about 1,000 levels, or sooner where the
   grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
   YAML, TOML, INI, ZON and expressions (and 127 operations in one
-  expression), 256 for XML, 512 for JSONC, 768 open rules for CSS, and
-  braces 100 deep for a `.proto` file, counted before it is parsed. A `--grammar`
+  expression), 256 for XML, 512 for JSONC, 768 open rules for CSS,
+  braces 100 deep for a `.proto` file, counted before it is parsed, and
+  C's own: 127 operations in an expression (a call's arguments among
+  them), 1,024 open rules and a syntax tree 256 levels deep, these with
+  no `line` when the parse stopped between tokens; and a C tree of more
+  than 256 values a byte of the file written out (a million at least),
+  which its reader's repeated subtrees make of a chain of subscripts or
+  member accesses a few levels deep, also with no `line`. A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.

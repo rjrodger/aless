@@ -754,7 +754,7 @@ fn materialize<S: Sink>(
     scope: Scope<S>,
     stop: Arc<Stop>,
 ) -> Ran {
-    let value = load::catch_grammar(|| parser.parse(text).map_err(Box::new));
+    let value = load::catch_grammar(|| load::parse_value(&parser, format, text));
     parsed.store(true, Ordering::Relaxed);
     // A parse that came to its end after the deadline, with a value or an
     // error, is too late, as the loader has it: the time is its outcome,
@@ -772,6 +772,19 @@ fn materialize<S: Sink>(
                 verdict: None,
                 from_sink: false,
             }
+        }
+        // A C parse its reader stopped with no token in hand, worded and
+        // placed as the loader words and places it.
+        Ok(Err(e)) if !late && !abort.is_aborted() && load::unplaced_c_cancel(format, &e) => {
+            let (message, hint) = load::too_deep_words(format, Deep::Grammar);
+            return Ran {
+                outcome: Outcome::Refused(Box::new(
+                    LoadError::tagged("too_deep", message).with_hint(&hint),
+                )),
+                stop: Some(stop),
+                verdict: None,
+                from_sink: false,
+            };
         }
         Ok(Err(e)) => {
             // As the transducer's source maps an engine error: the abort
@@ -818,7 +831,7 @@ fn materialize<S: Sink>(
     }
     // The tree the format's schema names, where its crate builds one from
     // the grammar's value, as the loader reads it.
-    let value = match load::read_as(format, value) {
+    let value = match load::read_as(format, value, text.len()) {
         Ok(value) => value,
         Err(e) => {
             return Ran {
@@ -2295,7 +2308,8 @@ mod tests {
         }
         // Parsed whole, then walked: the imperative grammars, and those no
         // differential suite has verified, which build a tree of a schema's
-        // from their parse (proto's descriptor, expr's S-expressions).
+        // from their parse (proto's descriptor, expr's S-expressions, C's
+        // syntax tree, realized from its arena).
         for f in [
             Format::Toml,
             Format::Ini,
@@ -2303,6 +2317,7 @@ mod tests {
             Format::Css,
             Format::Proto,
             Format::Pgn,
+            Format::C,
             Format::Expr,
             Format::Semver,
         ] {
@@ -2371,6 +2386,42 @@ mod tests {
         assert!(
             e.plain_report()
                 .starts_with("[proto/version]: version: unknown syntax version"),
+            "{}",
+            e.plain_report()
+        );
+        // A C file as its syntax tree, realized on the parse's thread, and
+        // refused as the loader refuses it: a tree too large written out,
+        // and a conditional that is a whole initializer, which its reader
+        // refuses with no token in hand, both with no place.
+        assert_eq!(
+            written(
+                Format::C,
+                ".children[0].children[0].children[0].src",
+                "int x = 1;"
+            ),
+            "\"int\"\n"
+        );
+        let refused_c = |text: &str| match run_text(&job(Format::C, Renderer::Json, "."), text) {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty(), "{text:?}");
+                error
+            }
+            other => panic!("{text:?}: {other:?}"),
+        };
+        let e = refused_c(&format!("int f(void) {{ return a{}; }}", ".b".repeat(40)));
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("written out"), "{}", e.message);
+        assert_eq!((e.line, e.col), (0, 0));
+        let e = refused_c("int a = b ? c : d;");
+        assert_eq!(e.code, "too_deep");
+        assert!(
+            e.message.contains("than the c reader reads"),
+            "{}",
+            e.message
+        );
+        assert_eq!((e.line, e.col), (0, 0));
+        assert!(
+            e.plain_report().contains("--> (stdin)"),
             "{}",
             e.plain_report()
         );

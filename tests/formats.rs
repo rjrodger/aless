@@ -71,6 +71,7 @@ fn every_fixture_loads() {
         Format::Css,
         Format::Proto,
         Format::Pgn,
+        Format::C,
         Format::Expr,
         Format::Semver,
         Format::Text,
@@ -79,7 +80,7 @@ fn every_fixture_loads() {
     }
     assert_eq!(
         Format::ALL.len(),
-        20,
+        21,
         "a format added to ALL needs a fixture, and its place in the list above"
     );
 }
@@ -225,6 +226,56 @@ fn the_newer_grammars_place_values() {
     assert_eq!(
         line("sample.proto", None, &[name("dependency"), Key::Index(1)]),
         line_of("sample.proto", "other.proto")
+    );
+}
+
+/// A C file's tokens are placed where its syntax tree says, which the
+/// reader records for each: every token's text starts at its node's line
+/// and column, the nodes the tree repeats under `operand` and the like
+/// included, and nothing the reader made up (a node's kind, a token's name,
+/// a span's numbers) has a place.
+#[test]
+fn c_tokens_are_where_the_tree_says() {
+    let text = std::fs::read_to_string(fixture("sample.c")).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let doc = load::load_path(&fixture("sample.c"), None).unwrap().doc;
+    let mut placed = 0;
+    for (i, node) in doc.nodes.iter().enumerate() {
+        let key = node.key.name();
+        if node.line == 0 {
+            continue;
+        }
+        assert!(
+            !matches!(
+                key,
+                Some("kind" | "tname" | "start" | "end" | "line" | "col")
+            ),
+            "{:?} has a place",
+            doc.path(i as u32)
+        );
+        if let (Some("src"), aless::doc::Kind::Str(src)) = (key, &node.kind) {
+            let line = lines[node.line as usize - 1];
+            let at: String = line.chars().skip(node.col as usize - 1).collect();
+            let first = src.lines().next().unwrap_or_default();
+            assert!(
+                at.starts_with(first),
+                "{src:?} at {}:{}, where the line reads {line:?}",
+                node.line,
+                node.col
+            );
+            placed += 1;
+        }
+    }
+    assert!(placed > 50, "{placed} tokens placed");
+    // The function's name, on its line.
+    let name = doc
+        .nodes
+        .iter()
+        .find(|n| matches!(&n.kind, aless::doc::Kind::Str(s) if &**s == "vec_dot") && n.line > 0)
+        .expect("vec_dot is placed");
+    assert_eq!(
+        (name.line, name.col),
+        (line_of("sample.c", "int vec_dot"), 5)
     );
 }
 

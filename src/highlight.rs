@@ -588,7 +588,7 @@ mod tests {
     }
 
     /// The newer formats need no registering: the bundled registry knows
-    /// each by the name aless gives it (proto, css and expr by their
+    /// each by the name aless gives it (proto, css, c and expr by their
     /// package's, pgn and semver by their own `languageId`), with a clean
     /// lex stream, so each is coloured as its grammar lexes it.
     #[test]
@@ -602,6 +602,7 @@ mod tests {
             (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
             (Format::Expr, "a: 1+2*3\n"),
             (Format::Semver, "1.2.3-rc.1"),
+            (Format::C, "int x = 1;\n"),
         ] {
             let grammar = Grammar::Format(format);
             assert!(grammar.entry(Registry::bundled()).is_some(), "{format}");
@@ -622,6 +623,19 @@ mod tests {
             "{:?}",
             kinds(&p, pgn, 0)
         );
+        let c = "/* n */ int f(void) { return x; }\n";
+        let p = paint(Grammar::Format(Format::C), c, None).unwrap();
+        for run in [
+            ("/* n */", "comment"),
+            ("int", "keyword"),
+            ("return", "keyword"),
+        ] {
+            assert!(
+                kinds(&p, c, 0).contains(&(run.0.into(), run.1)),
+                "{:?}",
+                kinds(&p, c, 0)
+            );
+        }
         let expr = "a: 1+2\n";
         let p = paint(Grammar::Format(Format::Expr), expr, None).unwrap();
         assert!(

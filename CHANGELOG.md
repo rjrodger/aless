@@ -8,6 +8,36 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## Unreleased
+
+### Added
+
+- C source (`.c`, `.h`, tabnas-c 0.5.14), read as its concrete syntax
+  tree, preprocessor directives parsed into it, and written by
+  `--render c` (admin ADR-27, phase 4's second batch). The tree is the
+  one tabnas-c realizes from its arena on the parse's thread: each node
+  its `kind`, `span`, `children` and `trivia`, each token its `tname`,
+  `src` and `span`, and the members a node names its parts by (`operand`,
+  `cond`), which repeat subtrees its `children` hold. Like CSS, `.proto`
+  and PGN, `--render c` writes only that tree, and refuses another
+  document before reading it with the `usage` error that names the
+  program route. A C file's tokens are placed where its tree says, not
+  by aligning values, and what the reader adds has no position. Its
+  reader's limits are `too_deep` errors: tabnas-expr's 127 operations in
+  an expression and 1,024 open rules, and tabnas-c's tree of 256 levels,
+  with no position where the parse stopped between two tokens. A `.c` or
+  `.h` file, read as plain text before, is read as C.
+- A C tree is refused as `too_deep`, before it is written out, when it
+  would hold more than 256 values a byte of the file written out (and at
+  least a million): its reader shares the subtrees it repeats, so a
+  chain of subscripts or member accesses doubles the tree written out at
+  each level, and 40 member accesses in one expression would otherwise
+  hold more values than a machine can.
+
+### Changed
+
+- tabnas-expr 0.5.17, a version move.
+
 ## [0.3.0] - 2026-10-10
 
 ### Added

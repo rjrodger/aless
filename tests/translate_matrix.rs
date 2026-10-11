@@ -10,7 +10,7 @@
 //! grammar refuses, or that reads back as anything but the conventions say
 //! is a failure, and so is a corpus that shrinks. Two refusals are a
 //! target's declared outcome, and counted as such: a schema-only target's
-//! (CSS, proto, PGN, which write only the tree their own documents read
+//! (CSS, proto, PGN, C, which write only the tree their own documents read
 //! as) of a document of another tree, before anything is read, with the
 //! usage error naming the program route; and a version's (semver's embed)
 //! of a tree that is not a version, `TARGET_VALUE_UNREPRESENTABLE` before
@@ -108,11 +108,11 @@ fn checkout(repository: &str) -> PathBuf {
     dir
 }
 
-/// The eighteen formats aless writes, by id, and the format aless reads a
+/// The nineteen formats aless writes, by id, and the format aless reads a
 /// document of each with.
-const FORMATS: [&str; 18] = [
-    "css", "csv", "expr", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
-    "pgn", "proto", "semver", "toml", "xml", "yaml", "zon",
+const FORMATS: [&str; 19] = [
+    "c", "css", "csv", "expr", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl",
+    "markdown", "pgn", "proto", "semver", "toml", "xml", "yaml", "zon",
 ];
 
 fn format(id: &str) -> Format {
@@ -142,6 +142,7 @@ fn format_of(extension: &str) -> Option<&'static str> {
         "css" => "css",
         "proto" => "proto",
         "pgn" => "pgn",
+        "c" | "h" => "c",
         // Formats that declare no extension: aless's fixtures name them.
         "expr" => "expr",
         "semver" => "semver",
@@ -323,10 +324,11 @@ impl Sink for Collect {
 
 /// Whether aless reads a format's document as more than its grammar's
 /// value: proto's as its descriptor, expr's as its S-expressions, a version
-/// without the line break a file ends with (`load::read_as`,
-/// `load::parse_text`).
+/// without the line break a file ends with, C's as its syntax tree
+/// realized from its reader's arena (`load::read_as`, `load::parse_text`,
+/// `load::parse_value`).
 fn read_by_aless(id: &str) -> bool {
-    matches!(id, "proto" | "expr" | "semver")
+    matches!(id, "proto" | "expr" | "semver" | "c")
 }
 
 /// A document read whole with a format's grammar, as a value: its events,
@@ -335,8 +337,9 @@ fn read_by_aless(id: &str) -> bool {
 /// where the incremental source cannot follow it. A repeated member keeps
 /// its last value. A document aless reads as more than its grammar's value
 /// ([`read_by_aless`]) is read as aless's own JSON export writes it, which
-/// holds every value those three formats' trees can: no number in them is
-/// one JSON cannot spell (proto's descriptor holds a NaN as null).
+/// holds every value those four formats' trees can: no number in them is
+/// one JSON cannot spell (proto's descriptor holds a NaN as null, and a C
+/// syntax tree holds no number but its spans').
 fn read(id: &str, text: &str) -> Result<Datum, Fail> {
     if read_by_aless(id) {
         let out = Buffer::default();
@@ -414,7 +417,7 @@ fn input(from: Format, text: &str) -> Input<'_> {
 
 /// A write that wrote no document.
 enum Unwritten {
-    /// A schema-only target (css, proto, pgn) refused a source of another
+    /// A schema-only target (css, proto, pgn, c) refused a source of another
     /// tree before reading it, with the usage error naming the program
     /// route: that target's declared outcome for such a source.
     SchemaOnly,
@@ -900,16 +903,22 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
-/// The default operators' source texts, which expr's render writes in
-/// infix (`(` a group): an operation is a list whose first element is one.
-const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
-
 /// What expr's conventions make of a value its render is given, as its
 /// reader reads the document back: a negative number is the operator `-`
 /// applied to its magnitude; a number that is not finite is the string
 /// `Infinity`, `-Infinity` or `NaN`; and a list whose first element is an
 /// object whose `src` member is a default operator's source text has that
 /// text in its place, the object's other members not kept.
+///
+/// The last holds of any text, not only an operator's: aless reads an
+/// expression as its S-expressions, `tabnas_expr::simplify`'s, which takes
+/// a list led by an object with a `src` member that is not empty for an
+/// operation that text names, whatever it is. The render writes such an
+/// object as it is where its text is no default operator's, and declares
+/// a loss for the default operators' alone, so a C syntax tree, whose lists
+/// are led by tokens, each an object with its `src`, reads back with each
+/// leading token's text in its place: a loss the render does not declare,
+/// which tabnas-expr's reader makes (reported to tabnas/expr).
 fn expr_reading(d: &Datum) -> Datum {
     match d {
         Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
@@ -935,9 +944,7 @@ fn expr_reading(d: &Datum) -> Datum {
             let mut items: Vec<Datum> = items.iter().map(expr_reading).collect();
             let operator = match items.first() {
                 Some(Datum::Object(m)) => match m.get("src") {
-                    Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
-                        Some(src.clone())
-                    }
+                    Some(Datum::String(src)) if !src.is_empty() => Some(src.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -1552,7 +1559,7 @@ fn every_document_translates_into_every_format() {
 }
 
 /// The documents [`corpus`] reads, at least.
-const FLOOR: usize = 117;
+const FLOOR: usize = 118;
 
 /// Every format's own fixture corpus, into every format: thousands of
 /// documents, run by CI with `--ignored` in the `matrix` profile, where
