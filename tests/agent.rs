@@ -770,7 +770,8 @@ fn nesting_too_deep_to_parse_fails_cleanly() {
 /// conditional that is a whole initializer, which it builds holding
 /// itself); and a chain within those limits whose tree, which the reader
 /// repeats under several members, doubles with each level written out
-/// stops at aless's bound on the tree written out, before it is. A
+/// stops at aless's bound on the tree written out, before it is, however
+/// long a comment beside it makes the file. A
 /// grammar stops at its own compiler's limits: groups and options nested
 /// past 2,048 open rules for ABNF, 520 for EBNF and 512 for GBNF, some
 /// 500, 130 and 128 levels, and elements nested past 128 levels in any
@@ -837,6 +838,15 @@ fn the_newer_formats_nested_too_deep_fail_cleanly() {
             format!("int f(void) {{ return a{}; }}\n", ".b".repeat(100)),
         ),
         ("ternary.c", "c", "int a = b ? c : d;\n".to_string()),
+        (
+            "padded.c",
+            "c",
+            format!(
+                "/*{}*/\nint f(void) {{ return a{}; }}\n",
+                " ".repeat(4 << 20),
+                ".b".repeat(21)
+            ),
+        ),
         (
             "groups.abnf",
             "abnf",

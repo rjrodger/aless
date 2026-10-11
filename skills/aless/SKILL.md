@@ -435,14 +435,14 @@ For those, pipe `--json` into jq.
   C's own: 127 operations in an expression (a call's arguments among
   them), 1,024 open rules and a syntax tree 256 levels deep, these with
   no `line` when the parse stopped between tokens; and a C tree of more
-  than 256 values a byte of the file written out (a million at least),
-  which its reader's repeated subtrees make of a chain of subscripts or
-  member accesses a few levels deep, also with no `line`; and a grammar
-  in ABNF, EBNF or GBNF at its compiler's limits, groups and options
-  nested about 500 levels in ABNF, 130 in EBNF and 128 in GBNF (no
-  `line`), and elements nested 128 levels (the rule's `line`). A grammar's
-  compile cannot be stopped part way: past `--timeout` aless stops
-  waiting for it (`timeout`, exit 6). A `--grammar`
+  than 256 values a byte of the file written out (a million at least,
+  33,554,432 at most), which its reader's repeated subtrees make of a
+  chain of subscripts or member accesses a few levels deep, also with no
+  `line`; and a grammar in ABNF, EBNF or GBNF at its compiler's limits,
+  groups and options nested about 500 levels in ABNF, 130 in EBNF and 128
+  in GBNF (no `line`), and elements nested 128 levels (the rule's
+  `line`). A grammar's compile cannot be stopped part way: past
+  `--timeout` aless stops waiting for it (`timeout`, exit 6). A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.

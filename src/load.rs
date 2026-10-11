@@ -1542,9 +1542,12 @@ pub(crate) fn read_as(
 }
 
 /// How many values a C syntax tree may hold written out, per byte of the
-/// source it was read from: six times what the most expression-laden code
-/// of tabnas-c's own corpus holds (its 100 Csmith programs hold from 3 to
-/// 41 values a byte written out, where a declaration a line holds 8).
+/// source it was read from: over four times what the most expression-laden
+/// code of tabnas-c's own corpus holds. Its 100 Csmith programs, read as
+/// tabnas-c's own test reads them (GCC's extensions on, stdint's typedefs
+/// known), hold from 0.9 to 58 values a byte written out (32 the median),
+/// and from 1 to 9.2 times the values the reader built for them; aless's
+/// fixture, ordinary declarations and functions, holds 4.7.
 pub const C_TREE_PER_BYTE: u64 = 256;
 
 /// The fewest values [`c_tree_cap`] allows any C document, so that a short
@@ -1552,12 +1555,22 @@ pub const C_TREE_PER_BYTE: u64 = 256;
 /// hint says.
 pub const C_TREE_FLOOR: u64 = 1 << 20;
 
+/// The most values any C document may hold written out, however long it
+/// is: 33,554,432 (2^25), the most a 64 MB JSON array of single digits,
+/// the default `--max-size`, makes of another format, and nearly twice
+/// what the largest Csmith program of tabnas-c's corpus (411 KB) holds, 18
+/// million. Without it the cap would grow with the file, so a long comment
+/// beside a short chain of member accesses would raise the cap that chain
+/// is held to; with it no padding raises the cap past this.
+pub const C_TREE_CEILING: u64 = 1 << 25;
+
 /// The most values a C document `source_len` bytes long may hold written
-/// out: [`C_TREE_PER_BYTE`] a byte, and at least [`C_TREE_FLOOR`].
+/// out: [`C_TREE_PER_BYTE`] a byte, at least [`C_TREE_FLOOR`], and never
+/// more than [`C_TREE_CEILING`].
 pub(crate) fn c_tree_cap(source_len: usize) -> u64 {
     (source_len as u64)
         .saturating_mul(C_TREE_PER_BYTE)
-        .max(C_TREE_FLOOR)
+        .clamp(C_TREE_FLOOR, C_TREE_CEILING)
 }
 
 /// How many values `value` holds written out as a tree, every container
@@ -2447,9 +2460,9 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                  them, such as operand and cond, beside its children, so each level of a chain \
                  of subscripts or member accesses, a run of prefix operators, a conditional or \
                  a brace initializer doubles the tree written out. aless reads one of at most \
-                 {C_TREE_PER_BYTE} values a byte of its source, and of 1,048,576 at least, \
-                 and stopped before writing out this one.\nReal code nests these a few \
-                 levels at most."
+                 {C_TREE_PER_BYTE} values a byte of its source, of 1,048,576 at least and of \
+                 33,554,432 at most, and stopped before writing out this one.\nReal code \
+                 nests these a few levels at most."
             ),
         ),
     }
@@ -4157,7 +4170,31 @@ mod tests {
         let twice = Value::array(vec![shared.clone(), shared]);
         assert_eq!(written_out(&twice, 1_000), 5);
         assert_eq!(c_tree_cap(10), C_TREE_FLOOR);
-        assert_eq!(c_tree_cap(1 << 20), 256 << 20);
+        assert_eq!(c_tree_cap(1 << 16), 256 << 16);
+        // Past 131,072 bytes the ceiling holds, however long the file.
+        assert_eq!(c_tree_cap(1 << 17), C_TREE_CEILING);
+        assert_eq!(c_tree_cap(64 << 20), C_TREE_CEILING);
+        assert_eq!(c_tree_cap(usize::MAX), C_TREE_CEILING);
+    }
+
+    /// A chain of member accesses whose tree written out (115,343,533
+    /// values for 21 of them) the ceiling refuses, whatever a long comment
+    /// beside it adds to the file: 4 MB of it would have raised a cap of
+    /// 256 values a byte to a billion.
+    #[test]
+    fn padding_does_not_raise_a_c_trees_cap() {
+        let chain = format!("int f(void) {{ return a{}; }}\n", ".b".repeat(21));
+        let padded = format!("/*{}*/\n{chain}", " ".repeat(4 << 20));
+        for src in [chain, padded] {
+            let e = parse(&src, Format::C).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{} bytes: {e}", src.len());
+        }
+        // Real code past the length where the ceiling holds reads: 4,000
+        // functions, a line each, 160 KB.
+        let functions: String = (0..4_000)
+            .map(|i| format!("int f{i}(int a) {{ return a.b.c + {i}; }}\n"))
+            .collect();
+        assert!(parse(&functions, Format::C).is_ok());
     }
 
     #[test]

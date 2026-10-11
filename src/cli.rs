@@ -1098,7 +1098,8 @@ const TOPICS: &[Topic] = &[
                 XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
                 file, counted before it is parsed, for C an expression of 127 \
                 operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
-                values a byte of the file written out, its reader repeating subtrees, and \
+                values a byte of the file written out (33,554,432 at most), its reader \
+                repeating subtrees, and \
                 for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
                 512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
                 128 deep).",

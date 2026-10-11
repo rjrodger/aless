@@ -28,8 +28,10 @@ bumps the version renames `Unreleased` to the version and its date
   with no position where the parse stopped between two tokens. A `.c` or
   `.h` file, read as plain text before, is read as C.
 - A C tree is refused as `too_deep`, before it is written out, when it
-  would hold more than 256 values a byte of the file written out (and at
-  least a million): its reader shares the subtrees it repeats, so a
+  would hold more than 256 values a byte of the file written out (at
+  least a million, and never more than 33,554,432, so that a long comment
+  cannot raise the bound a short chain is held to): its reader shares the
+  subtrees it repeats, so a
   chain of subscripts or member accesses doubles the tree written out at
   each level, and 40 member accesses in one expression would otherwise
   hold more values than a machine can.
