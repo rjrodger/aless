@@ -349,7 +349,8 @@ for XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a
 `.proto` file, counted before it is parsed, C's own: an expression of
 127 operations, 1,024 open rules and a syntax tree 256 levels deep, and a
 tree of more than 256 values a byte of the file written out (33,554,432
-at most, however long the file), which its reader's repeated subtrees
+at most, however long the file) or of more than 2,048 bytes of names and
+strings a byte (256 MB at most), which its reader's repeated subtrees
 make of a few levels of nesting, and an ABNF,
 EBNF or GBNF grammar's compiler's: groups and options about 500 deep in
 ABNF, 130 in EBNF and 128 in GBNF, and elements nested 128 deep in any of
@@ -1294,7 +1295,9 @@ down:
   its reader's limits (an expression of 127 operations, 1,024 open
   rules, a syntax tree 256 levels deep). A C tree also stops at 256
   values a byte of the file written out (a million at least, and
-  33,554,432 at most, so no padding beside a chain raises it): its reader
+  33,554,432 at most, so no padding beside a chain raises it), and at
+  2,048 bytes of names and strings a byte (8 MB at least, and 256 MB at
+  most, so a long name in a repeated subtree is held too): its reader
   repeats a node's subtrees under the members that name them, so each
   level of a chain of subscripts or member accesses doubles it. A
   grammar in ABNF, EBNF or GBNF stops at its compiler's limits: groups

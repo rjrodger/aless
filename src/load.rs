@@ -1551,14 +1551,15 @@ pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
 /// before that thread parses again, which releases them.
 ///
 /// C's is its syntax tree (`c`), as the crate realized it, refused when it
-/// holds more values written out than [`c_tree_cap`] allows: the reader
-/// repeats a node's subtrees under the members that name them (`operand`,
-/// `cond` and the like) beside its `children`, sharing each, so the tree it
-/// hands over is small and the tree written out, which the viewer and every
-/// output make of it, doubles with each level of a chain of subscripts or
-/// member accesses, a run of prefix operators, a conditional or a brace
-/// initializer. It is measured before anything is written out, in time
-/// that follows the shared tree.
+/// holds more values or more text written out than [`c_tree_cap`] allows:
+/// the reader repeats a node's subtrees under the members that name them
+/// (`operand`, `cond` and the like) beside its `children`, sharing each, so
+/// the tree it hands over is small and the tree written out, which the
+/// viewer and every output make of it, doubles with each level of a chain
+/// of subscripts or member accesses, a run of prefix operators, a
+/// conditional or a brace initializer, and with it every name and string
+/// under that level. It is measured before anything is written out, in
+/// time that follows the shared tree.
 pub(crate) fn read_as(
     format: Format,
     value: tabnas::Value,
@@ -1571,7 +1572,7 @@ pub(crate) fn read_as(
         Format::Expr => Ok(tabnas_expr::simplify(&value)),
         Format::C => {
             let cap = c_tree_cap(source_len);
-            if written_out(&value, cap) > cap {
+            if written_out(&value, cap).past(cap) {
                 drop_deep(value);
                 let (message, hint) = too_deep_words(format, Deep::Repeated);
                 return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
@@ -1599,93 +1600,174 @@ pub const C_TREE_FLOOR: u64 = 1 << 20;
 /// The most values any C document may hold written out, however long it
 /// is: 33,554,432 (2^25), the most a 64 MB JSON array of single digits,
 /// the default `--max-size`, makes of another format, and nearly twice
-/// what the largest Csmith program of tabnas-c's corpus (411 KB) holds, 18
-/// million. Without it the cap would grow with the file, so a long comment
-/// beside a short chain of member accesses would raise the cap that chain
-/// is held to; with it no padding raises the cap past this.
+/// the most a Csmith program of tabnas-c's corpus holds, 18 million values
+/// from 411 KB. Without it the cap would grow with the file, so a long
+/// comment beside a short chain of member accesses would raise the cap
+/// that chain is held to; with it no padding raises the cap past this.
 pub const C_TREE_CEILING: u64 = 1 << 25;
 
-/// The most values a C document `source_len` bytes long may hold written
-/// out: [`C_TREE_PER_BYTE`] a byte, at least [`C_TREE_FLOOR`], and never
-/// more than [`C_TREE_CEILING`].
-pub(crate) fn c_tree_cap(source_len: usize) -> u64 {
-    (source_len as u64)
-        .saturating_mul(C_TREE_PER_BYTE)
-        .clamp(C_TREE_FLOOR, C_TREE_CEILING)
+/// How much text, the bytes of its strings and member names, a C syntax
+/// tree may hold written out, per byte of the source: about six times the
+/// most tabnas-c's Csmith programs hold, from 5.5 to 342 bytes a byte (197
+/// the median, some six bytes a value); aless's fixture holds 29. The
+/// values count a scalar once whatever its length, so this is what holds a
+/// long name in a subtree the tree repeats.
+pub const C_TREE_BYTES_PER_BYTE: u64 = 2048;
+
+/// The least text [`c_tree_cap`] allows any C document: 8 MB, eight bytes
+/// for each value of [`C_TREE_FLOOR`].
+pub const C_TREE_BYTES_FLOOR: u64 = 8 << 20;
+
+/// The most text any C document may hold written out, however long it is:
+/// 256 MB, over twice the most a Csmith program of tabnas-c's corpus holds,
+/// 111 million bytes from 411 KB. Without it a name a megabyte long under
+/// 18 member accesses, which repeat it 2^18 times in a tree of 14 million
+/// values, well under [`C_TREE_CEILING`], would be written out a quarter
+/// of a million times: half a terabyte of text, since the reader keeps a
+/// name twice.
+pub const C_TREE_BYTES_CEILING: u64 = 256 << 20;
+
+/// What a value holds written out as a tree: its values, every container
+/// and scalar counted, and its text, the bytes of every string and member
+/// name, each counted in every place a shared container puts it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WrittenOut {
+    pub(crate) values: u64,
+    pub(crate) bytes: u64,
 }
 
-/// How many values `value` holds written out as a tree, every container
-/// and scalar counted, the root among them: a container shared by several
-/// parents counts once in each. A shared container (one its `Arc` holds
-/// more than once) is measured once and remembered, so the count takes
-/// time that follows the shared tree, however large the tree written out;
-/// it stops as soon as a container passes `cap`, answering that
-/// container's count. Walked with a stack of its own.
-pub(crate) fn written_out(value: &tabnas::Value, cap: u64) -> u64 {
+impl WrittenOut {
+    /// Both counts, added, saturating.
+    fn plus(self, other: WrittenOut) -> WrittenOut {
+        WrittenOut {
+            values: self.values.saturating_add(other.values),
+            bytes: self.bytes.saturating_add(other.bytes),
+        }
+    }
+
+    /// Whether either count passes `cap`'s.
+    pub(crate) fn past(self, cap: WrittenOut) -> bool {
+        self.values > cap.values || self.bytes > cap.bytes
+    }
+}
+
+/// What a C document `source_len` bytes long may hold written out:
+/// [`C_TREE_PER_BYTE`] values a byte, at least [`C_TREE_FLOOR`] and never
+/// more than [`C_TREE_CEILING`], and [`C_TREE_BYTES_PER_BYTE`] bytes of
+/// text a byte, between [`C_TREE_BYTES_FLOOR`] and [`C_TREE_BYTES_CEILING`].
+pub(crate) fn c_tree_cap(source_len: usize) -> WrittenOut {
+    let len = source_len as u64;
+    WrittenOut {
+        values: len
+            .saturating_mul(C_TREE_PER_BYTE)
+            .clamp(C_TREE_FLOOR, C_TREE_CEILING),
+        bytes: len
+            .saturating_mul(C_TREE_BYTES_PER_BYTE)
+            .clamp(C_TREE_BYTES_FLOOR, C_TREE_BYTES_CEILING),
+    }
+}
+
+/// What `value` holds written out as a tree ([`WrittenOut`]): every
+/// container and scalar, the root among them, and the bytes of every
+/// string and member name, a container shared by several parents counted
+/// once in each. A shared container (one its `Arc` holds more than once)
+/// is measured once and remembered, so the count takes time that follows
+/// the shared tree, however large the tree written out; it stops as soon
+/// as a container passes `cap` in either count, answering that container's
+/// counts. Walked with a stack of its own.
+pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut {
     use tabnas::Value;
-    /// A container's identity and whether it is shared, and its members.
-    fn container(v: &Value) -> Option<(usize, bool, Vec<&Value>)> {
+    /// A container's members, each with the bytes of the name it is under
+    /// (none in a list).
+    type Members<'a> = Vec<(&'a Value, u64)>;
+    /// A container's identity, whether it is shared, and its members.
+    fn container(v: &Value) -> Option<(usize, bool, Members<'_>)> {
         Some(match v {
             Value::Array(items) => (
                 Arc::as_ptr(items) as *const u8 as usize,
                 Arc::strong_count(items) > 1,
-                items.iter().collect(),
+                items.iter().map(|m| (m, 0)).collect(),
             ),
             Value::ListRef(list) => (
                 Arc::as_ptr(list) as *const u8 as usize,
                 Arc::strong_count(list) > 1,
-                list.value.iter().collect(),
+                list.value.iter().map(|m| (m, 0)).collect(),
             ),
             Value::Object(map) => (
                 Arc::as_ptr(map) as *const u8 as usize,
                 Arc::strong_count(map) > 1,
-                map.values().collect(),
+                map.iter().map(|(k, m)| (m, k.len() as u64)).collect(),
             ),
             Value::MapRef(map) => (
                 Arc::as_ptr(map) as *const u8 as usize,
                 Arc::strong_count(map) > 1,
-                map.value.values().collect(),
+                map.value.iter().map(|(k, m)| (m, k.len() as u64)).collect(),
             ),
             _ => return None,
         })
     }
-    enum Step<'a> {
-        Enter(&'a Value),
-        /// A container's members are measured: its identity, whether it is
-        /// shared, and where its members' counts start.
-        Leave(usize, bool, usize),
+    /// A scalar's text.
+    fn text(v: &Value) -> u64 {
+        match v {
+            Value::String(s) => s.len() as u64,
+            Value::Text(t) => t.string.len() as u64,
+            _ => 0,
+        }
     }
-    let mut known: HashMap<usize, u64> = HashMap::new();
-    let mut counts: Vec<u64> = Vec::new();
-    let mut steps = vec![Step::Enter(value)];
+    enum Step<'a> {
+        /// A value to measure, and the bytes of the name it is under.
+        Enter(&'a Value, u64),
+        /// A container's members are measured: its identity, whether it is
+        /// shared, where its members' counts start, and its name's bytes.
+        Leave(usize, bool, usize, u64),
+    }
+    let mut known: HashMap<usize, WrittenOut> = HashMap::new();
+    let mut counts: Vec<WrittenOut> = Vec::new();
+    let mut steps = vec![Step::Enter(value, 0)];
+    let named = |n: WrittenOut, name: u64| WrittenOut {
+        values: n.values,
+        bytes: n.bytes.saturating_add(name),
+    };
     while let Some(step) = steps.pop() {
         match step {
-            Step::Enter(v) => match container(v) {
-                None => counts.push(1),
+            Step::Enter(v, name) => match container(v) {
+                None => counts.push(WrittenOut {
+                    values: 1,
+                    bytes: text(v).saturating_add(name),
+                }),
                 Some((id, shared, members)) => {
                     if let Some(n) = shared.then(|| known.get(&id)).flatten() {
-                        counts.push(*n);
+                        counts.push(named(*n, name));
                         continue;
                     }
-                    steps.push(Step::Leave(id, shared, counts.len()));
-                    steps.extend(members.into_iter().rev().map(Step::Enter));
+                    steps.push(Step::Leave(id, shared, counts.len(), name));
+                    steps.extend(
+                        members
+                            .into_iter()
+                            .rev()
+                            .map(|(m, name)| Step::Enter(m, name)),
+                    );
                 }
             },
-            Step::Leave(id, shared, from) => {
-                let n = counts
-                    .drain(from..)
-                    .fold(1u64, |total, n| total.saturating_add(n));
-                if n > cap {
+            Step::Leave(id, shared, from, name) => {
+                let n = counts.drain(from..).fold(
+                    WrittenOut {
+                        values: 1,
+                        bytes: 0,
+                    },
+                    WrittenOut::plus,
+                );
+                if n.past(cap) {
                     return n;
                 }
                 if shared {
                     known.insert(id, n);
                 }
-                counts.push(n);
+                counts.push(named(n, name));
             }
         }
     }
-    counts.pop().unwrap_or(0)
+    counts.pop().unwrap_or_default()
 }
 
 /// Parse `text` with `parser`, which [`make_parser`] made for `format`:
@@ -2551,8 +2633,9 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                  of subscripts or member accesses, a run of prefix operators, a conditional or \
                  a brace initializer doubles the tree written out. aless reads one of at most \
                  {C_TREE_PER_BYTE} values a byte of its source, of 1,048,576 at least and of \
-                 33,554,432 at most, and stopped before writing out this one.\nReal code \
-                 nests these a few levels at most."
+                 33,554,432 at most, holding at most 2,048 bytes of names and strings a byte, \
+                 of 8 MB at least and of 256 MB at most, and stopped before writing out this \
+                 one.\nReal code nests these a few levels at most."
             ),
         ),
     }
@@ -4281,6 +4364,10 @@ mod tests {
     #[test]
     fn written_out_counts_a_shared_subtree_in_every_place() {
         use tabnas::Value;
+        let values = |values| WrittenOut {
+            values,
+            bytes: u64::MAX,
+        };
         let leaf = Value::array(vec![Value::Number(1.0), Value::Number(2.0)]);
         let mut level = leaf;
         for _ in 0..100 {
@@ -4288,19 +4375,97 @@ mod tests {
         }
         // 2^100 leaves written out, from 101 containers: the count stops
         // at the first level past the cap, the eighth, of 2^10 - 1 values.
-        assert_eq!(written_out(&level, 1_000), 1_023);
-        assert_eq!(written_out(&level, u64::MAX), u64::MAX, "saturated");
+        assert_eq!(written_out(&level, values(1_000)).values, 1_023);
+        let all = written_out(&level, values(u64::MAX));
+        assert_eq!(all.values, u64::MAX, "saturated");
         let small = Value::array(vec![Value::array(vec![]), Value::Null]);
-        assert_eq!(written_out(&small, 1_000), 3);
+        assert_eq!(
+            written_out(&small, values(1_000)),
+            WrittenOut {
+                values: 3,
+                bytes: 0
+            }
+        );
         let shared = Value::array(vec![Value::Number(1.0)]);
         let twice = Value::array(vec![shared.clone(), shared]);
-        assert_eq!(written_out(&twice, 1_000), 5);
-        assert_eq!(c_tree_cap(10), C_TREE_FLOOR);
-        assert_eq!(c_tree_cap(1 << 16), 256 << 16);
-        // Past 131,072 bytes the ceiling holds, however long the file.
-        assert_eq!(c_tree_cap(1 << 17), C_TREE_CEILING);
-        assert_eq!(c_tree_cap(64 << 20), C_TREE_CEILING);
-        assert_eq!(c_tree_cap(usize::MAX), C_TREE_CEILING);
+        assert_eq!(written_out(&twice, values(1_000)).values, 5);
+        // Text is counted in every place too: each string's bytes and each
+        // member name's, a shared container's own name among them.
+        let inner = Value::from_json(&serde_json::json!({"name": "abc"}));
+        let mut outer = Value::from_json(&serde_json::json!({"key": null}));
+        outer.as_object_mut().unwrap().insert(
+            "key".into(),
+            Value::array(vec![inner.clone(), inner.clone(), inner]),
+        );
+        let ample = values(u64::MAX);
+        assert_eq!(
+            written_out(&outer, ample),
+            WrittenOut {
+                values: 8,
+                bytes: 24
+            }
+        );
+        // The count stops at the first container past either cap: here the
+        // list, of 21 bytes of text.
+        let text = WrittenOut {
+            values: u64::MAX,
+            bytes: 20,
+        };
+        let stopped = written_out(&outer, text);
+        assert!(stopped.past(text));
+        assert_eq!(
+            stopped,
+            WrittenOut {
+                values: 7,
+                bytes: 21
+            }
+        );
+        let cap = |values, bytes| WrittenOut { values, bytes };
+        assert_eq!(c_tree_cap(10), cap(C_TREE_FLOOR, C_TREE_BYTES_FLOOR));
+        assert_eq!(c_tree_cap(1 << 16), cap(256 << 16, 2048 << 16));
+        // Past 131,072 bytes the ceilings hold, however long the file.
+        let ceilings = cap(C_TREE_CEILING, C_TREE_BYTES_CEILING);
+        assert_eq!(c_tree_cap(1 << 17), ceilings);
+        assert_eq!(c_tree_cap(64 << 20), ceilings);
+        assert_eq!(c_tree_cap(usize::MAX), ceilings);
+    }
+
+    /// A name a megabyte long at the foot of 18 member accesses, which
+    /// write it out 2^18 times: some 14 million values, under the ceiling
+    /// a file that long is held to, but half a terabyte of text, refused by
+    /// the ceiling on text. The name read once, or under four accesses (32
+    /// MB of text), reads.
+    #[test]
+    fn a_long_name_in_a_repeated_subtree_is_held_to_its_text() {
+        let name = "a".repeat(1 << 20);
+        let chain = |n: usize| format!("int f(void) {{ return {name}{}; }}\n", ".b".repeat(n));
+        let src = chain(18);
+        let parser = make_parser(Format::C).unwrap().unwrap();
+        let value = parse_value(&parser, Format::C, &src).unwrap();
+        let all = written_out(
+            &value,
+            WrittenOut {
+                values: u64::MAX,
+                bytes: u64::MAX,
+            },
+        );
+        drop(value);
+        let cap = c_tree_cap(src.len());
+        assert_eq!(cap.values, C_TREE_CEILING);
+        assert!(all.values < cap.values, "{all:?}");
+        assert!(all.bytes > 1 << 38, "{all:?}");
+        let e = parse(&src, Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep", "{e}");
+        assert!(
+            e.hint.contains(
+                "2,048 bytes of names and strings a byte, of 8 MB at least and of 256 MB at most"
+            ),
+            "{}",
+            e.hint
+        );
+        for n in [0, 4] {
+            assert!(parse(&chain(n), Format::C).is_ok(), "{n} accesses");
+        }
     }
 
     /// A chain of member accesses whose tree written out (115,343,533

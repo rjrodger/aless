@@ -30,11 +30,13 @@ bumps the version renames `Unreleased` to the version and its date
 - A C tree is refused as `too_deep`, before it is written out, when it
   would hold more than 256 values a byte of the file written out (at
   least a million, and never more than 33,554,432, so that a long comment
-  cannot raise the bound a short chain is held to): its reader shares the
-  subtrees it repeats, so a
-  chain of subscripts or member accesses doubles the tree written out at
-  each level, and 40 member accesses in one expression would otherwise
-  hold more values than a machine can.
+  cannot raise the bound a short chain is held to), or more than 2,048
+  bytes of names and strings a byte (at least 8 MB, and never more than
+  256 MB, so that a long name in a subtree it repeats is held as well):
+  its reader shares the subtrees it repeats, so a chain of subscripts or
+  member accesses doubles the tree written out at each level, and 40
+  member accesses in one expression would otherwise hold more values
+  than a machine can.
 - Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.22), EBNF (`.ebnf`,
   tabnas-ebnf 0.1.17) and GBNF (`.gbnf`, tabnas-gbnf 0.1.18), each read
   as the grammar spec its compiler writes, `options` and `rule`s with
