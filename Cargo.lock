@@ -1222,9 +1222,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ebnf"
-version = "0.1.16"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cb820a8e8c206ce19cf5ac4b1aacee98d78186cc79b98d2471e6059367363a8"
+checksum = "859a8e1df3955aac83a75dc3f653c01da2fa19e30e47c96d75d70d4ef257cffe"
 dependencies = [
  "indexmap",
  "regex",

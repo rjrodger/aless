@@ -81,7 +81,7 @@ tabnas-c = "0.5.14"
 # grammar's text becomes a GrammarSpec at startup. Each emits through
 # tabnas-bnf, the compiler the BNF-family front-ends share.
 tabnas-abnf = "0.4.22"
-tabnas-ebnf = "0.1.16"
+tabnas-ebnf = "0.1.17"
 tabnas-gbnf = "0.1.18"
 # The streaming transducer and its renderers, behind `--render`.
 tabnas-transduce = "0.2.7"

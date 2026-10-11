@@ -34,7 +34,7 @@ bumps the version renames `Unreleased` to the version and its date
   each level, and 40 member accesses in one expression would otherwise
   hold more values than a machine can.
 - Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.22), EBNF (`.ebnf`,
-  tabnas-ebnf 0.1.16) and GBNF (`.gbnf`, tabnas-gbnf 0.1.18), each read
+  tabnas-ebnf 0.1.17) and GBNF (`.gbnf`, tabnas-gbnf 0.1.18), each read
   as the grammar spec its compiler writes, `options` and `rule`s with
   the rules the compiler adds, and written by `--render abnf`, `ebnf` and
   `gbnf` (admin ADR-27, phase 4's second batch). The three write one
