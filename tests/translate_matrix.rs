@@ -8,7 +8,9 @@
 //! record at a time, the verified grammars as the parse proceeds, the rest
 //! whole. A pair that fails to write, that writes a document its own
 //! grammar refuses, or that reads back as anything but the conventions say
-//! is a failure, and so is a corpus that shrinks. Three refusals are a
+//! is a failure, and so is a corpus that shrinks, but for a defect of a
+//! format's crate pinned in [`KNOWN_DEFECTS`] until a release fixes it,
+//! which must go on failing. Three refusals are a
 //! target's declared outcome, and counted as such: a schema-only target's
 //! (CSS, proto, PGN, C, and the grammar notations, ABNF, EBNF and GBNF,
 //! which write only the tree their own documents read as) of a document of
@@ -1522,6 +1524,19 @@ fn depth(d: &Datum) -> usize {
 /// matrix leaves it out, and pins how few such documents there are.
 const DEPTH_BOUND: usize = 100;
 
+/// Pairs whose render writes a document its own reader refuses, where the
+/// render's loss list declares no such outcome: a defect of the format's
+/// crate, reported to its repository, pinned by document and target until
+/// a release fixes it. A pin whose document a run reads must still fail,
+/// so the list cannot outlive the defect.
+const KNOWN_DEFECTS: &[(&str, &str, &str)] = &[(
+    "proto/nesting.tsv:36",
+    "proto",
+    "tabnas-proto 0.6.8's render writes an option whose text holds a line break as an \
+     aggregate in braces, which its reader refuses when the text is no aggregate (here a \
+     backtick literal of 800 braces); reported to tabnas/proto",
+)];
+
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written by aless in every format, and read back
 /// under the target's conventions. At least `floor` documents, at most
@@ -1553,6 +1568,19 @@ fn matrix(
     // Grammars a notation's render wrote nested past what the notation's
     // own reader takes ([`GrammarBack::PastReader`]).
     let mut past_reader = Vec::new();
+    // The failures [`KNOWN_DEFECTS`] pins, by document and target.
+    let mut known: Vec<(String, &str, String)> = Vec::new();
+    let mut fail =
+        |failures: &mut Vec<String>, name: &str, from: &str, to: &'static str, why: String| {
+            if KNOWN_DEFECTS
+                .iter()
+                .any(|(doc, target, _)| *doc == name && *target == to)
+            {
+                known.push((name.to_string(), to, why));
+            } else {
+                failures.push(format!("{name} ({from}) -> {to}: {why}"));
+            }
+        };
     for (n, (name, from, text)) in docs.iter().enumerate() {
         let source = match read(from, text) {
             Ok(d) => d,
@@ -1582,7 +1610,7 @@ fn matrix(
                     continue;
                 }
                 Err(Unwritten::Failed(why)) => {
-                    failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                    fail(&mut failures, name, from, to, why);
                     continue;
                 }
             };
@@ -1608,7 +1636,7 @@ fn matrix(
                 check(from, to, &source, &written)
             };
             if let Err(why) = outcome {
-                failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                fail(&mut failures, name, from, to, why);
             }
         }
         if (n + 1) % 25 == 0 || n + 1 == docs.len() {
@@ -1630,6 +1658,16 @@ fn matrix(
     for line in &past_reader {
         eprintln!("written past its notation's reader: {line}");
     }
+    for (name, to, why) in &known {
+        let defect = KNOWN_DEFECTS
+            .iter()
+            .find(|(doc, target, _)| doc == name && target == to)
+            .map_or("", |(_, _, defect)| defect);
+        eprintln!(
+            "known defect: {name} -> {to}: {defect}: {}",
+            why.chars().take(300).collect::<String>()
+        );
+    }
     for line in &failures {
         eprintln!("FAIL {line}");
     }
@@ -1645,12 +1683,13 @@ fn matrix(
          declared: by a schema-only target {refusals:?}, by semver as not a version \
          {not_a_version}, by a notation's render as a spec it cannot write {unwritable:?}; {} \
          documents refused by their own reader, {} too deep; {} grammars written past their \
-         notation's reader",
+         notation's reader; {} known defects",
         docs.len(),
-        pairs - declared - failures.len(),
+        pairs - declared - failures.len() - known.len(),
         refused_sources.len(),
         too_deep.len(),
-        past_reader.len()
+        past_reader.len(),
+        known.len()
     );
     assert!(
         pairs + (refused_sources.len() + too_deep.len()) * FORMATS.len() == total
@@ -1673,6 +1712,14 @@ fn matrix(
         "{} of {pairs} pairs failed (above)",
         failures.len()
     );
+    for (doc, to, _) in KNOWN_DEFECTS {
+        if docs.iter().any(|(name, _, _)| name == doc) {
+            assert!(
+                known.iter().any(|(name, target, _)| name == doc && target == to),
+                "{doc} -> {to} no longer fails: its defect is fixed, so take it out of KNOWN_DEFECTS"
+            );
+        }
+    }
 }
 
 /// aless's own fixtures, one document per format at least, and the
@@ -1691,7 +1738,7 @@ const FLOOR: usize = 121;
 #[test]
 #[ignore = "the cross product of every format's fixtures: CI runs it in the matrix profile"]
 fn every_fixture_of_every_format_translates_into_every_format() {
-    matrix(spec_corpus(), 3949, 1, 1);
+    matrix(spec_corpus(), 3975, 1, 1);
 }
 
 /// Ten times the records leave what the composed render retains where it

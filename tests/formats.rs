@@ -180,7 +180,7 @@ fn other_grammars_place_values() {
 /// follow the source: a stylesheet's declarations, a game's tags, an
 /// expression's terms, a version's parts, and the start of a .proto
 /// file's descriptor, whose later members are derived and regrouped, so
-/// best effort there.
+/// best effort there, its package among them.
 #[test]
 fn the_newer_grammars_place_values() {
     let line = |name: &str, format: Option<Format>, path: &[Key]| {
@@ -225,14 +225,19 @@ fn the_newer_grammars_place_values() {
         line("sample.semver", Some(Format::Semver), &[name("patch")]),
         1
     );
+    // The descriptor holds its lists first, and what a statement places
+    // (the syntax, the package) after them in the statements' order: the
+    // imports are placed, and the package, which the alignment has passed
+    // when it comes to it, has no position rather than a wrong one.
     assert_eq!(
-        line("sample.proto", None, &[name("package")]),
-        line_of("sample.proto", "package demo")
+        line("sample.proto", None, &[name("dependency"), Key::Index(0)]),
+        line_of("sample.proto", "timestamp.proto")
     );
     assert_eq!(
         line("sample.proto", None, &[name("dependency"), Key::Index(1)]),
         line_of("sample.proto", "other.proto")
     );
+    assert_eq!(line("sample.proto", None, &[name("package")]), 0);
 }
 
 /// A C file's tokens are placed where its syntax tree says, which the

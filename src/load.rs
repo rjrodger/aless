@@ -1499,13 +1499,15 @@ pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
 /// three, whose crates build the tree their manifests' schemas name from
 /// it.
 /// proto's is the FileDescriptorProto (`proto-descriptor`) in the JSON form
-/// protoc writes one in, which [`tabnas_proto::to_descriptor`] builds from
-/// the syntax tree the parse returns, refusing a declaration of a version
-/// it does not know. expr's is its S-expressions (`expr`): each operation a
-/// list of its operator's source text and its terms, as
-/// [`tabnas_expr::simplify`] reads the nodes the parse left in this
-/// thread's arena, so it runs on the parse's thread, before that thread
-/// parses again, which releases them.
+/// protoc writes one in, which [`tabnas_proto::to_descriptor_value`] builds
+/// from the syntax tree the parse returns, its members in the order of the
+/// canonical descriptor the crate's other runtimes write, refusing a
+/// declaration of a version it does not know; a number its reader reads as
+/// NaN stays NaN, which the JSON outputs write as null. expr's is its
+/// S-expressions (`expr`): each operation a list of its operator's source
+/// text and its terms, as [`tabnas_expr::simplify`] reads the nodes the
+/// parse left in this thread's arena, so it runs on the parse's thread,
+/// before that thread parses again, which releases them.
 ///
 /// C's is its syntax tree (`c`), as the crate realized it, refused when it
 /// holds more values written out than [`c_tree_cap`] allows: the reader
@@ -1523,12 +1525,7 @@ pub(crate) fn read_as(
 ) -> Result<tabnas::Value, LoadError> {
     match format {
         Format::Proto => {
-            let descriptor =
-                tabnas_proto::to_descriptor(&value, None).map_err(|e| proto_refused(format, e))?;
-            drop(value);
-            let json = serde_json::to_value(&descriptor)
-                .map_err(|e| grammar_failed(format, &e.to_string()))?;
-            Ok(tabnas::Value::from_json(&json))
+            tabnas_proto::to_descriptor_value(&value, None).map_err(|e| proto_refused(format, e))
         }
         Format::Expr => Ok(tabnas_expr::simplify(&value)),
         Format::C => {
@@ -3930,17 +3927,33 @@ mod tests {
 
     /// A .proto file reads as its FileDescriptorProto (the schema
     /// `proto-descriptor`), in the JSON form protoc writes one in, not as
-    /// the syntax tree the grammar builds; a number the reader reads as
-    /// NaN (a digit separator, `1_0`) is null there, as the render takes it.
+    /// the syntax tree the grammar builds, in the member order of the
+    /// canonical descriptor the crate's other runtimes write: the lists
+    /// every descriptor has, then what a statement places (the syntax, the
+    /// package, a field's `proto3Optional`) in the statements' order. A
+    /// number the reader reads as NaN (a digit separator, `1_0`) stays
+    /// NaN, which JSON writes as null.
     #[test]
     fn proto_reads_as_its_descriptor() {
         assert_eq!(
             read_json(
-                "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; string b = 1_0; }",
+                "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; string b = 1_0; \
+                 optional int32 c = 3; }",
                 Format::Proto
             ),
-            r#"{"package":"p","dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[{"name":"M","field":[{"name":"a","number":1,"label":"LABEL_OPTIONAL","type":"TYPE_INT32"},{"name":"b","number":null,"label":"LABEL_OPTIONAL","type":"TYPE_STRING"}],"nestedType":[],"enumType":[],"oneofDecl":[],"extension":[]}],"enumType":[],"service":[],"extension":[],"syntax":"proto3"}"#
+            r#"{"dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[{"name":"M","field":[{"name":"a","number":1,"label":"LABEL_OPTIONAL","type":"TYPE_INT32"},{"name":"b","number":null,"label":"LABEL_OPTIONAL","type":"TYPE_STRING"},{"name":"c","number":3,"label":"LABEL_OPTIONAL","proto3Optional":true,"type":"TYPE_INT32","oneofIndex":0}],"nestedType":[],"enumType":[],"oneofDecl":[{"name":"_c"}],"extension":[]}],"enumType":[],"service":[],"extension":[],"syntax":"proto3","package":"p"}"#
         );
+        let doc = parse("message M { int32 b = 1_0; }", Format::Proto).unwrap();
+        let number = doc
+            .resolve(&[
+                Key::Name("messageType".into()),
+                Key::Index(0),
+                Key::Name("field".into()),
+                Key::Index(0),
+                Key::Name("number".into()),
+            ])
+            .unwrap();
+        assert!(matches!(doc.node(number).kind, Kind::Number(n) if n.is_nan()));
         // No declaration reads as proto2, as protoc has it.
         assert!(read_json("message M {}", Format::Proto).ends_with(r#""syntax":"proto2"}"#));
     }

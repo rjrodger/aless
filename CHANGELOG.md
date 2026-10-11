@@ -56,6 +56,16 @@ bumps the version renames `Unreleased` to the version and its date
 
 - tabnas-expr 0.5.17, a version move.
 - tabnas-abnf 0.4.22, from 0.4.20, the compiler behind `--grammar` too.
+- tabnas-proto 0.6.8. A `.proto` file is read through the crate's own
+  descriptor tree (`to_descriptor_value`), so a descriptor's members now
+  come in the order the crate's other runtimes give them: the lists every
+  descriptor has first, then what a statement places (the syntax, the
+  package, a field's `proto3Optional`) in the order of the statements.
+  The output can differ from 0.3.0's in member order, and the package,
+  held after the lists, is past where positions are aligned, so it has
+  none. A number the reader reads as NaN (a digit separator, `1_0`) stays
+  NaN: `--json` writes it as null, as before, an entry gives `"NaN"`,
+  and `--render yaml` writes `.nan`. The refusals are as they were.
 
 ## [0.3.0] - 2026-10-10
 
