@@ -60,6 +60,14 @@ bumps the version renames `Unreleased` to the version and its date
 
 - tabnas-expr 0.5.17, a version move.
 - tabnas-abnf 0.4.22, from 0.4.20, the compiler behind `--grammar` too.
+- tabnas-bnf 0.1.29, the compiler the three notations and `--grammar`
+  share. A cycle of rules whose alternatives start with one another,
+  which its left-recursion pass multiplied until memory ran out (twenty
+  such rules, 0.7 KB), is refused before anything is built, past 512
+  alternatives added to one rule, at once and in every route; so is a
+  grammar the pass would grow past 131,072 elements, a chain of 5,000
+  rules each led by the next among them. A grammar of 10,000 rules
+  compiles in under two seconds, where it took ten.
 - tabnas-proto 0.6.9. A `.proto` file is read through the crate's own
   descriptor tree (`to_descriptor_value`), so a descriptor's members now
   come in the order the crate's other runtimes give them: the lists every

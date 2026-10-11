@@ -1316,13 +1316,16 @@ down:
   `[[tables]]`, 1.6 MB, took under three seconds), so the limit matters
   most for large inputs. A grammar in ABNF, EBNF or GBNF is the
   exception: its compiler, which cannot be stopped part way, takes time
-  that grows with the square of its rules (10,000 rules, 300 KB, take
-  about ten seconds), and rules whose alternatives start with one another
-  in a cycle multiply (nine such rules, 300 bytes, took 17 seconds), as a
-  grammar from the command line does. Past `--timeout` aless stops
-  waiting for the compile and reports the `timeout`, and while that
-  compile runs on it starts no other grammar's, which reports the same
-  `timeout` at once.
+  that grows faster than its rules (10,000 rules, 300 KB, take under two
+  seconds, 40,000 about fifteen), as a grammar from the command line
+  does, and refuses, before building anything, a grammar its
+  left-recursion pass would grow past 512 alternatives added to one
+  rule, which a cycle of rules whose alternatives start with one another
+  multiplies, or past 131,072 elements added to the whole grammar, which
+  a long chain of rules led by one another copies. Past `--timeout`
+  aless stops waiting for the compile and reports the `timeout`, and
+  while that compile runs on it starts no other grammar's, which reports
+  the same `timeout` at once.
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file

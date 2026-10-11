@@ -904,6 +904,137 @@ fn the_newer_formats_nested_too_deep_fail_cleanly() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A cycle of `k` rules, each with two alternatives led by the next and
+/// one of its own, in `notation`: the shape whose alternatives a
+/// compiler's left-recursion pass multiplies, 2^k of them.
+fn left_recursive_cycle(notation: &str, k: usize) -> String {
+    let (define, or) = if notation == "abnf" {
+        (" = ", " / ")
+    } else {
+        (" ::= ", " | ")
+    };
+    let mut text = String::new();
+    if notation == "gbnf" {
+        text.push_str("root ::= r0\n");
+    }
+    for i in 0..k {
+        let next = (i + 1) % k;
+        text.push_str(&format!(
+            "r{i}{define}r{next} \"a{i}\"{or}r{next} \"b{i}\"{or}\"x{i}\"\n"
+        ));
+    }
+    text
+}
+
+/// Twenty rules in such a cycle, 0.7 KB, once took the compilers past a
+/// minute and then out of memory: tabnas-bnf now refuses them before it
+/// multiplies anything, past 512 alternatives added to one rule. A chain
+/// of 5,000 rules each led by the next, whose inlining would copy a
+/// quadratic count of elements, it refuses at its bound on the elements
+/// the pass adds to a grammar, 131,072. Each is a clean refusal at once,
+/// placed at the rule, in every route: read, written as JSON and as the
+/// notation itself, checked, and as a grammar from the command line.
+#[test]
+fn a_grammar_whose_alternatives_multiply_is_refused_at_once() {
+    let dir = std::env::temp_dir().join(format!("aless-cycle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let quick = |started: std::time::Instant, what: &str| {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "{what}: refused at once"
+        );
+    };
+    let alternatives = "rule 'r11' exceeds the left-recursion expansion limit of 512 \
+                        alternatives while inlining 'r12', which begins 2 of its alternatives \
+                        and has 511 of its own. Factor 'r12' out of the alternatives it begins.";
+    for (notation, line) in [("abnf", 12), ("ebnf", 12), ("gbnf", 13)] {
+        let path = dir.join(format!("cycle.{notation}"));
+        std::fs::write(&path, left_recursive_cycle(notation, 20)).unwrap();
+        let file = path.to_str().unwrap();
+        for mode in [
+            vec!["--json", file],
+            vec!["--render", "json", file],
+            vec!["--render", notation, file],
+        ] {
+            let started = std::time::Instant::now();
+            let out = aless(&mode, None);
+            let what = format!("{notation} {mode:?}");
+            quick(started, &what);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(code(&out), 1, "{what}: {stderr}");
+            assert!(out.stdout.is_empty(), "{what}");
+            let e = &json(&out.stderr)["error"];
+            assert_eq!(e["kind"], "parse", "{what}: {e}");
+            assert_eq!(e["code"], "compile", "{what}: {e}");
+            assert_eq!(e["format"], notation, "{what}: {e}");
+            assert_eq!(e["message"], format!("compile: {alternatives}"), "{what}");
+            assert_eq!((&e["line"], &e["col"]), (&json!(line), &json!(1)), "{what}");
+        }
+        let out = aless(&["--check", file], None);
+        assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+        let report = json(&out.stdout);
+        assert_eq!(report["files"][0]["error"]["code"], "compile", "{report}");
+    }
+    // As a grammar from the command line, before any input is read.
+    let cycle = format!("cycle={}", dir.join("cycle.abnf").to_str().unwrap());
+    let started = std::time::Instant::now();
+    let out = aless(
+        &["--grammar", &cycle, "--json", "tests/fixtures/sample.json"],
+        None,
+    );
+    quick(started, "--grammar");
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], "usage");
+    assert_eq!(
+        e["message"],
+        format!("--grammar cycle: abnf: {alternatives}")
+    );
+    // A chain of 5,000 rules, each led by the next, as a document and as a
+    // grammar from the command line.
+    let chain: String = (0..4_999)
+        .map(|i| format!("r{i} = r{} \"x{i}\"\n", i + 1))
+        .chain(std::iter::once("r4999 = \"end\"\n".to_string()))
+        .collect();
+    let path = dir.join("chain.abnf");
+    std::fs::write(&path, chain).unwrap();
+    let file = path.to_str().unwrap();
+    let elements = "rule 'r4486' exceeds the left-recursion element limit of 131072 elements \
+                    while inlining 'r4487', which begins 1 of its alternatives and would add \
+                    more than 256 elements to the 130816 already added to the grammar. Factor \
+                    'r4487' out of the alternatives it begins.";
+    let started = std::time::Instant::now();
+    let out = aless(&["--json", file], None);
+    quick(started, "the chain");
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(
+        (&e["kind"], &e["code"]),
+        (&json!("parse"), &json!("compile")),
+        "{e}"
+    );
+    assert_eq!(e["message"], format!("compile: {elements}"));
+    assert_eq!(e["line"], 4487);
+    let grammar = format!("chain={file}");
+    let started = std::time::Instant::now();
+    let out = aless(
+        &[
+            "--grammar",
+            &grammar,
+            "--json",
+            "tests/fixtures/sample.json",
+        ],
+        None,
+    );
+    quick(started, "the chain as --grammar");
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], "usage");
+    assert_eq!(e["message"], format!("--grammar chain: abnf: {elements}"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn help_leads_with_the_agent_interface() {
     let out = aless(&["--help"], None);

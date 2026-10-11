@@ -1711,11 +1711,13 @@ pub(crate) fn unplaced_c_cancel(format: Format, e: &tabnas::TabnasError) -> bool
 ///
 /// Each compiler bounds the grammar it reads: its parse refuses groups
 /// nested past a limit of its own (2,048 open rules for ABNF, some 500
-/// groups; 520 for EBNF and 512 for GBNF, some 130), and its emitter
-/// elements nested past 128, and a repetition that would be written out
-/// past 8,192 copies, each before anything that deep or that large is
-/// built. It runs where it is called, uninterrupted
-/// ([`compile_notation_by`] bounds the wait).
+/// groups; 520 for EBNF and 512 for GBNF, some 130), its emitter elements
+/// nested past 128 and a repetition that would be written out past 8,192
+/// copies, and its left-recursion pass (tabnas-bnf 0.1.29) more than 512
+/// alternatives added to one rule or 131,072 elements added to the
+/// grammar, each before anything that deep or that large is built. It
+/// runs where it is called, uninterrupted ([`compile_notation_by`] bounds
+/// the wait).
 pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Value, LoadError> {
     use tabnas_abnf::AbnfConvertOptions as Convert;
     let builtins = Convert {

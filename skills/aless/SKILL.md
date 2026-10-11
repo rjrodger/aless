@@ -441,7 +441,10 @@ For those, pipe `--json` into jq.
   `line`; and a grammar in ABNF, EBNF or GBNF at its compiler's limits,
   groups and options nested about 500 levels in ABNF, 130 in EBNF and 128
   in GBNF (no `line`), and elements nested 128 levels (the rule's
-  `line`). A grammar's compile cannot be stopped part way: past
+  `line`); a grammar the compiler's left-recursion pass would grow past
+  512 alternatives added to one rule or 131,072 elements added to the
+  grammar is code `compile`, at the rule. A grammar's compile cannot be
+  stopped part way: past
   `--timeout` aless stops waiting for it (`timeout`, exit 6), and a later
   grammar in the same run is the same `timeout` at once while that
   compile still runs. A `--grammar`
