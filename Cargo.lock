@@ -1388,9 +1388,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-proto"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c9c965c24605164ede7c62bbd59c6a36aad074883ac6a3aae3bdad624122184"
+checksum = "2cacd41b9117e6c7fa5ac4ba4e852fbbefe8ca9488ecb6fd5258b40feb84eebe"
 dependencies = [
  "indexmap",
  "serde",

@@ -18,7 +18,8 @@
 //! program route; a version's (semver's embed) of a tree that is not a
 //! version, `TARGET_VALUE_UNREPRESENTABLE` before anything is written; and
 //! a notation's render's of a grammar spec it cannot write in its notation,
-//! the same code, before anything is written.
+//! or proto's of a string no `.proto` spelling holds, the same code, before
+//! anything is written.
 //!
 //! The corpora are the grammar repositories' own, at the tags of the
 //! versions Cargo.lock pins, which `scripts/fixtures.sh` clones and names
@@ -455,9 +456,10 @@ enum Unwritten {
     SchemaOnly,
     /// A notation's render refused a grammar spec it cannot write in its
     /// notation (an action, a terminal none of its forms matches, a
-    /// case-insensitive literal EBNF cannot spell), with
-    /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written: the outcome
-    /// each render's loss list declares for such a spec.
+    /// case-insensitive literal EBNF cannot spell), or proto's a string no
+    /// spelling of a `.proto` file holds, with `TARGET_VALUE_UNREPRESENTABLE`
+    /// and nothing written: the outcome each render's loss list declares
+    /// for such a tree.
     Unwritable,
     /// The target's embed refused the tree, with
     /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written: a version's
@@ -531,9 +533,9 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwrit
             return Err(Unwritten::NotAVersion)
         }
         // A notation's render refuses, from its own file, a spec it cannot
-        // write before writing anything.
+        // write before writing anything, and proto's a string it cannot.
         Err(ExportError::Program(fail))
-            if NOTATIONS.contains(&to)
+            if (NOTATIONS.contains(&to) || to == "proto")
                 && fail.code == Code::TargetValueUnrepresentable
                 && fail.file.as_deref() == Some(&format!("tabnas-{to}/alchemy/render.alc"))
                 && bytes.is_empty() =>
@@ -1526,16 +1528,13 @@ const DEPTH_BOUND: usize = 100;
 
 /// Pairs whose render writes a document its own reader refuses, where the
 /// render's loss list declares no such outcome: a defect of the format's
-/// crate, reported to its repository, pinned by document and target until
-/// a release fixes it. A pin whose document a run reads must still fail,
-/// so the list cannot outlive the defect.
-const KNOWN_DEFECTS: &[(&str, &str, &str)] = &[(
-    "proto/nesting.tsv:36",
-    "proto",
-    "tabnas-proto 0.6.8's render writes an option whose text holds a line break as an \
-     aggregate in braces, which its reader refuses when the text is no aggregate (here a \
-     backtick literal of 800 braces); reported to tabnas/proto",
-)];
+/// crate, reported to its repository, pinned by document and target (and
+/// the defect, in words) until a release fixes it. A pin whose document a
+/// run reads must still fail, so the list cannot outlive the defect. None
+/// is open: tabnas-proto 0.6.9 fixed the one this list was made for, an
+/// option's backtick literal holding a line break, which 0.6.8's render
+/// wrote as an aggregate its reader refused (proto/nesting.tsv:36).
+const KNOWN_DEFECTS: &[(&str, &str, &str)] = &[];
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written by aless in every format, and read back
@@ -1681,7 +1680,7 @@ fn matrix(
     eprintln!(
         "matrix: {pairs} pairs of {} documents; {} written and read back, {declared} refused as \
          declared: by a schema-only target {refusals:?}, by semver as not a version \
-         {not_a_version}, by a notation's render as a spec it cannot write {unwritable:?}; {} \
+         {not_a_version}, by a render as a tree it cannot write {unwritable:?}; {} \
          documents refused by their own reader, {} too deep; {} grammars written past their \
          notation's reader; {} known defects",
         docs.len(),
