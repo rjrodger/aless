@@ -953,23 +953,44 @@ fn zon_back(d: &Datum) -> Datum {
     }
 }
 
+/// The default operators' source texts, which expr's render writes in
+/// infix (`(` a group): an operation is a list whose first element is one.
+const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
+
 /// What expr's conventions make of a value its render is given, as its
-/// reader reads the document back: a negative number is the operator `-`
-/// applied to its magnitude; a number that is not finite is the string
-/// `Infinity`, `-Infinity` or `NaN`; and a list whose first element is an
-/// object whose `src` member is a default operator's source text has that
-/// text in its place, the object's other members not kept.
-///
-/// The last holds of any text, not only an operator's: aless reads an
-/// expression as its S-expressions, `tabnas_expr::simplify`'s, which takes
-/// a list led by an object with a `src` member that is not empty for an
-/// operation that text names, whatever it is. The render writes such an
-/// object as it is where its text is no default operator's, and declares
-/// a loss for the default operators' alone, so a C syntax tree, whose lists
-/// are led by tokens, each an object with its `src`, reads back with each
-/// leading token's text in its place: a loss the render does not declare,
-/// which tabnas-expr's reader makes (reported to tabnas/expr).
+/// reader reads the document back (its loss list): a negative number is
+/// the operator `-` applied to its magnitude; a number that is not finite
+/// is the string `Infinity`, `-Infinity` or `NaN`; and a list whose first
+/// element is an object whose `src` member is a default operator's source
+/// text has that text in its place, the object's other members not kept.
 fn expr_reading(d: &Datum) -> Datum {
+    expr_read(d, &|src| EXPR_OPERATORS.contains(&src))
+}
+
+/// What expr's reader makes of a value, where it differs from what its
+/// render declares: [`expr_reading`], but a list led by an object whose
+/// `src` member is any text that is not empty has that text in its place.
+/// aless reads an expression as its S-expressions, and
+/// `tabnas_expr::simplify` takes any such object for an operator's
+/// description; the render writes the object whole where its text is no
+/// default operator's, and declares the loss for the default operators
+/// alone. So a C syntax tree, whose lists are led by tokens, each an object
+/// with its `src`, reads back with each leading token's text in its place,
+/// its name and span lost: a pair that reads back so fails with
+/// [`EXPR_SRC_LOSS`], which [`KNOWN_DEFECTS`] pins until tabnas/expr fixes
+/// it.
+fn expr_simplified(d: &Datum) -> Datum {
+    expr_read(d, &|src| !src.is_empty())
+}
+
+/// The failure of a pair that reads back as [`expr_simplified`] says and
+/// not as [`expr_reading`] does.
+const EXPR_SRC_LOSS: &str =
+    "a list led by an object with a src member read back with that text in the object's place";
+
+/// [`expr_reading`] and [`expr_simplified`]: a list led by an object whose
+/// `src` member is a text `leads` takes has that text in its place.
+fn expr_read(d: &Datum, leads: &dyn Fn(&str) -> bool) -> Datum {
     match d {
         Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
         Datum::Number { value, .. } if value.is_infinite() => Datum::String(
@@ -991,10 +1012,10 @@ fn expr_reading(d: &Datum) -> Datum {
             },
         ]),
         Datum::Array(items) => {
-            let mut items: Vec<Datum> = items.iter().map(expr_reading).collect();
+            let mut items: Vec<Datum> = items.iter().map(|d| expr_read(d, leads)).collect();
             let operator = match items.first() {
                 Some(Datum::Object(m)) => match m.get("src") {
-                    Some(Datum::String(src)) if !src.is_empty() => Some(src.clone()),
+                    Some(Datum::String(src)) if leads(src) => Some(src.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -1007,7 +1028,7 @@ fn expr_reading(d: &Datum) -> Datum {
         Datum::Object(members) => Datum::Object(
             members
                 .iter()
-                .map(|(k, v)| (k.clone(), expr_reading(v)))
+                .map(|(k, v)| (k.clone(), expr_read(v, leads)))
                 .collect(),
         ),
         d => d.clone(),
@@ -1393,21 +1414,9 @@ fn feed_reading(d: &Datum) -> Datum {
     Datum::Object(out.into_iter().collect())
 }
 
-/// How a grammar a notation's render wrote reads back: compiled by that
-/// notation's compiler, as aless reads a document of it.
-enum GrammarBack {
-    /// It compiles.
-    Read,
-    /// The notation's reader refused it as nested past its own limit: a
-    /// limit and not a shape, which the matrix pins how few reach. EBNF
-    /// has no bounded repetition, so its render writes ABNF's `*200"a"` as
-    /// two hundred nested options, past the 130 groups its reader nests,
-    /// where its loss list declares no such outcome (reported to
-    /// tabnas/ebnf).
-    PastReader(String),
-    /// Any other refusal, a failure.
-    Failed(String),
-}
+/// The failure of a grammar a notation's render wrote nested past what
+/// that notation's own reader takes.
+const PAST_READER: &str = "written past its notation's reader";
 
 /// A grammar written in a notation is held to compiling back with that
 /// notation's compiler, and the spec it compiles to to nothing more: each
@@ -1417,18 +1426,25 @@ enum GrammarBack {
 /// literal's case written as classes, the target's own group tag and
 /// lexing), while recognising what that one recognised, which no
 /// comparison of the two trees can tell.
-fn grammar_back(to: &str, written: &str) -> GrammarBack {
+///
+/// A grammar the notation's reader refuses as nested past its own limit
+/// fails like any other ([`PAST_READER`]): no render's loss list declares
+/// it. EBNF has no bounded repetition, so its render writes ABNF's
+/// `*200"a"` as two hundred nested options, past the 130 groups its reader
+/// nests, which [`KNOWN_DEFECTS`] pins until tabnas/ebnf's render refuses
+/// such a repetition.
+fn grammar_back(to: &str, written: &str) -> Result<(), String> {
     let result = export::export(
         &job(to, format(to), What::Render(Renderer::Json)),
         input(format(to), written),
         Box::new(Buffer::default()),
     );
     match result {
-        Ok(()) => GrammarBack::Read,
+        Ok(()) => Ok(()),
         Err(ExportError::Load { error, .. }) if error.code == "too_deep" => {
-            GrammarBack::PastReader(error.message.clone())
+            Err(format!("{PAST_READER}: {}", error.message))
         }
-        Err(e) => GrammarBack::Failed(format!("the written grammar does not read back: {e:?}")),
+        Err(e) => Err(format!("the written grammar does not read back: {e:?}")),
     }
 }
 
@@ -1490,7 +1506,15 @@ fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), Stri
         "jsonl" => map_non_finite(&wrap_array(source), &|_| Datum::Null),
         "toml" => without_nulls(&wrap_object(source, &key)),
         "zon" => zon_reading(source),
-        "expr" => expr_reading(source),
+        "expr" => {
+            let expected = expr_reading(source);
+            if !same(&expected, &back) && same(&expr_simplified(source), &back) {
+                return Err(format!(
+                    "{EXPR_SRC_LOSS}: read back as {back}, where {expected} was written"
+                ));
+            }
+            expected
+        }
         // Only a version reaches its render: the embed refuses any other
         // tree, and a version's own documents are versions.
         "semver" => semver_reading(source),
@@ -1526,28 +1550,60 @@ fn depth(d: &Datum) -> usize {
 /// matrix leaves it out, and pins how few such documents there are.
 const DEPTH_BOUND: usize = 100;
 
-/// Pairs whose render writes a document its own reader refuses, where the
-/// render's loss list declares no such outcome: a defect of the format's
-/// crate, reported to its repository, pinned by document and target (and
-/// the defect, in words) until a release fixes it. A pin whose document a
-/// run reads must still fail, so the list cannot outlive the defect. None
-/// is open: tabnas-proto 0.6.9 fixed the one this list was made for, an
-/// option's backtick literal holding a line break, which 0.6.8's render
-/// wrote as an aggregate its reader refused (proto/nesting.tsv:36).
-const KNOWN_DEFECTS: &[(&str, &str, &str)] = &[];
+/// A defect of a format's crate the matrix pins: the documents it holds
+/// for (`of`, one document by name, or a source format, each document of
+/// it), the target, the words its failure begins with (`shows`, so that a
+/// pin holds that failure and no other), and the defect, in words, naming
+/// the repository it is reported to.
+struct Known {
+    of: &'static str,
+    to: &'static str,
+    shows: &'static str,
+    defect: &'static str,
+}
+
+impl Known {
+    /// Whether this pin holds a document of `from` named `name`.
+    fn holds(&self, name: &str, from: &str) -> bool {
+        self.of == name || self.of == from
+    }
+}
+
+/// Pairs whose render writes a document its own reader refuses, or that
+/// reads back as other than the render's conventions say, where its loss
+/// list declares no such outcome: a defect of the format's crate, reported
+/// to its repository, pinned until a release fixes it. A pin whose
+/// documents a run reads must still fail, so the list cannot outlive the
+/// defect. (tabnas-proto 0.6.9 fixed the first pin, an option's backtick
+/// literal holding a line break, which 0.6.8's render wrote as an aggregate
+/// its reader refused: proto/nesting.tsv:36.)
+const KNOWN_DEFECTS: &[Known] = &[
+    Known {
+        of: "c",
+        to: "expr",
+        shows: EXPR_SRC_LOSS,
+        defect: "tabnas/expr: its reader (simplify) takes a list led by any object with a src \
+                 member for an operation and keeps only that text, and its render writes such \
+                 a list whole and declares the loss for the default operators alone, so a C \
+                 syntax tree, whose lists are led by tokens, reads back with each leading \
+                 token's text in its place, its name and span lost",
+    },
+    Known {
+        of: "abnf/alignment-abnf-ast.tsv:28",
+        to: "ebnf",
+        shows: PAST_READER,
+        defect: "tabnas/ebnf: EBNF has no bounded repetition, so its render writes *200\"a\" \
+                 as two hundred nested options, past the 130 groups its own reader nests; the \
+                 render is to refuse a counted repetition nested past that limit with \
+                 TARGET_VALUE_UNREPRESENTABLE (tabnas-ebnf 0.1.18)",
+    },
+];
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written by aless in every format, and read back
-/// under the target's conventions. At least `floor` documents, at most
-/// `too_deep_at_most` of them deeper than every format reads, and at most
-/// `past_reader_at_most` grammars a notation's render wrote past what that
-/// notation's own reader takes ([`GrammarBack::PastReader`]).
-fn matrix(
-    docs: Vec<(String, &'static str, String)>,
-    floor: usize,
-    too_deep_at_most: usize,
-    past_reader_at_most: usize,
-) {
+/// under the target's conventions. At least `floor` documents, and at most
+/// `too_deep_at_most` of them deeper than every format reads.
+fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_most: usize) {
     assert_eq!(
         translate::render_names(),
         FORMATS.to_vec(),
@@ -1564,20 +1620,17 @@ fn matrix(
     let mut schema_only: HashMap<&str, usize> = HashMap::new();
     let mut not_a_version = 0;
     let mut unwritable: HashMap<&str, usize> = HashMap::new();
-    // Grammars a notation's render wrote nested past what the notation's
-    // own reader takes ([`GrammarBack::PastReader`]).
-    let mut past_reader = Vec::new();
-    // The failures [`KNOWN_DEFECTS`] pins, by document and target.
-    let mut known: Vec<(String, &str, String)> = Vec::new();
+    // The failures each pin of [`KNOWN_DEFECTS`] holds, by its index: the
+    // document and the failure.
+    let mut known: Vec<(usize, String, String)> = Vec::new();
     let mut fail =
         |failures: &mut Vec<String>, name: &str, from: &str, to: &'static str, why: String| {
-            if KNOWN_DEFECTS
+            let pin = KNOWN_DEFECTS
                 .iter()
-                .any(|(doc, target, _)| *doc == name && *target == to)
-            {
-                known.push((name.to_string(), to, why));
-            } else {
-                failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                .position(|k| k.holds(name, from) && k.to == to && why.starts_with(k.shows));
+            match pin {
+                Some(pin) => known.push((pin, name.to_string(), why)),
+                None => failures.push(format!("{name} ({from}) -> {to}: {why}")),
             }
         };
     for (n, (name, from, text)) in docs.iter().enumerate() {
@@ -1623,14 +1676,7 @@ fn matrix(
                     .map(|_| ())
                     .map_err(|f| format!("the written document does not read back: {f}"))
             } else if NOTATIONS.contains(&to) {
-                match grammar_back(to, &written) {
-                    GrammarBack::Read => Ok(()),
-                    GrammarBack::PastReader(why) => {
-                        past_reader.push(format!("{name} ({from}) -> {to}: {why}"));
-                        Ok(())
-                    }
-                    GrammarBack::Failed(why) => Err(why),
-                }
+                grammar_back(to, &written)
             } else {
                 check(from, to, &source, &written)
             };
@@ -1654,18 +1700,22 @@ fn matrix(
     for line in &too_deep {
         eprintln!("deeper than every format reads: {line}");
     }
-    for line in &past_reader {
-        eprintln!("written past its notation's reader: {line}");
-    }
-    for (name, to, why) in &known {
-        let defect = KNOWN_DEFECTS
-            .iter()
-            .find(|(doc, target, _)| doc == name && target == to)
-            .map_or("", |(_, _, defect)| defect);
-        eprintln!(
-            "known defect: {name} -> {to}: {defect}: {}",
-            why.chars().take(300).collect::<String>()
-        );
+    // Each pin's failures, as a count and the first of them.
+    let mut pins_held = 0;
+    for (pin, k) in KNOWN_DEFECTS.iter().enumerate() {
+        let held: Vec<&(usize, String, String)> =
+            known.iter().filter(|(p, ..)| *p == pin).collect();
+        if let Some((_, name, why)) = held.first() {
+            pins_held += 1;
+            eprintln!(
+                "known defect: {} -> {}, {} documents, the first {name}: {}: {}",
+                k.of,
+                k.to,
+                held.len(),
+                k.defect,
+                why.chars().take(300).collect::<String>()
+            );
+        }
     }
     for line in &failures {
         eprintln!("FAIL {line}");
@@ -1681,14 +1731,13 @@ fn matrix(
         "matrix: {pairs} pairs of {} documents; {} written and read back, {declared} refused as \
          declared: by a schema-only target {refusals:?}, by semver as not a version \
          {not_a_version}, by a render as a tree it cannot write {unwritable:?}; {} \
-         documents refused by their own reader, {} too deep; {} grammars written past their \
-         notation's reader; {} known defects",
+         documents refused by their own reader, {} too deep; {} pairs held by {} known defects",
         docs.len(),
         pairs - declared - failures.len() - known.len(),
         refused_sources.len(),
         too_deep.len(),
-        past_reader.len(),
-        known.len()
+        known.len(),
+        pins_held
     );
     assert!(
         pairs + (refused_sources.len() + too_deep.len()) * FORMATS.len() == total
@@ -1702,20 +1751,18 @@ fn matrix(
         too_deep.len()
     );
     assert!(
-        past_reader.len() <= past_reader_at_most,
-        "{} grammars were written past their notation's reader (above)",
-        past_reader.len()
-    );
-    assert!(
         failures.is_empty(),
         "{} of {pairs} pairs failed (above)",
         failures.len()
     );
-    for (doc, to, _) in KNOWN_DEFECTS {
-        if docs.iter().any(|(name, _, _)| name == doc) {
+    for (pin, k) in KNOWN_DEFECTS.iter().enumerate() {
+        if docs.iter().any(|(name, from, _)| k.holds(name, from)) {
             assert!(
-                known.iter().any(|(name, target, _)| name == doc && target == to),
-                "{doc} -> {to} no longer fails: its defect is fixed, so take it out of KNOWN_DEFECTS"
+                known.iter().any(|(held, ..)| *held == pin),
+                "{} -> {} no longer fails as it did: its defect is fixed, so take it out of \
+                 KNOWN_DEFECTS",
+                k.of,
+                k.to
             );
         }
     }
@@ -1725,7 +1772,7 @@ fn matrix(
 /// documents of JSONTestSuite every JSON parser must accept.
 #[test]
 fn every_document_translates_into_every_format() {
-    matrix(corpus(), FLOOR, 0, 0);
+    matrix(corpus(), FLOOR, 0);
 }
 
 /// The documents [`corpus`] reads, at least.
@@ -1737,7 +1784,7 @@ const FLOOR: usize = 121;
 #[test]
 #[ignore = "the cross product of every format's fixtures: CI runs it in the matrix profile"]
 fn every_fixture_of_every_format_translates_into_every_format() {
-    matrix(spec_corpus(), 3975, 1, 1);
+    matrix(spec_corpus(), 3975, 1);
 }
 
 /// Ten times the records leave what the composed render retains where it
