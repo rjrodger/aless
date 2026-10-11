@@ -611,7 +611,7 @@ struct Alarm {
 impl Alarm {
     fn fire(&self) {
         self.program.abort();
-        if self.lines || self.parsed.load(Ordering::Relaxed) {
+        if self.lines || self.parsed.load(Ordering::SeqCst) {
             self.abort.abort();
         }
     }
@@ -664,14 +664,12 @@ fn run<S: Sink + Send + 'static>(
             // A grammar is compiled by its notation's compiler, as the
             // loader compiles it, and the spec it writes walked; the
             // compile cannot be stopped part way, so the deadline bounds
-            // the wait for it, and the alarm the walk.
+            // the wait for it, and the alarm, or the time read once the
+            // compile is done, the walk.
             Input::Text(text) if format.is_notation() => {
                 let text = load::parse_text(text, format);
-                match load::compile_notation_by(format, text, deadline) {
-                    Ok(value) => {
-                        parsed.store(true, Ordering::Relaxed);
-                        walk(&value, scope, &abort, None)
-                    }
+                match load::compile_notation_by(format, text, deadline.clone()) {
+                    Ok(value) => walk_compiled(&value, deadline.as_ref(), scope, &abort, &parsed),
                     Err(e) => Ran {
                         outcome: Outcome::Refused(Box::new(e)),
                         stop: None,
@@ -862,6 +860,33 @@ fn materialize<S: Sink>(
         }
     };
     walk(&value, scope, abort, Some(stop))
+}
+
+/// Walk the spec a grammar's compiler wrote into `scope`, unless the
+/// deadline passed while it compiled. An alarm that fired then found no
+/// walk to stop (`parsed` was not yet set, and a compile has no flag to
+/// read), so the time is read here, once `parsed` is set, as
+/// [`materialize`] reads it after a parse: a compile that ends past the
+/// deadline is too late, whatever it gave, and an alarm that fires after
+/// this raises the flag the walk reads.
+fn walk_compiled<S: Sink>(
+    value: &tabnas::Value,
+    deadline: Option<&Deadline>,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    parsed: &AtomicBool,
+) -> Ran {
+    parsed.store(true, Ordering::SeqCst);
+    if deadline.is_some_and(Deadline::is_past) {
+        abort.abort();
+        return Ran {
+            outcome: Outcome::Failed(Fail::aborted()),
+            stop: None,
+            verdict: None,
+            from_sink: false,
+        };
+    }
+    walk(value, scope, abort, None)
 }
 
 /// Walk a value into `scope`: the transducer's `Materialize` mode once the
@@ -2374,6 +2399,34 @@ mod tests {
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
         assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
         assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
+    }
+
+    /// A grammar whose compile ends past the deadline is too late, whatever
+    /// it gave: its spec is not walked, though the alarm, which fired while
+    /// it compiled, found no walk to stop; in time, it is walked whole.
+    #[test]
+    fn a_grammar_compiled_past_the_deadline_is_not_walked() {
+        let value = load::compile_notation(Format::Gbnf, "root ::= \"a\"\n").unwrap();
+        let parsed = AtomicBool::new(false);
+        let scope = || Scope::new(Vec::new(), Vec::<OwnedJsonEvent>::new());
+        let abort = AbortFlag::new();
+        let past = Deadline::after(Some(Duration::ZERO));
+        let ran = walk_compiled(&value, past.as_ref(), scope(), &abort, &parsed);
+        assert!(
+            matches!(&ran.outcome, Outcome::Failed(f) if f.code == Code::Aborted),
+            "{:?}",
+            ran.outcome
+        );
+        assert!(abort.is_aborted());
+        assert!(
+            parsed.load(Ordering::SeqCst),
+            "an alarm after this stops the walk"
+        );
+        let abort = AbortFlag::new();
+        let ahead = Deadline::after(Some(Duration::from_secs(600)));
+        let ran = walk_compiled(&value, ahead.as_ref(), scope(), &abort, &parsed);
+        assert!(matches!(ran.outcome, Outcome::Done), "{:?}", ran.outcome);
+        assert!(!abort.is_aborted());
     }
 
     /// A document is exported as the loader reads it: a .proto file as

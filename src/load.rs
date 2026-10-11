@@ -731,6 +731,14 @@ impl Deadline {
             None => Instant::now() >= self.at,
         }
     }
+
+    /// [`Deadline::passed`], or the clock past the deadline whether or
+    /// not the alarm has been seen yet: for work that hands over to a
+    /// stage the alarm stops by another flag, and has to know the time at
+    /// the handover itself.
+    pub(crate) fn is_past(&self) -> bool {
+        self.passed() || Instant::now() >= self.at
+    }
 }
 
 /// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
