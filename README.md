@@ -1325,7 +1325,7 @@ down:
   a long chain of rules led by one another copies. Past `--timeout`
   aless stops waiting for the compile and reports the `timeout`, and
   while that compile runs on it starts no other grammar's, which reports
-  the same `timeout` at once.
+  the same `timeout` at once, nor any once the time is up.
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file

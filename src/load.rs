@@ -989,6 +989,21 @@ impl LoadError {
         LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
+    /// A grammar not compiled, since the time was up before its compile
+    /// started ([`compile_notation_by`]): a compiler cannot be interrupted,
+    /// so one started then would be left to itself at once.
+    pub(crate) fn compile_unstarted(limit: Duration) -> LoadError {
+        let message = format!(
+            "timeout: the grammar was not compiled within {} s: the time was up before its \
+             compile started",
+            seconds(limit)
+        );
+        let hint = "The time was up before the grammar reached its compiler, which cannot be \
+                    interrupted, so aless did not start it.\nPass a larger --timeout, or \
+                    --timeout 0 for no limit.";
+        LoadError::tagged("timeout", message).with_hint(hint)
+    }
+
     /// A grammar whose compile ended past the time limit on the caller's
     /// thread, the one place it can run when no thread of its own can be
     /// started: it cannot be stopped there, so it ran to its end, and the
@@ -1774,7 +1789,10 @@ enum Compile {
 /// the text, what it builds) is held until it ends, so while one runs no
 /// other compile with a deadline starts: it is the same `timeout` at once
 /// ([`LoadError::compile_behind`]), and a `--check` of many slow grammars
-/// leaves one compile behind it, not one each. When no thread can be had
+/// leaves one compile behind it, not one each. Nor does one start once the
+/// deadline has passed: the time is read immediately before the thread is
+/// asked for, and a compile it finds too late is not started at all
+/// ([`LoadError::compile_unstarted`]). When no thread can be had
 /// the grammar is not compiled at all (a `grammar` error), since a compile
 /// on this thread could not be held to the deadline.
 pub(crate) fn compile_notation_by(
@@ -1795,6 +1813,11 @@ pub(crate) fn compile_notation_by(
     let theirs = state.clone();
     let (send, compiled) = mpsc::channel();
     let text = src.to_string();
+    // A compile started past the deadline would be abandoned as soon as it
+    // started, holding its thread and what it builds until it ends.
+    if deadline.is_past() {
+        return Err(LoadError::compile_unstarted(deadline.limit));
+    }
     let spawned = std::thread::Builder::new()
         .name("aless-notation".into())
         .stack_size(PARSE_STACK)
@@ -3982,6 +4005,8 @@ mod tests {
     /// left to itself runs, no other with a deadline starts: it is the same
     /// timeout at once, so a run of many slow grammars leaves one compile
     /// behind, not one each; once that compile ends, compiles start again.
+    /// Nor does one start once the deadline has passed: it is refused at
+    /// once, and nothing is left behind.
     #[test]
     fn a_grammars_compile_is_waited_for_within_the_deadline() {
         let rules: String = (0..2_000)
@@ -4016,6 +4041,20 @@ mod tests {
             assert!(Instant::now() < until, "the compile left behind ends");
             std::thread::sleep(Duration::from_millis(20));
         }
+        assert!(parse_within(small, Format::Abnf, ample).is_ok());
+        let past = Deadline::after(Some(Duration::ZERO));
+        let e = compile_notation_by(Format::Abnf, &rules, past).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar was not compiled within 0 s: the time was up before its \
+             compile started"
+        );
+        assert_eq!(
+            ABANDONED_COMPILES.load(Ordering::SeqCst),
+            0,
+            "no compile was started to be left behind"
+        );
         assert!(parse_within(small, Format::Abnf, ample).is_ok());
     }
 

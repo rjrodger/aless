@@ -447,7 +447,8 @@ For those, pipe `--json` into jq.
   stopped part way: past
   `--timeout` aless stops waiting for it (`timeout`, exit 6), and a later
   grammar in the same run is the same `timeout` at once while that
-  compile still runs. A `--grammar`
+  compile still runs, as is one whose time is up before its compile
+  starts. A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.
