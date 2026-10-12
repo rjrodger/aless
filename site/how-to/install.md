@@ -1,6 +1,7 @@
 ---
 title: Install aless
 description: Install aless on Linux, macOS or Windows, from a release, with Homebrew or with Cargo, and check what you downloaded.
+group: Setting up
 order: 1
 ---
 aless is one binary with nothing else to install beside it. Every release is on [GitHub Releases](https://github.com/rjrodger/aless/releases), built for Linux, macOS and Windows, each on x86_64 and on aarch64.
@@ -67,4 +68,4 @@ $ aless --version
 aless {{version}}
 ```
 
-The [tutorials](/tutorials/index.html) start from here.
+[Run aless on Linux, macOS and Windows](/how-to/platforms.html) says what each platform needs from the terminal, and the [tutorials](/tutorials/index.html) start from here.

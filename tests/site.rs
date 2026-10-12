@@ -4,18 +4,21 @@
 //! under `site/`, one directory for each of Diátaxis's four kinds:
 //! `tutorials/`, `how-to/`, `reference/` and `explanation/`. They are
 //! rendered by tabnas-markdown, the parser aless reads Markdown with, into
-//! `site/layout.html`. The reference's pages are written from the binary's
-//! own tables rather than by hand: the command line from the topics
-//! `--help` prints (`aless::cli::reference_html`) and the keys from the
-//! help F1 shows (`aless::app::help_lines`), so the site cannot disagree
-//! with either.
+//! `site/layout.html`, which is drawn as tabnas.dev is drawn: the same
+//! tokens, the same faces (self-hosted under `site/fonts/`), a header, a
+//! sidebar, the page's own contents beside it, and a footer. The
+//! reference's pages are written from the binary's own tables rather than
+//! by hand: the command line from the topics `--help` prints
+//! (`aless::cli::reference_html`), the keys from the help F1 shows
+//! (`aless::app::help_lines`), and the releases from `CHANGELOG.md`, so
+//! the site cannot disagree with any of them.
 //!
 //! `cargo test --test site` builds the site in memory and checks it: its
 //! links and anchors, the options each example names, the console
 //! examples' output (on Unix, by running them against the files in
-//! `examples/`), and the house style's rules for prose. With
-//! `ALESS_SITE_OUT=DIR` it also writes the site into DIR, which is what
-//! `.github/workflows/pages.yml` publishes.
+//! `examples/`), and the house style's rules for prose, on every page and
+//! on the README. With `ALESS_SITE_OUT=DIR` it also writes the site into
+//! DIR, which is what `.github/workflows/pages.yml` publishes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -34,29 +37,63 @@ struct Section {
     label: &'static str,
     /// A page's kind, as the page heads itself.
     kind: &'static str,
+    /// The groups the section lists its pages under, in order; none for
+    /// a section listed flat. A page of a grouped section names its group
+    /// in its front matter.
+    groups: &'static [Group],
 }
 
-/// The sections, in the order the navigation lists them.
+/// A heading in a section's list: the pages under it share a situation.
+struct Group {
+    name: &'static str,
+    /// One sentence under the heading, on the list page and in llms.txt.
+    blurb: &'static str,
+}
+
+/// The sections, in the order the navigation lists them. The how-to
+/// guides are grouped by the two faces of aless, the viewer and the
+/// command line, with the guides to setting it up first.
 const SECTIONS: [Section; 4] = [
     Section {
         dir: "tutorials",
         label: "Tutorials",
         kind: "Tutorial",
+        groups: &[],
     },
     Section {
         dir: "how-to",
         label: "How-to guides",
         kind: "How-to guide",
+        groups: &[
+            Group {
+                name: "Setting up",
+                blurb: "aless on your machine, with its completions and its manual page, on \
+                        Linux, macOS or Windows.",
+            },
+            Group {
+                name: "In the viewer",
+                blurb: "A file open in a terminal: searching it, following it as it changes, \
+                        copying from it, several files at once, and a conversion beside it.",
+            },
+            Group {
+                name: "From the command line",
+                blurb: "The same files from a shell script, a CI job or an agent: a value \
+                        out, a format in or out, a program over the document, and a check \
+                        that files parse.",
+            },
+        ],
     },
     Section {
         dir: "reference",
         label: "Reference",
         kind: "Reference",
+        groups: &[],
     },
     Section {
         dir: "explanation",
         label: "Explanation",
         kind: "Explanation",
+        groups: &[],
     },
 ];
 
@@ -84,6 +121,10 @@ struct Page {
     order: i64,
     /// Its section; `None` for the home page and the 404 page.
     section: Option<usize>,
+    /// Its group in its section's list, an index into the section's
+    /// `groups`; `None` in a section listed flat, and for a page in no
+    /// list.
+    group: Option<usize>,
     /// The Markdown it was written in, without its front matter; `None`
     /// for a page written from the binary.
     markdown: Option<String>,
@@ -92,8 +133,17 @@ struct Page {
     text: Option<String>,
     /// The file it comes from, for the footer's link to it.
     origin: String,
-    /// The page's content as HTML.
+    /// The page's content as HTML, every heading given an id.
     body: String,
+    /// The page's own h2 and h3 headings, for the list of its contents.
+    headings: Vec<Heading>,
+}
+
+/// A heading of a page: its level, its id, and its text without markup.
+struct Heading {
+    level: u8,
+    id: String,
+    text: String,
 }
 
 impl Page {
@@ -129,7 +179,13 @@ fn site() -> &'static Site {
 fn build() -> Site {
     let mut pages = markdown_pages();
     pages.extend(reference_pages());
+    pages.push(releases_page());
     list_sections(&mut pages);
+    for page in &mut pages {
+        let (body, headings) = anchor_headings(&page.body);
+        page.body = body;
+        page.headings = headings;
+    }
     let layout = read(&sources().join("layout.html"));
     let mut files = BTreeMap::new();
     for page in &pages {
@@ -148,9 +204,16 @@ fn build() -> Site {
             );
         }
     }
-    for name in ["style.css", "favicon.svg", "CNAME"] {
+    for name in ["style.css", "favicon.svg", "mark.svg", "CNAME"] {
         let bytes = std::fs::read(sources().join(name)).unwrap();
         files.insert(name.to_string(), bytes);
+    }
+    // The faces, served from the site itself: a page requests nothing
+    // anywhere else.
+    for entry in std::fs::read_dir(sources().join("fonts")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        files.insert(format!("fonts/{name}"), std::fs::read(&path).unwrap());
     }
     // The files the pages' examples read, for a reader to download.
     let mut downloads: Vec<PathBuf> = std::fs::read_dir(root().join("examples"))
@@ -215,16 +278,53 @@ fn markdown_pages() -> Vec<Page> {
                 ),
                 (false, None) => 0,
             };
+            // `group` places a listed page under one of its section's
+            // groups, which a grouped section requires and a flat one
+            // refuses.
+            let group = match (listed, meta.get("group")) {
+                (true, Some(name)) => {
+                    let section = &SECTIONS[section.unwrap()];
+                    Some(
+                        section
+                            .groups
+                            .iter()
+                            .position(|g| g.name == name)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{origin}: group {name:?} is not a group of {}",
+                                    section.label
+                                )
+                            }),
+                    )
+                }
+                (true, None) => {
+                    let section = &SECTIONS[section.unwrap()];
+                    assert!(
+                        section.groups.is_empty(),
+                        "{origin}: no group in its front matter, and {} lists its pages by \
+                         group",
+                        section.label
+                    );
+                    None
+                }
+                (false, Some(_)) => panic!(
+                    "{origin}: group places a page under a heading of its section's list, \
+                     and this page is in no list"
+                ),
+                (false, None) => None,
+            };
             pages.push(Page {
                 path,
                 title: field("title"),
                 description: field("description"),
                 order,
                 section,
+                group,
                 body: markdown_html(&markdown),
                 markdown: Some(markdown),
                 text: None,
                 origin,
+                headings: Vec::new(),
             });
         }
     }
@@ -257,7 +357,7 @@ fn front_matter(text: &str, origin: &str) -> (BTreeMap<String, String>, String) 
             .split_once(':')
             .unwrap_or_else(|| panic!("{origin}: {line:?} is not key: value"));
         assert!(
-            ["title", "description", "order"].contains(&key),
+            ["title", "description", "order", "group"].contains(&key),
             "{origin}: unknown front matter key {key}"
         );
         meta.insert(key.to_string(), value.trim().to_string());
@@ -276,10 +376,12 @@ fn markdown_html(markdown: &str) -> String {
 
 /// Each `screen` block, a capture of the viewer, marked for the
 /// stylesheet, with its status bar marked within it: the row that ends in
-/// ` · LINE:COL`, which the viewer draws in reverse video.
+/// ` · LINE:COL`, or in ` · watching` where the focused node has no
+/// position (a directory, a file that does not parse), which the viewer
+/// draws in reverse video.
 fn screens(html: &str) -> String {
     let block = Regex::new(r#"(?s)<pre><code class="language-screen">(.*?)</code></pre>"#).unwrap();
-    let status = Regex::new(r"^(?: \S|…).* · \d+:\d+$").unwrap();
+    let status = Regex::new(r"^(?: \S|…).* · (?:\d+:\d+|watching)$").unwrap();
     block
         .replace_all(html, |c: &regex::Captures| {
             let rows: Vec<String> = c[1]
@@ -303,7 +405,7 @@ fn fill(text: &str) -> String {
         .replace("{{tagline}}", aless::cli::TAGLINE)
 }
 
-/// The reference's pages, written from the binary's own tables.
+/// The reference's pages written from the binary's own tables.
 fn reference_pages() -> Vec<Page> {
     let command_line = format!(
         "<p>The reference <code>aless --help</code> prints, for aless {VERSION}. \
@@ -322,10 +424,12 @@ fn reference_pages() -> Vec<Page> {
                 .into(),
             order: 1,
             section: Some(REFERENCE),
+            group: None,
             markdown: None,
             text: Some(aless::cli::reference()),
             origin: "src/cli.rs".into(),
             body: command_line,
+            headings: Vec::new(),
         },
         Page {
             path: "reference/keys.html".into(),
@@ -335,12 +439,46 @@ fn reference_pages() -> Vec<Page> {
                 .into(),
             order: 2,
             section: Some(REFERENCE),
+            group: None,
             markdown: None,
             text: Some(aless::app::help_lines().join("\n") + "\n"),
             origin: "src/app.rs".into(),
             body: keys_html(),
+            headings: Vec::new(),
         },
     ]
+}
+
+/// The releases, written from `CHANGELOG.md`: every release and what
+/// changed in it, from the first release heading on. The file's own
+/// introduction, which describes the repository, stays in the repository.
+fn releases_page() -> Page {
+    let changelog = read(&root().join("CHANGELOG.md")).replace("\r\n", "\n");
+    let start = changelog
+        .find("\n## ")
+        .expect("CHANGELOG.md has no release heading");
+    let markdown = format!(
+        "The releases of aless, newest first, each with what it added, changed and \
+         fixed. Every release is on [GitHub](https://github.com/rjrodger/aless/releases), \
+         with its archives and installers; [Install aless](/how-to/install.html) says how \
+         to get the newest.\n\n{}",
+        &changelog[start + 1..]
+    );
+    Page {
+        path: "reference/releases.html".into(),
+        title: "Releases".into(),
+        description: "Every release of aless and what changed in it, newest first, from \
+            the repository's changelog."
+            .into(),
+        order: 3,
+        section: Some(REFERENCE),
+        group: None,
+        body: markdown_html(&markdown),
+        markdown: Some(markdown),
+        text: None,
+        origin: "CHANGELOG.md".into(),
+        headings: Vec::new(),
+    }
 }
 
 /// The help F1 shows, a section for each of its headings.
@@ -408,31 +546,11 @@ fn sentence_case(text: &str) -> String {
     }
 }
 
-/// Each section's index page, with the list of its pages appended.
+/// Each section's index page, with the list of its pages appended: one
+/// row a page, under the section's group headings where it has them.
 fn list_sections(pages: &mut [Page]) {
-    for (i, _) in SECTIONS.iter().enumerate() {
-        let mut members: Vec<(i64, String, String, String)> = pages
-            .iter()
-            .filter(|p| p.section == Some(i) && !p.is_index())
-            .map(|p| {
-                (
-                    p.order,
-                    p.title.clone(),
-                    p.path.clone(),
-                    p.description.clone(),
-                )
-            })
-            .collect();
-        members.sort();
-        let mut list = String::from("<dl class=\"pages\">\n");
-        for (_, title, path, description) in &members {
-            list.push_str(&format!(
-                "<dt><a href=\"/{path}\">{}</a></dt>\n<dd>{}</dd>\n",
-                escape(title),
-                escape(description)
-            ));
-        }
-        list.push_str("</dl>\n");
+    for i in 0..SECTIONS.len() {
+        let list = list_html(pages, i);
         let index = pages
             .iter_mut()
             .find(|p| p.section == Some(i) && p.is_index())
@@ -441,13 +559,50 @@ fn list_sections(pages: &mut [Page]) {
     }
 }
 
-/// The pages of a section, in their order.
+/// A section's pages as a list of rows, grouped where the section is.
+fn list_html(pages: &[Page], section: usize) -> String {
+    let groups = SECTIONS[section].groups;
+    let members = members(pages, section);
+    let mut out = String::new();
+    if groups.is_empty() {
+        out.push_str("<ul class=\"list\">\n");
+        for &page in &members {
+            out.push_str(&row(page));
+        }
+        out.push_str("</ul>\n");
+    }
+    for (g, group) in groups.iter().enumerate() {
+        out.push_str(&format!(
+            "<h2>{}</h2>\n<p class=\"group-blurb\">{}</p>\n<ul class=\"list\">\n",
+            escape(group.name),
+            escape(group.blurb)
+        ));
+        for &page in members.iter().filter(|p| p.group == Some(g)) {
+            out.push_str(&row(page));
+        }
+        out.push_str("</ul>\n");
+    }
+    out
+}
+
+/// A page's row in its section's list: its title and its description.
+fn row(page: &Page) -> String {
+    format!(
+        "<li><a class=\"row\" href=\"/{}\"><span class=\"row-title\">{}</span>\
+         <span class=\"row-desc\">{}</span></a></li>\n",
+        page.path,
+        escape(&page.title),
+        escape(&page.description)
+    )
+}
+
+/// The pages of a section, in their order: by group, then by `order`.
 fn members(pages: &[Page], section: usize) -> Vec<&Page> {
     let mut members: Vec<&Page> = pages
         .iter()
         .filter(|p| p.section == Some(section) && !p.is_index())
         .collect();
-    members.sort_by(|a, b| (a.order, &a.title).cmp(&(b.order, &b.title)));
+    members.sort_by(|a, b| (a.group, a.order, &a.title).cmp(&(b.group, b.order, &b.title)));
     members
 }
 
@@ -472,23 +627,42 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         None if home => String::new(),
         None => format!("<h1>{}</h1>\n", escape(&page.title)),
     };
-    let nav = match page.section {
-        Some(_) => nav(page, pages),
-        None => String::new(),
+    let (nav, toc, pager, describes) = match page.section {
+        Some(_) => (
+            nav(page, pages),
+            toc(page),
+            pager(page, pages),
+            format!(
+                "<p class=\"describes\">Describes aless {VERSION}. \
+                 <a href=\"/{}\">This page as Markdown</a>.</p>\n",
+                twin_path(page)
+            ),
+        ),
+        None => (String::new(), String::new(), String::new(), String::new()),
     };
     let head_title = if home {
         format!("aless: {}", page.title)
     } else {
         format!("{} · aless", page.title)
     };
+    let body_class = match page.section {
+        Some(s) => format!("doc section-{}", SECTIONS[s].dir),
+        None if home => "home".to_string(),
+        None => "plain".to_string(),
+    };
     let mut html = layout
         .replace("{{head_title}}", &escape(&head_title))
         .replace("{{description}}", &escape(&page.description))
         .replace("{{canonical}}", &url(&page.path))
-        .replace("{{body_class}}", if home { "home" } else { "doc" })
+        .replace("{{twin}}", &format!("/{}", twin_path(page)))
+        .replace("{{body_class}}", &body_class)
         .replace("{{page_head}}", &head)
         .replace("{{nav}}", &nav)
+        .replace("{{toc}}", &toc)
+        .replace("{{pager}}", &pager)
+        .replace("{{describes}}", &describes)
         .replace("{{version}}", VERSION)
+        .replace("{{tagline}}", &escape(aless::cli::TAGLINE))
         .replace(
             "{{source}}",
             &format!("{REPOSITORY}/blob/main/{}", page.origin),
@@ -498,39 +672,115 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         !html.replace("{{content}}", "").contains("{{"),
         "layout.html names a value the build does not fill"
     );
-    html = html.replace("{{content}}", &anchor_headings(&page.body));
+    html = html.replace("{{content}}", &page.body);
     relative(&html, &root)
 }
 
-/// The sidebar: every section and its pages, this page marked.
+/// The sidebar: every section and its pages, grouped as the section is,
+/// this page marked.
 fn nav(page: &Page, pages: &[Page]) -> String {
+    let current = |path: &str| {
+        if path == page.path {
+            " aria-current=\"page\""
+        } else {
+            ""
+        }
+    };
+    let link = |member: &Page| {
+        format!(
+            "<li><a class=\"side-link\" href=\"/{}\"{}>{}</a></li>\n",
+            member.path,
+            current(&member.path),
+            escape(&member.title)
+        )
+    };
     let mut out = String::from("<nav class=\"sidebar\" aria-label=\"Documentation\">\n");
     for (i, section) in SECTIONS.iter().enumerate() {
-        let current = |path: &str| {
-            if path == page.path {
-                " aria-current=\"page\""
-            } else {
-                ""
-            }
-        };
         let index = format!("{}/index.html", section.dir);
         out.push_str(&format!(
-            "<p class=\"nav-group\"><a href=\"/{index}\"{}>{}</a></p>\n<ul>\n",
+            "<div class=\"group\">\n<p class=\"group-head\"><a href=\"/{index}\"{}>{}</a></p>\n",
             current(&index),
             section.label
         ));
-        for member in members(pages, i) {
-            out.push_str(&format!(
-                "<li><a href=\"/{}\"{}>{}</a></li>\n",
-                member.path,
-                current(&member.path),
-                escape(&member.title)
-            ));
+        let members = members(pages, i);
+        if section.groups.is_empty() {
+            out.push_str("<ul>\n");
+            for &member in &members {
+                out.push_str(&link(member));
+            }
+            out.push_str("</ul>\n");
         }
-        out.push_str("</ul>\n");
+        for (g, group) in section.groups.iter().enumerate() {
+            out.push_str(&format!(
+                "<p class=\"subgroup\">{}</p>\n<ul>\n",
+                escape(group.name)
+            ));
+            for &member in members.iter().filter(|p| p.group == Some(g)) {
+                out.push_str(&link(member));
+            }
+            out.push_str("</ul>\n");
+        }
+        out.push_str("</div>\n");
     }
     out.push_str("</nav>\n");
     out
+}
+
+/// The page's own contents: its h2 and h3 headings, when it has two or
+/// more.
+fn toc(page: &Page) -> String {
+    if page.headings.len() < 2 {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<nav class=\"toc\" aria-label=\"On this page\">\n<p class=\"toc-head\">On this \
+         page</p>\n<ul>\n",
+    );
+    for heading in &page.headings {
+        out.push_str(&format!(
+            "<li{}><a href=\"#{}\">{}</a></li>\n",
+            if heading.level == 3 {
+                " class=\"sub\""
+            } else {
+                ""
+            },
+            heading.id,
+            heading.text
+        ));
+    }
+    out.push_str("</ul>\n</nav>\n");
+    out
+}
+
+/// The previous and the next page of the section: its index first, then
+/// its pages in their order.
+fn pager(page: &Page, pages: &[Page]) -> String {
+    let Some(section) = page.section else {
+        return String::new();
+    };
+    let index = pages
+        .iter()
+        .find(|p| p.section == Some(section) && p.is_index())
+        .unwrap();
+    let mut sequence = vec![index];
+    sequence.extend(members(pages, section));
+    let at = sequence.iter().position(|p| p.path == page.path).unwrap();
+    let link = |p: &Page, class: &str, label: &str| {
+        format!(
+            "<a class=\"pg {class}\" href=\"/{}\"><span>{label}</span>{}</a>",
+            p.path,
+            escape(&p.title)
+        )
+    };
+    let prev = match at {
+        0 => "<span></span>".to_string(),
+        at => link(sequence[at - 1], "prev", "← Previous"),
+    };
+    let next = match sequence.get(at + 1) {
+        Some(p) => link(p, "next", "Next →"),
+        None => "<span></span>".to_string(),
+    };
+    format!("<nav class=\"pager\" aria-label=\"Previous and next\">\n{prev}\n{next}\n</nav>\n")
 }
 
 /// Links from the site's root (`/how-to/convert.html`) made relative to a
@@ -554,13 +804,16 @@ fn relative(html: &str, root: &str) -> String {
     .into_owned()
 }
 
-/// Every `<h2>` to `<h4>` given an `id` and a link to itself.
-fn anchor_headings(html: &str) -> String {
+/// Every `<h2>` to `<h4>` given an `id` and a link to itself, and the
+/// h2 and h3 headings listed, for the page's contents.
+fn anchor_headings(html: &str) -> (String, Vec<Heading>) {
     let heading = Regex::new(r#"<h([2-4])(?: id="([^"]*)")?>(.*?)</h[2-4]>"#).unwrap();
+    let tags = Regex::new(r"<[^>]*>").unwrap();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    heading
+    let mut headings = Vec::new();
+    let body = heading
         .replace_all(html, |c: &regex::Captures| {
-            let level = &c[1];
+            let level: u8 = c[1].parse().unwrap();
             let text = &c[3];
             let mut id = c
                 .get(2)
@@ -572,12 +825,20 @@ fn anchor_headings(html: &str) -> String {
                 id = format!("{base}-{n}");
                 n += 1;
             }
+            if level < 4 {
+                headings.push(Heading {
+                    level,
+                    id: id.clone(),
+                    text: tags.replace_all(text, "").into_owned(),
+                });
+            }
             format!(
-                "<h{level} id=\"{id}\">{text} <a class=\"anchor\" href=\"#{id}\" \
+                "<h{level} id=\"{id}\">{text} <a class=\"heading-anchor\" href=\"#{id}\" \
                  aria-label=\"Link to this section\">#</a></h{level}>"
             )
         })
-        .into_owned()
+        .into_owned();
+    (body, headings)
 }
 
 /// A heading's `id`: its words, lower case, joined by `-`.
@@ -616,6 +877,11 @@ fn url(path: &str) -> String {
     format!("{HOMEPAGE}/{path}")
 }
 
+/// Where a page's Markdown twin is published: its path with `.md`.
+fn twin_path(page: &Page) -> String {
+    page.path.replace(".html", ".md")
+}
+
 /// A page as Markdown, for a reader that prefers it, at its address with
 /// `.md` for `.html`: its own Markdown under its title, with the site's
 /// links made absolute, or for a page written from the binary, its text as
@@ -639,14 +905,35 @@ fn twin(page: &Page, pages: &[Page]) -> String {
     };
     let mut out = format!("# {}\n\n{}\n\n{body}", page.title, page.description);
     if let Some(section) = page.section.filter(|_| page.is_index()) {
+        out.push_str(&listing(pages, section, "## "));
+    }
+    out
+}
+
+/// A section's pages as a Markdown list, under its group headings where
+/// it has them, at the heading level `heading` gives.
+fn listing(pages: &[Page], section: usize, heading: &str) -> String {
+    let groups = SECTIONS[section].groups;
+    let members = members(pages, section);
+    let line = |page: &Page| {
+        format!(
+            "- [{}]({}): {}\n",
+            page.title,
+            url(&page.path),
+            page.description
+        )
+    };
+    let mut out = String::new();
+    if groups.is_empty() {
         out.push('\n');
-        for member in members(pages, section) {
-            out.push_str(&format!(
-                "- [{}]({}): {}\n",
-                member.title,
-                url(&member.path),
-                member.description
-            ));
+        for &page in &members {
+            out.push_str(&line(page));
+        }
+    }
+    for (g, group) in groups.iter().enumerate() {
+        out.push_str(&format!("\n{heading}{}\n\n{}\n\n", group.name, group.blurb));
+        for &page in members.iter().filter(|p| p.group == Some(g)) {
+            out.push_str(&line(page));
         }
     }
     out
@@ -661,13 +948,28 @@ fn llms(pages: &[Page]) -> String {
         aless::cli::TAGLINE
     );
     for (i, section) in SECTIONS.iter().enumerate() {
-        out.push_str(&format!("\n## {}\n\n", section.label));
-        for page in members(pages, i) {
-            let address = url(&page.path.replace(".html", ".md"));
-            out.push_str(&format!(
-                "- [{}]({address}): {}\n",
-                page.title, page.description
-            ));
+        out.push_str(&format!("\n## {}\n", section.label));
+        let groups = SECTIONS[i].groups;
+        let line = |page: &Page| {
+            format!(
+                "- [{}]({}): {}\n",
+                page.title,
+                url(&twin_path(page)),
+                page.description
+            )
+        };
+        let members = members(pages, i);
+        if groups.is_empty() {
+            out.push('\n');
+            for &page in &members {
+                out.push_str(&line(page));
+            }
+        }
+        for (g, group) in groups.iter().enumerate() {
+            out.push_str(&format!("\n### {}\n\n{}\n\n", group.name, group.blurb));
+            for &page in members.iter().filter(|p| p.group == Some(g)) {
+                out.push_str(&line(page));
+            }
         }
     }
     out.push_str(&format!(
@@ -782,7 +1084,7 @@ fn the_site_builds_and_its_links_hold() {
                 ));
             }
         }
-        let twin = page.path.replace(".html", ".md");
+        let twin = twin_path(page);
         assert!(site.files.contains_key(&twin), "{}: no {twin}", page.path);
         if page.markdown.is_some() && page.path != "index.html" {
             assert!(
@@ -835,8 +1137,9 @@ fn resolve(dir: &str, path: &str) -> String {
     parts.join("/")
 }
 
-/// The reference's pages hold every option and every line of the help F1
-/// shows: they are written from the binary, not by hand.
+/// The reference's pages hold every option, every line of the help F1
+/// shows, and every release the changelog records: they are written from
+/// the binary and the repository, not by hand.
 #[test]
 fn the_reference_is_the_binarys() {
     let site = site();
@@ -859,6 +1162,23 @@ fn the_reference_is_the_binarys() {
             "the keys page leaves out {line:?}"
         );
     }
+    let releases = page("reference/releases.html");
+    let release = Regex::new(r"(?m)^## \[(\d+\.\d+\.\d+)\]").unwrap();
+    let changelog = read(&root().join("CHANGELOG.md"));
+    let mut found = 0;
+    for c in release.captures_iter(&changelog) {
+        assert!(
+            releases.contains(&c[1]),
+            "the releases page leaves out {}",
+            &c[1]
+        );
+        found += 1;
+    }
+    assert!(found > 0, "CHANGELOG.md records no release");
+    assert!(
+        releases.contains(VERSION),
+        "CHANGELOG.md has no section for {VERSION}, this build's version"
+    );
 }
 
 /// Every command line on the pages names options aless takes.
@@ -996,13 +1316,70 @@ fn the_console_examples_print_what_the_pages_say() {
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n\n"));
 }
 
-/// The house style's rules for prose, on every page written by hand: no
-/// phrase `site/reject.txt` bans, no em dash, no emoji; `we` in tutorials
-/// alone, `I` nowhere; and an exclamation mark in a tutorial, once at most.
-/// Code, quoted output, link targets and markup are not prose.
-/// `site/reject.txt` is a copy of the tabnas house style's list, which
-/// tabnas/parser keeps for Vale in
-/// `.vale/styles/config/vocabularies/Tabnas/reject.txt`.
+/// The faults in a document's prose against the house style: a phrase
+/// `site/reject.txt` bans, an em dash, an emoji, "I" anywhere, "we"
+/// outside a tutorial, and an exclamation mark outside a tutorial or more
+/// than one in one. Code, quoted output, link targets and markup are not
+/// prose.
+fn style_faults(
+    origin: &str,
+    markdown: &str,
+    tutorial: bool,
+    patterns: &[(Regex, String)],
+) -> Vec<String> {
+    let code = Regex::new(r"`[^`]*`").unwrap();
+    let markup = Regex::new(r"<[^>]*>|\]\([^)]*\)").unwrap();
+    let emoji = Regex::new(r"\p{Emoji_Presentation}").unwrap();
+    let i = Regex::new(r"\bI\b").unwrap();
+    let we = Regex::new(r"(?i)\b(?:we|we['’](?:ll|re|ve|d))\b").unwrap();
+    let (_, prose) = fences(markdown);
+    let prose = markup
+        .replace_all(&code.replace_all(&prose, "code"), " ")
+        .to_string();
+    // A paragraph is matched whole, so a phrase split across lines is found.
+    let paragraphs: Vec<String> = prose
+        .split("\n\n")
+        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    let mut faults = Vec::new();
+    for paragraph in &paragraphs {
+        for (re, src) in patterns {
+            if let Some(m) = re.find(paragraph) {
+                faults.push(format!("{origin}: {:?} (banned: {src})", m.as_str()));
+            }
+        }
+        if paragraph.contains('—') {
+            faults.push(format!("{origin}: an em dash in {paragraph:?}"));
+        }
+        if let Some(m) = emoji.find(paragraph) {
+            faults.push(format!("{origin}: emoji {:?}", m.as_str()));
+        }
+        if i.is_match(paragraph) {
+            faults.push(format!("{origin}: \"I\" in {paragraph:?}"));
+        }
+        if !tutorial && we.is_match(paragraph) {
+            faults.push(format!(
+                "{origin}: \"we\" outside a tutorial: {paragraph:?}"
+            ));
+        }
+    }
+    let bangs = paragraphs
+        .iter()
+        .map(|p| p.matches('!').count())
+        .sum::<usize>();
+    if bangs > 1 || (bangs == 1 && !tutorial) {
+        faults.push(format!("{origin}: {bangs} exclamation marks"));
+    }
+    faults
+}
+
+/// The house style's rules for prose, on every page written by hand and
+/// on the README: no phrase `site/reject.txt` bans, no em dash, no emoji;
+/// `we` in tutorials alone, `I` nowhere; and an exclamation mark in a
+/// tutorial, once at most. The rules are the tabnas documentation style
+/// guide's, which AGENTS.md names, and `site/reject.txt` is a copy of the
+/// tabnas house style's banned list, which tabnas/parser keeps for Vale
+/// in `.vale/styles/config/vocabularies/Tabnas/reject.txt`.
 #[test]
 fn the_pages_keep_the_house_style() {
     let patterns: Vec<(Regex, String)> = read(&sources().join("reject.txt"))
@@ -1018,56 +1395,23 @@ fn the_pages_keep_the_house_style() {
         })
         .collect();
     assert!(patterns.len() > 50, "reject.txt loaded too few patterns");
-    let code = Regex::new(r"`[^`]*`").unwrap();
-    let markup = Regex::new(r"<[^>]*>|\]\([^)]*\)").unwrap();
-    let emoji = Regex::new(r"\p{Emoji_Presentation}").unwrap();
-    let i = Regex::new(r"\bI\b").unwrap();
-    let we = Regex::new(r"(?i)\b(?:we|we['’](?:ll|re|ve|d))\b").unwrap();
     let mut faults = Vec::new();
     for page in &site().pages {
         let Some(markdown) = &page.markdown else {
             continue;
         };
-        let (_, prose) = fences(markdown);
-        let prose = markup
-            .replace_all(&code.replace_all(&prose, "code"), " ")
-            .to_string();
-        // A paragraph is matched whole, so a phrase split across lines is found.
-        let paragraphs: Vec<String> = prose
-            .split("\n\n")
-            .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect();
-        let tutorial = page.section == Some(TUTORIALS);
-        let kind = page.section.is_some();
-        for paragraph in &paragraphs {
-            for (re, src) in &patterns {
-                if let Some(m) = re.find(paragraph) {
-                    faults.push(format!("{}: {:?} (banned: {src})", page.origin, m.as_str()));
-                }
-            }
-            if paragraph.contains('—') {
-                faults.push(format!("{}: an em dash in {paragraph:?}", page.origin));
-            }
-            if let Some(m) = emoji.find(paragraph) {
-                faults.push(format!("{}: emoji {:?}", page.origin, m.as_str()));
-            }
-            if i.is_match(paragraph) {
-                faults.push(format!("{}: \"I\" in {paragraph:?}", page.origin));
-            }
-            if kind && !tutorial && we.is_match(paragraph) {
-                faults.push(format!(
-                    "{}: \"we\" outside a tutorial: {paragraph:?}",
-                    page.origin
-                ));
-            }
-        }
-        let bangs = paragraphs
-            .iter()
-            .map(|p| p.matches('!').count())
-            .sum::<usize>();
-        if kind && (bangs > 1 || (bangs == 1 && !tutorial)) {
-            faults.push(format!("{}: {bangs} exclamation marks", page.origin));
-        }
+        faults.extend(style_faults(
+            &page.origin,
+            markdown,
+            page.section == Some(TUTORIALS),
+            &patterns,
+        ));
     }
+    faults.extend(style_faults(
+        "README.md",
+        &read(&root().join("README.md")),
+        false,
+        &patterns,
+    ));
     assert!(faults.is_empty(), "\n{}", faults.join("\n"));
 }

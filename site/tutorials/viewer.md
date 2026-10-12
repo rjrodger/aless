@@ -178,4 +178,4 @@ The new summary is there, and the focus is still on `listBooks`. aless found it 
 
 ## Next
 
-That is the viewer's daily work: move, fold, search, copy. [Keys](/reference/keys.html) lists every key, as `F1` shows them inside aless. The [next tutorial](/tutorials/scripting.html) asks the same file questions from the command line, without opening the viewer at all.
+That is the viewer's daily work: move, fold, search, copy. [Keys](/reference/keys.html) lists every key, as `F1` shows them inside aless, and the how-to guides go further on each of them: [Search a document](/how-to/search.html), [Choose how the viewer draws a document](/how-to/display.html), [Open several files in tabs](/how-to/tabs.html). The [next tutorial](/tutorials/scripting.html) asks the same file questions from the command line, without opening the viewer at all.

@@ -1,6 +1,6 @@
 ---
 title: Why the command line answers in JSON
-description: The design of aless's interface for scripts and agents, and why it never waits, prints one answer, and keeps its output shapes stable.
+description: The design of aless's interface for scripts and agents, and why it never waits, prints one answer, streams a conversion, and keeps its output shapes stable.
 order: 4
 ---
 aless has two interfaces to one tree. The viewer is for a person at a terminal. The command line is for a program: a shell script, a CI job, or an AI agent working in a terminal. A program cannot look at a screen, cannot press keys, and cannot ask what an ambiguous message meant, so the command line is designed around what a program can do, which is read a status and parse JSON.
@@ -10,6 +10,10 @@ aless has two interfaces to one tree. The viewer is for a person at a terminal. 
 Every run reads its input, prints one answer on standard output, and exits 0, or prints one error object on standard error and exits with a status that says what kind of failure it was. Nothing else is written to standard output, so a caller never has to separate the answer from chatter. The answer is JSON whatever the input format was, because JSON is what every language and tool can already read, and because the tree aless reads every format into is JSON's model.
 
 The error is JSON for the same reason. A message meant for people would need parsing by a program, and would change wording between releases. aless's errors carry their facts as fields instead: the kind, the file, the line and column, the parser's code and hint, and for a path that names nothing, the nearest node it did reach and that node's keys, which is what a caller needs to try again.
+
+## A conversion is the one answer that is not JSON
+
+`--render` writes the document, or the value at a path, in another format, and `--alchemy` what a program exports. That answer is the other format's text, and it is written a record at a time as the input is read, so a file of any size passes through in the memory of one record wherever its format allows. What the format cannot keep is not an error: each format declares a convention and a loss note, and the note goes to standard error as JSON, where a caller can read it or discard it, while standard output holds the document alone. A failure part-way leaves every whole record already written on standard output and says so in the error, with `"output": "partial"`, since a stream cannot take back what it wrote.
 
 ## Never waiting
 

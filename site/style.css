@@ -1,179 +1,569 @@
-/* The tabnas palette (deep monastery green, illuminated gold, warm
-   parchment), as tabnas.dev and the other tabnas pages use it. The site
-   makes no requests elsewhere, so the faces are their fallbacks rather
-   than webfonts. */
+/* aless.tabnas.dev, drawn as tabnas.dev is drawn: the same colour scales,
+   the same semantic tokens, the same three faces. The tokens are
+   tabnas/web's src/styles/tokens.css, carried over whole, so the two
+   sites read as one family; the fonts are self-hosted under fonts/, so a
+   page makes no request anywhere else. Light and dark follow the
+   reader's system, and the header's toggle overrides that by stamping
+   data-theme on <html>. */
+
+/* 1. The raw brand scales: the source of truth, used only by the
+      semantic tokens below, never by a rule. */
 :root {
-  color-scheme: light dark;
+  --green-950: #0b2d1a;
+  --green-900: #0e3320;
+  --green-800: #123c24;
+  --green-700: #14512e;
+  --green-600: #1e6b3e;
+  --green-500: #2c7045;
+  --green-400: #4f9268;
+  --green-300: #82b89b;
+  --green-200: #b9d7c6;
+  --green-100: #dcebe2;
+  --green-50: #eef5f0;
 
-  --green-950: #0b2d1a; --green-900: #0e3320; --green-800: #123c24;
-  --green-700: #14512e; --green-300: #82b89b; --green-200: #b9d7c6;
-  --gold-700: #9e7720;  --gold-500: #cb9e3e;  --gold-300: #e6cd8b;
-  --parch-50: #fdfbf3;  --parch-100: #faf6ea; --parch-200: #f7eed4;
+  --gold-900: #5c4715;
+  --gold-800: #7a5e1c;
+  --gold-700: #9e7720;
+  --gold-600: #b8912f;
+  --gold-500: #cb9e3e;
+  --gold-400: #d8b45f;
+  --gold-300: #e6cd8b;
+  --gold-200: #f0d585;
+  --gold-100: #f6e6b8;
+  --gold-50: #faf1d8;
 
+  --parch-50: #fdfbf3;
+  --parch-100: #faf6ea;
+  --parch-200: #f7eed4;
+  --parch-300: #ece0bf;
+  --parch-400: #e5d4aa;
+  --parch-500: #d3c39a;
+
+  --wood-700: #3f2812;
+  --wood-600: #553519;
+  --wood-500: #8a5a30;
+  --wood-400: #b07d3f;
+}
+
+/* 2. The semantic tokens, light. Gold is an accent for large text and
+      decoration alone: it does not meet 4.5:1 on parchment. */
+:root {
   --bg: var(--parch-100);
+  --gradient-stops: var(--parch-200), var(--parch-50);
   --surface: var(--parch-50);
+  --surface-2: var(--parch-200);
   --ink: var(--green-800);
   --ink-soft: #3a4a3f;
   --ink-mute: #6a7269;
-  --primary: var(--green-700);
-  --accent: var(--gold-700);
-  --rule: #ddd0af;
-  --code-bg: var(--parch-200);
 
+  --primary: var(--green-700);
+  --primary-hover: var(--green-900);
+  --on-primary: var(--parch-50);
+
+  --accent: var(--gold-700);
+  --accent-strong: var(--gold-500);
+
+  --border: #ddd0af;
+  --border-strong: var(--gold-500);
+  --ring: color-mix(in srgb, var(--green-700) 55%, transparent);
+
+  --code-bg: var(--parch-200);
+  --code-ink: var(--green-900);
+  --shadow: 0 1px 2px rgba(11, 45, 26, 0.06), 0 6px 20px rgba(11, 45, 26, 0.1);
+
+  /* A capture of the viewer is drawn as a terminal draws it, whatever
+     the theme: light on dark, the status bar in reverse video. */
+  --screen-bg: #071a0f;
+  --screen-ink: #f1e8cd;
+  --screen-border: var(--green-700);
+
+  --font-display: "Uncial Antiqua", "Kells Uncial", "Luminari", serif;
   --font-heading: "Cormorant Garamond", Georgia, serif;
   --font-body: Atkinson, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  color-scheme: light;
 }
 
+/* 2b. Dark, by the system's preference unless the toggle has chosen. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: var(--green-950);
-    --surface: var(--green-900);
+    --gradient-stops: var(--green-900), var(--green-950);
+    --surface: var(--green-800);
+    --surface-2: #0f3822;
     --ink: #f1e8cd;
     --ink-soft: #cdbf98;
     --ink-mute: #9aa79b;
     --primary: var(--green-300);
+    --primary-hover: var(--green-200);
+    --on-primary: var(--green-950);
     --accent: var(--gold-300);
-    --rule: #29452f;
-    --code-bg: var(--green-900);
+    --accent-strong: var(--gold-400);
+    --border: #29452f;
+    --border-strong: var(--gold-700);
+    --ring: color-mix(in srgb, var(--green-300) 55%, transparent);
+    --code-bg: #0f3822;
+    --code-ink: var(--gold-100);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 26px rgba(0, 0, 0, 0.45);
+    --screen-border: var(--green-600);
+    color-scheme: dark;
   }
 }
 
+/* 2c. Dark, chosen with the toggle. The same values as above: a theme
+      is one list, and the two blocks are the two ways of asking for it. */
+:root[data-theme="dark"] {
+  --bg: var(--green-950);
+  --gradient-stops: var(--green-900), var(--green-950);
+  --surface: var(--green-800);
+  --surface-2: #0f3822;
+  --ink: #f1e8cd;
+  --ink-soft: #cdbf98;
+  --ink-mute: #9aa79b;
+  --primary: var(--green-300);
+  --primary-hover: var(--green-200);
+  --on-primary: var(--green-950);
+  --accent: var(--gold-300);
+  --accent-strong: var(--gold-400);
+  --border: #29452f;
+  --border-strong: var(--gold-700);
+  --ring: color-mix(in srgb, var(--green-300) 55%, transparent);
+  --code-bg: #0f3822;
+  --code-ink: var(--gold-100);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 26px rgba(0, 0, 0, 0.45);
+  --screen-border: var(--green-600);
+  color-scheme: dark;
+}
+
+/* 3. The faces, served from fonts/ beside this file. Atkinson
+      Hyperlegible for the body, Cormorant Garamond (variable, 400 to 700,
+      roman and italic) for headings, Uncial Antiqua for the wordmark. */
+@font-face {
+  font-family: Atkinson;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/atkinson-regular.woff") format("woff");
+}
+@font-face {
+  font-family: Atkinson;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/atkinson-bold.woff") format("woff");
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/cormorant-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/cormorant-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/cormorant-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/cormorant-italic-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Uncial Antiqua";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/uncial-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Uncial Antiqua";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/uncial-400-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* 4. The page. */
 *, *::before, *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 5rem; }
 
 body {
   margin: 0;
   background: var(--bg);
+  background-image: linear-gradient(180deg, var(--gradient-stops));
+  background-repeat: no-repeat;
+  background-size: 100% 600px;
   color: var(--ink);
   font-family: var(--font-body);
   font-size: 1.0625rem;
-  line-height: 1.6;
+  line-height: 1.65;
+  overflow-wrap: break-word;
 }
 
 a { color: var(--primary); text-underline-offset: 0.15em; }
-a:hover { color: var(--accent); }
+a:hover { color: var(--primary-hover); }
+strong, b { font-weight: 700; }
+img { max-width: 100%; height: auto; }
 
 .skip { position: absolute; left: -999rem; }
 .skip:focus {
-  left: 1rem; top: 1rem; z-index: 10;
-  background: var(--surface); padding: 0.5rem 0.75rem;
+  left: 1rem; top: 1rem; z-index: 60;
+  background: var(--surface); color: var(--ink);
+  padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px;
 }
 
-.site-header { background: var(--surface); border-bottom: 1px solid var(--rule); }
+/* The wordmark, in the header, the footer and the home page. */
+.word {
+  font-family: var(--font-display);
+  color: var(--primary);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+/* 5. The header: sticky, translucent over the page, the sections as
+      links, the one for this page's section marked. */
+.site-header {
+  position: sticky; top: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px);
+  border-bottom: 1px solid var(--border);
+}
 .bar {
-  max-width: 74rem; margin: 0 auto; padding: 0.75rem 1rem;
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1.75rem;
+  max-width: 76rem; margin: 0 auto; padding: 0.55rem 1.25rem;
+  display: flex; align-items: center; gap: 1rem;
 }
 .brand {
-  font-family: var(--font-mono); font-weight: 700; font-size: 1.3rem;
-  color: var(--ink); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 0.6rem;
+  text-decoration: none; color: var(--ink);
 }
-.sections { display: flex; flex-wrap: wrap; gap: 0.25rem 1.1rem; font-size: 0.95rem; }
-.sections a { text-decoration: none; }
+.brand img { display: block; filter: drop-shadow(0 1px 2px rgba(11, 45, 26, 0.25)); }
+.brand .word { font-size: 1.7rem; }
+.nav {
+  margin-left: auto;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end;
+  gap: 0.35rem;
+}
+.nav-link {
+  font-size: 0.98rem; color: var(--ink-soft); text-decoration: none;
+  padding: 0.45rem 0.7rem; border-radius: 8px;
+  border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.nav-link:hover { color: var(--ink); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
+body.section-tutorials .nav-link[data-section="tutorials"],
+body.section-how-to .nav-link[data-section="how-to"],
+body.section-reference .nav-link[data-section="reference"],
+body.section-explanation .nav-link[data-section="explanation"] {
+  color: var(--primary); border-bottom-color: var(--accent-strong);
+}
+.actions { display: flex; align-items: center; gap: 0.25rem; margin-left: 0.4rem; }
+.icon-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 9px;
+  color: var(--ink-soft); background: none; border: none; cursor: pointer;
+  text-decoration: none; padding: 0;
+}
+.icon-link:hover { color: var(--primary); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
+.theme-toggle .i-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .i-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .i-moon { display: block; }
 
-.page {
-  max-width: 74rem; margin: 0 auto; padding: 1.75rem 1rem 3.5rem;
-  display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 3rem;
+.menu-btn {
+  display: none; margin-left: auto;
+  flex-direction: column; gap: 4px; width: 40px; height: 40px;
+  align-items: center; justify-content: center;
+  background: none; border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
 }
-body.home .page { display: block; max-width: 54rem; }
+.menu-btn span { display: block; width: 18px; height: 2px; background: var(--ink); border-radius: 2px; }
+
+/* 6. The shell of a documentation page: the sidebar, the page, and the
+      page's own headings. */
+.page {
+  max-width: 76rem; margin: 0 auto; padding: 2rem 1.25rem 1rem;
+  display: grid; grid-template-columns: 14rem minmax(0, 1fr) 12rem; gap: 2.5rem;
+  align-items: start;
+}
+body.home .page, body.plain .page { display: block; }
+body.home .page { max-width: 72rem; }
+body.plain .page { max-width: 48rem; }
 
 .sidebar {
-  font-size: 0.92rem; align-self: start;
-  position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto;
+  position: sticky; top: 4.5rem; max-height: calc(100vh - 5rem); overflow-y: auto;
+  font-size: 0.95rem;
 }
-.sidebar .nav-group { margin: 1.2rem 0 0.3rem; font-weight: 600; }
-.sidebar .nav-group:first-child { margin-top: 0; }
+.sidebar .group { margin-bottom: 1.25rem; }
+.sidebar .group-head {
+  font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink-mute); margin: 0 0 0.5rem;
+}
+.sidebar .group-head a { color: inherit; text-decoration: none; }
+.sidebar .group-head a:hover, .sidebar .group-head a[aria-current="page"] { color: var(--primary); }
+.sidebar .subgroup {
+  font-family: var(--font-heading); font-style: italic; font-size: 0.95rem;
+  color: var(--ink-mute); margin: 0.6rem 0 0.15rem 0.6rem;
+}
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
-.sidebar li { margin: 0.2rem 0; }
-.sidebar a { color: var(--ink-soft); text-decoration: none; }
-.sidebar .nav-group a { color: var(--ink); }
-.sidebar a[aria-current="page"] { color: var(--primary); font-weight: 600; }
-.sidebar a:hover { color: var(--accent); }
+.side-link {
+  display: block; padding: 0.3rem 0.6rem;
+  border-radius: 0 7px 7px 0; border-left: 2px solid transparent;
+  color: var(--ink-soft); text-decoration: none;
+}
+.side-link:hover { color: var(--ink); background: color-mix(in srgb, var(--accent-strong) 10%, transparent); }
+.side-link[aria-current="page"] { color: var(--primary); border-left-color: var(--primary); font-weight: 600; }
 
 main { min-width: 0; }
-article { max-width: 46rem; }
+article { max-width: 48rem; }
+body.home article { max-width: none; }
 
-h1, h2, h3, h4 { font-family: var(--font-heading); line-height: 1.2; color: var(--ink); }
-h1 { font-size: 2.4rem; margin: 0.2rem 0 0.6rem; }
-h2 {
-  font-size: 1.65rem; margin: 2.4rem 0 0.8rem;
-  padding-bottom: 0.25rem; border-bottom: 1px solid var(--rule);
+.toc { position: sticky; top: 4.5rem; font-size: 0.88rem; }
+.toc .toc-head {
+  font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink-mute); margin: 0 0 0.5rem;
 }
-h3 { font-size: 1.3rem; margin: 1.8rem 0 0.5rem; }
-h4 { font-size: 1.1rem; margin: 1.5rem 0 0.4rem; }
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 0.2rem 0; }
+.toc li.sub { padding-left: 0.9rem; }
+.toc a { color: var(--ink-soft); text-decoration: none; }
+.toc a:hover { color: var(--primary); }
 
-.anchor {
-  margin-left: 0.3rem; font-family: var(--font-body); font-size: 0.75em;
-  color: var(--ink-mute); text-decoration: none; opacity: 0;
+.pager {
+  display: flex; justify-content: space-between; gap: 1rem;
+  margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
+  max-width: 48rem;
 }
-h2:hover .anchor, h3:hover .anchor, h4:hover .anchor, .anchor:focus { opacity: 1; }
+.pg {
+  display: flex; flex-direction: column; gap: 0.15rem; text-decoration: none;
+  border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 1rem;
+  color: var(--ink); background: var(--surface); max-width: 48%;
+}
+.pg span { font-size: 0.75rem; color: var(--ink-mute); }
+.pg.next { text-align: right; margin-left: auto; }
+.pg:hover { border-color: var(--border-strong); color: var(--ink); }
+
+.describes { margin-top: 1.5rem; font-size: 0.82rem; color: var(--ink-mute); max-width: 48rem; }
+.describes code { font-size: 0.8rem; }
+
+/* 7. The prose. */
+h1, h2, h3, h4 {
+  font-family: var(--font-heading); font-weight: 700; line-height: 1.2;
+  color: var(--ink); scroll-margin-top: 5rem;
+}
+h1 { font-size: 2.5rem; margin: 0.2rem 0 0.6rem; }
+h2 { font-size: 1.85rem; margin: 2.25rem 0 0.75rem; }
+h3 { font-size: 1.4rem; margin: 1.6rem 0 0.5rem; }
+h4 { font-size: 1.15rem; margin: 1.4rem 0 0.4rem; }
+p { margin: 0 0 1em; }
+
+/* Every heading is linkable; the link shows on hover and on focus. */
+.heading-anchor {
+  margin-left: 0.4em; font-family: var(--font-mono); font-size: 0.7em; font-weight: 400;
+  color: var(--accent); text-decoration: none; opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+:is(h2, h3, h4):hover > .heading-anchor, .heading-anchor:focus-visible { opacity: 1; }
+.heading-anchor:hover { text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) {
+  .heading-anchor { transition: none; }
+  .site-header { backdrop-filter: none; }
+}
+@media (hover: none) { .heading-anchor { opacity: 0.45; } }
 
 .kind {
-  margin: 0; font-family: var(--font-mono); font-size: 0.78rem;
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
+  margin: 0; font-family: var(--font-mono); font-size: 0.72rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
 }
-.lede { margin-top: 0; font-size: 1.15rem; color: var(--ink-soft); }
+.lede { margin-top: 0; font-size: 1.12rem; color: var(--ink-soft); }
 .note { margin-top: -0.4rem; color: var(--ink-mute); font-style: italic; }
 
 code, pre, kbd { font-family: var(--font-mono); }
 :not(pre) > code {
-  font-size: 0.88em; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px;
-  overflow-wrap: anywhere;
+  font-size: 0.88em; padding: 0.1em 0.3em; border-radius: 4px;
+  background: var(--code-bg); color: var(--code-ink); overflow-wrap: anywhere;
 }
 pre {
-  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px;
-  padding: 0.85rem 1rem; overflow-x: auto; line-height: 1.45;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1rem 1.15rem; overflow-x: auto; line-height: 1.5; margin: 1rem 0;
 }
-pre code { font-size: 0.86rem; }
+pre code { font-size: 0.86rem; color: var(--code-ink); }
 kbd {
   font-size: 0.85em; padding: 0 0.3em;
-  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px;
   background: var(--surface);
 }
 
-/* A capture of the viewer, drawn as a terminal draws it: light on dark,
-   the status bar in reverse video. */
-pre.screen { background: #071a0f; color: #f1e8cd; border-color: var(--green-700); }
-pre.screen code { font-size: 0.84rem; line-height: 1.3; }
-pre.screen .status { background: #f1e8cd; color: #071a0f; }
+/* 80 columns of the viewer fit the page's column at this size. */
+pre.screen { background: var(--screen-bg); color: var(--screen-ink); border-color: var(--screen-border); }
+pre.screen code { font-size: 0.8rem; line-height: 1.3; color: var(--screen-ink); }
+pre.screen .status { background: var(--screen-ink); color: var(--screen-bg); }
 
 table { border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
-th, td { border: 1px solid var(--rule); padding: 0.4rem 0.65rem; text-align: left; vertical-align: top; }
-th { background: var(--code-bg); }
+th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: left; vertical-align: top; }
+th { background: var(--surface-2); }
+
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.25rem 0; }
 
 dl dt { margin-top: 0.9rem; font-weight: 600; }
 dl dd { margin: 0.2rem 0 0 1.25rem; }
 dl dd > p:first-child { margin-top: 0; }
-dl.pages dd { margin-left: 0; color: var(--ink-soft); font-weight: normal; }
 
 blockquote {
-  margin: 1.25rem 0; padding: 0.1rem 1rem;
-  border-left: 3px solid var(--gold-500); color: var(--ink-soft);
+  margin: 1.25rem 0; padding: 0.1rem 0 0.1rem 1.1rem;
+  border-left: 3px solid var(--accent-strong); color: var(--ink-soft);
 }
+hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 
-.site-footer { border-top: 1px solid var(--rule); color: var(--ink-mute); font-size: 0.9rem; }
-.site-footer p { max-width: 74rem; margin: 0 auto; padding: 1.1rem 1rem; }
-
-/* The home page. */
-.hero h1 { font-family: var(--font-mono); font-size: 3rem; margin-bottom: 0.25rem; }
-.hero .tagline { font-size: 1.3rem; color: var(--ink-soft); margin-top: 0; }
-.quadrants {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 0.5rem 2rem; margin: 1rem 0;
+/* A section's list of its pages: one card a page, under its group. */
+.group-blurb { color: var(--ink-mute); max-width: 46rem; margin: 0 0 1rem; font-size: 0.95rem; }
+.list { list-style: none; margin: 0 0 1.5rem; padding: 0; display: grid; gap: 0.6rem; }
+.list li { margin: 0; }
+.row {
+  display: block; border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.85rem 1rem; background: var(--surface); text-decoration: none; color: inherit;
 }
-.quadrants h3 { margin-bottom: 0.2rem; }
-.quadrants p { margin-top: 0.2rem; color: var(--ink-soft); }
+.row:hover { border-color: var(--border-strong); color: inherit; }
+.row-title { display: block; color: var(--primary); font-weight: 600; }
+.row-desc { display: block; color: var(--ink-soft); font-size: 0.92rem; margin-top: 0.15rem; }
 
-/* On a narrow screen the page comes first and the contents after it, so a
-   reader arriving from a link starts at what they came for. */
-@media (max-width: 54rem) {
-  .page { display: flex; flex-direction: column; gap: 0; }
-  .sidebar {
-    order: 1; position: static; max-height: none; overflow: visible;
-    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+/* Chips: the formats, and other short lists of names. */
+.chips { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; margin: 0.75rem 0 1.25rem; }
+.chips-label {
+  font-family: var(--font-mono); font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-mute);
+}
+.chip {
+  font-family: var(--font-mono); font-size: 0.82rem; text-decoration: none;
+  color: var(--ink-soft); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.25rem 0.7rem; background: var(--surface);
+}
+a.chip:hover { color: var(--primary); border-color: var(--border-strong); }
+
+/* Cards: the four kinds of documentation, and the project. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; margin: 1.25rem 0; }
+.card {
+  display: block; border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.25rem; background: var(--surface); text-decoration: none; color: inherit;
+}
+.card h3 { font-size: 1.25rem; margin: 0 0 0.4rem; }
+.card p { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
+.card p + p { margin-top: 0.6rem; }
+a.card:hover { border-color: var(--border-strong); color: inherit; }
+
+/* 8. The footer. */
+.site-footer {
+  margin-top: 4rem; border-top: 1px solid var(--border); color: var(--ink-soft);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent-strong) 6%, transparent));
+}
+.site-footer .inner { max-width: 76rem; margin: 0 auto; padding: 3rem 1.25rem 3.5rem; }
+.site-footer .cols { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 2rem; }
+.site-footer .about .word { font-size: 1.9rem; }
+.site-footer .motto {
+  font-family: var(--font-heading); font-style: italic; color: var(--ink-mute);
+  margin: 0.4rem 0 0.5rem; max-width: 34ch; font-size: 1.05rem;
+}
+.site-footer .byline { font-size: 0.9rem; color: var(--ink-soft); margin: 0 0 1rem; }
+.site-footer .byline a { color: var(--ink-soft); }
+.site-footer .byline a:hover { color: var(--primary); }
+.site-footer .col { display: flex; flex-direction: column; gap: 0.5rem; }
+.site-footer .col-head {
+  font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.14em; color: var(--ink-mute); margin: 0 0 0.35rem;
+}
+.site-footer .col a { color: var(--ink-soft); text-decoration: none; font-size: 0.95rem; }
+.site-footer .col a:hover { color: var(--primary); }
+.site-footer .legal {
+  margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  font-size: 0.85rem; color: var(--ink-mute);
+}
+.site-footer .legal a { color: var(--ink-mute); }
+.site-footer .legal a:hover { color: var(--primary); }
+
+/* 9. The home page. */
+.intro { text-align: center; padding: 2rem 0 2.5rem; }
+.intro .emblem { width: 96px; height: 96px; filter: drop-shadow(0 6px 20px rgba(11, 45, 26, 0.28)); }
+.intro .word { display: block; font-size: 3.4rem; margin: 0.75rem 0 0.5rem; }
+.intro h1 {
+  font-size: clamp(1.8rem, 4vw, 2.5rem); line-height: 1.12; text-wrap: balance;
+  max-width: 34ch; margin: 0 auto 0.9rem;
+}
+.intro .lede { max-width: 62ch; margin: 0 auto; }
+.intro .meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-mute); margin-top: 1.5rem; }
+
+.faces { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; margin: 1rem 0 2rem; }
+.face {
+  border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.4rem;
+  background: var(--surface); min-width: 0;
+}
+.face .kind { margin-bottom: 0.25rem; }
+.face h2 { margin: 0 0 0.5rem; font-size: 1.6rem; }
+.face p { color: var(--ink-soft); font-size: 0.98rem; }
+/* The captures in the faces are 60 columns, taken so, to sit two abreast. */
+.face pre { margin: 0.9rem 0; }
+.face pre code { font-size: 0.78rem; }
+.face .more { font-family: var(--font-heading); font-style: italic; font-size: 1.05rem; margin: 0; }
+
+.home h2 { font-size: clamp(1.5rem, 3vw, 2rem); }
+.sec-note { color: var(--ink-soft); font-size: 0.98rem; max-width: 68ch; }
+
+table.install { width: 100%; font-size: 0.95rem; }
+table.install code { white-space: nowrap; }
+table.install td:first-child { white-space: nowrap; }
+
+/* 10. Narrow screens. The sidebar and the contents give way to the page
+       itself, and the header folds into a menu. */
+@media (max-width: 1080px) {
+  .page { grid-template-columns: 14rem minmax(0, 1fr); }
+  .toc { display: none; }
+}
+@media (max-width: 1000px) {
+  .menu-btn { display: flex; }
+  .nav {
+    position: absolute; left: 0; right: 0; top: 100%;
+    flex-direction: column; align-items: stretch; flex-wrap: nowrap; justify-content: flex-start;
+    gap: 0.15rem; background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0.75rem 1.25rem 1rem; box-shadow: var(--shadow); display: none;
   }
-  .sidebar ul { display: flex; flex-wrap: wrap; gap: 0.1rem 1rem; }
+  .nav.open { display: flex; }
+  .nav-link { padding: 0.6rem 0.5rem; }
+  .actions { margin: 0.4rem 0 0; }
+}
+@media (max-width: 900px) {
+  .site-footer .cols { grid-template-columns: 1fr 1fr; gap: 1.75rem; }
+  .faces { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .page { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 1.5rem 1rem 1rem; }
+  .sidebar {
+    position: static; max-height: none; overflow: visible; order: 2;
+    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  }
+  main { order: 1; }
   h1 { font-size: 2rem; }
+  .intro .word { font-size: 2.6rem; }
+  .pager { flex-direction: column; }
+  .pg { max-width: none; }
+  .pg.next { margin-left: 0; }
+}
+@media (max-width: 680px) {
+  .site-footer .cols { grid-template-columns: 1fr; }
 }

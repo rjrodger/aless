@@ -1,7 +1,8 @@
 ---
 title: Reshape a document with a program
 description: Run a program in the alchemy language over a document, to choose, rename and arrange its values as a table, written as CSV, JSON or any format aless writes.
-order: 10
+group: From the command line
+order: 6
 ---
 `--render` converts a whole document. When you want a table made of some of its values, under names you choose, a program does it. Programs are written in [alchemy](https://github.com/tabnas/alchemy), a small streaming language, and `--alchemy FILE` runs one over the input. The examples use [`records.json`](/examples/records.json), an API response whose rows are deep inside it, with the columns described in the response itself, and two programs, [`export.alc`](/examples/export.alc) and [`table.alc`](/examples/table.alc).
 
@@ -65,4 +66,4 @@ $ aless --alchemy table.alc --explain | head -12
     "Text"
 ```
 
-A program streams: it holds what its plan says it retains, here the column descriptions and one row at a time, so a table over a large input runs in little memory. The program does the choosing, so `--path` and `--at` do not go with `--alchemy`. The [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md) has the language, and the [command line reference](/reference/command-line.html#errors) the errors a program can raise.
+A program streams: it holds what its plan says it retains, here the column descriptions and one row at a time, so a table over a large input runs in little memory. The program does the choosing, so `--path` and `--at` do not go with `--alchemy`. The [language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md) has the language, the [command line reference](/reference/command-line.html#errors) the errors a program can raise, and [See a document beside its conversion](/how-to/panes.html) shows a program's output in the viewer, rewritten as you edit the program.

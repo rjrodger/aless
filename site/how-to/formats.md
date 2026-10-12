@@ -1,7 +1,8 @@
 ---
 title: Choose the format aless reads
-description: Read a file whose name does not tell its format, or standard input, as the format you name.
-order: 3
+description: Read a file whose name does not tell its format, or standard input, as the format you name, in the viewer or from the command line.
+group: From the command line
+order: 1
 ---
 aless takes a file's format from its extension, and reads a file whose extension no format claims as plain text, an array of its lines. When the name is wrong or missing, you name the format.
 

@@ -1,7 +1,8 @@
 ---
 title: Check that files parse
 description: Find out which of a set of files do not parse, where and why, in a terminal or a CI job.
-order: 8
+group: From the command line
+order: 4
 ---
 `--check` parses every file it is given and reports on each one, with the status 0 when all of them parse and 1 when any does not. The examples use [`books.json`](/examples/books.json), and [`broken.json`](/examples/broken.json), which has a trailing comma.
 
@@ -46,4 +47,23 @@ git ls-files -z '*.json' '*.yaml' '*.yml' '*.toml' | xargs -0 -r aless --check -
 
 The job fails when a file does not parse, and the report says which. Through `xargs` the status is 123 rather than aless's 1, and any status but 0 fails the job. A file that is too large or too slow fails too, with its own error: `--max-size` (64 MB unless you set it) and `--timeout` set the bounds, and the [reference](/reference/command-line.html#errors) gives each error's fields. A format of your own is checked with its grammar named, as in `aless --grammar hosts=hosts.abnf --check hosts`.
 
-To see the same report in a terminal, open the file in the viewer: a file that does not parse shows the parser's report, with a caret under the place it stopped.
+## The same report in the viewer
+
+Open a file that does not parse and the viewer shows the parser's report in place of the tree, with a caret under the place it stopped:
+
+```screen
+[tabnas/unexpected]: unexpected character(s): ]
+  --> broken.json:3:36
+  1 | {
+  2 |   "title": "A Book of Examples",
+  3 |   "tags": ["examples", "reference",]
+                                         ^ unexpected character(s): ]
+  4 | }
+  5 |
+
+  The character(s) ] do not match any rule alternative active at
+  ! shows the full report
+ broken.json .               !3:36: unexpected character(s): ]  json · watching
+```
+
+`!` shows the whole report, `s` the source with the failing line marked, and a save that parses replaces the report with the tree ([Follow a file as it changes](/how-to/watch.html)).

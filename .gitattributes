@@ -8,3 +8,5 @@ examples/*.yaml -text -whitespace
 man/** text eol=lf
 completions/** text eol=lf
 skills/** text eol=lf
+# The site's self-hosted fonts.
+site/fonts/** binary
