@@ -387,9 +387,11 @@ p { margin: 0 0 1em; }
 }
 @media (hover: none) { .heading-anchor { opacity: 0.45; } }
 
+/* Small text, so the primary green rather than the gold accent, which
+   does not reach 4.5:1 on parchment. */
 .kind {
   margin: 0; font-family: var(--font-mono); font-size: 0.72rem;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--primary);
 }
 .lede { margin-top: 0; font-size: 1.12rem; color: var(--ink-soft); }
 .note { margin-top: -0.4rem; color: var(--ink-mute); font-style: italic; }

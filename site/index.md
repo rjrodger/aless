@@ -1,12 +1,12 @@
 ---
 title: a terminal viewer and a format converter, for people, scripts and agents
-description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and without a terminal prints JSON, writes any of those formats as any other as it streams, and runs programs over them, for scripts and agents.
+description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and without a terminal prints JSON, writes any of those formats as any other, and runs programs over them, for scripts and agents.
 ---
 <section class="intro">
 <img class="emblem" src="/mark.svg" width="96" height="96" alt="">
 <span class="word">aless</span>
 <h1>Every format as one tree: a viewer in a terminal, and a converter and query tool for scripts and agents</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree. In a terminal it is a viewer with jless's keys, with tabs and a watch mode that keeps your place. In a shell script, a pipe or an agent's tool call it prints JSON, writes any of those formats as any other while it reads, and runs programs over them.</p>
+<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree. In a terminal it is a viewer with jless's keys, with tabs and a watch mode that keeps your place. In a shell script, a pipe or an agent's tool call it prints JSON, writes any of those formats as any other, and runs programs over them.</p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
 
@@ -35,8 +35,8 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as o
 </div>
 <div class="face">
 <p class="kind">In a script, a pipe or an agent's tool call</p>
-<h2>A converter and a query tool that answer in JSON</h2>
-<p>Without a terminal, aless draws nothing and never waits for a key. It prints an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, or a report on whether files parse, as JSON on standard output. It writes any format it reads as any format it can write, a record at a time as it reads. It runs programs that choose and reshape values on the way through. Every answer is one JSON value, every error one JSON object, and the exit status says which.</p>
+<h2>A query tool and a converter for scripts and agents</h2>
+<p>Without a terminal, aless draws nothing and never waits for a key. It prints an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, or a report on whether files parse, as JSON on standard output. It writes any format it reads as any format it can write, a record at a time where the format's reader allows, and standard output is then that format's text. It runs programs that choose and reshape values on the way through. A query answers with one JSON value and a conversion with one document, every error is one JSON object on standard error, and the exit status says which.</p>
 
 ```console
 $ aless --json --path '.info.title' bookshelf-openapi.yaml

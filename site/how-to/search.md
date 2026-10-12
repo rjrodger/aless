@@ -37,13 +37,13 @@ With the focus on a key, `*` searches forward for the next node with the same ke
 A pattern is a regular expression in the syntax of Rust's [regex crate](https://docs.rs/regex/latest/regex/#syntax), with three rules that fit it to a document:
 
 - Case. A pattern with no capital letter ignores case, and one with a capital letter minds it: `/index` finds `Index` and `/Index` finds only that. `/s` after the pattern forces case: `/index/s` finds `index` and not `Index`.
-- Brackets. `[ ] { }` match themselves, since documents are full of them: `/[1, 2]` finds an array of those two values, and `/{}` an empty object. Escape a bracket for a character class or a count: `/\[bch\]at` finds `bat`, `cat` and `hat`, and `/(ha)\{2,3\}` finds `haha` and `hahaha`.
+- Brackets. `[ ] { }` match themselves, since documents are full of them: `/[]` finds an empty array and `/{}` an empty object. Escape a bracket for a character class or a count: `/\[bch\]at` finds `bat`, `cat` and `hat`, and `/(ha)\{2,3\}` finds `haha` and `hahaha`.
 - Slashes. A single `/` at the end of a pattern is dropped, so `/s/` searches for `s`; to find a `/` at the end, write two: `/a//` finds `a/`.
 
 A pattern the regex engine refuses, such as an unclosed group, shows its message on the status line and finds nothing.
 
 ## What the search reads
 
-The search reads each row's text as line mode shows it: the key in quotes, a colon, and the value, so `/"year": 2012` finds the second book and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, `"tags": [`, and an empty container's its brackets, `"tags": []`; what is inside a fold is searched all the same, and unfolded when it matches. A row holds one node, so a pattern cannot span two rows: search for a value, a key, or a key with its value, not for two members at once. The command line's `--find` reads the same text, and prints the matches as entries ([Ask a file questions from a script](/tutorials/scripting.html#find-a-node)).
+The search reads each row's text as line mode shows it: the key in quotes, a colon, and the value, so `/"year": 2012` finds the second book and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, `"tags": [`, and an empty container's its brackets, `"tags": []`; what is inside a fold is searched all the same, and unfolded when it matches. A row holds one node, so a pattern cannot span two rows: search for a value, a key, or a key with its value, not for two elements of an array or two members of an object at once. The command line's `--find` reads the same text, and prints the matches as entries ([Ask a file questions from a script](/tutorials/scripting.html#find-a-node)).
 
 In the [file explorer](/how-to/explore.html), `/` searches the names listed so far. The [keys](/reference/keys.html#search) list every search key, and [aless and jless](/explanation/jless.html) says how this search differs from jless's, which reads the whole document as one line.

@@ -1162,21 +1162,31 @@ fn the_reference_is_the_binarys() {
             "the keys page leaves out {line:?}"
         );
     }
-    let releases = page("reference/releases.html");
+    // The versions the changelog records, read from the changelog itself,
+    // each on the releases page's own body: the rendered page names this
+    // build's version in its footer whatever the changelog says, so
+    // neither it nor the page can be the witness for the other.
+    let releases = &site
+        .pages
+        .iter()
+        .find(|p| p.path == "reference/releases.html")
+        .unwrap()
+        .body;
     let release = Regex::new(r"(?m)^## \[(\d+\.\d+\.\d+)\]").unwrap();
     let changelog = read(&root().join("CHANGELOG.md"));
-    let mut found = 0;
-    for c in release.captures_iter(&changelog) {
+    let versions: Vec<&str> = release
+        .captures_iter(&changelog)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    assert!(!versions.is_empty(), "CHANGELOG.md records no release");
+    for version in &versions {
         assert!(
-            releases.contains(&c[1]),
-            "the releases page leaves out {}",
-            &c[1]
+            releases.contains(version),
+            "the releases page leaves out {version}"
         );
-        found += 1;
     }
-    assert!(found > 0, "CHANGELOG.md records no release");
     assert!(
-        releases.contains(VERSION),
+        versions.contains(&VERSION),
         "CHANGELOG.md has no section for {VERSION}, this build's version"
     );
 }

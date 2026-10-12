@@ -15,7 +15,7 @@ aless ~/projects
 aless
 ```
 
-Directories are folds and files are leaves, each showing its size and the format its extension implies, where one does. A directory holding the [example files](/examples/books.json) of this site, opened with `aless --grammar hosts=hosts.abnf bookshelf`, looks like this:
+Directories are folds and files are leaves, each showing its size and the format its extension implies, where one does. A directory holding the [example files](/examples/books.json) of this site, opened from its parent with `aless --grammar hosts=bookshelf/hosts.abnf bookshelf`, looks like this:
 
 ```screen
 ▼ /home/user/bookshelf/
