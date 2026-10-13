@@ -1,0 +1,9 @@
+# The JSON subset of sample.abnf, in GBNF, which reads no white space
+# it is not given: digits, single-letter names, nested objects, arrays.
+root   ::= value
+value  ::= digit | letter | object | array
+object ::= "{" ( member ( "," member )* )? "}"
+member ::= letter ":" value
+array  ::= "[" ( value ( "," value )* )? "]"
+digit  ::= [0-9]
+letter ::= [a-c]

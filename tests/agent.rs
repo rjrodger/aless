@@ -763,7 +763,19 @@ fn nesting_too_deep_to_parse_fails_cleanly() {
 /// preflight counts, since a value built past them can abort the process
 /// as it is dropped; CSS stops at its grammar's 768 open rules, a feed at
 /// XML's 256 open elements, an expression at 127 operations, and PGN's
-/// variations, which have no limit of their own, at aless's cap.
+/// variations, which have no limit of their own, at aless's cap. C stops at
+/// its reader's limits, tabnas-expr's 127 operations in an expression (a
+/// long sum, a long chain of member accesses) and 1,024 open rules (nested
+/// blocks, a run of prefix operators), or tabnas-c's tree of 256 levels (a
+/// conditional that is a whole initializer, which it builds holding
+/// itself); and a chain within those limits whose tree, which the reader
+/// repeats under several members, doubles with each level written out
+/// stops at aless's bound on the tree written out, before it is, however
+/// long a comment beside it makes the file. A
+/// grammar stops at its own compiler's limits: groups and options nested
+/// past 2,048 open rules for ABNF, 520 for EBNF and 512 for GBNF, some
+/// 500, 130 and 128 levels, and elements nested past 128 levels in any
+/// of them.
 #[test]
 fn the_newer_formats_nested_too_deep_fail_cleanly() {
     let n = 20_000;
@@ -800,6 +812,76 @@ fn the_newer_formats_nested_too_deep_fail_cleanly() {
             "pgn",
             format!("1. e4 {}{} *\n", "(1. d4 ".repeat(n), ")".repeat(n)),
         ),
+        (
+            "deep.c",
+            "c",
+            format!("void f(void) {{ {}{} }}\n", "{".repeat(n), "}".repeat(n)),
+        ),
+        (
+            "long.c",
+            "c",
+            format!("int x = {};\n", vec!["a"; n].join(" + ")),
+        ),
+        (
+            "chain.c",
+            "c",
+            format!("int f(void) {{ return a{}; }}\n", ".b".repeat(n)),
+        ),
+        (
+            "not.c",
+            "c",
+            format!("int f(void) {{ return {}a; }}\n", "!".repeat(n)),
+        ),
+        (
+            "doubling.c",
+            "c",
+            format!("int f(void) {{ return a{}; }}\n", ".b".repeat(100)),
+        ),
+        ("ternary.c", "c", "int a = b ? c : d;\n".to_string()),
+        (
+            "padded.c",
+            "c",
+            format!(
+                "/*{}*/\nint f(void) {{ return a{}; }}\n",
+                " ".repeat(4 << 20),
+                ".b".repeat(21)
+            ),
+        ),
+        (
+            "groups.abnf",
+            "abnf",
+            format!("a = {}\"x\"{}\n", "(".repeat(n), ")".repeat(n)),
+        ),
+        (
+            "options.abnf",
+            "abnf",
+            format!("a = {}\"x\"{}\n", "[".repeat(n), "]".repeat(n)),
+        ),
+        (
+            "elements.abnf",
+            "abnf",
+            format!("a = {}\"x\"{}\n", "(".repeat(200), ")".repeat(200)),
+        ),
+        (
+            "groups.ebnf",
+            "ebnf",
+            format!("a ::= {}\"x\"{}\n", "(".repeat(n), ")".repeat(n)),
+        ),
+        (
+            "options.ebnf",
+            "ebnf",
+            format!("a ::= {}\"x\"{}\n", "(".repeat(n), ")?".repeat(n)),
+        ),
+        (
+            "groups.gbnf",
+            "gbnf",
+            format!("root ::= {}\"x\"{}\n", "(".repeat(n), ")".repeat(n)),
+        ),
+        (
+            "options.gbnf",
+            "gbnf",
+            format!("root ::= {}\"x\"{}\n", "(".repeat(n), ")?".repeat(n)),
+        ),
     ] {
         let deep = dir.join(name);
         std::fs::write(&deep, text).unwrap();
@@ -819,6 +901,137 @@ fn the_newer_formats_nested_too_deep_fail_cleanly() {
             assert_eq!(e["format"], json!(kind), "{name} {mode:?}: {e}");
         }
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A cycle of `k` rules, each with two alternatives led by the next and
+/// one of its own, in `notation`: the shape whose alternatives a
+/// compiler's left-recursion pass multiplies, 2^k of them.
+fn left_recursive_cycle(notation: &str, k: usize) -> String {
+    let (define, or) = if notation == "abnf" {
+        (" = ", " / ")
+    } else {
+        (" ::= ", " | ")
+    };
+    let mut text = String::new();
+    if notation == "gbnf" {
+        text.push_str("root ::= r0\n");
+    }
+    for i in 0..k {
+        let next = (i + 1) % k;
+        text.push_str(&format!(
+            "r{i}{define}r{next} \"a{i}\"{or}r{next} \"b{i}\"{or}\"x{i}\"\n"
+        ));
+    }
+    text
+}
+
+/// Twenty rules in such a cycle, 0.7 KB, once took the compilers past a
+/// minute and then out of memory: tabnas-bnf now refuses them before it
+/// multiplies anything, past 512 alternatives added to one rule. A chain
+/// of 5,000 rules each led by the next, whose inlining would copy a
+/// quadratic count of elements, it refuses at its bound on the elements
+/// the pass adds to a grammar, 131,072. Each is a clean refusal at once,
+/// placed at the rule, in every route: read, written as JSON and as the
+/// notation itself, checked, and as a grammar from the command line.
+#[test]
+fn a_grammar_whose_alternatives_multiply_is_refused_at_once() {
+    let dir = std::env::temp_dir().join(format!("aless-cycle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let quick = |started: std::time::Instant, what: &str| {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "{what}: refused at once"
+        );
+    };
+    let alternatives = "rule 'r11' exceeds the left-recursion expansion limit of 512 \
+                        alternatives while inlining 'r12', which begins 2 of its alternatives \
+                        and has 511 of its own. Factor 'r12' out of the alternatives it begins.";
+    for (notation, line) in [("abnf", 12), ("ebnf", 12), ("gbnf", 13)] {
+        let path = dir.join(format!("cycle.{notation}"));
+        std::fs::write(&path, left_recursive_cycle(notation, 20)).unwrap();
+        let file = path.to_str().unwrap();
+        for mode in [
+            vec!["--json", file],
+            vec!["--render", "json", file],
+            vec!["--render", notation, file],
+        ] {
+            let started = std::time::Instant::now();
+            let out = aless(&mode, None);
+            let what = format!("{notation} {mode:?}");
+            quick(started, &what);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(code(&out), 1, "{what}: {stderr}");
+            assert!(out.stdout.is_empty(), "{what}");
+            let e = &json(&out.stderr)["error"];
+            assert_eq!(e["kind"], "parse", "{what}: {e}");
+            assert_eq!(e["code"], "compile", "{what}: {e}");
+            assert_eq!(e["format"], notation, "{what}: {e}");
+            assert_eq!(e["message"], format!("compile: {alternatives}"), "{what}");
+            assert_eq!((&e["line"], &e["col"]), (&json!(line), &json!(1)), "{what}");
+        }
+        let out = aless(&["--check", file], None);
+        assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+        let report = json(&out.stdout);
+        assert_eq!(report["files"][0]["error"]["code"], "compile", "{report}");
+    }
+    // As a grammar from the command line, before any input is read.
+    let cycle = format!("cycle={}", dir.join("cycle.abnf").to_str().unwrap());
+    let started = std::time::Instant::now();
+    let out = aless(
+        &["--grammar", &cycle, "--json", "tests/fixtures/sample.json"],
+        None,
+    );
+    quick(started, "--grammar");
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], "usage");
+    assert_eq!(
+        e["message"],
+        format!("--grammar cycle: abnf: {alternatives}")
+    );
+    // A chain of 5,000 rules, each led by the next, as a document and as a
+    // grammar from the command line.
+    let chain: String = (0..4_999)
+        .map(|i| format!("r{i} = r{} \"x{i}\"\n", i + 1))
+        .chain(std::iter::once("r4999 = \"end\"\n".to_string()))
+        .collect();
+    let path = dir.join("chain.abnf");
+    std::fs::write(&path, chain).unwrap();
+    let file = path.to_str().unwrap();
+    let elements = "rule 'r4486' exceeds the left-recursion element limit of 131072 elements \
+                    while inlining 'r4487', which begins 1 of its alternatives and would add \
+                    more than 256 elements to the 130816 already added to the grammar. Factor \
+                    'r4487' out of the alternatives it begins.";
+    let started = std::time::Instant::now();
+    let out = aless(&["--json", file], None);
+    quick(started, "the chain");
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(
+        (&e["kind"], &e["code"]),
+        (&json!("parse"), &json!("compile")),
+        "{e}"
+    );
+    assert_eq!(e["message"], format!("compile: {elements}"));
+    assert_eq!(e["line"], 4487);
+    let grammar = format!("chain={file}");
+    let started = std::time::Instant::now();
+    let out = aless(
+        &[
+            "--grammar",
+            &grammar,
+            "--json",
+            "tests/fixtures/sample.json",
+        ],
+        None,
+    );
+    quick(started, "the chain as --grammar");
+    assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["kind"], "usage");
+    assert_eq!(e["message"], format!("--grammar chain: abnf: {elements}"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -3354,26 +3567,38 @@ fn render_refuses_what_it_cannot_write() {
     for (args, message) in [
         (
             vec!["--render", "tsv", "tests/fixtures/sample.tsv"],
-            "--render tsv: aless reads tsv but has no render for it; --render writes css, csv, \
-             expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, \
-             toml, xml, yaml or zon",
+            "--render tsv: aless reads tsv but has no render for it; --render writes abnf, c, \
+             css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, markdown, \
+             pgn, proto, semver, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "rss", "tests/fixtures/sample.rss"],
             "--render rss: rss is read as feed, whose render is --render feed; --render writes \
-             css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
-             semver, toml, xml, yaml or zon",
+             abnf, c, css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, \
+             markdown, pgn, proto, semver, toml, xml, yaml or zon",
         ),
         (
             vec!["--render", "docx", "tests/fixtures/nested.json"],
-            "--render writes css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, \
-             markdown, pgn, proto, semver, toml, xml, yaml or zon, not docx",
+            "--render writes abnf, c, css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, \
+             jsonic, jsonl, markdown, pgn, proto, semver, toml, xml, yaml or zon, not docx",
         ),
         (
             vec!["--render", "proto", "tests/fixtures/nested.json"],
             "--render proto: proto writes a proto-descriptor tree, the tree its own documents \
              read as, and tests/fixtures/nested.json is not one; a program that makes one can \
              write it: --alchemy FILE --render proto",
+        ),
+        (
+            vec!["--render", "gbnf", "tests/fixtures/sample.c"],
+            "--render gbnf: gbnf writes a grammar-spec tree, the tree its own documents read \
+             as, and tests/fixtures/sample.c is not one; a program that makes one can write it: \
+             --alchemy FILE --render gbnf",
+        ),
+        (
+            vec!["--render", "c", "tests/fixtures/sample.css"],
+            "--render c: c writes a c tree, the tree its own documents read as, and \
+             tests/fixtures/sample.css is not one; a program that makes one can write it: \
+             --alchemy FILE --render c",
         ),
         (
             vec![
@@ -3434,6 +3659,10 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
         ("css", "tests/fixtures/sample.css"),
         ("proto", "tests/fixtures/sample.proto"),
         ("pgn", "tests/fixtures/sample.pgn"),
+        ("c", "tests/fixtures/sample.c"),
+        ("abnf", "tests/fixtures/sample.abnf"),
+        ("ebnf", "tests/fixtures/sample.ebnf"),
+        ("gbnf", "tests/fixtures/sample.gbnf"),
         ("expr", "tests/fixtures/sample.expr"),
         ("semver", "tests/fixtures/sample.semver"),
     ] {
@@ -3475,7 +3704,7 @@ fn every_format_with_a_render_writes_its_own_sample_and_reads_it_back() {
 /// expression's tree as it is, and a feed's through its embedding; a
 /// version's only when it is a version, any other refused before anything
 /// is written; and a format that writes only its own documents' tree
-/// (CSS, proto, PGN) takes another tree from a program that makes one,
+/// (CSS, proto, PGN, C) takes another tree from a program that makes one,
 /// the route its refusal names.
 #[test]
 fn render_into_a_schema_embeds_refuses_or_takes_a_program() {
@@ -3546,6 +3775,118 @@ fn render_into_a_schema_embeds_refuses_or_takes_a_program() {
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
+    // And one that makes a C syntax tree, here a file's own, writes it as C.
+    let out = aless(
+        &[
+            "--alchemy-expr",
+            "def export [input] input",
+            "--render",
+            "c",
+            "tests/fixtures/sample.c",
+        ],
+        None,
+    );
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .starts_with("/* Tiny types module, shaped like a real stdint.h. */\n#ifndef"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+/// The three grammar notations read as one schema, the grammar spec their
+/// compilers make, so a grammar written in one is written in another,
+/// which reads it back; what the target notation cannot say is refused
+/// before anything is written, a spec has no positions, and no other tree
+/// is a grammar spec.
+#[test]
+fn a_grammar_is_written_in_another_notation() {
+    let out = aless(&["--render", "gbnf", "tests/fixtures/sample.abnf"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let gbnf = String::from_utf8(out.stdout).unwrap();
+    // GBNF starts at a rule named root, which the ABNF has not.
+    assert!(
+        gbnf.starts_with("root ::= value\nvalue ::= digit | letter | object | array\n"),
+        "{gbnf}"
+    );
+    let note = json(&out.stderr);
+    assert_eq!(note["warning"]["render"], "gbnf");
+    assert!(
+        note["warning"]["loss"]
+            .as_array()
+            .is_some_and(|l| !l.is_empty()),
+        "{note}"
+    );
+    let back = aless(&["-k", "gbnf", "--json", "-"], Some(&gbnf));
+    assert_eq!(code(&back), 0, "{}", String::from_utf8_lossy(&back.stderr));
+    let out = aless(&["--render", "abnf", "tests/fixtures/sample.gbnf"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let abnf = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        abnf.ends_with("digit = %x30-39\nletter = %x61-63\n"),
+        "{abnf}"
+    );
+    let back = aless(&["-k", "abnf", "--json", "-"], Some(&abnf));
+    assert_eq!(code(&back), 0, "{}", String::from_utf8_lossy(&back.stderr));
+    // The EBNF sample's strings are the engine's own string token, which
+    // ABNF names as EBNF does and GBNF has no terminal for.
+    let out = aless(&["--render", "abnf", "tests/fixtures/sample.ebnf"], None);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Member = ST \":\" Value\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = aless(&["--render", "gbnf", "tests/fixtures/sample.ebnf"], None);
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stdout.is_empty(),
+        "nothing is written before the refusal"
+    );
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["kind"], "transduce");
+    assert_eq!(error["code"], "TARGET_VALUE_UNREPRESENTABLE");
+    assert_eq!(error["output"], "none");
+    assert_eq!(error["input"], "tests/fixtures/sample.ebnf");
+    assert_eq!(error["file"], "tabnas-gbnf/alchemy/render.alc");
+    assert!(
+        error["message"].as_str().is_some_and(|m| m.starts_with(
+            "the grammar spec cannot be written as GBNF: the token #ST is the engine's own ST"
+        )),
+        "{error}"
+    );
+    // The compiler keeps no places: a spec has no position to find.
+    let out = aless(
+        &["--where", "--at", "4:3", "tests/fixtures/sample.abnf"],
+        None,
+    );
+    assert_eq!(code(&out), 4, "{}", String::from_utf8_lossy(&out.stderr));
+    let error = &json(&out.stderr)["error"];
+    assert_eq!(error["kind"], "not_found");
+    assert_eq!(
+        error["message"],
+        "no node in tests/fixtures/sample.abnf has a known source position"
+    );
+    // A grammar spec is no other schema's tree, and no other tree is one.
+    for (render, file, schema) in [
+        ("c", "tests/fixtures/sample.abnf", "c"),
+        ("abnf", "tests/fixtures/sample.json", "grammar-spec"),
+    ] {
+        let out = aless(&["--render", render, file], None);
+        assert_eq!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout.is_empty());
+        let error = &json(&out.stderr)["error"];
+        assert_eq!(error["kind"], "usage");
+        assert_eq!(
+            error["message"],
+            format!(
+                "--render {render}: {render} writes a {schema} tree, the tree its own documents \
+                 read as, and {file} is not one; a program that makes one can write it: \
+                 --alchemy FILE --render {render}"
+            )
+        );
+    }
 }
 
 /// A tree reaches a render that writes from records through the inferred

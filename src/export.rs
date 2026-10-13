@@ -611,7 +611,7 @@ struct Alarm {
 impl Alarm {
     fn fire(&self) {
         self.program.abort();
-        if self.lines || self.parsed.load(Ordering::Relaxed) {
+        if self.lines || self.parsed.load(Ordering::SeqCst) {
             self.abort.abort();
         }
     }
@@ -655,6 +655,23 @@ fn run<S: Sink + Send + 'static>(
                     },
                     Err(what) => Ran {
                         outcome: Outcome::Panicked(what),
+                        stop: None,
+                        verdict: None,
+                        from_sink: false,
+                    },
+                }
+            }
+            // A grammar is compiled by its notation's compiler, as the
+            // loader compiles it, and the spec it writes walked; the
+            // compile cannot be stopped part way, so the deadline bounds
+            // the wait for it, and the alarm, or the time read once the
+            // compile is done, the walk.
+            Input::Text(text) if format.is_notation() => {
+                let text = load::parse_text(text, format);
+                match load::compile_notation_by(format, text, deadline.clone()) {
+                    Ok(value) => walk_compiled(&value, deadline.as_ref(), scope, &abort, &parsed),
+                    Err(e) => Ran {
+                        outcome: Outcome::Refused(Box::new(e)),
                         stop: None,
                         verdict: None,
                         from_sink: false,
@@ -754,7 +771,7 @@ fn materialize<S: Sink>(
     scope: Scope<S>,
     stop: Arc<Stop>,
 ) -> Ran {
-    let value = load::catch_grammar(|| parser.parse(text).map_err(Box::new));
+    let value = load::catch_grammar(|| load::parse_value(&parser, format, text));
     parsed.store(true, Ordering::Relaxed);
     // A parse that came to its end after the deadline, with a value or an
     // error, is too late, as the loader has it: the time is its outcome,
@@ -772,6 +789,19 @@ fn materialize<S: Sink>(
                 verdict: None,
                 from_sink: false,
             }
+        }
+        // A C parse its reader stopped with no token in hand, worded and
+        // placed as the loader words and places it.
+        Ok(Err(e)) if !late && !abort.is_aborted() && load::unplaced_c_cancel(format, &e) => {
+            let (message, hint) = load::too_deep_words(format, Deep::Grammar);
+            return Ran {
+                outcome: Outcome::Refused(Box::new(
+                    LoadError::tagged("too_deep", message).with_hint(&hint),
+                )),
+                stop: Some(stop),
+                verdict: None,
+                from_sink: false,
+            };
         }
         Ok(Err(e)) => {
             // As the transducer's source maps an engine error: the abort
@@ -818,7 +848,7 @@ fn materialize<S: Sink>(
     }
     // The tree the format's schema names, where its crate builds one from
     // the grammar's value, as the loader reads it.
-    let value = match load::read_as(format, value) {
+    let value = match load::read_as(format, value, text.len()) {
         Ok(value) => value,
         Err(e) => {
             return Ran {
@@ -829,12 +859,51 @@ fn materialize<S: Sink>(
             }
         }
     };
+    walk(&value, scope, abort, Some(stop))
+}
+
+/// Walk the spec a grammar's compiler wrote into `scope`, unless the
+/// deadline passed while it compiled. An alarm that fired then found no
+/// walk to stop (`parsed` was not yet set, and a compile has no flag to
+/// read), so the time is read here, once `parsed` is set, as
+/// [`materialize`] reads it after a parse: a compile that ends past the
+/// deadline is too late, whatever it gave, and an alarm that fires after
+/// this raises the flag the walk reads.
+fn walk_compiled<S: Sink>(
+    value: &tabnas::Value,
+    deadline: Option<&Deadline>,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    parsed: &AtomicBool,
+) -> Ran {
+    parsed.store(true, Ordering::SeqCst);
+    if deadline.is_some_and(Deadline::is_past) {
+        abort.abort();
+        return Ran {
+            outcome: Outcome::Failed(Fail::aborted()),
+            stop: None,
+            verdict: None,
+            from_sink: false,
+        };
+    }
+    walk(value, scope, abort, None)
+}
+
+/// Walk a value into `scope`: the transducer's `Materialize` mode once the
+/// value is in hand, under the source limits and the abort flag the alarm
+/// raises at the deadline.
+fn walk<S: Sink>(
+    value: &tabnas::Value,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    stop: Option<Arc<Stop>>,
+) -> Ran {
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
-    let outcome = ValueSource(&value).run(&mut guarded);
+    let outcome = ValueSource(value).run(&mut guarded);
     let scope = guarded.into_inner();
     Ran {
         outcome: Outcome::of(outcome),
-        stop: Some(stop),
+        stop,
         verdict: scope.verdict(),
         from_sink: scope.sink_failed,
     }
@@ -2295,7 +2364,9 @@ mod tests {
         }
         // Parsed whole, then walked: the imperative grammars, and those no
         // differential suite has verified, which build a tree of a schema's
-        // from their parse (proto's descriptor, expr's S-expressions).
+        // from their parse (proto's descriptor, expr's S-expressions, C's
+        // syntax tree, realized from its arena), and a grammar, the spec its
+        // compiler writes.
         for f in [
             Format::Toml,
             Format::Ini,
@@ -2303,6 +2374,10 @@ mod tests {
             Format::Css,
             Format::Proto,
             Format::Pgn,
+            Format::C,
+            Format::Abnf,
+            Format::Ebnf,
+            Format::Gbnf,
             Format::Expr,
             Format::Semver,
         ] {
@@ -2324,6 +2399,34 @@ mod tests {
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
         assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
         assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
+    }
+
+    /// A grammar whose compile ends past the deadline is too late, whatever
+    /// it gave: its spec is not walked, though the alarm, which fired while
+    /// it compiled, found no walk to stop; in time, it is walked whole.
+    #[test]
+    fn a_grammar_compiled_past_the_deadline_is_not_walked() {
+        let value = load::compile_notation(Format::Gbnf, "root ::= \"a\"\n").unwrap();
+        let parsed = AtomicBool::new(false);
+        let scope = || Scope::new(Vec::new(), Vec::<OwnedJsonEvent>::new());
+        let abort = AbortFlag::new();
+        let past = Deadline::after(Some(Duration::ZERO));
+        let ran = walk_compiled(&value, past.as_ref(), scope(), &abort, &parsed);
+        assert!(
+            matches!(&ran.outcome, Outcome::Failed(f) if f.code == Code::Aborted),
+            "{:?}",
+            ran.outcome
+        );
+        assert!(abort.is_aborted());
+        assert!(
+            parsed.load(Ordering::SeqCst),
+            "an alarm after this stops the walk"
+        );
+        let abort = AbortFlag::new();
+        let ahead = Deadline::after(Some(Duration::from_secs(600)));
+        let ran = walk_compiled(&value, ahead.as_ref(), scope(), &abort, &parsed);
+        assert!(matches!(ran.outcome, Outcome::Done), "{:?}", ran.outcome);
+        assert!(!abort.is_aborted());
     }
 
     /// A document is exported as the loader reads it: a .proto file as
@@ -2371,6 +2474,61 @@ mod tests {
         assert!(
             e.plain_report()
                 .starts_with("[proto/version]: version: unknown syntax version"),
+            "{}",
+            e.plain_report()
+        );
+        // A C file as its syntax tree, realized on the parse's thread, and
+        // refused as the loader refuses it: a tree too large written out,
+        // and a conditional that is a whole initializer, which its reader
+        // refuses with no token in hand, both with no place.
+        assert_eq!(
+            written(
+                Format::C,
+                ".children[0].children[0].children[0].src",
+                "int x = 1;"
+            ),
+            "\"int\"\n"
+        );
+        let refused_c = |text: &str| match run_text(&job(Format::C, Renderer::Json, "."), text) {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty(), "{text:?}");
+                error
+            }
+            other => panic!("{text:?}: {other:?}"),
+        };
+        let e = refused_c(&format!("int f(void) {{ return a{}; }}", ".b".repeat(40)));
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("written out"), "{}", e.message);
+        assert_eq!((e.line, e.col), (0, 0));
+        let e = refused_c("int a = b ? c : d;");
+        assert_eq!(e.code, "too_deep");
+        assert!(
+            e.message.contains("than the c reader reads"),
+            "{}",
+            e.message
+        );
+        assert_eq!((e.line, e.col), (0, 0));
+        assert!(
+            e.plain_report().contains("--> (stdin)"),
+            "{}",
+            e.plain_report()
+        );
+        // A grammar as the spec its compiler writes, and refused as the
+        // loader refuses it, placed where its compiler says.
+        assert_eq!(
+            written(Format::Gbnf, ".options.rule.start", "root ::= \"a\"\n"),
+            "\"__start__\"\n"
+        );
+        let e = match run_text(&job(Format::Abnf, Renderer::Json, "."), "a = b\n") {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty());
+                error
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((e.code.as_str(), e.line, e.col), ("compile", 1, 5), "{e}");
+        assert!(
+            e.plain_report().contains("--> (stdin):1:5"),
             "{}",
             e.plain_report()
         );

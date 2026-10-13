@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -41,6 +41,16 @@ pub enum Format {
     Proto,
     /// PGN, chess games, by tabnas-chess: its manifest's `languageId`.
     Pgn,
+    /// C source, by tabnas-c: its concrete syntax tree.
+    C,
+    /// A grammar in ABNF (RFC 5234), by tabnas-abnf: the grammar spec its
+    /// compiler writes for it, of the schema the three notations share.
+    Abnf,
+    /// A grammar in W3C EBNF, by tabnas-ebnf, read as [`Format::Abnf`] is.
+    Ebnf,
+    /// A grammar in llama.cpp's GBNF, by tabnas-gbnf, read as
+    /// [`Format::Abnf`] is.
+    Gbnf,
     Expr,
     Semver,
     Text,
@@ -51,7 +61,7 @@ pub enum Format {
 impl Format {
     /// The built-in formats. A custom grammar is not among them: the
     /// registry lists those ([`grammar::registered`]).
-    pub const ALL: [Format; 20] = [
+    pub const ALL: [Format; 24] = [
         Format::Json,
         Format::Jsonl,
         Format::Jsonic,
@@ -69,6 +79,10 @@ impl Format {
         Format::Css,
         Format::Proto,
         Format::Pgn,
+        Format::C,
+        Format::Abnf,
+        Format::Ebnf,
+        Format::Gbnf,
         Format::Expr,
         Format::Semver,
         Format::Text,
@@ -93,6 +107,10 @@ impl Format {
             Format::Css => "css",
             Format::Proto => "proto",
             Format::Pgn => "pgn",
+            Format::C => "c",
+            Format::Abnf => "abnf",
+            Format::Ebnf => "ebnf",
+            Format::Gbnf => "gbnf",
             Format::Expr => "expr",
             Format::Semver => "semver",
             Format::Text => "text",
@@ -105,6 +123,16 @@ impl Format {
     /// built-in format.
     pub fn is_custom(self) -> bool {
         matches!(self, Format::Custom(_))
+    }
+
+    /// Whether a document of this format is a grammar in a notation (ABNF,
+    /// EBNF, GBNF), read as the grammar spec its compiler writes for it
+    /// ([`compile_notation`]) rather than by a parse aless drives: the
+    /// compiler parses it with a parser of its own, which takes no guard of
+    /// aless's and lexes no tokens aless sees, so a grammar has no source
+    /// positions and no colours.
+    pub fn is_notation(self) -> bool {
+        matches!(self, Format::Abnf | Format::Ebnf | Format::Gbnf)
     }
 
     /// Whether the document is a list of records keyed by a header row,
@@ -165,6 +193,10 @@ impl Format {
             Format::Css => &["css"],
             Format::Proto => &["proto"],
             Format::Pgn => &["pgn"],
+            Format::C => &["c", "h"],
+            Format::Abnf => &["abnf"],
+            Format::Ebnf => &["ebnf"],
+            Format::Gbnf => &["gbnf"],
             Format::Expr | Format::Semver => &[],
             Format::Text => &["txt", "text", "log"],
             Format::Custom(_) => &[],
@@ -699,6 +731,14 @@ impl Deadline {
             None => Instant::now() >= self.at,
         }
     }
+
+    /// [`Deadline::passed`], or the clock past the deadline whether or
+    /// not the alarm has been seen yet: for work that hands over to a
+    /// stage the alarm stops by another flag, and has to know the time at
+    /// the handover itself.
+    pub(crate) fn is_past(&self) -> bool {
+        self.passed() || Instant::now() >= self.at
+    }
 }
 
 /// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
@@ -811,8 +851,10 @@ impl LoadError {
     }
 
     /// A refusal a format's crate made of the document outside its
-    /// grammar's parse (proto's check of the version a file declares), in
-    /// the engine's layout under `[<format>/<code>]`, with no position.
+    /// grammar's parse (proto's check of the version a file declares, a
+    /// grammar notation's compiler's refusal that names no place), in the
+    /// engine's layout under `[<format>/<code>]`, with no position, and
+    /// the hint unless it is empty.
     pub(crate) fn refused(
         format: Format,
         code: &str,
@@ -823,7 +865,11 @@ impl LoadError {
         e.report = e
             .report
             .replacen(&format!("[aless/{code}]"), &format!("[{format}/{code}]"), 1);
-        e.with_hint(hint)
+        if hint.is_empty() {
+            e
+        } else {
+            e.with_hint(hint)
+        }
     }
 
     /// Whether the input could not be read at all, as opposed to read and
@@ -923,6 +969,39 @@ impl LoadError {
             Self::SLOW_GRAMMARS
         );
         Self::compile_late(limit).with_hint(&hint)
+    }
+
+    /// A grammar not compiled, since a compile aless stopped waiting for
+    /// is still running ([`compile_notation_by`]): the time is up for it
+    /// before it starts.
+    pub(crate) fn compile_behind(limit: Duration) -> LoadError {
+        let message = format!(
+            "timeout: the grammar was not compiled within {} s: a compile aless stopped \
+             waiting for is still running",
+            seconds(limit)
+        );
+        let hint = format!(
+            "A compiler cannot be interrupted, so aless starts no other while one it stopped \
+             waiting for still runs.\nPass a larger --timeout, or --timeout 0 for no limit, or \
+             read the slow grammar on its own. {}",
+            Self::SLOW_GRAMMARS
+        );
+        LoadError::tagged("timeout", message).with_hint(&hint)
+    }
+
+    /// A grammar not compiled, since the time was up before its compile
+    /// started ([`compile_notation_by`]): a compiler cannot be interrupted,
+    /// so one started then would be left to itself at once.
+    pub(crate) fn compile_unstarted(limit: Duration) -> LoadError {
+        let message = format!(
+            "timeout: the grammar was not compiled within {} s: the time was up before its \
+             compile started",
+            seconds(limit)
+        );
+        let hint = "The time was up before the grammar reached its compiler, which cannot be \
+                    interrupted, so aless did not start it.\nPass a larger --timeout, or \
+                    --timeout 0 for no limit.";
+        LoadError::tagged("timeout", message).with_hint(hint)
     }
 
     /// A grammar whose compile ended past the time limit on the caller's
@@ -1396,7 +1475,14 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         },
         Format::Expr => tabnas_expr::make(),
         Format::Semver => tabnas_semver::make(),
-        Format::Text => return Ok(None),
+        // Plain C23 with the whole preprocessor, the crate's default; its
+        // parse builds the tree in this thread's arena, which
+        // [`parse_value`] realizes.
+        Format::C => tabnas_c::make(),
+        // A grammar's compiler parses it with a parser of its own
+        // ([`compile_notation`]), and has none to hand over to drive, to
+        // colour with or to align with.
+        Format::Text | Format::Abnf | Format::Ebnf | Format::Gbnf => return Ok(None),
         Format::Custom(id) => {
             let Some(g) = grammar::get(id) else {
                 return Err(grammar_failed(format, "the grammar is not registered"));
@@ -1449,30 +1535,576 @@ pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
     }
 }
 
-/// What a document of `format` is read as, from the value its grammar's
-/// parse built: that value, for every format but two, whose crates build
-/// the tree their manifests' schemas name from it. proto's is the
-/// FileDescriptorProto (`proto-descriptor`) in the JSON form protoc writes
-/// one in, which [`tabnas_proto::to_descriptor`] builds from the syntax
-/// tree the parse returns, refusing a declaration of a version it does
-/// not know. expr's is its S-expressions (`expr`): each operation a list
-/// of its operator's source text and its terms, as
-/// [`tabnas_expr::simplify`] reads the nodes the parse left in this
-/// thread's arena, so it runs on the parse's thread, before that thread
-/// parses again, which releases them.
-pub(crate) fn read_as(format: Format, value: tabnas::Value) -> Result<tabnas::Value, LoadError> {
+/// What a document of `format`, `source_len` bytes long, is read as, from
+/// the value [`parse_value`] built: that value, for every format but
+/// three, whose crates build the tree their manifests' schemas name from
+/// it.
+/// proto's is the FileDescriptorProto (`proto-descriptor`) in the JSON form
+/// protoc writes one in, which [`tabnas_proto::to_descriptor_value`] builds
+/// from the syntax tree the parse returns, its members in the order of the
+/// canonical descriptor the crate's other runtimes write, refusing a
+/// declaration of a version it does not know; a number its reader reads as
+/// NaN stays NaN, which the JSON outputs write as null. expr's is its
+/// S-expressions (`expr`): each operation a list of its operator's source
+/// text and its terms, as [`tabnas_expr::simplify`] reads the nodes the
+/// parse left in this thread's arena, so it runs on the parse's thread,
+/// before that thread parses again, which releases them.
+///
+/// C's is its syntax tree (`c`), as the crate realized it, refused when it
+/// holds more values or more text written out than [`c_tree_cap`] allows:
+/// the reader repeats a node's subtrees under the members that name them
+/// (`operand`, `cond` and the like) beside its `children`, sharing each, so
+/// the tree it hands over is small and the tree written out, which the
+/// viewer and every output make of it, doubles with each level of a chain
+/// of subscripts or member accesses, a run of prefix operators, a
+/// conditional or a brace initializer, and with it every name and string
+/// under that level. It is measured before anything is written out, in
+/// time that follows the shared tree.
+pub(crate) fn read_as(
+    format: Format,
+    value: tabnas::Value,
+    source_len: usize,
+) -> Result<tabnas::Value, LoadError> {
     match format {
         Format::Proto => {
-            let descriptor =
-                tabnas_proto::to_descriptor(&value, None).map_err(|e| proto_refused(format, e))?;
-            drop(value);
-            let json = serde_json::to_value(&descriptor)
-                .map_err(|e| grammar_failed(format, &e.to_string()))?;
-            Ok(tabnas::Value::from_json(&json))
+            tabnas_proto::to_descriptor_value(&value, None).map_err(|e| proto_refused(format, e))
         }
         Format::Expr => Ok(tabnas_expr::simplify(&value)),
+        Format::C => {
+            let cap = c_tree_cap(source_len);
+            if written_out(&value, cap).past(cap) {
+                drop_deep(value);
+                let (message, hint) = too_deep_words(format, Deep::Repeated);
+                return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
+            }
+            Ok(value)
+        }
         _ => Ok(value),
     }
+}
+
+/// How many values a C syntax tree may hold written out, per byte of the
+/// source it was read from: over four times what the most expression-laden
+/// code of tabnas-c's own corpus holds. Its 100 Csmith programs, read as
+/// tabnas-c's own test reads them (GCC's extensions on, stdint's typedefs
+/// known), hold from 0.9 to 58 values a byte written out (32 the median),
+/// and from 1 to 9.2 times the values the reader built for them; aless's
+/// fixture, ordinary declarations and functions, holds 4.7.
+pub const C_TREE_PER_BYTE: u64 = 256;
+
+/// The fewest values [`c_tree_cap`] allows any C document, so that a short
+/// one is not refused for its length: 1,048,576, as [`Deep::Repeated`]'s
+/// hint says.
+pub const C_TREE_FLOOR: u64 = 1 << 20;
+
+/// The most values any C document may hold written out, however long it
+/// is: 33,554,432 (2^25), the most a 64 MB JSON array of single digits,
+/// the default `--max-size`, makes of another format, and nearly twice
+/// the most a Csmith program of tabnas-c's corpus holds, 18 million values
+/// from 411 KB. Without it the cap would grow with the file, so a long
+/// comment beside a short chain of member accesses would raise the cap
+/// that chain is held to; with it no padding raises the cap past this.
+pub const C_TREE_CEILING: u64 = 1 << 25;
+
+/// How much text, the bytes of its strings and member names, a C syntax
+/// tree may hold written out, per byte of the source: about six times the
+/// most tabnas-c's Csmith programs hold, from 5.5 to 342 bytes a byte (197
+/// the median, some six bytes a value); aless's fixture holds 29. The
+/// values count a scalar once whatever its length, so this is what holds a
+/// long name in a subtree the tree repeats.
+pub const C_TREE_BYTES_PER_BYTE: u64 = 2048;
+
+/// The least text [`c_tree_cap`] allows any C document: 8 MB, eight bytes
+/// for each value of [`C_TREE_FLOOR`].
+pub const C_TREE_BYTES_FLOOR: u64 = 8 << 20;
+
+/// The most text any C document may hold written out, however long it is:
+/// 256 MB, over twice the most a Csmith program of tabnas-c's corpus holds,
+/// 111 million bytes from 411 KB. Without it a name a megabyte long under
+/// 18 member accesses, which repeat it 2^18 times in a tree of 14 million
+/// values, well under [`C_TREE_CEILING`], would be written out a quarter
+/// of a million times: half a terabyte of text, since the reader keeps a
+/// name twice.
+pub const C_TREE_BYTES_CEILING: u64 = 256 << 20;
+
+/// What a value holds written out as a tree: its values, every container
+/// and scalar counted, and its text, the bytes of every string and member
+/// name, each counted in every place a shared container puts it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WrittenOut {
+    pub(crate) values: u64,
+    pub(crate) bytes: u64,
+}
+
+impl WrittenOut {
+    /// Both counts, added, saturating.
+    fn plus(self, other: WrittenOut) -> WrittenOut {
+        WrittenOut {
+            values: self.values.saturating_add(other.values),
+            bytes: self.bytes.saturating_add(other.bytes),
+        }
+    }
+
+    /// Whether either count passes `cap`'s.
+    pub(crate) fn past(self, cap: WrittenOut) -> bool {
+        self.values > cap.values || self.bytes > cap.bytes
+    }
+}
+
+/// What a C document `source_len` bytes long may hold written out:
+/// [`C_TREE_PER_BYTE`] values a byte, at least [`C_TREE_FLOOR`] and never
+/// more than [`C_TREE_CEILING`], and [`C_TREE_BYTES_PER_BYTE`] bytes of
+/// text a byte, between [`C_TREE_BYTES_FLOOR`] and [`C_TREE_BYTES_CEILING`].
+pub(crate) fn c_tree_cap(source_len: usize) -> WrittenOut {
+    let len = source_len as u64;
+    WrittenOut {
+        values: len
+            .saturating_mul(C_TREE_PER_BYTE)
+            .clamp(C_TREE_FLOOR, C_TREE_CEILING),
+        bytes: len
+            .saturating_mul(C_TREE_BYTES_PER_BYTE)
+            .clamp(C_TREE_BYTES_FLOOR, C_TREE_BYTES_CEILING),
+    }
+}
+
+/// What `value` holds written out as a tree ([`WrittenOut`]): every
+/// container and scalar, the root among them, and the bytes of every
+/// string and member name, a container shared by several parents counted
+/// once in each. A shared container (one its `Arc` holds more than once)
+/// is measured once and remembered, so the count takes time that follows
+/// the shared tree, however large the tree written out; it stops as soon
+/// as a container passes `cap` in either count, answering that container's
+/// counts. Walked with a stack of its own.
+pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut {
+    use tabnas::Value;
+    /// A container's members, each with the bytes of the name it is under
+    /// (none in a list).
+    type Members<'a> = Vec<(&'a Value, u64)>;
+    /// A container's identity, whether it is shared, and its members.
+    fn container(v: &Value) -> Option<(usize, bool, Members<'_>)> {
+        Some(match v {
+            Value::Array(items) => (
+                Arc::as_ptr(items) as *const u8 as usize,
+                Arc::strong_count(items) > 1,
+                items.iter().map(|m| (m, 0)).collect(),
+            ),
+            Value::ListRef(list) => (
+                Arc::as_ptr(list) as *const u8 as usize,
+                Arc::strong_count(list) > 1,
+                list.value.iter().map(|m| (m, 0)).collect(),
+            ),
+            Value::Object(map) => (
+                Arc::as_ptr(map) as *const u8 as usize,
+                Arc::strong_count(map) > 1,
+                map.iter().map(|(k, m)| (m, k.len() as u64)).collect(),
+            ),
+            Value::MapRef(map) => (
+                Arc::as_ptr(map) as *const u8 as usize,
+                Arc::strong_count(map) > 1,
+                map.value.iter().map(|(k, m)| (m, k.len() as u64)).collect(),
+            ),
+            _ => return None,
+        })
+    }
+    /// A scalar's text.
+    fn text(v: &Value) -> u64 {
+        match v {
+            Value::String(s) => s.len() as u64,
+            Value::Text(t) => t.string.len() as u64,
+            _ => 0,
+        }
+    }
+    enum Step<'a> {
+        /// A value to measure, and the bytes of the name it is under.
+        Enter(&'a Value, u64),
+        /// A container's members are measured: its identity, whether it is
+        /// shared, where its members' counts start, and its name's bytes.
+        Leave(usize, bool, usize, u64),
+    }
+    let mut known: HashMap<usize, WrittenOut> = HashMap::new();
+    let mut counts: Vec<WrittenOut> = Vec::new();
+    let mut steps = vec![Step::Enter(value, 0)];
+    let named = |n: WrittenOut, name: u64| WrittenOut {
+        values: n.values,
+        bytes: n.bytes.saturating_add(name),
+    };
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Enter(v, name) => match container(v) {
+                None => counts.push(WrittenOut {
+                    values: 1,
+                    bytes: text(v).saturating_add(name),
+                }),
+                Some((id, shared, members)) => {
+                    if let Some(n) = shared.then(|| known.get(&id)).flatten() {
+                        counts.push(named(*n, name));
+                        continue;
+                    }
+                    steps.push(Step::Leave(id, shared, counts.len(), name));
+                    steps.extend(
+                        members
+                            .into_iter()
+                            .rev()
+                            .map(|(m, name)| Step::Enter(m, name)),
+                    );
+                }
+            },
+            Step::Leave(id, shared, from, name) => {
+                let n = counts.drain(from..).fold(
+                    WrittenOut {
+                        values: 1,
+                        bytes: 0,
+                    },
+                    WrittenOut::plus,
+                );
+                if n.past(cap) {
+                    return n;
+                }
+                if shared {
+                    known.insert(id, n);
+                }
+                counts.push(named(n, name));
+            }
+        }
+    }
+    counts.pop().unwrap_or_default()
+}
+
+/// Parse `text` with `parser`, which [`make_parser`] made for `format`:
+/// the engine's parse, and for C the crate's own, which realizes the tree
+/// the parse built in this thread's arena into plain values
+/// ([`tabnas_c::parse_with`]), on the parse's thread, before that thread
+/// parses again. It refuses a tree deeper than it realizes
+/// ([`tabnas_c::REALIZE_DEPTH_CAP`]) with the engine's `cancel`, which
+/// [`unplaced_c_cancel`] tells from a cancel that names a place.
+pub(crate) fn parse_value(
+    parser: &Tabnas,
+    format: Format,
+    text: &str,
+) -> Result<tabnas::Value, Box<tabnas::TabnasError>> {
+    match format {
+        Format::C => tabnas_c::parse_with(parser, text),
+        _ => parser.parse(text),
+    }
+    .map_err(Box::new)
+}
+
+/// Whether `e`, a `cancel` from a C parse, names no place: the engine's
+/// for a stop with no token in hand, and tabnas-c's for a tree it could not
+/// realize, are both at offset 0, line 1, column 1, with no token text.
+pub(crate) fn unplaced_c_cancel(format: Format, e: &tabnas::TabnasError) -> bool {
+    format == Format::C && e.code == "cancel" && e.pos == 0 && e.src.is_empty()
+}
+
+/// The grammar spec a grammar document's compiler writes for it: what a
+/// document of ABNF, EBNF or GBNF is read as (the schema `grammar-spec`,
+/// which the three share). It is the pure-data spec, with the tree
+/// builders every compiled grammar carries, as each crate says a host
+/// reads one, which is the text its TypeScript compiler writes: ABNF's
+/// [`tabnas_abnf::abnf_compile`]'s, with `recognition` off (`builtins`
+/// and `marks` on), EBNF's and GBNF's conversions with `builtins` on, each
+/// lowered to pure data by [`tabnas_abnf::to_pure_spec`], as tabnas-bnf's
+/// `compile_spec` lowers it before writing it as text.
+///
+/// Each compiler bounds the grammar it reads: its parse refuses groups
+/// nested past a limit of its own (2,048 open rules for ABNF, some 500
+/// groups; 520 for EBNF and 512 for GBNF, some 130), its emitter elements
+/// nested past 128 and a repetition that would be written out past 8,192
+/// copies, and its left-recursion pass (tabnas-bnf 0.1.29) more than 512
+/// alternatives added to one rule or 131,072 elements added to the
+/// grammar, each before anything that deep or that large is built. It
+/// runs where it is called, uninterrupted ([`compile_notation_by`] bounds
+/// the wait).
+pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Value, LoadError> {
+    use tabnas_abnf::AbnfConvertOptions as Convert;
+    let builtins = Convert {
+        builtins: true,
+        ..Convert::default()
+    };
+    let spec = match format {
+        Format::Abnf => tabnas_abnf::abnf_convert(
+            src,
+            Some(&Convert {
+                marks: true,
+                ..builtins
+            }),
+        )
+        .map_err(Refusal::from),
+        Format::Ebnf => tabnas_ebnf::ebnf_convert(src, Some(&builtins)).map_err(Refusal::from),
+        Format::Gbnf => {
+            tabnas_gbnf::gbnf_convert(src, Some(&tabnas_gbnf::GbnfConvertOptions::new(builtins)))
+                .map_err(Refusal::from)
+        }
+        other => return Err(grammar_failed(other, "it is no grammar notation")),
+    };
+    let pure = spec
+        .and_then(|spec| tabnas_abnf::to_pure_spec(&spec).map_err(|e| Refusal::message(e.message)));
+    match pure {
+        Ok(json) => Ok(tabnas::Value::from_json(&json)),
+        Err(refusal) => Err(refusal.load_error(format, src)),
+    }
+}
+
+/// How many grammar compiles aless stopped waiting for still run. While
+/// any does, [`compile_notation_by`] starts no other with a deadline, so a
+/// run leaves one behind, or as many as it started at the same moment.
+static ABANDONED_COMPILES: AtomicUsize = AtomicUsize::new(0);
+
+/// Where a compile [`compile_notation_by`] started stands: running, given
+/// up on by the thread that waited for it, or done, whichever of the last
+/// two comes first; each side reads and writes it under its lock.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Compile {
+    Running,
+    Abandoned,
+    Done,
+}
+
+/// [`compile_notation`] within `deadline`. A compile cannot be stopped
+/// part way, so with a deadline it runs on a thread of its own, with the
+/// stack a parse has, and past the deadline aless stops waiting for it and
+/// leaves the thread to itself, as it does a grammar's from the command
+/// line; with none it runs here, on the parse's thread. A panic in the
+/// compiler is a `grammar` error, as one in a parse is.
+///
+/// What a compile left to itself holds (its thread, its stack, its copy of
+/// the text, what it builds) is held until it ends, so while one runs no
+/// other compile with a deadline starts: it is the same `timeout` at once
+/// ([`LoadError::compile_behind`]), and a `--check` of many slow grammars
+/// leaves one compile behind it, not one each. Nor does one start once the
+/// deadline has passed: the time is read immediately before the thread is
+/// asked for, and a compile it finds too late is not started at all
+/// ([`LoadError::compile_unstarted`]). When no thread can be had
+/// the grammar is not compiled at all (a `grammar` error), since a compile
+/// on this thread could not be held to the deadline.
+pub(crate) fn compile_notation_by(
+    format: Format,
+    src: &str,
+    deadline: Option<Deadline>,
+) -> Result<tabnas::Value, LoadError> {
+    let caught = |outcome: Result<Result<tabnas::Value, LoadError>, String>| {
+        outcome.unwrap_or_else(|panic| Err(grammar_failed(format, &panic)))
+    };
+    let Some(deadline) = deadline else {
+        return caught(catch_grammar(|| compile_notation(format, src)));
+    };
+    if ABANDONED_COMPILES.load(Ordering::SeqCst) > 0 {
+        return Err(LoadError::compile_behind(deadline.limit));
+    }
+    let state = Arc::new(Mutex::new(Compile::Running));
+    let theirs = state.clone();
+    let (send, compiled) = mpsc::channel();
+    let text = src.to_string();
+    // A compile started past the deadline would be abandoned as soon as it
+    // started, holding its thread and what it builds until it ends.
+    if deadline.is_past() {
+        return Err(LoadError::compile_unstarted(deadline.limit));
+    }
+    let spawned = std::thread::Builder::new()
+        .name("aless-notation".into())
+        .stack_size(PARSE_STACK)
+        .spawn(move || {
+            let outcome = catch_grammar(|| compile_notation(format, &text));
+            drop(text);
+            let mut state = theirs.lock().unwrap_or_else(|e| e.into_inner());
+            if *state == Compile::Abandoned {
+                // Nothing waits for it: let the outcome go, and the next
+                // compile start.
+                drop(outcome);
+                ABANDONED_COMPILES.fetch_sub(1, Ordering::SeqCst);
+            } else {
+                let _ = send.send(outcome);
+            }
+            *state = Compile::Done;
+        });
+    if spawned.is_err() {
+        return Err(grammar_failed(
+            format,
+            "no thread could be had for its compiler, which cannot be stopped part way, so \
+             it was not compiled where --timeout could not hold it",
+        ));
+    }
+    let left = deadline.at.saturating_duration_since(Instant::now());
+    match compiled.recv_timeout(left) {
+        Ok(outcome) => caught(outcome),
+        Err(RecvTimeoutError::Timeout) => {
+            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+            // Done in the meantime is done late: the time is the outcome.
+            if *state == Compile::Running {
+                *state = Compile::Abandoned;
+                ABANDONED_COMPILES.fetch_add(1, Ordering::SeqCst);
+            }
+            Err(LoadError::compile_timed_out(deadline.limit))
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(grammar_failed(format, "the compiler gave no answer"))
+        }
+    }
+}
+
+/// What a grammar notation's compiler refused a document for, whichever
+/// notation it is: its message (prefixed with the notation's name), the
+/// place the refusal names, when it names one, and the engine's code,
+/// when the engine refused the text.
+#[derive(Debug)]
+struct Refusal {
+    message: String,
+    line: Option<usize>,
+    col: Option<usize>,
+    code: Option<String>,
+}
+
+impl Refusal {
+    /// A refusal that names no place.
+    fn message(message: String) -> Refusal {
+        Refusal {
+            message,
+            line: None,
+            col: None,
+            code: None,
+        }
+    }
+
+    /// A refusal of the compiler's, at the range of the grammar's text it
+    /// names, when it names one.
+    fn spanned(message: String, span: Option<tabnas_abnf::SrcSpan>) -> Refusal {
+        Refusal {
+            message,
+            line: span.and_then(|sp| sp.r),
+            col: span.and_then(|sp| sp.c),
+            code: None,
+        }
+    }
+
+    /// A refusal of the notation's parse: the engine's, with its code, or
+    /// the front-end's own, with none.
+    fn parsed(
+        message: String,
+        line: Option<usize>,
+        col: Option<usize>,
+        code: Option<String>,
+    ) -> Refusal {
+        Refusal {
+            message,
+            line,
+            col,
+            code,
+        }
+    }
+
+    /// The refusal as aless reports a load error of `format`, a document
+    /// whose text is `src`. Nesting past what the compiler reads is
+    /// `too_deep`, as any grammar's limit is; the engine's refusal of the
+    /// text keeps the engine's code, and any other refusal of the
+    /// compiler's is `compile`. Each is placed where the refusal says, in
+    /// the engine's layout, with the line quoted; without a place it has
+    /// none.
+    fn load_error(self, format: Format, src: &str) -> LoadError {
+        let plain = strip_ansi(&self.message);
+        let detail = plain
+            .strip_prefix(&format!("{format}: "))
+            .unwrap_or(&plain)
+            .to_string();
+        // The engine's own report, which the front-end quotes after its
+        // place: `parse error at line 1, column 5: [tabnas/unexpected]: …`.
+        let detail = match (&self.code, detail.find("]: ")) {
+            (Some(_), Some(at)) if detail.starts_with("parse error") => {
+                detail[at + 3..].to_string()
+            }
+            _ => detail,
+        };
+        let deep =
+            detail.contains("nests too deeply") || detail.contains("nests elements more than");
+        let code = match (&self.code, deep) {
+            (_, true) => "too_deep".to_string(),
+            (Some(code), false) => code.clone(),
+            (None, false) => "compile".to_string(),
+        };
+        let hint = if deep {
+            format!(
+                "The {format} compiler bounds how deep a grammar nests, and refused this one \
+                 before building anything that deep.\nSplit a deeply nested rule into named \
+                 rules."
+            )
+        } else if self.code.is_some() {
+            String::new()
+        } else {
+            format!(
+                "The document is read as the grammar spec the {format} compiler writes for it, \
+                 and the compiler refused it."
+            )
+        };
+        match self.line.zip(self.col) {
+            Some((line, col)) if line > 0 && col > 0 => {
+                let pos = offset_of(src, line, col);
+                let token: String = src[pos..].chars().take(1).collect();
+                let mut e = tabnas::TabnasError::new(code, token, src, pos, line, col);
+                e.tag = format.name().to_string();
+                e.detail = detail;
+                if !hint.is_empty() || self.code.is_none() {
+                    e.hint = hint;
+                }
+                LoadError::from_tabnas(&e, None)
+            }
+            _ => LoadError::refused(format, &code, format!("{code}: {detail}"), &hint),
+        }
+    }
+}
+
+impl From<tabnas_abnf::AbnfError> for Refusal {
+    fn from(e: tabnas_abnf::AbnfError) -> Refusal {
+        use tabnas_abnf::AbnfError;
+        match e {
+            AbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            AbnfError::Emit(e) => Refusal::spanned(e.message, e.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+impl From<tabnas_ebnf::EbnfError> for Refusal {
+    fn from(e: tabnas_ebnf::EbnfError) -> Refusal {
+        use tabnas_ebnf::EbnfError;
+        match e {
+            EbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            EbnfError::Compile(c) => Refusal::spanned(c.message, c.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+impl From<tabnas_gbnf::GbnfError> for Refusal {
+    fn from(e: tabnas_gbnf::GbnfError) -> Refusal {
+        use tabnas_gbnf::GbnfError;
+        match e {
+            GbnfError::Parse(p) => Refusal::parsed(p.message, p.line, p.column, p.code),
+            GbnfError::Compile(c) => Refusal::spanned(c.message, c.sp),
+            GbnfError::Emit(e) => Refusal::spanned(e.message, e.sp),
+            other => Refusal::message(other.to_string()),
+        }
+    }
+}
+
+/// The byte offset of the 1-based `line` and `col` (counted in characters)
+/// in `src`, or the nearest place there is: a column past its line's end
+/// is that end, a line past the last is the source's end.
+fn offset_of(src: &str, line: usize, col: usize) -> usize {
+    let Some(start) = src
+        .split_inclusive('\n')
+        .take(line - 1)
+        .map(str::len)
+        .try_fold(0usize, |at, n| Some(at + n))
+        .filter(|at| *at <= src.len() && (line == 1 || src[..*at].ends_with('\n')))
+    else {
+        return src.len();
+    };
+    let rest = &src[start..];
+    let end = rest.find('\n').unwrap_or(rest.len());
+    start
+        + rest[..end]
+            .char_indices()
+            .nth(col - 1)
+            .map_or(end, |(i, _)| i)
 }
 
 /// A refusal of proto's own, outside its grammar's parse, as aless reports
@@ -1615,6 +2247,15 @@ pub(crate) fn parse_until(
         return Ok(Doc::from_lines(&lines(src)));
     }
     let src = parse_text(src, format);
+    if format.is_notation() {
+        // The grammar spec has no source positions, nor its nodes a place.
+        return on_parse_thread(
+            timeout,
+            started,
+            || {},
+            |deadline| compile_notation_by(format, src, deadline).map(|v| Doc::from_value(&v)),
+        );
+    }
     on_parse_thread(
         timeout,
         started,
@@ -1734,19 +2375,22 @@ fn parse_guarded(
     check_text(format, src)?;
     // Under a grammar of plain text, a lone `*` is a word and a value; a
     // document of records keyed by a header row (CSV, TSV) is aligned by
-    // column, which its separators and line ends carry.
-    let sink = if format.is_custom() {
-        prov::capture_words(&mut parser)
+    // column, which its separators and line ends carry. A C syntax tree
+    // carries every token's place itself, so its tokens are not kept.
+    let sink = if format == Format::C {
+        None
+    } else if format.is_custom() {
+        Some(prov::capture_words(&mut parser))
     } else if format.keyed_by_header() {
-        prov::capture_cells(&mut parser)
+        Some(prov::capture_cells(&mut parser))
     } else {
-        prov::capture(&mut parser)
+        Some(prov::capture(&mut parser))
     };
     // A grammar is a plugin; a defect in one must not take the viewer down.
     let outcome = {
         let _guard = CatchGuard::enter();
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            parser.parse(src).map_err(Box::new)
+            parse_value(&parser, format, src)
         }))
     };
     let stop = stopped.why();
@@ -1772,18 +2416,24 @@ fn parse_guarded(
                 let (message, hint) = too_deep_words(format, Deep::Value);
                 return Err(LoadError::tagged("too_deep", message).with_hint(&hint));
             }
-            let value = read_as(format, value)?;
+            let value = read_as(format, value, src.len())?;
             let mut doc = Doc::from_value(&value);
             // The engine's tree is not needed past this point; letting it
             // go before the alignment lowers the peak on a large document.
             drop(value);
-            if let Ok(toks) = sink.lock() {
-                // CSV and TSV records are keyed by the header row, which is
-                // lexed once, ahead of every value.
-                if format.keyed_by_header() {
-                    prov::align_records(&mut doc, &toks);
-                } else {
-                    prov::align(&mut doc, &toks);
+            match sink {
+                // C's tokens, at the places its tree says.
+                None => prov::align_spans(&mut doc),
+                Some(sink) => {
+                    if let Ok(toks) = sink.lock() {
+                        // CSV and TSV records are keyed by the header row,
+                        // which is lexed once, ahead of every value.
+                        if format.keyed_by_header() {
+                            prov::align_records(&mut doc, &toks);
+                        } else {
+                            prov::align(&mut doc, &toks);
+                        }
+                    }
                 }
             }
             Ok(doc)
@@ -1808,6 +2458,14 @@ fn parse_guarded(
                  larger --timeout to let it finish, or --timeout 0 for no limit."
             );
             Err(LoadError::from_tabnas(&e, None))
+        }
+        // A C parse stopped with no token in hand (by tabnas-expr's bound
+        // between two tokens, or by tabnas-c, refusing the tree it could
+        // not realize) is stopped nowhere in particular: the engine's
+        // line 1, column 1 is no place in the document.
+        Ok(Err(e)) if e.code == "cancel" && unplaced_c_cancel(format, &e) => {
+            let (message, hint) = too_deep_words(format, Deep::Grammar);
+            Err(LoadError::tagged("too_deep", message).with_hint(&hint))
         }
         // A grammar's own depth limit, lower than aless's: JSON's (and
         // YAML's, INI's and the rest of jsonic's family) is a parse guard
@@ -1882,6 +2540,9 @@ pub(crate) enum Deep {
     /// The format's crate counted the text's braces before the parse, and
     /// they nest past this many levels (proto's).
     Braces(usize),
+    /// A C syntax tree holds more values written out than [`c_tree_cap`]
+    /// allows, its reader repeating subtrees under several members.
+    Repeated,
 }
 
 /// The message and hint of a `too_deep` error, as the loader and the
@@ -1929,6 +2590,26 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 limit = tabnas_expr::NODE_LIMIT
             ),
         ),
+        // C's limits are its reader's: tabnas-expr's bounds on the
+        // expressions it reads (each argument of a call one of the
+        // operations), and tabnas-c's on the tree it realizes, which it
+        // passes on a conditional that is a whole initializer, a tree that
+        // holds itself.
+        Deep::Grammar if format == Format::C => (
+            "too_deep: an expression larger, or code nested deeper, than the c reader reads"
+                .to_string(),
+            format!(
+                "The c reader holds at most {limit} operations in one expression, the \
+                 arguments of a call among them, keeps at most {rules} rules open, and builds \
+                 a syntax tree at most {tree} levels deep; the parse stopped where the document \
+                 passed one of them. It reads a conditional that is a whole initializer, as \
+                 in int a = b ? c : d;, as a tree that holds itself, and refuses it the same \
+                 way.\nSplit a long expression into several.",
+                limit = tabnas_expr::NODE_LIMIT,
+                rules = tabnas_expr::RULE_LIMIT,
+                tree = tabnas_c::REALIZE_DEPTH_CAP
+            ),
+        ),
         Deep::Grammar => (
             format!("too_deep: nested deeper than the {format} grammar reads"),
             format!(
@@ -1942,6 +2623,19 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 "The {format} reader counts a document's braces before it parses it, and \
                  refuses one that nests them more than {levels} levels deep.\nReal documents \
                  nest a few levels at most."
+            ),
+        ),
+        Deep::Repeated => (
+            format!("too_deep: a {format} syntax tree larger written out than aless reads"),
+            format!(
+                "The {format} reader repeats a node's subtrees under the members that name \
+                 them, such as operand and cond, beside its children, so each level of a chain \
+                 of subscripts or member accesses, a run of prefix operators, a conditional or \
+                 a brace initializer doubles the tree written out. aless reads one of at most \
+                 {C_TREE_PER_BYTE} values a byte of its source, of 1,048,576 at least and of \
+                 33,554,432 at most, holding at most 2,048 bytes of names and strings a byte, \
+                 of 8 MB at least and of 256 MB at most, and stopped before writing out this \
+                 one.\nReal code nests these a few levels at most."
             ),
         ),
     }
@@ -2142,6 +2836,9 @@ mod tests {
         assert_eq!(Format::detect(Path::new("site.css")), Format::Css);
         assert_eq!(Format::detect(Path::new("api/v1.proto")), Format::Proto);
         assert_eq!(Format::detect(Path::new("games.PGN")), Format::Pgn);
+        assert_eq!(Format::detect(Path::new("src/main.c")), Format::C);
+        assert_eq!(Format::detect(Path::new("include/vec.H")), Format::C);
+        assert_eq!(Format::from_name("c"), Some(Format::C));
         // Expressions and versions declare none: -k names them.
         assert!(Format::Expr.extensions().is_empty() && Format::Semver.extensions().is_empty());
         assert_eq!(Format::detect(Path::new("calc.expr")), Format::Text);
@@ -3066,17 +3763,26 @@ mod tests {
             let mut unbounded = make();
             unbounded.options.rule.history = None;
             let run = |p: Tabnas| {
-                p.parse(src)
-                    .map_err(|e| e.to_string())
-                    .and_then(|v| match format {
-                        Some(format) => read_as(format, v).map_err(|e| e.to_string()),
-                        None => Ok(v),
-                    })
-                    .map(|v| v.to_json())
+                match format {
+                    Some(format) => parse_value(&p, format, src),
+                    None => p.parse(src).map_err(Box::new),
+                }
+                .map_err(|e| e.to_string())
+                .and_then(|v| match format {
+                    Some(format) => read_as(format, v, src.len()).map_err(|e| e.to_string()),
+                    None => Ok(v),
+                })
+                .map(|v| v.to_json())
             };
             assert_eq!(run(bounded), run(unbounded), "{what}");
         };
-        for format in Format::ALL.iter().copied().filter(|f| *f != Format::Text) {
+        // A grammar's compiler parses it with a parser of its own, which
+        // aless has no way to bound.
+        for format in Format::ALL
+            .iter()
+            .copied()
+            .filter(|f| *f != Format::Text && !f.is_notation())
+        {
             let make = || make_parser(format).unwrap().unwrap();
             // A sequence well past the bound, nested once.
             let items = |item: &dyn Fn(usize) -> String, sep: &str| {
@@ -3118,6 +3824,10 @@ mod tests {
                     &|i| format!("[Event \"e{i}\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0"),
                     "\n\n",
                 ),
+                Format::C => items(
+                    &|i| format!("int f{i}(int a) {{ return a * {i} + b[{i}].c; }}"),
+                    "\n",
+                ),
                 Format::Expr => format!("[{}]", items(&|i| format!("{i}+{i}*({i}-1)"), ", ")),
                 Format::Semver => format!(
                     "1.2.3-{}+{}",
@@ -3139,6 +3849,9 @@ mod tests {
             let path = entry.unwrap().path();
             let format = match fixture_format(&path) {
                 Some(Format::Text) | None => continue,
+                // A grammar is its compiler's to parse, with a parser
+                // aless does not make.
+                Some(format) if format.is_notation() => continue,
                 Some(format) => format,
             };
             let src = std::fs::read_to_string(&path).unwrap();
@@ -3216,7 +3929,7 @@ mod tests {
 
     #[test]
     fn every_format_parses_its_sample() {
-        let samples: [(Format, &str); 19] = [
+        let samples: [(Format, &str); 23] = [
             (Format::Json, "{\"a\": [1, 2]}"),
             (Format::Jsonl, "{\"a\": 1}\n{\"a\": 2}\n"),
             (Format::Jsonic, "a: 1, b: {c: x}"),
@@ -3240,6 +3953,10 @@ mod tests {
                 "syntax = \"proto3\";\nmessage M { int32 a = 1; }\n",
             ),
             (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
+            (Format::C, "#define N 2\nint x = N;\nint f(void) { return x; }\n"),
+            (Format::Abnf, "greet = \"hi\" / \"hello\"\n"),
+            (Format::Ebnf, "Greet ::= \"hi\" | \"hello\"\n"),
+            (Format::Gbnf, "root ::= \"hi\" | \"hello\"\n"),
             (Format::Expr, "a: 1+2*3, b: (4)\n"),
             (Format::Semver, "1.2.3-rc.1+build.5\n"),
         ];
@@ -3252,11 +3969,176 @@ mod tests {
         for (format, src) in samples {
             let doc = parse(src, format).unwrap_or_else(|e| panic!("{format}: {e}"));
             assert!(doc.len() > 1, "{format} produced a scalar-only document");
-            assert!(
+            // A grammar's spec is its compiler's writing, and places nothing.
+            assert_eq!(
                 doc.nodes.iter().any(|n| n.line > 0),
-                "{format}: no node carries a source line"
+                !format.is_notation(),
+                "{format}: which nodes carry a source line"
             );
         }
+    }
+
+    /// A grammar in a notation reads as the pure-data spec its compiler
+    /// writes for it, as each crate says a host reads one: its rules, the
+    /// start wrapper the compiler adds, the tree builders every compiled
+    /// grammar carries, and the tokens; ABNF's literals matching either
+    /// case, as RFC 5234 has them. The three read one schema.
+    #[test]
+    fn a_grammar_reads_as_the_spec_its_compiler_writes() {
+        let spec = |src: &str, format: Format| -> serde_json::Value {
+            serde_json::from_str(&read_json(src, format)).unwrap()
+        };
+        let abnf = spec("greet = \"hi\" / \"hello\"\n", Format::Abnf);
+        let rules: Vec<&String> = abnf["rule"].as_object().unwrap().keys().collect();
+        assert_eq!(rules, ["greet", "__start__"]);
+        assert_eq!(abnf["options"]["rule"]["start"], "__start__");
+        assert_eq!(abnf["options"]["match"]["token"]["#HI"], "@~/^hi/i");
+        assert_eq!(abnf["rule"]["greet"]["open"][0]["a"], "@node$");
+        assert_eq!(abnf["rule"]["greet"]["open"][0]["g"], "abnf");
+        let ebnf = spec(
+            "Doc ::= Greet\nGreet ::= \"hi\" | \"hello\"\n",
+            Format::Ebnf,
+        );
+        let rules: Vec<&String> = ebnf["rule"].as_object().unwrap().keys().collect();
+        assert_eq!(rules, ["Doc", "Greet", "__start__"]);
+        let gbnf = spec(
+            "root ::= greet\ngreet ::= \"hi\" | \"hello\"\n",
+            Format::Gbnf,
+        );
+        assert_eq!(gbnf["options"]["tokenSet"]["IGNORE"], serde_json::json!([]));
+        assert_eq!(gbnf["rule"]["greet"]["open"][0]["g"], "gbnf");
+    }
+
+    /// What a notation's compiler refuses is a load error of aless's: a
+    /// grammar nested past the compiler's own limit is `too_deep`, with no
+    /// place, or the rule's where the refusal names one; the engine's
+    /// refusal of the text keeps the engine's code, placed; any other of
+    /// the compiler's is `compile`, placed where it says, and quoted in the
+    /// engine's layout under the notation's name.
+    #[test]
+    fn a_grammars_refusals_are_load_errors() {
+        for (format, src) in [
+            (
+                Format::Abnf,
+                format!("a = {}\"x\"{}\n", "(".repeat(20_000), ")".repeat(20_000)),
+            ),
+            (
+                Format::Ebnf,
+                format!("a ::= {}\"x\"{}\n", "(".repeat(20_000), ")".repeat(20_000)),
+            ),
+            (
+                Format::Gbnf,
+                format!(
+                    "root ::= {}\"x\"{}\n",
+                    "(".repeat(20_000),
+                    ")".repeat(20_000)
+                ),
+            ),
+        ] {
+            let e = parse(&src, format).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{format}: {e}");
+            assert_eq!((e.line, e.col), (0, 0), "{format}");
+            assert!(e.message.contains("nests too deeply"), "{format}: {e}");
+            assert!(
+                e.plain_report()
+                    .starts_with(&format!("[{format}/too_deep]: ")),
+                "{}",
+                e.plain_report()
+            );
+        }
+        let e = parse(
+            &format!("a = {}\"x\"{}\n", "(".repeat(200), ")".repeat(200)),
+            Format::Abnf,
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("more than 128 deep"), "{e}");
+        let e = parse("greet = \"hi\"\na = \"\u{1}\"\n", Format::Abnf).unwrap_err();
+        assert_eq!(
+            (e.code.as_str(), e.line, e.col),
+            ("unprintable", 2, 6),
+            "{e}"
+        );
+        assert!(
+            e.plain_report().starts_with("[abnf/unprintable]: "),
+            "{}",
+            e.plain_report()
+        );
+        let e = parse("a = b\n", Format::Abnf).unwrap_err();
+        assert_eq!(e.code, "compile");
+        assert_eq!(e.message, "compile: rule 'a' references unknown rule 'b'");
+        assert_eq!((e.line, e.col), (1, 5));
+        assert!(
+            e.plain_report().contains("  1 | a = b"),
+            "{}",
+            e.plain_report()
+        );
+        let e = parse("a ::= \"x\"\n", Format::Gbnf).unwrap_err();
+        assert_eq!(e.code, "compile");
+        assert!(e.message.contains("no 'root' rule"), "{e}");
+        let e = parse("\n", Format::Ebnf).unwrap_err();
+        assert_eq!(e.message, "compile: no productions found");
+        assert_eq!((e.line, e.col), (0, 0));
+        assert!(!e.is_io() && !e.is_too_large() && !e.is_timeout());
+    }
+
+    /// A compile cannot be stopped part way: past the deadline aless stops
+    /// waiting for it, and says so as a grammar's compile that ran past
+    /// --timeout, where without one it runs to its end. While a compile
+    /// left to itself runs, no other with a deadline starts: it is the same
+    /// timeout at once, so a run of many slow grammars leaves one compile
+    /// behind, not one each; once that compile ends, compiles start again.
+    /// Nor does one start once the deadline has passed: it is refused at
+    /// once, and nothing is left behind.
+    #[test]
+    fn a_grammars_compile_is_waited_for_within_the_deadline() {
+        let rules: String = (0..2_000)
+            .map(|i| format!("r{i} = \"x{i}\" r{}\n", i + 1))
+            .chain(std::iter::once("r2000 = \"y\"\n".to_string()))
+            .collect();
+        let started = Instant::now();
+        let e = parse_within(&rules, Format::Abnf, Some(Duration::from_millis(50))).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar took longer than 0.05 s to compile"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "it stopped waiting"
+        );
+        let small = "r0 = \"x\"\n";
+        let ample = Some(Duration::from_secs(600));
+        let e = parse_within(small, Format::Abnf, ample).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar was not compiled within 600 s: a compile aless stopped waiting \
+             for is still running"
+        );
+        assert_eq!(ABANDONED_COMPILES.load(Ordering::SeqCst), 1);
+        // With no deadline nothing is left behind, so nothing waits.
+        assert!(parse(small, Format::Abnf).is_ok());
+        let until = Instant::now() + Duration::from_secs(600);
+        while ABANDONED_COMPILES.load(Ordering::SeqCst) > 0 {
+            assert!(Instant::now() < until, "the compile left behind ends");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(parse_within(small, Format::Abnf, ample).is_ok());
+        let past = Deadline::after(Some(Duration::ZERO));
+        let e = compile_notation_by(Format::Abnf, &rules, past).unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert_eq!(
+            e.message,
+            "timeout: the grammar was not compiled within 0 s: the time was up before its \
+             compile started"
+        );
+        assert_eq!(
+            ABANDONED_COMPILES.load(Ordering::SeqCst),
+            0,
+            "no compile was started to be left behind"
+        );
+        assert!(parse_within(small, Format::Abnf, ample).is_ok());
     }
 
     /// The value as aless reads it, as compact JSON.
@@ -3267,17 +4149,33 @@ mod tests {
 
     /// A .proto file reads as its FileDescriptorProto (the schema
     /// `proto-descriptor`), in the JSON form protoc writes one in, not as
-    /// the syntax tree the grammar builds; a number the reader reads as
-    /// NaN (a digit separator, `1_0`) is null there, as the render takes it.
+    /// the syntax tree the grammar builds, in the member order of the
+    /// canonical descriptor the crate's other runtimes write: the lists
+    /// every descriptor has, then what a statement places (the syntax, the
+    /// package, a field's `proto3Optional`) in the statements' order. A
+    /// number the reader reads as NaN (a digit separator, `1_0`) stays
+    /// NaN, which JSON writes as null.
     #[test]
     fn proto_reads_as_its_descriptor() {
         assert_eq!(
             read_json(
-                "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; string b = 1_0; }",
+                "syntax = \"proto3\";\npackage p;\nmessage M { int32 a = 1; string b = 1_0; \
+                 optional int32 c = 3; }",
                 Format::Proto
             ),
-            r#"{"package":"p","dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[{"name":"M","field":[{"name":"a","number":1,"label":"LABEL_OPTIONAL","type":"TYPE_INT32"},{"name":"b","number":null,"label":"LABEL_OPTIONAL","type":"TYPE_STRING"}],"nestedType":[],"enumType":[],"oneofDecl":[],"extension":[]}],"enumType":[],"service":[],"extension":[],"syntax":"proto3"}"#
+            r#"{"dependency":[],"publicDependency":[],"weakDependency":[],"messageType":[{"name":"M","field":[{"name":"a","number":1,"label":"LABEL_OPTIONAL","type":"TYPE_INT32"},{"name":"b","number":null,"label":"LABEL_OPTIONAL","type":"TYPE_STRING"},{"name":"c","number":3,"label":"LABEL_OPTIONAL","proto3Optional":true,"type":"TYPE_INT32","oneofIndex":0}],"nestedType":[],"enumType":[],"oneofDecl":[{"name":"_c"}],"extension":[]}],"enumType":[],"service":[],"extension":[],"syntax":"proto3","package":"p"}"#
         );
+        let doc = parse("message M { int32 b = 1_0; }", Format::Proto).unwrap();
+        let number = doc
+            .resolve(&[
+                Key::Name("messageType".into()),
+                Key::Index(0),
+                Key::Name("field".into()),
+                Key::Index(0),
+                Key::Name("number".into()),
+            ])
+            .unwrap();
+        assert!(matches!(doc.node(number).kind, Kind::Number(n) if n.is_nan()));
         // No declaration reads as proto2, as protoc has it.
         assert!(read_json("message M {}", Format::Proto).ends_with(r#""syntax":"proto2"}"#));
     }
@@ -3381,6 +4279,213 @@ mod tests {
         let e = parse("1. e4 Zz9", Format::Pgn).unwrap_err();
         assert_eq!(e.code, "unexpected");
         assert!(e.message.contains("not chess notation"), "{}", e.message);
+    }
+
+    /// A C file reads as its concrete syntax tree, as tabnas-c realizes it:
+    /// every node its kind, span, children and trivia, every token its
+    /// name, text and span, the subtrees the reader repeats under members
+    /// such as `operand` included.
+    #[test]
+    fn c_reads_as_its_syntax_tree() {
+        let tree = read_json("int x = 1;", Format::C);
+        assert!(
+            tree.starts_with(r#"{"kind":"translation_unit","span":"#),
+            "{tree}"
+        );
+        assert!(
+            tree.contains(r#"{"kind":"token","tname":"KW_INT","src":"int","span":{"start":0,"end":3,"line":1,"col":1}}"#),
+            "{tree}"
+        );
+        // A unary operation's operand is its child too.
+        let doc = parse("int f(void) { return -x; }", Format::C).unwrap();
+        let operand = doc
+            .nodes
+            .iter()
+            .position(|n| n.key.name() == Some("operand"))
+            .expect("an operand");
+        assert!(doc.nodes[operand].is_container());
+    }
+
+    /// C's limits are its reader's, each `too_deep`: tabnas-expr's 127
+    /// operations in one expression and its 1,024 open rules, placed where
+    /// the parse stopped, or nowhere when it stopped between two tokens;
+    /// tabnas-c's tree of 256 levels, which a conditional that is a whole
+    /// initializer passes, holding itself; and aless's bound on the tree
+    /// written out, which the reader's repeated subtrees double with each
+    /// level of a chain of member accesses, refused before anything is
+    /// written out, as quickly as the reader read it.
+    #[test]
+    fn c_is_bounded_by_its_readers_limits_and_the_tree_written_out() {
+        let terms = |n: usize| {
+            (0..n)
+                .map(|i| format!("a{i}"))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
+        assert!(parse(&format!("int x = {};", terms(100)), Format::C).is_ok());
+        let e = parse(&format!("int x = {};", terms(200)), Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: an expression larger, or code nested deeper, than the c reader reads"
+        );
+        assert!(e.hint.contains("127 operations"), "{}", e.hint);
+        assert_eq!(e.line, 1, "{e}");
+        assert!(e.col > 1, "{e}");
+        let blocks = |n: usize| format!("void f(void) {{ {}{} }}", "{".repeat(n), "}".repeat(n));
+        assert!(parse(&blocks(50), Format::C).is_ok());
+        for src in [blocks(300), "int a = b ? c : d;".to_string()] {
+            let e = parse(&src, Format::C).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{src}");
+            assert_eq!((e.line, e.col), (0, 0), "no place: {e}");
+            assert!(e.hint.contains("256 levels"), "{}", e.hint);
+        }
+        let e = parse(&blocks(2000), Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep");
+        assert!(e.line == 1 && e.col > 300, "{e}");
+        // Each member access doubles the tree written out: 12 levels are
+        // read, 40 are refused at once, before the doubling is written out.
+        let members = |n: usize| format!("int f(void) {{ return a{}; }}", ".b".repeat(n));
+        assert!(parse(&members(12), Format::C).is_ok());
+        let started = Instant::now();
+        let e = parse(&members(40), Format::C).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert_eq!(e.code, "too_deep");
+        assert_eq!(
+            e.message,
+            "too_deep: a c syntax tree larger written out than aless reads"
+        );
+        assert!(e.hint.contains("256 values a byte"), "{}", e.hint);
+        assert_eq!((e.line, e.col), (0, 0));
+    }
+
+    /// A tree written out counts a shared container once in each place,
+    /// measured once; the count stops at the first container past the cap.
+    #[test]
+    fn written_out_counts_a_shared_subtree_in_every_place() {
+        use tabnas::Value;
+        let values = |values| WrittenOut {
+            values,
+            bytes: u64::MAX,
+        };
+        let leaf = Value::array(vec![Value::Number(1.0), Value::Number(2.0)]);
+        let mut level = leaf;
+        for _ in 0..100 {
+            level = Value::array(vec![level.clone(), level]);
+        }
+        // 2^100 leaves written out, from 101 containers: the count stops
+        // at the first level past the cap, the eighth, of 2^10 - 1 values.
+        assert_eq!(written_out(&level, values(1_000)).values, 1_023);
+        let all = written_out(&level, values(u64::MAX));
+        assert_eq!(all.values, u64::MAX, "saturated");
+        let small = Value::array(vec![Value::array(vec![]), Value::Null]);
+        assert_eq!(
+            written_out(&small, values(1_000)),
+            WrittenOut {
+                values: 3,
+                bytes: 0
+            }
+        );
+        let shared = Value::array(vec![Value::Number(1.0)]);
+        let twice = Value::array(vec![shared.clone(), shared]);
+        assert_eq!(written_out(&twice, values(1_000)).values, 5);
+        // Text is counted in every place too: each string's bytes and each
+        // member name's, a shared container's own name among them.
+        let inner = Value::from_json(&serde_json::json!({"name": "abc"}));
+        let mut outer = Value::from_json(&serde_json::json!({"key": null}));
+        outer.as_object_mut().unwrap().insert(
+            "key".into(),
+            Value::array(vec![inner.clone(), inner.clone(), inner]),
+        );
+        let ample = values(u64::MAX);
+        assert_eq!(
+            written_out(&outer, ample),
+            WrittenOut {
+                values: 8,
+                bytes: 24
+            }
+        );
+        // The count stops at the first container past either cap: here the
+        // list, of 21 bytes of text.
+        let text = WrittenOut {
+            values: u64::MAX,
+            bytes: 20,
+        };
+        let stopped = written_out(&outer, text);
+        assert!(stopped.past(text));
+        assert_eq!(
+            stopped,
+            WrittenOut {
+                values: 7,
+                bytes: 21
+            }
+        );
+        let cap = |values, bytes| WrittenOut { values, bytes };
+        assert_eq!(c_tree_cap(10), cap(C_TREE_FLOOR, C_TREE_BYTES_FLOOR));
+        assert_eq!(c_tree_cap(1 << 16), cap(256 << 16, 2048 << 16));
+        // Past 131,072 bytes the ceilings hold, however long the file.
+        let ceilings = cap(C_TREE_CEILING, C_TREE_BYTES_CEILING);
+        assert_eq!(c_tree_cap(1 << 17), ceilings);
+        assert_eq!(c_tree_cap(64 << 20), ceilings);
+        assert_eq!(c_tree_cap(usize::MAX), ceilings);
+    }
+
+    /// A name a megabyte long at the foot of 18 member accesses, which
+    /// write it out 2^18 times: some 14 million values, under the ceiling
+    /// a file that long is held to, but half a terabyte of text, refused by
+    /// the ceiling on text. The name read once, or under four accesses (32
+    /// MB of text), reads.
+    #[test]
+    fn a_long_name_in_a_repeated_subtree_is_held_to_its_text() {
+        let name = "a".repeat(1 << 20);
+        let chain = |n: usize| format!("int f(void) {{ return {name}{}; }}\n", ".b".repeat(n));
+        let src = chain(18);
+        let parser = make_parser(Format::C).unwrap().unwrap();
+        let value = parse_value(&parser, Format::C, &src).unwrap();
+        let all = written_out(
+            &value,
+            WrittenOut {
+                values: u64::MAX,
+                bytes: u64::MAX,
+            },
+        );
+        drop(value);
+        let cap = c_tree_cap(src.len());
+        assert_eq!(cap.values, C_TREE_CEILING);
+        assert!(all.values < cap.values, "{all:?}");
+        assert!(all.bytes > 1 << 38, "{all:?}");
+        let e = parse(&src, Format::C).unwrap_err();
+        assert_eq!(e.code, "too_deep", "{e}");
+        assert!(
+            e.hint.contains(
+                "2,048 bytes of names and strings a byte, of 8 MB at least and of 256 MB at most"
+            ),
+            "{}",
+            e.hint
+        );
+        for n in [0, 4] {
+            assert!(parse(&chain(n), Format::C).is_ok(), "{n} accesses");
+        }
+    }
+
+    /// A chain of member accesses whose tree written out (115,343,533
+    /// values for 21 of them) the ceiling refuses, whatever a long comment
+    /// beside it adds to the file: 4 MB of it would have raised a cap of
+    /// 256 values a byte to a billion.
+    #[test]
+    fn padding_does_not_raise_a_c_trees_cap() {
+        let chain = format!("int f(void) {{ return a{}; }}\n", ".b".repeat(21));
+        let padded = format!("/*{}*/\n{chain}", " ".repeat(4 << 20));
+        for src in [chain, padded] {
+            let e = parse(&src, Format::C).unwrap_err();
+            assert_eq!(e.code, "too_deep", "{} bytes: {e}", src.len());
+        }
+        // Real code past the length where the ceiling holds reads: 4,000
+        // functions, a line each, 160 KB.
+        let functions: String = (0..4_000)
+            .map(|i| format!("int f{i}(int a) {{ return a.b.c + {i}; }}\n"))
+            .collect();
+        assert!(parse(&functions, Format::C).is_ok());
     }
 
     #[test]

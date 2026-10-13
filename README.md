@@ -3,8 +3,9 @@
 A [jless](https://jless.io)-style terminal viewer for **every format the
 [tabnas](https://github.com/tabnas) parsers read** — JSON, JSON Lines,
 jsonic, JSONC, JSON5, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown,
-RSS/Atom feeds, CSS, `.proto` files, PGN chess games, expressions and
-semantic versions, and any text format you describe with an ABNF grammar
+RSS/Atom feeds, CSS, `.proto` files, PGN chess games, C source,
+grammars in ABNF, EBNF and GBNF, expressions and semantic versions, and
+any text format you describe with an ABNF grammar
 ([Custom grammars](#custom-grammars)) — with **tabs** for several files
 at once and a **watch mode** that reloads a file when it changes while
 **keeping your place**.
@@ -220,9 +221,11 @@ shell, whose globbing would take `[0]`.
   boolean or null.
 - `line` and `col` count from 1, columns in characters, and give where
   the node starts in the source: at its key when it has one, else at its
-  value. They are exact for the JSON family, TOML, INI, CSV and ZON,
-  best-effort for YAML, XML, Markdown, CSS, PGN and expressions, loose
-  for a `.proto` file's descriptor, and `null` when unknown.
+  value. They are exact for the JSON family, TOML, INI, CSV and ZON, and
+  for C's tokens, from the places its syntax tree records; best-effort
+  for YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
+  file's descriptor, and `null` when unknown, as throughout a grammar's
+  spec, which its compiler writes.
 - A container has `length`, its item count; a scalar has `value`. A
   string over 200 characters is cut to 200, with `"truncated": true` and
   its full `length`. Numbers are 64-bit floats, so an integer beyond
@@ -342,8 +345,16 @@ A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
 TOML, INI, ZON and expressions, an expression of 127 operations too, 256
-for XML, 512 for JSONC, 768 open rules for CSS, and braces 100 deep for a
-`.proto` file, counted before it is parsed). For a grammar from the
+for XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a
+`.proto` file, counted before it is parsed, C's own: an expression of
+127 operations, 1,024 open rules and a syntax tree 256 levels deep, and a
+tree of more than 256 values a byte of the file written out (33,554,432
+at most, however long the file) or of more than 2,048 bytes of names and
+strings a byte (256 MB at most), which its reader's repeated subtrees
+make of a few levels of nesting, and an ABNF,
+EBNF or GBNF grammar's compiler's: groups and options about 500 deep in
+ABNF, 130 in EBNF and 128 in GBNF, and elements nested 128 deep in any of
+them). For a grammar from the
 command line the 1,000 levels are measured on the value it built, once
 the parse is done, and the error then has no `line` ([Custom
 grammars](#custom-grammars)).
@@ -497,7 +508,7 @@ the render the format's crate carries: a library in the
 [alchemy](https://github.com/tabnas/alchemy) language, which aless links
 with a one-line program and runs as it runs `--alchemy`, streamed as the
 input is read. Every format aless reads can be written as every format
-that has a render and can hold it (four hold only their own kind of
+that has a render and can hold it (eight hold only their own kind of
 tree, below), so it is a translation: CSV's records become a YAML
 sequence of mappings, a JSON document a TOML table, a Markdown table a
 CSV file. The input is read as `--render json` reads it: JSON Lines, CSV
@@ -506,9 +517,10 @@ over the whole run. A format's lift reads a whole document, so it runs
 at the root only: below the root, `--path` selects a value of the
 document's tree, rows or a tree by its own shape (a Markdown file's
 table is its rows at the root, and `--path` into the file selects its
-nodes). The formats with a render today are `css`, `csv`, `expr`,
-`feed` (Atom), `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
-`markdown`, `pgn`, `proto`, `semver`, `toml`, `xml`, `yaml` and `zon`;
+nodes). The formats with a render today are `abnf`, `c`, `css`, `csv`,
+`ebnf`, `expr`, `feed` (Atom), `gbnf`, `ini`, `json`, `json5`, `jsonc`,
+`jsonic`, `jsonl`, `markdown`, `pgn`, `proto`, `semver`, `toml`, `xml`,
+`yaml` and `zon`;
 `--render` with any other name is a usage error that lists them, and one
 that names a format by an extension (`--render rss`) names the format's
 render (`--render feed`).
@@ -530,7 +542,8 @@ table), what its render writes from (a tree, or records), the root that
 render needs (an object for TOML and INI, an array for JSON Lines and the
 record formats), the schema its events carry when they are not a plain
 tree (XML's element tree, a feed, an expression, a version, CSS's syntax
-tree, a `.proto` file's descriptor, a PGN database), with an embed from
+tree, a `.proto` file's descriptor, a PGN database, C's syntax tree, a
+grammar spec), with an embed from
 a plain tree where the format has one, and what a written document does
 not keep. alchemy's `translate` composes the
 program from them, and aless runs it: the source's lift, where the target
@@ -560,17 +573,23 @@ document is XML's element tree through its embedding, each value's kind
 in a `type` attribute, an Atom feed through the feed's (each value an
 entry, read back from its categories), or an expression as it is.
 
-Four formats have no convention for another tree, and refuse one before
-anything is written. CSS, `.proto` and PGN write only the tree their
+Eight formats have no convention for another tree, and refuse one before
+anything is written. CSS, `.proto`, PGN and C write only the tree their
 own documents read as (a stylesheet's syntax tree, a FileDescriptorProto,
-a database of games): from any other source, `--render css`, `proto` or
-`pgn` is a `usage` error, exit 2, that names the route that can write
-one, a program that makes that tree (`--alchemy FILE --render proto`).
+a database of games, a C syntax tree), and ABNF, EBNF and GBNF the
+grammar spec a grammar in any of the three reads as, so a grammar is
+written in another notation: from any other source, `--render css`,
+`proto`, `pgn`, `c`, `abnf`, `ebnf` or `gbnf` is a `usage` error, exit 2,
+that names the route that can write one, a program that makes that tree
+(`--alchemy FILE --render proto`).
 `--render semver` writes only a tree that is a version, an object of
 `major`, `minor` and `patch`: any other fails with
 `TARGET_VALUE_UNREPRESENTABLE`, exit 1, `output: "none"`, placed in the
 version's embedding as a render's own failures are, with the input named
-beside it.
+beside it. A notation's render fails the same way, placed in its own
+file, on a spec its notation cannot say: an action, or a terminal none of
+its forms matches, as GBNF has none for the engine's own string token
+that `ST` names in an EBNF or ABNF grammar.
 
 ```
 $ aless --render yaml tests/fixtures/sample.csv
@@ -800,6 +819,10 @@ text, one line per row, so every file is viewable.
 | css | css (its syntax tree) | tabnas-css |
 | proto | proto (its FileDescriptorProto, as protoc writes one in JSON) | tabnas-proto |
 | pgn | pgn (chess games, each its tags and moves) | tabnas-chess |
+| c | c, h (its concrete syntax tree, every token with its place) | tabnas-c |
+| abnf | abnf (the grammar spec its compiler writes) | tabnas-abnf |
+| ebnf | ebnf (the grammar spec its compiler writes) | tabnas-ebnf |
+| gbnf | gbnf (the grammar spec its compiler writes) | tabnas-gbnf |
 | expr | none, `-k expr` (jsonic with arithmetic, an operation the list of its operator and terms) | tabnas-expr |
 | semver | none, `-k semver` (a version: its major, minor, patch, prerelease and build) | tabnas-semver |
 | text | txt, text, log, anything else | — |
@@ -810,8 +833,23 @@ crate builds, not the syntax tree its grammar parses; an expression shows
 its operations as S-expressions (`1+2*3` is `["+", 1, ["*", 2, 3]]`), as
 the crate's fixtures write them; and a version is read without the line
 break its file ends with, which the grammar, taking no whitespace, would
-refuse. Any other text format can be given a grammar of its own, named on
-the command line: the next section.
+refuse. A C file shows its concrete syntax tree, preprocessor directives
+parsed into it: each node its `kind`, `span`, `children` and `trivia`
+(comments), each token its name (`tname`), text (`src`) and span, and the
+members a node names its parts by (`operand`, `cond`, `declaredName`),
+which repeat subtrees its `children` hold. It is read as plain C23,
+following no `#include`, so a typedef a header declares is not known for
+a type: `size_t x;` is kept as its tokens, with no declaration's
+structure. A grammar in ABNF, EBNF or GBNF shows the grammar spec its
+compiler writes, the tree a tabnas parser is made from: its `options`
+(the fixed tokens it lexes, its start rule) and its `rule`s, each its
+`open` and `close` alternates, with the helper rules and tokens the
+compiler adds. The three notations compile to one kind of spec, so a
+grammar in one is written in another by `--render`, and the compiler
+keeps no places, so no node of a spec has a position. To read a file
+with a grammar, rather than read the grammar, name it with `--grammar`.
+Any other text format can be given a grammar of its own, named on the
+command line: the next section.
 
 ## Custom grammars
 
@@ -833,7 +871,10 @@ first `=`. Both repeat, for several grammars at once. NAME is the
 format's name, as `--paths` and `--check` report it and as `-k` and
 `:format` take it, and what the extension or whole name must be, in any
 case. A name that is a built-in format's (`json`, `conf`) is allowed:
-the grammar then reads that extension.
+the grammar then reads that extension. A grammar file is a document of
+its own as well: `aless hosts.abnf` shows the grammar spec it compiles
+to, and `aless --check hosts.abnf` says whether it compiles, with the
+compiler's message where it does not ([Formats](#formats)).
 
 What the grammar builds is the document. With `; @object a b` and
 `; @array` comments on its rules (the annotation syntax is
@@ -1068,8 +1109,9 @@ aless --panes out --stacked orders.json                   # its JSON, one above 
   viewer's thread, and the text shows plain until they come in. Text
   over 512 KiB stays plain, since colouring parses the whole text and
   holds a few hundred times its size while it does; so does plain text,
-  and a grammar the language server's registry marks as lexing
-  speculatively. Colouring one text stops after ten seconds, or the
+  a grammar in ABNF, EBNF or GBNF, which its compiler lexes with a parser
+  of its own, and a grammar the language server's registry marks as
+  lexing speculatively. Colouring one text stops after ten seconds, or the
   parse timeout when that is shorter, and colours what it had lexed.
   Without colour (`--no-color`, `NO_COLOR`) no text is lexed for it.
 - **Limits.** The output pane keeps up to 16 MB of output; past that the
@@ -1194,7 +1236,12 @@ best-effort where a grammar synthesises values (Markdown's AST, XML's
 element records, YAML, CSS's and PGN's trees, an expression's operators):
 a node the alignment cannot place shows no position and inherits none. A
 `.proto` file's descriptor is derived rather than read, its statements
-regrouped, so only its first values are placed reliably.
+regrouped, so only its first values are placed reliably. A C syntax tree
+records where each token is, so a token and its text are placed exactly
+where it says, each time the tree repeats it, and what the reader adds (a
+node's kind, a token's name, a span's own numbers) has no position. A
+grammar's spec is written by its compiler, which keeps no places, so no
+node of it has a position, and `--where` finds none.
 
 ## Modes
 
@@ -1244,7 +1291,19 @@ down:
   with the same error: JSON, JSONL, JSONic, JSON5, YAML, TOML, INI, ZON
   and expressions at 127 levels (an expression at 127 operations, too),
   XML at 256 open elements, JSONC at 512 levels, CSS at 768 open rules,
-  and a `.proto` file's braces at 100, counted before it is parsed.
+  a `.proto` file's braces at 100, counted before it is parsed, and C at
+  its reader's limits (an expression of 127 operations, 1,024 open
+  rules, a syntax tree 256 levels deep). A C tree also stops at 256
+  values a byte of the file written out (a million at least, and
+  33,554,432 at most, so no padding beside a chain raises it), and at
+  2,048 bytes of names and strings a byte (8 MB at least, and 256 MB at
+  most, so a long name in a repeated subtree is held too): its reader
+  repeats a node's subtrees under the members that name them, so each
+  level of a chain of subscripts or member accesses doubles it. A
+  grammar in ABNF, EBNF or GBNF stops at its compiler's limits: groups
+  and options nested past 2,048 open rules in ABNF (about 500 levels),
+  520 in EBNF (about 130) and 512 in GBNF (about 128), and elements
+  nested past 128 levels in any of them.
   The parse runs on a thread with a 64 MB stack, whatever the platform
   gives the main thread. A grammar from the command line runs under the
   same cap, and its nesting is measured on its value as well, once the
@@ -1258,7 +1317,18 @@ down:
   parses in time that grows in step with the input, at half a megabyte to
   a megabyte and a half a second on one machine (40,000 TOML
   `[[tables]]`, 1.6 MB, took under three seconds), so the limit matters
-  most for large inputs.
+  most for large inputs. A grammar in ABNF, EBNF or GBNF is the
+  exception: its compiler, which cannot be stopped part way, takes time
+  that grows faster than its rules (10,000 rules, 300 KB, take under two
+  seconds, 40,000 about fifteen), as a grammar from the command line
+  does, and refuses, before building anything, a grammar its
+  left-recursion pass would grow past 512 alternatives added to one
+  rule, which a cycle of rules whose alternatives start with one another
+  multiplies, or past 131,072 elements added to the whole grammar, which
+  a long chain of rules led by one another copies. Past `--timeout`
+  aless stops waiting for the compile and reports the `timeout`, and
+  while that compile runs on it starts no other grammar's, which reports
+  the same `timeout` at once, nor any once the time is up.
 
 The parse blocks the interface, so a large file shows a `loading…` notice
 before the screen is taken over, and a reload of a large watched file
@@ -1301,7 +1371,9 @@ writes every document of every format's own fixture corpus into every
 format `--render` writes, through aless's own routes, and reads it back
 under the target's declared conventions, or holds it to the target's
 declared refusal (a schema-only target's of a document of another tree,
-a version's of a tree that is not one); `tests/yaml_render.rs` reads
+a version's of a tree that is not one, a notation's of a spec it cannot
+write), and a grammar a notation's render wrote to compiling back with
+that notation's compiler; `tests/yaml_render.rs` reads
 tabnas-yaml's `test/spec` and its vendored YAML Test Suite. The crates do
 not ship those fixtures, so both take them from checkouts of the grammar
 repositories at the tags of the versions `Cargo.lock` pins, named by
@@ -1310,9 +1382,10 @@ them and prints the lines that set both, and the tests fail without
 them, or with a checkout of another version.
 
 `tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
-way, as do `tabnas-abnf` and `tabnas-bnf`, the ABNF compiler behind
-`--grammar`, and `tabnas-lsp`, whose semantic tokens colour a pane's
-text. The other dependencies: crossterm (terminal), ratatui
+way, as do `tabnas-abnf`, `tabnas-ebnf`, `tabnas-gbnf` and the
+`tabnas-bnf` they share, the grammar notations' compilers (ABNF's also
+behind `--grammar`), and `tabnas-lsp`, whose semantic tokens colour a
+pane's text. The other dependencies: crossterm (terminal), ratatui
 (drawing), notify (file watching), regex (search), unicode-width
 (layout), serde_json (JSON output), arboard (clipboard, optional).
 
@@ -1354,7 +1427,7 @@ the library is terminal-free and unit tested:
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
 | `cli` | every option, in one table the parser reads; the reference `--help` prints, the summary of `-h`, the man page and the shells' completions (`--generate`) |
-| `load` | format detection; the tabnas grammars; errors with positions; the size, depth and time limits; text fallback |
+| `load` | format detection; the tabnas grammars; the grammar notations' documents compiled to their specs; errors with positions; the size, depth and time limits; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |

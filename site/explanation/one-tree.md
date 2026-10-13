@@ -3,7 +3,7 @@ title: One tree for every format
 description: Why aless reads every format into the same kind of tree, what each format becomes, and what the single model gives up.
 order: 1
 ---
-aless reads JSON, YAML, TOML, INI, CSV, XML, Markdown, feeds, stylesheets, chess games and a dozen other formats, and shows every one of them the same way. That is possible because it does not show the formats. It shows one kind of value, which every format is read into: objects with their keys in source order, arrays, strings, numbers, true, false and null. That is JSON's data model, and it is the only thing the viewer, the search, the paths and the command line's outputs ever deal with.
+aless reads JSON, YAML, TOML, INI, CSV, XML, Markdown, feeds, stylesheets, chess games, C source, grammars and a dozen other formats, and shows every one of them the same way. That is possible because it does not show the formats. It shows one kind of value, which every format is read into: objects with their keys in source order, arrays, strings, numbers, true, false and null. That is JSON's data model, and it is the only thing the viewer, the search, the paths and the command line's outputs ever deal with.
 
 ## What each format becomes
 
@@ -19,6 +19,8 @@ The JSON family maps onto that model as it is, and so does most of YAML and TOML
 | CSS | its syntax tree: a `type` for each rule, declaration, comment and at-rule |
 | `.proto` | its FileDescriptorProto, as protoc writes one in JSON, rather than the syntax its grammar parses |
 | PGN | an array of games, each its tags, its moves and its result |
+| C | its concrete syntax tree: a `kind`, `span`, `children` and `trivia` for each node, a name, text and span for each token, and members such as `operand` that repeat subtrees the `children` hold |
+| ABNF, EBNF, GBNF | the grammar spec its compiler writes, the same kind of tree in all three: its `options` and its `rule`s, each its `open` and `close` alternates, with the rules the compiler adds |
 | an expression | its value, each operation an array of its operator and its terms: `1+2*3` is `["+", 1, ["*", 2, 3]]` |
 | a version | its `major`, `minor`, `patch`, `prerelease` and `build` |
 | plain text | an array of its lines |

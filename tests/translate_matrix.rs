@@ -8,13 +8,20 @@
 //! record at a time, the verified grammars as the parse proceeds, the rest
 //! whole. A pair that fails to write, that writes a document its own
 //! grammar refuses, or that reads back as anything but the conventions say
-//! is a failure, and so is a corpus that shrinks. Two refusals are a
+//! is a failure, and so is a corpus that shrinks, but for a defect of a
+//! format's crate pinned in [`KNOWN_DEFECTS`] until a release fixes it,
+//! which must go on failing. Three refusals are a
 //! target's declared outcome, and counted as such: a schema-only target's
-//! (CSS, proto, PGN, which write only the tree their own documents read
-//! as) of a document of another tree, before anything is read, with the
-//! usage error naming the program route; and a version's (semver's embed)
-//! of a tree that is not a version, `TARGET_VALUE_UNREPRESENTABLE` before
-//! anything is written.
+//! (CSS, proto, PGN, C, and the grammar notations, ABNF, EBNF and GBNF,
+//! which write only the tree their own documents read as) of a document of
+//! another tree, before anything is read, with the usage error naming the
+//! program route; a version's (semver's embed) of a tree that is not a
+//! version, `TARGET_VALUE_UNREPRESENTABLE` before anything is written; and
+//! a notation's render's of a grammar spec it cannot write in its notation,
+//! or proto's of a string no `.proto` spelling holds, the same code, before
+//! anything is written, and expr's of a list led by an object whose `src`
+//! its reader would take for the list's operator, the same code, where its
+//! render meets the list.
 //!
 //! The corpora are the grammar repositories' own, at the tags of the
 //! versions Cargo.lock pins, which `scripts/fixtures.sh` clones and names
@@ -108,12 +115,23 @@ fn checkout(repository: &str) -> PathBuf {
     dir
 }
 
-/// The eighteen formats aless writes, by id, and the format aless reads a
+/// The twenty-two formats aless writes, by id, and the format aless reads a
 /// document of each with.
-const FORMATS: [&str; 18] = [
-    "css", "csv", "expr", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
-    "pgn", "proto", "semver", "toml", "xml", "yaml", "zon",
+const FORMATS: [&str; 22] = [
+    "abnf", "c", "css", "csv", "ebnf", "expr", "feed", "gbnf", "ini", "json", "json5", "jsonc",
+    "jsonic", "jsonl", "markdown", "pgn", "proto", "semver", "toml", "xml", "yaml", "zon",
 ];
+
+/// The grammar notations, whose documents read as the grammar spec their
+/// compilers write, a schema the three share.
+const NOTATIONS: [&str; 3] = ["abnf", "ebnf", "gbnf"];
+
+/// The formats whose repositories carry no `test/spec` corpus at the tags
+/// of the versions Cargo.lock pins, so `scripts/fixtures.sh` clones none:
+/// tabnas/ebnf's and tabnas/gbnf's fixtures are grammar files of their
+/// own layouts (gbnf's llama.cpp's grammars). aless's own fixtures hold a
+/// document of each, and tabnas/abnf's corpus is written into both.
+const NO_SPEC_CORPUS: [&str; 2] = ["ebnf", "gbnf"];
 
 fn format(id: &str) -> Format {
     Format::from_name(id).unwrap_or_else(|| panic!("{id} is a format"))
@@ -142,6 +160,10 @@ fn format_of(extension: &str) -> Option<&'static str> {
         "css" => "css",
         "proto" => "proto",
         "pgn" => "pgn",
+        "c" | "h" => "c",
+        "abnf" => "abnf",
+        "ebnf" => "ebnf",
+        "gbnf" => "gbnf",
         // Formats that declare no extension: aless's fixtures name them.
         "expr" => "expr",
         "semver" => "semver",
@@ -231,10 +253,16 @@ fn unescape(cell: &str) -> String {
 /// a CR before a line's end dropped), once each. A row that sets options
 /// of its own (`opts`) is read by another reader than the format's
 /// default, and an error row's input is one the format refuses, so
-/// neither is a document of the format here.
+/// neither is a document of the format here. A grammar notation's rows
+/// hold their document in `grammar`, where `input` is a text the grammar
+/// reads; and a format whose repository has no corpus ([`NO_SPEC_CORPUS`])
+/// gives none.
 fn spec_corpus() -> Vec<(String, &'static str, String)> {
     let mut docs = Vec::new();
-    for id in FORMATS {
+    for id in FORMATS
+        .into_iter()
+        .filter(|id| !NO_SPEC_CORPUS.contains(id))
+    {
         let dir = checkout(repository(id)).join("test/spec");
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("{id}: cannot read {}: {e}", dir.display()))
@@ -252,8 +280,13 @@ fn spec_corpus() -> Vec<(String, &'static str, String)> {
             };
             let header: Vec<&str> = header.trim_end_matches('\r').split('\t').collect();
             let column = |name: &str| header.iter().position(|h| *h == name);
+            let document = if NOTATIONS.contains(&id) {
+                "grammar"
+            } else {
+                "input"
+            };
             let (Some(input), expected, opts) =
-                (column("input"), column("expected"), column("opts"))
+                (column(document), column("expected"), column("opts"))
             else {
                 continue;
             };
@@ -323,10 +356,12 @@ impl Sink for Collect {
 
 /// Whether aless reads a format's document as more than its grammar's
 /// value: proto's as its descriptor, expr's as its S-expressions, a version
-/// without the line break a file ends with (`load::read_as`,
-/// `load::parse_text`).
+/// without the line break a file ends with, C's as its syntax tree
+/// realized from its reader's arena, a grammar as the spec its compiler
+/// writes (`load::read_as`, `load::parse_text`, `load::parse_value`,
+/// `load::compile_notation`).
 fn read_by_aless(id: &str) -> bool {
-    matches!(id, "proto" | "expr" | "semver")
+    matches!(id, "proto" | "expr" | "semver" | "c") || NOTATIONS.contains(&id)
 }
 
 /// A document read whole with a format's grammar, as a value: its events,
@@ -335,8 +370,10 @@ fn read_by_aless(id: &str) -> bool {
 /// where the incremental source cannot follow it. A repeated member keeps
 /// its last value. A document aless reads as more than its grammar's value
 /// ([`read_by_aless`]) is read as aless's own JSON export writes it, which
-/// holds every value those three formats' trees can: no number in them is
-/// one JSON cannot spell (proto's descriptor holds a NaN as null).
+/// holds every value those formats' trees can: no number in them is one
+/// JSON cannot spell (proto's descriptor holds a NaN as null, a C syntax
+/// tree holds no number but its spans', a grammar spec none but its
+/// counts).
 fn read(id: &str, text: &str) -> Result<Datum, Fail> {
     if read_by_aless(id) {
         let out = Buffer::default();
@@ -414,10 +451,22 @@ fn input(from: Format, text: &str) -> Input<'_> {
 
 /// A write that wrote no document.
 enum Unwritten {
-    /// A schema-only target (css, proto, pgn) refused a source of another
-    /// tree before reading it, with the usage error naming the program
-    /// route: that target's declared outcome for such a source.
+    /// A schema-only target (css, proto, pgn, c, abnf, ebnf, gbnf) refused
+    /// a source of another tree before reading it, with the usage error
+    /// naming the program route: that target's declared outcome for such a
+    /// source.
     SchemaOnly,
+    /// A notation's render refused a grammar spec it cannot write in its
+    /// notation (an action, a terminal none of its forms matches, a
+    /// case-insensitive literal EBNF cannot spell, a counted repetition
+    /// nested past what EBNF's reader reads), or proto's a string no
+    /// spelling of a `.proto` file holds, with
+    /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written; or expr's a list
+    /// led by an object whose `src` its reader would take for the list's
+    /// operator (a C syntax tree's token), with the same code where it
+    /// meets the list: the outcome each render's loss list declares for
+    /// such a tree.
+    Unwritable,
     /// The target's embed refused the tree, with
     /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written: a version's
     /// (semver's) declared outcome for a tree that is not a version
@@ -488,6 +537,20 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwrit
                 && bytes.is_empty() =>
         {
             return Err(Unwritten::NotAVersion)
+        }
+        // A notation's render refuses, from its own file, a spec it cannot
+        // write before writing anything, and proto's a string it cannot.
+        // expr's refuses a list its reader would read as another operation
+        // where it meets the list, after writing what comes before it: its
+        // render writes as the tree's events arrive, and its loss list
+        // declares the refusal, not that nothing is written first.
+        Err(ExportError::Program(fail))
+            if (NOTATIONS.contains(&to) || to == "proto" || to == "expr")
+                && fail.code == Code::TargetValueUnrepresentable
+                && fail.file.as_deref() == Some(&format!("tabnas-{to}/alchemy/render.alc"))
+                && (bytes.is_empty() || to == "expr") =>
+        {
+            return Err(Unwritten::Unwritable)
         }
         Err(e) => return Err(Unwritten::Failed(format!("does not write: {e:?}"))),
     }
@@ -905,12 +968,22 @@ fn zon_back(d: &Datum) -> Datum {
 const EXPR_OPERATORS: [&str; 6] = ["+", "-", "*", "/", "%", "("];
 
 /// What expr's conventions make of a value its render is given, as its
-/// reader reads the document back: a negative number is the operator `-`
-/// applied to its magnitude; a number that is not finite is the string
-/// `Infinity`, `-Infinity` or `NaN`; and a list whose first element is an
-/// object whose `src` member is a default operator's source text has that
-/// text in its place, the object's other members not kept.
+/// reader reads the document back (its loss list): a negative number is
+/// the operator `-` applied to its magnitude; a number that is not finite
+/// is the string `Infinity`, `-Infinity` or `NaN`; and a list whose first
+/// element is an object whose `src` member is a default operator's source
+/// text has that text in its place, the object's other members not kept.
 fn expr_reading(d: &Datum) -> Datum {
+    expr_read(d, &|src| EXPR_OPERATORS.contains(&src))
+}
+
+/// [`expr_reading`]: a list led by an object whose `src` member is a text
+/// `leads` takes has that text in its place. A list led by an object with
+/// any other `src` that is not empty, which `tabnas_expr::simplify` would
+/// read as the list's operator (a C syntax tree's token), never reaches
+/// the reader: since tabnas-expr 0.5.18 its render refuses it, as its loss
+/// list declares ([`Unwritten::Unwritable`]).
+fn expr_read(d: &Datum, leads: &dyn Fn(&str) -> bool) -> Datum {
     match d {
         Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
         Datum::Number { value, .. } if value.is_infinite() => Datum::String(
@@ -932,12 +1005,10 @@ fn expr_reading(d: &Datum) -> Datum {
             },
         ]),
         Datum::Array(items) => {
-            let mut items: Vec<Datum> = items.iter().map(expr_reading).collect();
+            let mut items: Vec<Datum> = items.iter().map(|d| expr_read(d, leads)).collect();
             let operator = match items.first() {
                 Some(Datum::Object(m)) => match m.get("src") {
-                    Some(Datum::String(src)) if EXPR_OPERATORS.contains(&&**src) => {
-                        Some(src.clone())
-                    }
+                    Some(Datum::String(src)) if leads(src) => Some(src.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -950,7 +1021,7 @@ fn expr_reading(d: &Datum) -> Datum {
         Datum::Object(members) => Datum::Object(
             members
                 .iter()
-                .map(|(k, v)| (k.clone(), expr_reading(v)))
+                .map(|(k, v)| (k.clone(), expr_read(v, leads)))
                 .collect(),
         ),
         d => d.clone(),
@@ -1336,6 +1407,40 @@ fn feed_reading(d: &Datum) -> Datum {
     Datum::Object(out.into_iter().collect())
 }
 
+/// The failure of a grammar a notation's render wrote nested past what
+/// that notation's own reader takes.
+const PAST_READER: &str = "written past its notation's reader";
+
+/// A grammar written in a notation is held to compiling back with that
+/// notation's compiler, and the spec it compiles to to nothing more: each
+/// render declares that the spec compiled back can differ from the one it
+/// was given (the order of alternates, the compiler's helper rules and
+/// tokens, a left recursion rewritten, the start rule moved first, a
+/// literal's case written as classes, the target's own group tag and
+/// lexing), while recognising what that one recognised, which no
+/// comparison of the two trees can tell.
+///
+/// A grammar the notation's reader refuses as nested past its own limit
+/// fails like any other ([`PAST_READER`]): no render's loss list declares
+/// it. EBNF has no bounded repetition, and its render wrote ABNF's
+/// `*200"a"` as two hundred nested options, past the 128 levels its reader
+/// reads, until tabnas-ebnf 0.1.18, whose render refuses such a repetition
+/// as its loss list declares ([`Unwritten::Unwritable`]).
+fn grammar_back(to: &str, written: &str) -> Result<(), String> {
+    let result = export::export(
+        &job(to, format(to), What::Render(Renderer::Json)),
+        input(format(to), written),
+        Box::new(Buffer::default()),
+    );
+    match result {
+        Ok(()) => Ok(()),
+        Err(ExportError::Load { error, .. }) if error.code == "too_deep" => {
+            Err(format!("{PAST_READER}: {}", error.message))
+        }
+        Err(e) => Err(format!("the written grammar does not read back: {e:?}")),
+    }
+}
+
 /// Whether `written`, the document aless wrote into `to` from a source of
 /// `from` whose value is `source`, reads back as the conventions say.
 fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), String> {
@@ -1430,6 +1535,40 @@ fn depth(d: &Datum) -> usize {
 /// matrix leaves it out, and pins how few such documents there are.
 const DEPTH_BOUND: usize = 100;
 
+/// A defect of a format's crate the matrix pins: the documents it holds
+/// for (`of`, one document by name, or a source format, each document of
+/// it), the target, the words its failure begins with (`shows`, so that a
+/// pin holds that failure and no other), and the defect, in words, naming
+/// the repository it is reported to.
+struct Known {
+    of: &'static str,
+    to: &'static str,
+    shows: &'static str,
+    defect: &'static str,
+}
+
+impl Known {
+    /// Whether this pin holds a document of `from` named `name`.
+    fn holds(&self, name: &str, from: &str) -> bool {
+        self.of == name || self.of == from
+    }
+}
+
+/// Pairs whose render writes a document its own reader refuses, or that
+/// reads back as other than the render's conventions say, where its loss
+/// list declares no such outcome: a defect of the format's crate, reported
+/// to its repository, pinned until a release fixes it. A pin whose
+/// documents a run reads must still fail, so the list cannot outlive the
+/// defect. None is open. tabnas-proto 0.6.9 fixed the first, an option's
+/// backtick literal holding a line break, which 0.6.8's render wrote as an
+/// aggregate its reader refused (proto/nesting.tsv:36); tabnas-expr 0.5.18
+/// the second, a C syntax tree read back with each list's leading token
+/// reduced to its text, which its render now refuses; and tabnas-ebnf
+/// 0.1.18 the third, ABNF's `*200"a"` written as options nested past what
+/// its own reader reads (abnf/alignment-abnf-ast.tsv:28), which its render
+/// now refuses.
+const KNOWN_DEFECTS: &[Known] = &[];
+
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written by aless in every format, and read back
 /// under the target's conventions. At least `floor` documents, and at most
@@ -1450,6 +1589,20 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
     // is not a version.
     let mut schema_only: HashMap<&str, usize> = HashMap::new();
     let mut not_a_version = 0;
+    let mut unwritable: HashMap<&str, usize> = HashMap::new();
+    // The failures each pin of [`KNOWN_DEFECTS`] holds, by its index: the
+    // document and the failure.
+    let mut known: Vec<(usize, String, String)> = Vec::new();
+    let mut fail =
+        |failures: &mut Vec<String>, name: &str, from: &str, to: &'static str, why: String| {
+            let pin = KNOWN_DEFECTS
+                .iter()
+                .position(|k| k.holds(name, from) && k.to == to && why.starts_with(k.shows));
+            match pin {
+                Some(pin) => known.push((pin, name.to_string(), why)),
+                None => failures.push(format!("{name} ({from}) -> {to}: {why}")),
+            }
+        };
     for (n, (name, from, text)) in docs.iter().enumerate() {
         let source = match read(from, text) {
             Ok(d) => d,
@@ -1474,8 +1627,12 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
                     not_a_version += 1;
                     continue;
                 }
+                Err(Unwritten::Unwritable) => {
+                    *unwritable.entry(to).or_default() += 1;
+                    continue;
+                }
                 Err(Unwritten::Failed(why)) => {
-                    failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                    fail(&mut failures, name, from, to, why);
                     continue;
                 }
             };
@@ -1488,11 +1645,13 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
                 read(to, &written)
                     .map(|_| ())
                     .map_err(|f| format!("the written document does not read back: {f}"))
+            } else if NOTATIONS.contains(&to) {
+                grammar_back(to, &written)
             } else {
                 check(from, to, &source, &written)
             };
             if let Err(why) = outcome {
-                failures.push(format!("{name} ({from}) -> {to}: {why}"));
+                fail(&mut failures, name, from, to, why);
             }
         }
         if (n + 1) % 25 == 0 || n + 1 == docs.len() {
@@ -1511,20 +1670,44 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
     for line in &too_deep {
         eprintln!("deeper than every format reads: {line}");
     }
+    // Each pin's failures, as a count and the first of them.
+    let mut pins_held = 0;
+    for (pin, k) in KNOWN_DEFECTS.iter().enumerate() {
+        let held: Vec<&(usize, String, String)> =
+            known.iter().filter(|(p, ..)| *p == pin).collect();
+        if let Some((_, name, why)) = held.first() {
+            pins_held += 1;
+            eprintln!(
+                "known defect: {} -> {}, {} documents, the first {name}: {}: {}",
+                k.of,
+                k.to,
+                held.len(),
+                k.defect,
+                why.chars().take(300).collect::<String>()
+            );
+        }
+    }
     for line in &failures {
         eprintln!("FAIL {line}");
     }
     let mut refusals: Vec<(&str, usize)> = schema_only.into_iter().collect();
     refusals.sort_unstable();
-    let declared = refusals.iter().map(|(_, n)| n).sum::<usize>() + not_a_version;
+    let mut unwritable: Vec<(&str, usize)> = unwritable.into_iter().collect();
+    unwritable.sort_unstable();
+    let declared = refusals.iter().map(|(_, n)| n).sum::<usize>()
+        + not_a_version
+        + unwritable.iter().map(|(_, n)| n).sum::<usize>();
     eprintln!(
         "matrix: {pairs} pairs of {} documents; {} written and read back, {declared} refused as \
          declared: by a schema-only target {refusals:?}, by semver as not a version \
-         {not_a_version}; {} documents refused by their own reader, {} too deep",
+         {not_a_version}, by a render as a tree it cannot write {unwritable:?}; {} \
+         documents refused by their own reader, {} too deep; {} pairs held by {} known defects",
         docs.len(),
-        pairs - declared - failures.len(),
+        pairs - declared - failures.len() - known.len(),
         refused_sources.len(),
-        too_deep.len()
+        too_deep.len(),
+        known.len(),
+        pins_held
     );
     assert!(
         pairs + (refused_sources.len() + too_deep.len()) * FORMATS.len() == total
@@ -1542,6 +1725,17 @@ fn matrix(docs: Vec<(String, &'static str, String)>, floor: usize, too_deep_at_m
         "{} of {pairs} pairs failed (above)",
         failures.len()
     );
+    for (pin, k) in KNOWN_DEFECTS.iter().enumerate() {
+        if docs.iter().any(|(name, from, _)| k.holds(name, from)) {
+            assert!(
+                known.iter().any(|(held, ..)| *held == pin),
+                "{} -> {} no longer fails as it did: its defect is fixed, so take it out of \
+                 KNOWN_DEFECTS",
+                k.of,
+                k.to
+            );
+        }
+    }
 }
 
 /// aless's own fixtures, one document per format at least, and the
@@ -1552,7 +1746,7 @@ fn every_document_translates_into_every_format() {
 }
 
 /// The documents [`corpus`] reads, at least.
-const FLOOR: usize = 117;
+const FLOOR: usize = 121;
 
 /// Every format's own fixture corpus, into every format: thousands of
 /// documents, run by CI with `--ignored` in the `matrix` profile, where
@@ -1560,7 +1754,7 @@ const FLOOR: usize = 117;
 #[test]
 #[ignore = "the cross product of every format's fixtures: CI runs it in the matrix profile"]
 fn every_fixture_of_every_format_translates_into_every_format() {
-    matrix(spec_corpus(), 3850, 1);
+    matrix(spec_corpus(), 3975, 1);
 }
 
 /// Ten times the records leave what the composed render retains where it

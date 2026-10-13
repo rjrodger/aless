@@ -68,16 +68,21 @@ tabnas-csv = "0.6.6"
 tabnas-xml = "0.7.17"
 tabnas-zon = "0.5.16"
 tabnas-markdown = "0.7.12"
-tabnas-feed = "0.6.16"
-tabnas-expr = "0.5.16"
+tabnas-feed = "0.6.17"
+tabnas-expr = "0.5.18"
 tabnas-semver = "0.0.10"
-tabnas-proto = "0.6.7"
+tabnas-proto = "0.6.10"
 tabnas-css = "0.5.14"
 tabnas-chess = "0.1.14"
-# The ABNF compiler behind --grammar and --grammar-expr: a custom grammar's
-# text becomes a GrammarSpec at startup. It emits through tabnas-bnf, the
-# compiler the BNF-family front-ends share.
-tabnas-abnf = "0.4.20"
+tabnas-c = "0.5.14"
+# The grammar notations, each read as the grammar spec its compiler writes
+# (the schema grammar-spec the three share) and written by its render.
+# The ABNF compiler is also behind --grammar and --grammar-expr: a custom
+# grammar's text becomes a GrammarSpec at startup. Each emits through
+# tabnas-bnf, the compiler the BNF-family front-ends share.
+tabnas-abnf = "0.4.23"
+tabnas-ebnf = "0.1.18"
+tabnas-gbnf = "0.1.19"
 # The streaming transducer and its renderers, behind `--render`.
 tabnas-transduce = "0.2.7"
 tabnas-render = "0.2.4"
