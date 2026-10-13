@@ -620,9 +620,11 @@ read. The sentences come from the format's manifest:
 
 Where a source's format says why its documents are read whole before
 anything is written, the warning says it too, as `whole`, in the
-format's own sentence: TOML's (a later header can add to a table) and
-INI's (a later header can name a section again). An error that carries
-`loss` carries it as well. A value below the root (`--path`) is written
+format's own sentence: TOML's (a later header can add to a table),
+INI's (a later header can name a section again), and those of feeds,
+`.proto`, PGN, expressions, versions, C and the three grammar notations,
+each a reason the document's tree is complete only at its end. An error
+that carries `loss` carries it as well. A value below the root (`--path`) is written
 as a plain tree, whatever its document, and has none; nor has a
 program's output, or a document of a format that says nothing of the
 kind:

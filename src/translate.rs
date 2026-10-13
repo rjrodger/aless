@@ -533,14 +533,23 @@ mod tests {
             "JSON declares its one loss"
         );
         // Why a format's documents are read whole before anything is
-        // written, where its manifest says: TOML's and INI's alone, the two
-        // the README, the reference and the skill name.
+        // written, where its manifest says: every format with a part but
+        // those transduce streams as they parse (the JSON family, jsonic,
+        // YAML, XML, ZON and Markdown), those read a record at a time (CSV
+        // and JSON Lines), and CSS, whose crate does not say yet. The
+        // README, the reference and the skill name them.
         let whole: Vec<&str> = parts()
             .iter()
             .filter(|p| p.whole.is_some())
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(whole, ["toml", "ini"]);
+        assert_eq!(
+            whole,
+            [
+                "toml", "ini", "feed", "proto", "pgn", "expr", "semver", "c", "abnf", "ebnf",
+                "gbnf"
+            ]
+        );
         // The trees with schemas of their own: an embed from a plain tree
         // into an expression's, a version's and a feed's; none into the
         // three that write only the trees their own documents read as.

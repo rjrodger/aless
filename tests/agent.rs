@@ -3384,19 +3384,39 @@ fn a_program_slow_on_one_item_is_stopped_at_the_timeout() {
 /// A source whose documents are read whole says why beside the loss:
 /// `whole` in the loss note is the sentence its format's manifest gives,
 /// TOML's tables and INI's sections being open to additions until the
-/// document ends.
+/// document ends, a C file's conditional groups folded into nodes once it
+/// is parsed, a grammar's rules named before they are defined, and the
+/// rest.
 #[test]
-fn render_says_why_a_toml_or_ini_source_is_read_whole() {
+fn render_says_why_a_source_is_read_whole() {
+    macro_rules! manifest {
+        ($module:ident) => {
+            $module::translate().map(|parts| parts.manifest)
+        };
+    }
     for (file, manifest) in [
-        ("tests/fixtures/sample.toml", tabnas_toml::manifest_text()),
-        ("tests/fixtures/sample.ini", tabnas_ini::manifest_text()),
+        ("tests/fixtures/sample.toml", manifest!(tabnas_toml)),
+        ("tests/fixtures/sample.ini", manifest!(tabnas_ini)),
+        ("tests/fixtures/sample.rss", manifest!(tabnas_feed)),
+        ("tests/fixtures/sample.proto", manifest!(tabnas_proto)),
+        ("tests/fixtures/sample.pgn", manifest!(tabnas_chess)),
+        ("tests/fixtures/sample.expr", manifest!(tabnas_expr)),
+        ("tests/fixtures/sample.semver", manifest!(tabnas_semver)),
+        ("tests/fixtures/sample.c", manifest!(tabnas_c)),
+        ("tests/fixtures/sample.abnf", manifest!(tabnas_abnf)),
+        ("tests/fixtures/sample.ebnf", manifest!(tabnas_ebnf)),
+        ("tests/fixtures/sample.gbnf", manifest!(tabnas_gbnf)),
     ] {
+        let manifest = manifest.unwrap_or_else(|| panic!("{file}: its crate has parts"));
         let sentence = &json(manifest.as_bytes())["translate"]["whole"];
         assert!(
             sentence.as_str().is_some_and(|s| !s.is_empty()),
             "{file}: {sentence}"
         );
-        let out = aless(&["--render", "json", "--compact", file], None);
+        let out = aless(
+            &[kind_of(file), vec!["--render", "json", "--compact", file]].concat(),
+            None,
+        );
         assert_eq!(
             code(&out),
             0,
