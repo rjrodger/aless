@@ -8,6 +8,20 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- `whole`, in `--render`'s loss note and in an error carrying `loss`, is
+  given for nine more of the formats read whole before anything is
+  written, where it was given for TOML and INI alone: feeds, `.proto`,
+  PGN, expressions, versions, C and the three grammar notations now say
+  why in their manifests (tabnas-feed 0.6.18, tabnas-proto 0.6.11,
+  tabnas-chess 0.1.15, tabnas-expr 0.5.19, tabnas-semver 0.0.11, tabnas-c
+  0.5.15, tabnas-abnf 0.4.24, tabnas-ebnf 0.1.19 and tabnas-gbnf 0.1.20).
+  A C file, for one, is read whole because a conditional group is folded
+  into one node only once the whole file is parsed.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added

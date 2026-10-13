@@ -1134,9 +1134,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-abnf"
-version = "0.4.23"
+version = "0.4.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad48778c09f992d765ef57da236975b59687f73554fe4b76fd5a2e88dcaf8d6f"
+checksum = "1cbe3348243e9d36ad0ea1dfbd1a42e4e66a2c510987f1511a74480d1dd89c44"
 dependencies = [
  "indexmap",
  "regex",
@@ -1173,9 +1173,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-c"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b87aaf615c7dd5770e8abbbe5b6df25e5cf55fc96ecd22badeec47fcc4bc9ef"
+checksum = "9646748396a28aa1f8ce1177dab15607049f48386448abe708208f20b683d28b"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1186,9 +1186,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-chess"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "923f32f7dfebb08d961deb2126c3c9c1d7cfe0a254e6dd862636c8c6ec5ecdce"
+checksum = "6068ea905c7f8eccbda6d89fadc22bb5126a84ac21a2d3be390f6683fc312a8a"
 dependencies = [
  "indexmap",
  "regex",
@@ -1222,9 +1222,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ebnf"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4cc8adf950a6107f07edf2ac6c8432a87944901dfb51f4236c17e5f758aa50f"
+checksum = "fec71849eee0eaec3a7c193c3074f438cfe0b605082a158265c2b92e35a4741a"
 dependencies = [
  "indexmap",
  "regex",
@@ -1235,9 +1235,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-expr"
-version = "0.5.18"
+version = "0.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1724b86bed247ca9f6982691cbecd0676eefdf9199f5dca3025802a8bf6b0860"
+checksum = "c97487b1060cfccda9afdb9cdb2e2b9ed2a120f7fe757961ad3ffeb1c86b2d78"
 dependencies = [
  "indexmap",
  "tabnas-jsonic",
@@ -1246,9 +1246,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-feed"
-version = "0.6.17"
+version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82c0e7d9041955460f2d9da76203b8f2ac139d32156bc80284c053f9b427e9ee"
+checksum = "b298b98c474d151e6a675d2b06f687195820b65ac0ef45aaceeeab7e4122a2d0"
 dependencies = [
  "indexmap",
  "regex",
@@ -1259,9 +1259,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-gbnf"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cd371015cc51c4831e04068c5b07bfa0b19f694b3ee4250f7767e832f5bb243"
+checksum = "98ca93242e03fd62da8ee423824694d8b2d5bb5979996c11816349d0f1338625"
 dependencies = [
  "indexmap",
  "regex",
@@ -1388,9 +1388,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-proto"
-version = "0.6.10"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87824e18b9035c26b672317f63369077ee2e3a6f2bcf2580b8f6c9d6854188ee"
+checksum = "b673041b5aa3b4ced21f2315f32fe6b7d8125bbfbda0c240688681891182e140"
 dependencies = [
  "indexmap",
  "serde",
@@ -1409,9 +1409,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-semver"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c02fddd48e3c337697884a2c4da077204795061dec151b57e03becd55a5c15d"
+checksum = "b4d9275d2aac60a79d40ce28e6fcccbc925732e2995e2e3441e77e32e8a4cfcb"
 dependencies = [
  "indexmap",
  "serde_json",
