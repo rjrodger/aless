@@ -19,7 +19,9 @@
 //! version, `TARGET_VALUE_UNREPRESENTABLE` before anything is written; and
 //! a notation's render's of a grammar spec it cannot write in its notation,
 //! or proto's of a string no `.proto` spelling holds, the same code, before
-//! anything is written.
+//! anything is written, and expr's of a list led by an object whose `src`
+//! its reader would take for the list's operator, the same code, where its
+//! render meets the list.
 //!
 //! The corpora are the grammar repositories' own, at the tags of the
 //! versions Cargo.lock pins, which `scripts/fixtures.sh` clones and names
@@ -456,10 +458,14 @@ enum Unwritten {
     SchemaOnly,
     /// A notation's render refused a grammar spec it cannot write in its
     /// notation (an action, a terminal none of its forms matches, a
-    /// case-insensitive literal EBNF cannot spell), or proto's a string no
-    /// spelling of a `.proto` file holds, with `TARGET_VALUE_UNREPRESENTABLE`
-    /// and nothing written: the outcome each render's loss list declares
-    /// for such a tree.
+    /// case-insensitive literal EBNF cannot spell, a counted repetition
+    /// nested past what EBNF's reader reads), or proto's a string no
+    /// spelling of a `.proto` file holds, with
+    /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written; or expr's a list
+    /// led by an object whose `src` its reader would take for the list's
+    /// operator (a C syntax tree's token), with the same code where it
+    /// meets the list: the outcome each render's loss list declares for
+    /// such a tree.
     Unwritable,
     /// The target's embed refused the tree, with
     /// `TARGET_VALUE_UNREPRESENTABLE` and nothing written: a version's
@@ -534,11 +540,15 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwrit
         }
         // A notation's render refuses, from its own file, a spec it cannot
         // write before writing anything, and proto's a string it cannot.
+        // expr's refuses a list its reader would read as another operation
+        // where it meets the list, after writing what comes before it: its
+        // render writes as the tree's events arrive, and its loss list
+        // declares the refusal, not that nothing is written first.
         Err(ExportError::Program(fail))
-            if (NOTATIONS.contains(&to) || to == "proto")
+            if (NOTATIONS.contains(&to) || to == "proto" || to == "expr")
                 && fail.code == Code::TargetValueUnrepresentable
                 && fail.file.as_deref() == Some(&format!("tabnas-{to}/alchemy/render.alc"))
-                && bytes.is_empty() =>
+                && (bytes.is_empty() || to == "expr") =>
         {
             return Err(Unwritten::Unwritable)
         }
@@ -967,29 +977,12 @@ fn expr_reading(d: &Datum) -> Datum {
     expr_read(d, &|src| EXPR_OPERATORS.contains(&src))
 }
 
-/// What expr's reader makes of a value, where it differs from what its
-/// render declares: [`expr_reading`], but a list led by an object whose
-/// `src` member is any text that is not empty has that text in its place.
-/// aless reads an expression as its S-expressions, and
-/// `tabnas_expr::simplify` takes any such object for an operator's
-/// description; the render writes the object whole where its text is no
-/// default operator's, and declares the loss for the default operators
-/// alone. So a C syntax tree, whose lists are led by tokens, each an object
-/// with its `src`, reads back with each leading token's text in its place,
-/// its name and span lost: a pair that reads back so fails with
-/// [`EXPR_SRC_LOSS`], which [`KNOWN_DEFECTS`] pins until tabnas/expr fixes
-/// it.
-fn expr_simplified(d: &Datum) -> Datum {
-    expr_read(d, &|src| !src.is_empty())
-}
-
-/// The failure of a pair that reads back as [`expr_simplified`] says and
-/// not as [`expr_reading`] does.
-const EXPR_SRC_LOSS: &str =
-    "a list led by an object with a src member read back with that text in the object's place";
-
-/// [`expr_reading`] and [`expr_simplified`]: a list led by an object whose
-/// `src` member is a text `leads` takes has that text in its place.
+/// [`expr_reading`]: a list led by an object whose `src` member is a text
+/// `leads` takes has that text in its place. A list led by an object with
+/// any other `src` that is not empty, which `tabnas_expr::simplify` would
+/// read as the list's operator (a C syntax tree's token), never reaches
+/// the reader: since tabnas-expr 0.5.18 its render refuses it, as its loss
+/// list declares ([`Unwritten::Unwritable`]).
 fn expr_read(d: &Datum, leads: &dyn Fn(&str) -> bool) -> Datum {
     match d {
         Datum::Number { value, .. } if value.is_nan() => Datum::String("NaN".into()),
@@ -1429,10 +1422,10 @@ const PAST_READER: &str = "written past its notation's reader";
 ///
 /// A grammar the notation's reader refuses as nested past its own limit
 /// fails like any other ([`PAST_READER`]): no render's loss list declares
-/// it. EBNF has no bounded repetition, so its render writes ABNF's
-/// `*200"a"` as two hundred nested options, past the 130 groups its reader
-/// nests, which [`KNOWN_DEFECTS`] pins until tabnas/ebnf's render refuses
-/// such a repetition.
+/// it. EBNF has no bounded repetition, and its render wrote ABNF's
+/// `*200"a"` as two hundred nested options, past the 128 levels its reader
+/// reads, until tabnas-ebnf 0.1.18, whose render refuses such a repetition
+/// as its loss list declares ([`Unwritten::Unwritable`]).
 fn grammar_back(to: &str, written: &str) -> Result<(), String> {
     let result = export::export(
         &job(to, format(to), What::Render(Renderer::Json)),
@@ -1506,15 +1499,7 @@ fn check(from: &str, to: &str, source: &Datum, written: &str) -> Result<(), Stri
         "jsonl" => map_non_finite(&wrap_array(source), &|_| Datum::Null),
         "toml" => without_nulls(&wrap_object(source, &key)),
         "zon" => zon_reading(source),
-        "expr" => {
-            let expected = expr_reading(source);
-            if !same(&expected, &back) && same(&expr_simplified(source), &back) {
-                return Err(format!(
-                    "{EXPR_SRC_LOSS}: read back as {back}, where {expected} was written"
-                ));
-            }
-            expected
-        }
+        "expr" => expr_reading(source),
         // Only a version reaches its render: the embed refuses any other
         // tree, and a version's own documents are versions.
         "semver" => semver_reading(source),
@@ -1574,30 +1559,15 @@ impl Known {
 /// list declares no such outcome: a defect of the format's crate, reported
 /// to its repository, pinned until a release fixes it. A pin whose
 /// documents a run reads must still fail, so the list cannot outlive the
-/// defect. (tabnas-proto 0.6.9 fixed the first pin, an option's backtick
-/// literal holding a line break, which 0.6.8's render wrote as an aggregate
-/// its reader refused: proto/nesting.tsv:36.)
-const KNOWN_DEFECTS: &[Known] = &[
-    Known {
-        of: "c",
-        to: "expr",
-        shows: EXPR_SRC_LOSS,
-        defect: "tabnas/expr: its reader (simplify) takes a list led by any object with a src \
-                 member for an operation and keeps only that text, and its render writes such \
-                 a list whole and declares the loss for the default operators alone, so a C \
-                 syntax tree, whose lists are led by tokens, reads back with each leading \
-                 token's text in its place, its name and span lost",
-    },
-    Known {
-        of: "abnf/alignment-abnf-ast.tsv:28",
-        to: "ebnf",
-        shows: PAST_READER,
-        defect: "tabnas/ebnf: EBNF has no bounded repetition, so its render writes *200\"a\" \
-                 as two hundred nested options, past the 130 groups its own reader nests; the \
-                 render is to refuse a counted repetition nested past that limit with \
-                 TARGET_VALUE_UNREPRESENTABLE (tabnas-ebnf 0.1.18)",
-    },
-];
+/// defect. None is open. tabnas-proto 0.6.9 fixed the first, an option's
+/// backtick literal holding a line break, which 0.6.8's render wrote as an
+/// aggregate its reader refused (proto/nesting.tsv:36); tabnas-expr 0.5.18
+/// the second, a C syntax tree read back with each list's leading token
+/// reduced to its text, which its render now refuses; and tabnas-ebnf
+/// 0.1.18 the third, ABNF's `*200"a"` written as options nested past what
+/// its own reader reads (abnf/alignment-abnf-ast.tsv:28), which its render
+/// now refuses.
+const KNOWN_DEFECTS: &[Known] = &[];
 
 /// The cross product of `docs` and every format: each document read with
 /// its format's grammar, written by aless in every format, and read back

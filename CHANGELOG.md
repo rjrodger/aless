@@ -37,40 +37,50 @@ bumps the version renames `Unreleased` to the version and its date
   member accesses doubles the tree written out at each level, and 40
   member accesses in one expression would otherwise hold more values
   than a machine can.
-- Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.22), EBNF (`.ebnf`,
-  tabnas-ebnf 0.1.17) and GBNF (`.gbnf`, tabnas-gbnf 0.1.18), each read
+- Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.23), EBNF (`.ebnf`,
+  tabnas-ebnf 0.1.18) and GBNF (`.gbnf`, tabnas-gbnf 0.1.19), each read
   as the grammar spec its compiler writes, `options` and `rule`s with
   the rules the compiler adds, and written by `--render abnf`, `ebnf` and
   `gbnf` (admin ADR-27, phase 4's second batch). The three write one
   schema, so a grammar in one notation is written in another; any other
   document is the `usage` error that names the program route, and a spec
   the target notation cannot say (an action, a terminal none of its
-  forms matches) is `TARGET_VALUE_UNREPRESENTABLE` before anything is
-  written. A grammar's compiler keeps no places, so no node of its spec
-  has a position, and the compiler's own limits are `too_deep` errors:
-  groups and options nested about 500 levels in ABNF, 130 in EBNF and
-  128 in GBNF, and elements nested 128 levels. The compile runs on the
-  parse's thread, or within `--timeout` on a thread of its own, which
-  aless stops waiting for when the time is up, and does not start once it
-  is; while a compile it stopped waiting for runs on, no other starts, and
-  a later grammar in the run is the same `timeout` at once. `aless --check` on a
+  forms matches, in EBNF a counted repetition nested past the 128 levels
+  its own reader reads, so ABNF's `*65"a"` and longer) is
+  `TARGET_VALUE_UNREPRESENTABLE` before anything is written. A grammar's
+  compiler keeps no places, so no node of its spec has a position, and
+  the compiler's own limits are `too_deep` errors: groups and options
+  nested about 500 levels in ABNF, 130 in EBNF and 128 in GBNF, and
+  elements nested 128 levels. The compile runs on the parse's thread, or
+  within `--timeout` on a thread of its own, which aless stops waiting
+  for when the time is up, and does not start once it is; while a
+  compile it stopped waiting for runs on, no other starts, and a later
+  grammar in the run is the same `timeout` at once. `aless --check` on a
   grammar file now says whether it compiles; such a file, read as plain
   text before, is read as its spec. `--grammar` reads its grammar as
   before.
 
 ### Changed
 
-- tabnas-expr 0.5.17, a version move.
-- tabnas-abnf 0.4.22, from 0.4.20, the compiler behind `--grammar` too.
-- tabnas-bnf 0.1.29, the compiler the three notations and `--grammar`
+- tabnas-expr 0.5.18. `--render expr` refuses a tree its reader would
+  read back as another, with `TARGET_VALUE_UNREPRESENTABLE` naming the
+  object's path where it meets it: a list led by an object whose `src`
+  the reader takes for the list's operator, where that is no default
+  operator's text, as a C syntax tree's lists are. 0.5.17 wrote such a
+  list, and it read back with its leading object reduced to that text.
+- tabnas-abnf 0.4.23, from 0.4.20, the compiler behind `--grammar` too.
+- tabnas-bnf 0.1.30, the compiler the three notations and `--grammar`
   share. A cycle of rules whose alternatives start with one another,
   which its left-recursion pass multiplied until memory ran out (twenty
   such rules, 0.7 KB), is refused before anything is built, past 512
   alternatives added to one rule, at once and in every route; so is a
   grammar the pass would grow past 131,072 elements, a chain of 5,000
   rules each led by the next among them. A grammar of 10,000 rules
-  compiles in under two seconds, where it took ten.
-- tabnas-proto 0.6.9. A `.proto` file is read through the crate's own
+  compiles in under two seconds, where it took ten. What the compiler
+  writes and holds is bounded too (3,500,000 units), so a grammar whose
+  spec would pass that is refused rather than built.
+- tabnas-feed 0.6.17, a version move.
+- tabnas-proto 0.6.10. A `.proto` file is read through the crate's own
   descriptor tree (`to_descriptor_value`), so a descriptor's members now
   come in the order the crate's other runtimes give them: the lists every
   descriptor has first, then what a statement places (the syntax, the
