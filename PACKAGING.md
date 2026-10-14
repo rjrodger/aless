@@ -112,7 +112,7 @@ lives in that channel's repository, not this one.
 
 ```bash
 pkgname=aless
-pkgver=0.4.1
+pkgver=0.4.2
 pkgrel=1
 pkgdesc='Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more'
 arch=('x86_64' 'aarch64')
@@ -178,17 +178,17 @@ whose workflow keeps the manifest current through `checkver` and
 
 ```json
 {
-    "version": "0.4.1",
+    "version": "0.4.2",
     "description": "Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more",
     "homepage": "https://aless.tabnas.dev",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/rjrodger/aless/releases/download/v0.4.1/aless-x86_64-pc-windows-msvc.zip",
+            "url": "https://github.com/rjrodger/aless/releases/download/v0.4.2/aless-x86_64-pc-windows-msvc.zip",
             "hash": "the first word of aless-x86_64-pc-windows-msvc.zip.sha256"
         },
         "arm64": {
-            "url": "https://github.com/rjrodger/aless/releases/download/v0.4.1/aless-aarch64-pc-windows-msvc.zip",
+            "url": "https://github.com/rjrodger/aless/releases/download/v0.4.2/aless-aarch64-pc-windows-msvc.zip",
             "hash": "the first word of aless-aarch64-pc-windows-msvc.zip.sha256"
         }
     },
