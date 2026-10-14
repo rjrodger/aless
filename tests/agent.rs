@@ -1418,6 +1418,35 @@ fn a_large_xml_document_streams_as_the_json_familys_do() {
     assert!(out.stdout.is_empty());
 }
 
+/// A PGN database streams a game at a time, as XML's elements do:
+/// tabnas-chess stores a game in the database only once it is complete,
+/// so a failure in the database's last game finds every game before it
+/// already on standard output, with `output` partial.
+#[test]
+fn a_pgn_database_streams_a_game_at_a_time() {
+    let games = 2_000;
+    let body: String = (0..games)
+        .map(|i| format!("[Event \"e\"]\n[Round \"{i}\"]\n\n1. e4 {{a}} e5 $1 (1... c5) 1-0\n\n"))
+        .collect();
+    let pgn = ["-k", "pgn", "--render", "json", "--compact"];
+    let out = aless(&pgn, Some(&body));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stdout).as_array().map(Vec::len), Some(games));
+    // The same games, then one whose movetext closes a variation it never
+    // opened: the parse fails in the last game, every game before it
+    // already written.
+    let out = aless(
+        &pgn,
+        Some(&format!("{body}[Event \"bad\"]\n\n1. e4 ) 1-0\n")),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"), "{e}");
+    assert_eq!(e["output"], json!("partial"), "{e}");
+    let written = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(written.matches("\"Round\":").count(), games);
+}
+
 /// A writer that goes quiet part way, past `--timeout`: the records it
 /// had written whole are on standard output before the `timeout` error,
 /// with `output` partial, on every path (aless#17).
@@ -3407,7 +3436,6 @@ fn render_says_why_a_source_is_read_whole() {
         ("tests/fixtures/sample.rss", manifest!(tabnas_feed)),
         ("tests/fixtures/sample.css", manifest!(tabnas_css)),
         ("tests/fixtures/sample.proto", manifest!(tabnas_proto)),
-        ("tests/fixtures/sample.pgn", manifest!(tabnas_chess)),
         ("tests/fixtures/sample.expr", manifest!(tabnas_expr)),
         ("tests/fixtures/sample.semver", manifest!(tabnas_semver)),
         ("tests/fixtures/sample.c", manifest!(tabnas_c)),
@@ -3438,23 +3466,23 @@ fn render_says_why_a_source_is_read_whole() {
     }
 }
 
-/// A source that streams says nothing of being read whole: a JSON
-/// document's loss note has no `whole`.
+/// A source that streams says nothing of being read whole: the loss note
+/// of a JSON document, or of a PGN database, which streams a game at a
+/// time, has no `whole`.
 #[test]
-fn render_from_json_has_no_whole() {
-    let out = aless(
-        &[
-            "--render",
-            "json",
-            "--compact",
-            "tests/fixtures/sample.json",
-        ],
-        None,
-    );
-    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
-    let note = json(&out.stderr);
-    assert_eq!(note["warning"]["kind"], "loss", "{note}");
-    assert!(note["warning"].get("whole").is_none(), "{note}");
+fn render_from_a_streaming_source_has_no_whole() {
+    for file in ["tests/fixtures/sample.json", "tests/fixtures/sample.pgn"] {
+        let out = aless(&["--render", "json", "--compact", file], None);
+        assert_eq!(
+            code(&out),
+            0,
+            "{file}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let note = json(&out.stderr);
+        assert_eq!(note["warning"]["kind"], "loss", "{file}: {note}");
+        assert!(note["warning"].get("whole").is_none(), "{file}: {note}");
+    }
 }
 
 /// `--render yaml` writes the value at the start as YAML, through

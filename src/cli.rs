@@ -925,7 +925,7 @@ const TOPICS: &[Topic] = &[
                 the one between a tree and a table, the inferred table or records, their \
                 sentences in loss after the format's own. Where the source's format says \
                 why its documents are read whole before anything is written (TOML, INI, \
-                CSS, feeds, .proto, PGN, expressions, versions, C and the grammar \
+                CSS, feeds, .proto, expressions, versions, C and the grammar \
                 notations), \
                 whole is that sentence; a value below the root, a program's output and a \
                 document of any other format have none. Status 0 is success whatever \
@@ -1087,8 +1087,8 @@ const TOPICS: &[Topic] = &[
                 "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
                 record at a time, whatever their size, so --max-size does not apply to \
                 them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, \
-                Markdown and XML write their records as the parse proceeds, and the other \
-                formats after it. A document a grammar refuses to stream part-way is read whole \
+                Markdown, XML and PGN (a game at a time) write their records as the parse \
+                proceeds, and the other formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\".",
             ),

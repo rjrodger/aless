@@ -8,6 +8,21 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- A PGN database streams through `--render` and `--alchemy` a game at a
+  time, as XML's elements do. tabnas-chess 0.1.17 stores a game in the
+  database only once it is complete, and tabnas-transduce 0.2.8 lists
+  `pgn` among the grammars it streams.
+  - The games already written are not kept behind them. The text is
+    still read whole, within `--max-size`.
+  - A failure in a game leaves every game before it on standard output,
+    with `output` partial. Before, nothing was written until the whole
+    database had parsed.
+  - PGN's loss note no longer has `whole`.
+
 ## [0.4.3] - 2026-10-14
 
 ### Changed
