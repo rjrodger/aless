@@ -161,8 +161,8 @@ source and the render (`wrap-object`, `wrap-array`, `embed`, `the
 inferred table`, `records`), `adapter` the one between a tree and a
 table, the inferred table or `records`, and `whole`, where the source's
 format says why its documents are read whole before anything is written
-(TOML, INI, feeds, `.proto`, PGN, expressions, versions, C and the
-grammar notations), that sentence: never below the root, nor for a
+(TOML, INI, CSS, feeds, `.proto`, PGN, expressions, versions, C and
+the grammar notations), that sentence: never below the root, nor for a
 program's output. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had

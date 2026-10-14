@@ -536,8 +536,8 @@ mod tests {
         // written, where its manifest says: every format with a part but
         // those transduce streams as they parse (the JSON family, jsonic,
         // YAML, XML, ZON and Markdown), those read a record at a time (CSV
-        // and JSON Lines), and CSS, whose crate does not say yet. The
-        // README, the reference and the skill name them.
+        // and JSON Lines). The README, the reference and the skill name
+        // them.
         let whole: Vec<&str> = parts()
             .iter()
             .filter(|p| p.whole.is_some())
@@ -546,8 +546,8 @@ mod tests {
         assert_eq!(
             whole,
             [
-                "toml", "ini", "feed", "proto", "pgn", "expr", "semver", "c", "abnf", "ebnf",
-                "gbnf"
+                "toml", "ini", "feed", "css", "proto", "pgn", "expr", "semver", "c", "abnf",
+                "ebnf", "gbnf"
             ]
         );
         // The trees with schemas of their own: an embed from a plain tree

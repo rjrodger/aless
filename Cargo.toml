@@ -72,7 +72,7 @@ tabnas-feed = "0.6.18"
 tabnas-expr = "0.5.19"
 tabnas-semver = "0.0.11"
 tabnas-proto = "0.6.11"
-tabnas-css = "0.5.14"
+tabnas-css = "0.5.15"
 tabnas-chess = "0.1.15"
 tabnas-c = "0.5.15"
 # The grammar notations, each read as the grammar spec its compiler writes

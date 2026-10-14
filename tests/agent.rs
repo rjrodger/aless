@@ -3398,6 +3398,7 @@ fn render_says_why_a_source_is_read_whole() {
         ("tests/fixtures/sample.toml", manifest!(tabnas_toml)),
         ("tests/fixtures/sample.ini", manifest!(tabnas_ini)),
         ("tests/fixtures/sample.rss", manifest!(tabnas_feed)),
+        ("tests/fixtures/sample.css", manifest!(tabnas_css)),
         ("tests/fixtures/sample.proto", manifest!(tabnas_proto)),
         ("tests/fixtures/sample.pgn", manifest!(tabnas_chess)),
         ("tests/fixtures/sample.expr", manifest!(tabnas_expr)),
