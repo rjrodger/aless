@@ -1149,9 +1149,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "534c332f993521b178cddd879e51791cf6080ae5a3871ceb85a51dc604afb0e2"
+checksum = "3a1e3982f709903a42c96a5f93a895afbf028806bff8637b5d70cbe85f240136"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1187,9 +1187,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-chess"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6068ea905c7f8eccbda6d89fadc22bb5126a84ac21a2d3be390f6683fc312a8a"
+checksum = "c4c169514cbb615ae3696030e4bb2249c800c0343c4b12108a05e69de1091628"
 dependencies = [
  "indexmap",
  "regex",
@@ -1200,9 +1200,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-css"
-version = "0.5.15"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a61f27a21693e7bf32f76ff3da34d13adf1480ca6f6dd5ed85106fa23692106"
+checksum = "0a75ec84b501a664565eb8c98895751d3e39ff20d69ead75a648c8bab7d80634"
 dependencies = [
  "tabnas-jsonic",
  "tabnas-parser",
@@ -1282,9 +1282,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.19"
+version = "0.5.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51bb4de6623b1598e91dfac3f0f16381915a210a2381fd02dedf15e272a60ea1"
+checksum = "257da6657cd4cb697c868bbe65fac541972e14684392d1cd7e5485523e5861ad"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1306,9 +1306,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json5"
-version = "0.5.15"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddf76ce560b7e877719ac708a0bb06dc5d837866ebe34ed517f86c7d756ff806"
+checksum = "471a00ec8e85ecca8d7e0a9194a12e2338bd5c83a06e45bb64e8aa77535f7fd0"
 dependencies = [
  "indexmap",
  "regex",
@@ -1343,9 +1343,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonl"
-version = "0.1.16"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcb12ae75de5010c7782febf964be0d1deb7e2c67249e09b11c6ce37853953c9"
+checksum = "8d495998606c19362d99b3b80ce59ee69599f23a1f31b294613e62a87482e100"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -1401,9 +1401,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-render"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8416e3cb07ede87c12ef25c7e96c79b7f0fcd46f0ef307126f5df95b054179"
+checksum = "cfd3acec2f5d92262ce6136a192e22a65426247257e3c27277ea4ed25456848c"
 dependencies = [
  "tabnas-alchemy",
 ]
@@ -1421,9 +1421,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.17"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eecfdb99e52ad2a1782706ef3842bb855202dcd11a5e74b558dbb5f92635445f"
+checksum = "c31f9c68784d28b7f38a12bb8a17e133bbabc66d808b6697b77584e9a27c804a"
 dependencies = [
  "indexmap",
  "regex",
@@ -1446,9 +1446,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b0594d4599b01d5f6c717149792ca6f01b41b305e10f97a07d4a6ebefe59bfc"
+checksum = "891e8c970333acae6c9ef1958deb8c73a71453802f1ed3d4012b6d0b5f2207cb"
 dependencies = [
  "indexmap",
  "regex",
@@ -1458,9 +1458,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.23"
+version = "0.5.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "995beb379fff80381cc5517121f8b3778ea78d96fbfad722e055b2d565943ac7"
+checksum = "aeb4fc3c32d7d3203355a74e9ebe38e094150a70e265a3c43412d3de6fd16947"
 dependencies = [
  "indexmap",
  "regex",
@@ -1471,9 +1471,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.16"
+version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61de13e0dd23c4fb475e6af26cf546258e966bf8d80b7ba622ff89cbba556fe2"
+checksum = "8785179243ce932cf3d6bb2df688310fe07bab4e7f142ae938aa7f28598d70ed"
 dependencies = [
  "indexmap",
  "serde",

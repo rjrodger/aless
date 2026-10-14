@@ -36,14 +36,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tabnas_alchemy::effects::{self, RendererProfile};
 use tabnas_alchemy::shared::{Renderers, Routers};
 use tabnas_alchemy::value::Val;
 use tabnas_alchemy::{Output, Program};
 use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink};
 
-use crate::export::{self, ExportError, Input, Job, Records, Renderer};
+use crate::export::{self, ExportError, Input, Job, Renderer};
 use crate::load::{self, LoadError};
 
 /// The name diagnostics give a program from `--alchemy-expr`, which has
@@ -203,28 +202,15 @@ pub fn run(
         max_output_bytes: job.max_output,
         ..Limits::default()
     };
-    // A table is CSV unless --render json says JSON records, and JSON
-    // events JSON unless --render csv says a table; a program's own text
-    // is written an item at a time, unless a `json` or `csv` render in
-    // the program writes it, which is written a record at a time.
-    let records = match (program.output(), render) {
-        (Output::Text, _) => match effects::summarize(program).renderer {
-            RendererProfile::Json { .. } => Records::Json,
-            RendererProfile::Csv { .. } => Records::Csv,
-            RendererProfile::Text => Records::Any,
-        },
-        (Output::TableRows, Some(Renderer::Json)) => Records::Json,
-        (Output::TableRows, _) => Records::Csv,
-        (Output::JsonEvents, Some(Renderer::Csv)) => Records::Csv,
-        (Output::JsonEvents, _) => Records::Json,
-    };
-    export::run_program(job, input, out, records, |pipe, abort| {
+    export::run_program(job, input, out, |pipe, abort| {
         // The program's writer stage is aless's: the coalescing writer the
         // program's own `sink` would put over the pipe, with the same
-        // limit and metrics, but with no budget, so every fragment reaches
-        // the pipe as it comes and a record is on the output the moment it
-        // ends, rather than held, up to 32 KB of them, until the run's
-        // flush that a failure never makes.
+        // limit and metrics, but with no budget, so a record reaches the
+        // pipe the moment its end is marked (a renderer's row or value, an
+        // item `concat-map` writes, a `:record-end` among a `join`'s
+        // items), rather than held, up to 32 KB of them, until the run's
+        // flush that a failure never makes. A text nobody marks reaches
+        // the pipe as it comes.
         let metrics = Metrics::new();
         let out = WriteOut::new(pipe)
             .with_budget(0)

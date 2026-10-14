@@ -544,13 +544,11 @@ fn translate(
         max_output: None,
     };
     let metrics = Metrics::new();
-    let records = translate::records(part);
     let mut text = String::new();
     let opened = open_input(req, &source, &name, format, plan, stdin)?;
     let result = translate::run(
         &job,
         &composition,
-        records,
         opened.input(&mut text, req),
         out,
         metrics,
@@ -763,14 +761,7 @@ fn run_program(
         max_output: req.max_output,
     };
     let run = |input: Input<'_>| match &composition {
-        Some((part, composition)) => translate::run(
-            &job,
-            composition,
-            translate::records(part),
-            input,
-            out,
-            Metrics::new(),
-        ),
+        Some((_, composition)) => translate::run(&job, composition, input, out, Metrics::new()),
         None => alchemy::run(&job, &compiled, render, input, out),
     };
     let mut text = String::new();

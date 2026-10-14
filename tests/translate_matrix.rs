@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use aless::export::{self, ExportError, Input, Job, Plan, Records, Renderer, What};
+use aless::export::{self, ExportError, Input, Job, Plan, Renderer, What};
 use aless::load::Format;
 use aless::translate::{self, Options, Part, Shape, Translation};
 use tabnas::Tabnas;
@@ -519,7 +519,6 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwrit
         Translation::Composed(c) => translate::run(
             &job(name, format(from), What::Part),
             c,
-            translate::records(target(to)),
             input(format(from), text),
             Box::new(out.clone()),
             Metrics::new(),
@@ -573,7 +572,6 @@ fn through_program(file: &str, program: &str, from: &str, text: &str) -> Result<
     translate::run(
         &job(file, format(from), What::Part),
         &c,
-        Records::Any,
         input(format(from), text),
         Box::new(out.clone()),
         Metrics::new(),
@@ -1840,7 +1838,6 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
             translate::run(
                 &job(id, from, What::Part),
                 &composition,
-                Records::Any,
                 input(from, &text),
                 Box::new(std::io::sink()),
                 metrics.clone(),

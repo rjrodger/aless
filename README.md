@@ -274,8 +274,9 @@ print (below): a parse error's fields for a file that does not parse,
 with two exceptions: a failed `--check` still prints its report there,
 with status 1, and a `--render` or `--alchemy` stream that fails leaves
 there what it had written: every record it had written whole, and no
-part of one, but for a record over 16 MB and another format's render
-(`--render yaml`), which can stop inside one ([Exporting](#exporting)).
+part of one, but for a record over 16 MB and a render that marks no
+records (`--render markdown`), which can stop inside one
+([Exporting](#exporting)).
 A parse error:
 
 ```
@@ -441,16 +442,20 @@ $ aless --render csv --path .response.payload.deep.records response.json
 the result had been written before the failure, else `"none"`. A stream
 cannot take bytes back, so what was written stays, and it ends at the end
 of a record: a CSV row, a value directly inside the root JSON array or
-object (a bare number there, which may go on, ends at the comma after
-it), a line of JSON Lines. Every record whole when the failure came is
-on standard output before the error is reported, none held back in a
+object, a line of JSON Lines, and for another format's render the record
+its package marks (a value inside the root in YAML, JSON5 and ZON, a root
+member's line in TOML, a line in INI, a child of the root element in XML,
+a rule in CSS, a game in PGN). Every record whole when the failure came
+is on standard output before the error is reported, none held back in a
 buffer; a record half written is dropped, not written in part. A record
-longer than 16 MB is not held back whole: a JSON one is written up to the
-end of one of its own values, a CSV one as it comes, and a failure can cut
-it. A program's own text is written an item at a time, each item whole,
-and a `json` or `csv` render in the program a record at a time; another
-format's render (`--render yaml`) writes as it goes, and may stop inside
-one. The status follows the code, as the table above says. aless's own limits report as they do for a parse, plus that
+longer than 16 MB is not held back whole: it is written as it comes, and
+a failure can cut it. A program's own text is written a record at a
+time where the program marks them, each item `concat-map` writes and
+each `:record-end` among a `join`'s items, and a `json` or `csv` render
+in the program a record at a time; a render that marks no records
+(Markdown, feeds, expressions, versions, C, `.proto` and the grammar
+notations) writes as it goes, and may stop inside one. The status follows
+the code, as the table above says. aless's own limits report as they do for a parse, plus that
 `output` field: nesting past its cap is a `parse` error with the code
 `too_deep`, a run past `--timeout` a `timeout` error (the deadline covers
 the whole run, the writing of a parsed value included), and a grammar

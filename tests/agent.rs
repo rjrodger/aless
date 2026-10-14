@@ -1274,7 +1274,9 @@ fn render_csv_exports_the_records_at_a_path() {
     // events cannot hold: refused before anything was written, a file is
     // read again whole, and the parsed value, which keeps the last, is
     // written, as --json reads it. Standard input cannot be read again, so
-    // there the refusal stands, with nothing written.
+    // there the refusal stands, with what was whole before it written:
+    // nothing at the root, where the refused record is the first, and the
+    // first member below it, a record there.
     let dir = std::env::temp_dir().join(format!("aless-repeated-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("repeated.jsonl");
@@ -1296,10 +1298,15 @@ fn render_csv_exports_the_records_at_a_path() {
             Some(text),
         );
         assert_eq!(code(&out), 1, "{at}");
-        assert!(out.stdout.is_empty(), "{at}");
+        let (whole, output) = if at == "." {
+            ("", "none")
+        } else {
+            ("{\"a\":1", "partial")
+        };
+        assert_eq!(String::from_utf8_lossy(&out.stdout), whole, "{at}");
         let e = &json(&out.stderr)["error"];
         assert_eq!(e["code"], json!("DUPLICATE_MEMBER"), "{at}: {e}");
-        assert_eq!(e["output"], json!("none"), "{at}: {e}");
+        assert_eq!(e["output"], json!(output), "{at}: {e}");
     }
     std::fs::remove_dir_all(&dir).ok();
     // Standard input too, with -k saying the format.
@@ -1342,8 +1349,8 @@ fn whole_records_reach_standard_output_before_the_error() {
         assert_eq!(e["output"], json!("partial"), "{mode:?}");
     }
     // A scalar record is whole where it ends, a string at its closing
-    // quote: the second string is on the output though nothing followed
-    // it. A bare number may go on, and is whole at the comma after it.
+    // quote and a number at its last digit: the second of each is on the
+    // output though nothing followed it.
     let json_compact = ["-k", "jsonl", "--render", "json", "--compact"];
     let out = aless(&json_compact, Some("\"x\"\n\"y\"\n\"unterminated\n"));
     assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
@@ -1351,7 +1358,7 @@ fn whole_records_reach_standard_output_before_the_error() {
     assert_eq!(json(&out.stderr)["error"]["output"], json!("partial"));
     let out = aless(&json_compact, Some("1\n2\n\"unterminated\n"));
     assert_eq!(code(&out), 1);
-    assert_eq!(out.stdout, b"[1");
+    assert_eq!(out.stdout, b"[1,2");
 }
 
 /// A large XML document streams as the JSON family's do: its records

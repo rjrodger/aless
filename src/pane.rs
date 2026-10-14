@@ -447,14 +447,9 @@ fn render_within(
         _ => Input::Text(source),
     };
     let result = match (&composed, through) {
-        (Some((part, composition)), _) => translate::run(
-            &job,
-            composition,
-            translate::records(part),
-            input,
-            out,
-            Metrics::new(),
-        ),
+        (Some((_, composition)), _) => {
+            translate::run(&job, composition, input, out, Metrics::new())
+        }
         (None, Through::Render(_)) => export::export(&job, input, out),
         (None, Through::Program { render, .. }) => {
             let compiled = program.ok_or("the program did not compile")?;

@@ -8,6 +8,35 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- A `--render` or `--alchemy` run that fails part way stops at the end of
+  a record its renderer marks, held by tabnas-render's writer (0.2.5)
+  until the mark rather than found by scanning the bytes written: aless's
+  own record scanner is gone, and its writer passes each record on whole
+  the moment its end is marked (tabnas/alchemy#29).
+  - A value directly inside the root JSON array or object is whole where
+    it ends: a bare number no longer waits for the comma after it, so a
+    failure after it leaves it on standard output, with `output`
+    partial. Below `--path`, the first member of the object taken is a
+    record like any other.
+  - Another format's render leaves whole records where its package marks
+    them (tabnas-jsonl 0.1.17, tabnas-yaml 0.5.24, tabnas-toml 0.5.18,
+    tabnas-ini 0.5.20, tabnas-json5 0.5.16, tabnas-zon 0.5.17, tabnas-xml
+    0.7.18, tabnas-css 0.5.16, tabnas-chess 0.1.16): a value inside the
+    root in YAML, JSON5 and ZON, a root member's line in TOML, a line in
+    INI and JSON Lines, a child of the root element in XML, a node of the
+    stylesheet in CSS and a game in PGN. A render that marks none
+    (Markdown, feeds, expressions, versions, C, `.proto` and the grammar
+    notations) writes as it goes, as before.
+  - A program's own text is held a record at a time where the program
+    marks one: each item `concat-map` writes, and each `:record-end`
+    among a `join`'s items (tabnas-alchemy 0.2.7).
+  - A record longer than 16 MB is written as it comes; a JSON one is no
+    longer cut at the end of one of its own values.
+
 ## [0.4.2] - 2026-10-14
 
 ### Changed
