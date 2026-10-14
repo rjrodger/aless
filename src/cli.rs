@@ -943,8 +943,8 @@ const TOPICS: &[Topic] = &[
                 then empty, with two exceptions: a failed --check still prints its report, \
                 and a --render or --alchemy stream that fails leaves what it had written, \
                 every record whole and none in part (but for a record over 16 MB, and \
-                another format's render, such as --render yaml, which can stop inside \
-                one). A parse error:",
+                a render that marks no records, such as --render markdown, which can \
+                stop inside one). A parse error:",
             ),
             Block::Code(
                 r#"{"error": {"kind": "parse", "file": "bad.json", "format": "json",

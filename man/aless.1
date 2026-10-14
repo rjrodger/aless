@@ -466,8 +466,8 @@ success whatever standard error holds.
 An error is one JSON object on standard error, and standard output is then
 empty, with two exceptions: a failed \-\-check still prints its report, and a
 \-\-render or \-\-alchemy stream that fails leaves what it had written, every
-record whole and none in part (but for a record over 16 MB, and another
-format\(aqs render, such as \-\-render yaml, which can stop inside one). A
+record whole and none in part (but for a record over 16 MB, and a render that
+marks no records, such as \-\-render markdown, which can stop inside one). A
 parse error:
 .PP
 .RS 2

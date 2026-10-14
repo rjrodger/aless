@@ -15,8 +15,7 @@
 //! entry point and source text. aless reads each crate's descriptor once
 //! into alchemy's [`Part`], keyed by its `languageId`, and `--render`
 //! names that id. Nothing is copied here, and nothing here knows a format
-//! by name but JSON Lines, whose render writes a record a line
-//! ([`records`]).
+//! by name.
 //!
 //! alchemy composes the translation ([`tabnas_alchemy::translate`]): the
 //! source's lift, where the target writes from records and the source
@@ -66,7 +65,7 @@ use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink, TreeContract};
 
 use crate::alchemy::{renderers, routers};
-use crate::export::{self, ExportError, Input, Job, Records, Renderer};
+use crate::export::{self, ExportError, Input, Job, Renderer};
 use crate::load::Format;
 
 /// Each crate aless reads whose manifest may name translation parts, as
@@ -190,19 +189,6 @@ pub fn refusal(name: &str) -> String {
 /// The name the composed program's own line goes by in diagnostics.
 pub fn main_name(part: &Part) -> String {
     format!("--render {}", part.id)
-}
-
-/// Where the records of what `part`'s render writes end, for a run that
-/// fails part way ([`Records`]): alchemy's CSV and JSON write records the
-/// pipe can see, and JSON Lines a record a line; another format's render
-/// writes text of its own shape.
-pub fn records(part: &Part) -> Records {
-    match &part.render {
-        Render::Csv => Records::Csv,
-        Render::Json => Records::Json,
-        Render::Alc(_) if part.id == "jsonl" => Records::Lines,
-        Render::Alc(_) => Records::Any,
-    }
 }
 
 /// The adapter between the two shapes among `adapters`, the inferred table
@@ -371,7 +357,6 @@ pub fn compose_program(
 pub fn run(
     job: &Job,
     composition: &Composition,
-    records: Records,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
@@ -382,12 +367,12 @@ pub fn run(
         max_output_bytes: job.max_output,
         ..Limits::default()
     };
-    export::run_program(job, input, out, records, |pipe, abort| {
+    export::run_program(job, input, out, |pipe, abort| {
         // The writer stage is aless's, as for a program (`alchemy::run`):
-        // the program's own coalescing writer, with no budget, so every
-        // fragment reaches the pipe as it comes and a record is on the
-        // output the moment it ends, rather than held, up to 32 KB of
-        // them, until the run's flush that a failure never makes.
+        // the program's own coalescing writer, with no budget, so a record
+        // reaches the pipe the moment the render marks its end, rather
+        // than held, up to 32 KB of them, until the run's flush that a
+        // failure never makes.
         let out = WriteOut::new(pipe)
             .with_budget(0)
             .with_limits(&limits)
@@ -479,14 +464,6 @@ mod tests {
             assert_eq!(alc.file, format!("tabnas-{id}/alchemy/render.alc"));
             assert_eq!(alc.entry, format!("{id}-render"), "{id}");
             assert!(alc.text.contains(&format!("def {id}-render [")), "{id}");
-            assert_eq!(
-                records(p),
-                if id == "jsonl" {
-                    Records::Lines
-                } else {
-                    Records::Any
-                }
-            );
         }
         let xml = part("xml").unwrap();
         assert_eq!(xml.schema.as_deref(), Some("xml-element"));
@@ -500,14 +477,12 @@ mod tests {
             assert_eq!(p.writes, Shape::Tree, "{id}");
             assert_eq!(p.root, Root::Any, "{id}");
             assert_eq!(p.render, Render::Json, "{id}");
-            assert_eq!(records(p), Records::Json, "{id}");
         }
         let csv = part("csv").expect("csv's manifest names csv");
         assert_eq!(csv.reads, vec![Shape::Tree]);
         assert_eq!(csv.writes, Shape::Records);
         assert_eq!(csv.root, Root::Array);
         assert_eq!(csv.render, Render::Csv);
-        assert_eq!(records(csv), Records::Csv);
         let md = part("markdown").expect("markdown's manifest names its parts");
         assert_eq!(md.reads, vec![Shape::Records, Shape::Tree]);
         assert_eq!(md.writes, Shape::Records);
@@ -577,7 +552,6 @@ mod tests {
             };
             assert_eq!(alc.entry, format!("{id}-render"), "{id}");
             assert!(!p.loss.is_empty(), "{id} declares its loss");
-            assert_eq!(records(p), Records::Any, "{id}");
         }
         assert_eq!(
             part("pgn").map(|p| match &p.render {
@@ -937,7 +911,6 @@ mod tests {
             let result = run(
                 &job(&name, format, What::Part, true),
                 &composition,
-                records(target),
                 input(),
                 Box::new(composed.clone()),
                 Metrics::new(),
@@ -992,7 +965,6 @@ mod tests {
         run(
             &job("doc.json", Format::Json, What::Part, false),
             &composition,
-            Records::Any,
             Input::Text("[1, 2]"),
             Box::new(out.clone()),
             Metrics::new(),
@@ -1068,7 +1040,6 @@ mod tests {
             run(
                 &job("rows.csv", Format::Csv, What::Part, false),
                 &composition,
-                Records::Any,
                 Input::Lines(reader),
                 Box::new(std::io::sink()),
                 metrics.clone(),

@@ -12,8 +12,8 @@ prints one JSON value on standard output and exits 0, or prints
 is then empty, with two exceptions: a failed `--check` still prints its
 report there (exit 1), and a `--render` or `--alchemy` stream that fails
 leaves there what it had written before the error: whole records, but
-for a record over 16 MB and another format's render (`--render yaml`),
-which can stop inside one.
+for a record over 16 MB and a render that marks no records
+(`--render markdown`), which can stop inside one.
 
 ## Rules
 
@@ -32,8 +32,8 @@ which can stop inside one.
    means standard output holds the answer (with `--check`, 1 still
    comes with a full report; a failed `--render` or `--alchemy` leaves
    only what it wrote before the failure, which a record over 16 MB or
-   another format's render, such as `--render yaml`, can leave cut
-   short).
+   a render that marks no records, such as `--render markdown`, can
+   leave cut short).
 4. **Quote paths** for the shell: `--path '.items[0]'`, since the shell
    would glob `[0]`.
 5. **Start small on a big or unknown file.** Use `--paths --depth 1`
@@ -348,14 +348,18 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. What was written ends at the end of
 a record (a CSV row, a value directly inside the root JSON array or
-object, a bare number there ending at the comma after it, a JSON Lines
-line): every record whole when the failure came is
-on standard output before the error is reported, none held back in a
+object, a JSON Lines line, and for another format's render the record its
+package marks: a value inside the root in YAML, JSON5 and ZON, a root
+member's line in TOML, a line in INI, a child of the root element in XML,
+a rule in CSS, a game in PGN): every record whole when the failure came
+is on standard output before the error is reported, none held back in a
 buffer; a record half written is dropped, unless it is longer than 16 MB,
-which is written as it comes (a JSON one to the end of one of its own
-values). A program's own text is written an item at a time, and a `json`
-or `csv` render in the program a record at a time; another format's
-render (`--render yaml`) may stop inside a record. `DUPLICATE_MEMBER` means a key on the exported
+which is written as it comes. A program's own text is written a record
+at a time where the program marks them (each item `concat-map` writes,
+each `:record-end` among a `join`'s items), and a `json` or `csv` render
+in the program a record at a time; a render that marks no records
+(Markdown, feeds, expressions, versions, C, `.proto`, the grammar
+notations) may stop inside one. `DUPLICATE_MEMBER` means a key on the exported
 path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
 refuses rather than export a different one. `[-1]` on an array is a usage
