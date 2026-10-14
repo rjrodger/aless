@@ -3,7 +3,7 @@ title: a terminal viewer for JSON, YAML, TOML, CSV, XML and more
 description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and prints JSON for scripts and agents.
 ---
 <div class="hero">
-<h1>aless</h1>
+<h1><img src="/logo.svg" alt="aless" width="1490" height="430"></h1>
 <p class="tagline">{{tagline}}.</p>
 </div>
 

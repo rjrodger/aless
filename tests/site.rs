@@ -148,7 +148,7 @@ fn build() -> Site {
             );
         }
     }
-    for name in ["style.css", "favicon.svg", "CNAME"] {
+    for name in ["style.css", "favicon.svg", "logo.svg", "CNAME"] {
         let bytes = std::fs::read(sources().join(name)).unwrap();
         files.insert(name.to_string(), bytes);
     }
@@ -618,12 +618,14 @@ fn url(path: &str) -> String {
 
 /// A page as Markdown, for a reader that prefers it, at its address with
 /// `.md` for `.html`: its own Markdown under its title, with the site's
-/// links made absolute, or for a page written from the binary, its text as
-/// the terminal shows it. The pages and `llms.txt` promise one for every
-/// page.
+/// links and images made absolute, or for a page written from the binary,
+/// its text as the terminal shows it. The pages and `llms.txt` promise one
+/// for every page.
 fn twin(page: &Page, pages: &[Page]) -> String {
     let body = match (&page.markdown, &page.text) {
-        (Some(markdown), _) => fill(markdown).replace("](/", &format!("]({HOMEPAGE}/")),
+        (Some(markdown), _) => fill(markdown)
+            .replace("](/", &format!("]({HOMEPAGE}/"))
+            .replace("src=\"/", &format!("src=\"{HOMEPAGE}/")),
         (None, Some(text)) => {
             // A fence longer than any run of backticks in the text.
             let run = Regex::new("`+")

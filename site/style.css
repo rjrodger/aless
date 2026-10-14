@@ -70,6 +70,10 @@ a:hover { color: var(--accent); }
   font-family: var(--font-mono); font-weight: 700; font-size: 1.3rem;
   color: var(--ink); text-decoration: none;
 }
+/* The logo's wordmark stands on the nav's baseline. The bar aligns the
+   image's foot with it, and the foot is 26 of the image's 430 units below
+   the letters. */
+.brand img { display: block; height: 2.5rem; width: auto; margin-bottom: -0.15rem; }
 .sections { display: flex; flex-wrap: wrap; gap: 0.25rem 1.1rem; font-size: 0.95rem; }
 .sections a { text-decoration: none; }
 
@@ -158,6 +162,7 @@ blockquote {
 
 /* The home page. */
 .hero h1 { font-family: var(--font-mono); font-size: 3rem; margin-bottom: 0.25rem; }
+.hero h1 img { display: block; width: 100%; max-width: 30rem; height: auto; }
 .hero .tagline { font-size: 1.3rem; color: var(--ink-soft); margin-top: 0; }
 .quadrants {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
