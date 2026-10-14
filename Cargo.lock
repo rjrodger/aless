@@ -1200,9 +1200,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-css"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a097c03f59380a00c64a8a243ca4212a6b03f13818188981e32991113756737"
+checksum = "9a61f27a21693e7bf32f76ff3da34d13adf1480ca6f6dd5ed85106fa23692106"
 dependencies = [
  "tabnas-jsonic",
  "tabnas-parser",

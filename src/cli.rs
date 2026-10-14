@@ -925,7 +925,8 @@ const TOPICS: &[Topic] = &[
                 the one between a tree and a table, the inferred table or records, their \
                 sentences in loss after the format's own. Where the source's format says \
                 why its documents are read whole before anything is written (TOML, INI, \
-                feeds, .proto, PGN, expressions, versions, C and the grammar notations), \
+                CSS, feeds, .proto, PGN, expressions, versions, C and the grammar \
+                notations), \
                 whole is that sentence; a value below the root, a program's output and a \
                 document of any other format have none. Status 0 is success whatever \
                 standard error holds.",

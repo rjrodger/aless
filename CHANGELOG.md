@@ -8,6 +8,16 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## Unreleased
+
+### Changed
+
+- `whole`, in `--render`'s loss note and in an error carrying `loss`, is
+  given for CSS too (tabnas-css 0.5.15): a stylesheet is read whole
+  because the reader builds each rule, at-rule, declaration and comment
+  before it adds the node to the list that holds it. Every format whose
+  crate reads a document whole now says why.
+
 ## [0.4.1] - 2026-10-13
 
 ### Changed
