@@ -489,11 +489,11 @@ transducer's own limits per record do (a line over `max_record_bytes`,
 64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
-JSON family, jsonic, YAML, ZON, Markdown and XML the records are
-streamed out as the parse proceeds, and the exported array is not kept
-behind them (except in YAML, jsonic and Markdown, whose grammars may
-still refer to it); for the rest they are streamed out after the parse,
-from the value it built. Where one of those grammars refuses to stream a particular
+JSON family, jsonic, YAML, ZON, Markdown, XML and PGN (a game at a time)
+the records are streamed out as the parse proceeds, and the exported
+array is not kept behind them (except in YAML, jsonic and Markdown, whose
+grammars may still refer to it); for the rest they are streamed out after
+the parse, from the value it built. Where one of those grammars refuses to stream a particular
 document part-way (a jsonic implicit list whose first element is a
 container, a YAML stream of several documents or a `<<` merge key, a
 repeated member the grammar merges), aless falls back once to parsing it
@@ -627,7 +627,7 @@ Where a source's format says why its documents are read whole before
 anything is written, the warning says it too, as `whole`, in the
 format's own sentence: TOML's (a later header can add to a table),
 INI's (a later header can name a section again), and those of CSS,
-feeds, `.proto`, PGN, expressions, versions, C and the three grammar
+feeds, `.proto`, expressions, versions, C and the three grammar
 notations,
 each a reason the document's tree is complete only at its end. An error
 that carries `loss` carries it as well. A value below the root (`--path`) is written

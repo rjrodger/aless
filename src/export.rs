@@ -137,7 +137,9 @@ pub enum Plan {
 /// established, so neither is pruned. The rest keep the memory saving,
 /// XML among them: its rules only append to an element's children, in a
 /// list of one owner until the element closes, which tabnas-xml keeps so
-/// that pruning empties the list the element stores.
+/// that pruning empties the list the element stores. So does PGN:
+/// tabnas-chess builds a game on a stack of its own and only appends it,
+/// complete, to the database, which it never reads back.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -2050,6 +2052,7 @@ mod tests {
             Format::Jsonc,
             Format::Zon,
             Format::Xml,
+            Format::Pgn,
         ] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
@@ -2068,7 +2071,6 @@ mod tests {
             Format::Feed,
             Format::Css,
             Format::Proto,
-            Format::Pgn,
             Format::C,
             Format::Abnf,
             Format::Ebnf,
