@@ -52,7 +52,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tabnas::Tabnas;
-use tabnas_render::{CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut};
+use tabnas_render::{
+    CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut, DEFAULT_HOLD,
+};
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
     capability, AbortFlag, Cell, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
@@ -135,7 +137,9 @@ pub enum Plan {
 /// established, so neither is pruned. The rest keep the memory saving,
 /// XML among them: its rules only append to an element's children, in a
 /// list of one owner until the element closes, which tabnas-xml keeps so
-/// that pruning empties the list the element stores.
+/// that pruning empties the list the element stores. So does PGN:
+/// tabnas-chess builds a game on a stack of its own and only appends it,
+/// complete, to the database, which it never reads back.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -308,15 +312,11 @@ fn export_staged(
     // Shared, so that a second chain of sinks (the fallback) can write to
     // the same output without the first chain having to hand it back.
     let stage = Stage::new(out, &written, &broken, stage_max);
-    let records = match renderer {
-        Renderer::Csv => Records::Csv,
-        _ => Records::Json,
-    };
-    // The renderer hands every fragment down as it comes, with no budget
-    // of its own: the pipe is what holds a record back until it ends, and
-    // the stage what holds whole records for the output, so a failure
-    // drops no whole record from a buffer above them.
-    let pipe = || WriteOut::new(Pipe::new(stage.clone(), records)).with_budget(0);
+    // The renderer's writer has no budget of its own: it holds a record
+    // until the renderer marks its end, then hands it down whole, and the
+    // stage holds whole records for the output, so a failure drops no
+    // whole record from a buffer above them.
+    let pipe = || WriteOut::new(Pipe::new(stage.clone())).with_budget(0);
     match renderer {
         Renderer::Part(_) => unreachable!("refused above"),
         Renderer::Json => {
@@ -384,20 +384,20 @@ fn export_staged(
 /// and reads the whole document; a part's may. `chain` builds the sink
 /// over the writer it is given and the program's abort flag, which its
 /// functions read between steps and the deadline's alarm raises in every
-/// mode; it is called once per attempt. `records` says where the records
-/// of what it writes end, when a run that fails has to stop at one.
+/// mode; it is called once per attempt. The writer `chain` puts over the
+/// pipe holds each record until its end is marked, by a renderer or by
+/// the program, so a run that fails stops at the end of one.
 pub fn run_program(
     job: &Job,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
-    records: Records,
     chain: impl Fn(Box<dyn Write + Send>, AbortFlag) -> Result<Box<dyn Sink + Send>, ExportError>,
 ) -> Result<(), ExportError> {
     let written = Arc::new(AtomicU64::new(0));
     let broken = Arc::new(AtomicBool::new(false));
     let stage = Stage::new(out, &written, &broken, stage_max(job.format));
     attempt(job, input, &written, &broken, &stage, |abort| {
-        let pipe: Box<dyn Write + Send> = Box::new(Pipe::new(stage.clone(), records));
+        let pipe: Box<dyn Write + Send> = Box::new(Pipe::new(stage.clone()));
         // A scope at the root passes every event through and never stops
         // the run: the program does the selecting. A part's scope re-roots
         // the stream at `--path`, as an export's does.
@@ -611,7 +611,7 @@ struct Alarm {
 impl Alarm {
     fn fire(&self) {
         self.program.abort();
-        if self.lines || self.parsed.load(Ordering::Relaxed) {
+        if self.lines || self.parsed.load(Ordering::SeqCst) {
             self.abort.abort();
         }
     }
@@ -655,6 +655,23 @@ fn run<S: Sink + Send + 'static>(
                     },
                     Err(what) => Ran {
                         outcome: Outcome::Panicked(what),
+                        stop: None,
+                        verdict: None,
+                        from_sink: false,
+                    },
+                }
+            }
+            // A grammar is compiled by its notation's compiler, as the
+            // loader compiles it, and the spec it writes walked; the
+            // compile cannot be stopped part way, so the deadline bounds
+            // the wait for it, and the alarm, or the time read once the
+            // compile is done, the walk.
+            Input::Text(text) if format.is_notation() => {
+                let text = load::parse_text(text, format);
+                match load::compile_notation_by(format, text, deadline.clone()) {
+                    Ok(value) => walk_compiled(&value, deadline.as_ref(), scope, &abort, &parsed),
+                    Err(e) => Ran {
+                        outcome: Outcome::Refused(Box::new(e)),
                         stop: None,
                         verdict: None,
                         from_sink: false,
@@ -754,7 +771,7 @@ fn materialize<S: Sink>(
     scope: Scope<S>,
     stop: Arc<Stop>,
 ) -> Ran {
-    let value = load::catch_grammar(|| parser.parse(text).map_err(Box::new));
+    let value = load::catch_grammar(|| load::parse_value(&parser, format, text));
     parsed.store(true, Ordering::Relaxed);
     // A parse that came to its end after the deadline, with a value or an
     // error, is too late, as the loader has it: the time is its outcome,
@@ -772,6 +789,19 @@ fn materialize<S: Sink>(
                 verdict: None,
                 from_sink: false,
             }
+        }
+        // A C parse its reader stopped with no token in hand, worded and
+        // placed as the loader words and places it.
+        Ok(Err(e)) if !late && !abort.is_aborted() && load::unplaced_c_cancel(format, &e) => {
+            let (message, hint) = load::too_deep_words(format, Deep::Grammar);
+            return Ran {
+                outcome: Outcome::Refused(Box::new(
+                    LoadError::tagged("too_deep", message).with_hint(&hint),
+                )),
+                stop: Some(stop),
+                verdict: None,
+                from_sink: false,
+            };
         }
         Ok(Err(e)) => {
             // As the transducer's source maps an engine error: the abort
@@ -818,7 +848,7 @@ fn materialize<S: Sink>(
     }
     // The tree the format's schema names, where its crate builds one from
     // the grammar's value, as the loader reads it.
-    let value = match load::read_as(format, value) {
+    let value = match load::read_as(format, value, text.len()) {
         Ok(value) => value,
         Err(e) => {
             return Ran {
@@ -829,12 +859,51 @@ fn materialize<S: Sink>(
             }
         }
     };
+    walk(&value, scope, abort, Some(stop))
+}
+
+/// Walk the spec a grammar's compiler wrote into `scope`, unless the
+/// deadline passed while it compiled. An alarm that fired then found no
+/// walk to stop (`parsed` was not yet set, and a compile has no flag to
+/// read), so the time is read here, once `parsed` is set, as
+/// [`materialize`] reads it after a parse: a compile that ends past the
+/// deadline is too late, whatever it gave, and an alarm that fires after
+/// this raises the flag the walk reads.
+fn walk_compiled<S: Sink>(
+    value: &tabnas::Value,
+    deadline: Option<&Deadline>,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    parsed: &AtomicBool,
+) -> Ran {
+    parsed.store(true, Ordering::SeqCst);
+    if deadline.is_some_and(Deadline::is_past) {
+        abort.abort();
+        return Ran {
+            outcome: Outcome::Failed(Fail::aborted()),
+            stop: None,
+            verdict: None,
+            from_sink: false,
+        };
+    }
+    walk(value, scope, abort, None)
+}
+
+/// Walk a value into `scope`: the transducer's `Materialize` mode once the
+/// value is in hand, under the source limits and the abort flag the alarm
+/// raises at the deadline.
+fn walk<S: Sink>(
+    value: &tabnas::Value,
+    scope: Scope<S>,
+    abort: &AbortFlag,
+    stop: Option<Arc<Stop>>,
+) -> Ran {
     let mut guarded = Guarded::new(scope, &limits(), abort.clone(), Metrics::new());
-    let outcome = ValueSource(&value).run(&mut guarded);
+    let outcome = ValueSource(value).run(&mut guarded);
     let scope = guarded.into_inner();
     Ran {
         outcome: Outcome::of(outcome),
-        stop: Some(stop),
+        stop,
         verdict: scope.verdict(),
         from_sink: scope.sink_failed,
     }
@@ -964,9 +1033,9 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
         None => {}
     }
     // What reached the output is what the stage committed, the whole
-    // records the pipe passed it and, by now, every one a failed run had
-    // ready; the renderer above them may have handed over more, a record
-    // not yet whole, which the pipe holds back and a failure drops.
+    // records the writer handed down and, by now, every one a failed run
+    // had ready; a record not yet whole is still in the writer above
+    // them, and a failure drops it.
     let position = |fail: &Fail| -> (u32, u32) {
         let at = |n: Option<u64>| n.and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
         (at(fail.row), at(fail.column))
@@ -1164,33 +1233,11 @@ fn with_article(word: &str) -> String {
 
 // ----- the writer ------------------------------------------------------------
 
-/// Where the records of a run's output end, so that a run that fails part
-/// way leaves standard output at the end of one, every record there whole.
-/// The writer above the pipe sends what it holds whenever its buffer
-/// fills, wherever the renderer was; the pipe holds back what follows the
-/// last record's end until the next one ends, or the run does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Records {
-    /// No shape the pipe can see, and nothing is held: a program's own
-    /// text, which `concat-map` writes an item at a time and each item
-    /// whole, or a format's render.
-    Any,
-    /// CSV: a record ends with a line break outside quotes.
-    Csv,
-    /// JSON: a record is a value directly inside the root array or object,
-    /// and ends before the comma that follows it; the root's end ends the
-    /// last.
-    Json,
-    /// One record a line, as JSON Lines writes them.
-    Lines,
-}
-
-/// The most the pipe holds back. A record longer than this is not held
-/// whole, so that a root object of one huge member, say, does not sit in
-/// memory: it is written up to the end of one of its own values where it
-/// has them (a JSON record's), else as it comes, and a failure can then
-/// cut it.
-const HOLD_MAX: usize = 16 << 20;
+/// The most of one record the writer holds back: render's
+/// [`DEFAULT_HOLD`], 16 MiB. A record longer than this is not held whole,
+/// so that a root object of one huge member, say, does not sit in memory:
+/// it is written as it comes, and a failure can then cut it.
+const HOLD_MAX: usize = DEFAULT_HOLD;
 
 /// How much of the whole records the stage holds for the output before
 /// it writes them: a failure late in a long run drops none of them, and
@@ -1202,7 +1249,7 @@ const STAGE_MAX: usize = 32 << 10;
 /// the stream after it has streamed the first value whole (an implicit
 /// list that wraps it, a second document), and the whole-value run then
 /// writes that value again, so for those two the stage holds as much as
-/// the pipe holds of one record ([`HOLD_MAX`]) before anything leaves;
+/// the writer holds of one record ([`HOLD_MAX`]) before anything leaves;
 /// every other source's refusals come before its first record ends, and
 /// its output leaves as [`STAGE_MAX`] of it is ready.
 fn stage_max(format: Format) -> usize {
@@ -1308,179 +1355,32 @@ impl Stage {
     }
 }
 
-/// The writer under the renderer's `WriteOut`: passes whole records
-/// ([`Records`]) to the [`Stage`] the moment they are whole, and holds
-/// back what follows the last one. The renderer above it keeps no buffer
-/// of its own (a budget of zero), so nothing whole waits above the pipe;
-/// what the pipe holds, the record being written, is dropped with it when
-/// the run fails, and only the run's end, the renderer's one flush,
-/// writes it.
+/// The writer under the renderer's `WriteOut`, which has no budget and
+/// holds a record until its end is marked (by the renderer, or by the
+/// program a run compiles), so what it hands down is whole records, each
+/// the moment it ends: the pipe passes them to the [`Stage`]. What the
+/// writer holds, the record being written, is dropped with it when the
+/// run fails, and only the run's end, the renderer's one flush, writes
+/// it. A text nobody marks reaches the pipe as it comes, and so does a
+/// record longer than the writer holds ([`HOLD_MAX`]).
 struct Pipe {
     stage: Arc<Stage>,
-    records: Records,
-    /// What follows the last record's end.
-    held: Vec<u8>,
-    /// How much of `held` has been looked at, and what was open there.
-    seen: usize,
-    /// Inside a CSV field's quotes, or a JSON string.
-    quoted: bool,
-    /// After a backslash in a JSON string.
-    escaped: bool,
-    /// JSON containers open.
-    depth: usize,
-    /// The JSON root is an object: a string directly inside it is a key
-    /// until the colon, then a value.
-    root_object: bool,
-    /// Directly inside a JSON object root, past the member's colon.
-    after_colon: bool,
-    /// The letters of a bare word directly inside the JSON root, so far:
-    /// `true`, `false` or `null` ends a record where it ends.
-    word: Vec<u8>,
-    /// Where in `held` the last value one level inside a JSON record ends:
-    /// the cut for a record too long to hold.
-    inner_end: usize,
-    /// [`HOLD_MAX`], which a test lowers.
-    hold_max: usize,
 }
 
 impl Pipe {
-    fn new(stage: Arc<Stage>, records: Records) -> Pipe {
-        Pipe {
-            stage,
-            records,
-            held: Vec::new(),
-            seen: 0,
-            quoted: false,
-            escaped: false,
-            depth: 0,
-            root_object: false,
-            after_colon: false,
-            word: Vec::new(),
-            inner_end: 0,
-            hold_max: HOLD_MAX,
-        }
-    }
-
-    /// Pass `bytes`, whole records, to the stage.
-    fn send(&self, bytes: &[u8]) -> io::Result<()> {
-        self.stage.stage(bytes)
-    }
-
-    /// Look at what `held` gained, and return where its last whole record
-    /// ends (0 for none).
-    fn last_end(&mut self) -> usize {
-        let mut end = 0;
-        for (i, &b) in self.held.iter().enumerate().skip(self.seen) {
-            match self.records {
-                Records::Any => end = i + 1,
-                Records::Lines => {
-                    if b == b'\n' {
-                        end = i + 1;
-                    }
-                }
-                Records::Csv => match b {
-                    // A doubled quote inside quotes closes and reopens them.
-                    b'"' => self.quoted = !self.quoted,
-                    b'\n' if !self.quoted => end = i + 1,
-                    _ => {}
-                },
-                Records::Json if self.quoted => match b {
-                    _ if self.escaped => self.escaped = false,
-                    b'\\' => self.escaped = true,
-                    // A string directly inside the root is whole at its
-                    // close, unless it is a member's key.
-                    b'"' => {
-                        self.quoted = false;
-                        if self.depth == 1 && self.value_here() {
-                            end = i + 1;
-                            self.after_colon = false;
-                        }
-                    }
-                    _ => {}
-                },
-                // A value directly inside the root is whole where it ends:
-                // a container at its close, a string at its closing quote,
-                // `true`, `false` and `null` at their last letter; a number
-                // may go on, so it is whole at the comma after it, or at
-                // the root's close.
-                Records::Json => match b {
-                    b'"' => self.quoted = true,
-                    b'[' | b'{' => {
-                        if self.depth == 0 {
-                            self.root_object = b == b'{';
-                        }
-                        self.depth += 1;
-                    }
-                    b']' | b'}' => {
-                        self.depth = self.depth.saturating_sub(1);
-                        if self.depth <= 1 {
-                            end = i + 1;
-                            self.after_colon = false;
-                        }
-                    }
-                    b':' if self.depth == 1 => self.after_colon = true,
-                    b',' if self.depth == 1 => {
-                        end = i;
-                        self.after_colon = false;
-                    }
-                    b',' if self.depth == 2 => self.inner_end = i,
-                    b'a'..=b'z' if self.depth == 1 => {
-                        self.word.push(b);
-                        if matches!(self.word.as_slice(), b"true" | b"false" | b"null") {
-                            end = i + 1;
-                            self.after_colon = false;
-                        }
-                    }
-                    _ => {}
-                },
-            }
-            if !b.is_ascii_lowercase() {
-                self.word.clear();
-            }
-        }
-        self.seen = self.held.len();
-        end
-    }
-
-    /// Directly inside the JSON root, is a scalar here a value? In an
-    /// array every one is; in an object a string before the colon is the
-    /// member's key.
-    fn value_here(&self) -> bool {
-        !self.root_object || self.after_colon
+    fn new(stage: Arc<Stage>) -> Pipe {
+        Pipe { stage }
     }
 }
 
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.records == Records::Any {
-            self.send(buf)?;
-            return Ok(buf.len());
-        }
-        self.held.extend_from_slice(buf);
-        let end = match self.last_end() {
-            // A record too long to hold: up to the end of one of its own
-            // values, where it has had one, else what there is.
-            0 if self.held.len() > self.hold_max && self.inner_end > 0 => self.inner_end,
-            0 if self.held.len() > self.hold_max => self.held.len(),
-            end => end,
-        };
-        if end > 0 {
-            let rest = self.held.split_off(end);
-            let whole = std::mem::replace(&mut self.held, rest);
-            self.seen -= end;
-            self.inner_end = self.inner_end.saturating_sub(end);
-            self.send(&whole)?;
-        }
+        self.stage.stage(buf)?;
         Ok(buf.len())
     }
 
-    /// The run's end, the one flush a renderer makes: what is held is
-    /// whole now.
+    /// The run's end, the one flush a renderer makes.
     fn flush(&mut self) -> io::Result<()> {
-        let held = std::mem::take(&mut self.held);
-        self.seen = 0;
-        self.inner_end = 0;
-        self.send(&held)?;
         self.stage.flush()
     }
 }
@@ -2057,18 +1957,6 @@ mod tests {
         }
     }
 
-    /// A stage that writes every whole record the moment it has it, so a
-    /// test of the pipe's record boundaries reads them on the output.
-    fn unstaged(out: &Shared, written: &Arc<AtomicU64>, broken: &Arc<AtomicBool>) -> Arc<Stage> {
-        Arc::new(Stage {
-            out: Arc::new(Mutex::new(Box::new(out.clone()))),
-            written: written.clone(),
-            broken: broken.clone(),
-            ready: Mutex::new(Vec::new()),
-            stage_max: 0,
-        })
-    }
-
     fn job(format: Format, renderer: Renderer, path: &str) -> Job {
         Job {
             name: "-".into(),
@@ -2095,128 +1983,6 @@ mod tests {
         let reader = Box::new(io::BufReader::new(text.as_bytes()));
         let r = export(job, Input::Lines(reader), Box::new(out.clone()));
         (r, out.text())
-    }
-
-    /// What a renderer hands the pipe, in pieces cut wherever its buffer
-    /// filled, reaches the output a whole record at a time: fed `text` up
-    /// to any point, the pipe has written up to the last record's end it
-    /// could see there, and the run's end, its flush, writes the rest
-    /// (aless#17). A JSON value is seen to end where it ends, a number at
-    /// the comma after it.
-    #[test]
-    fn the_pipe_writes_whole_records() {
-        let csv = "a,\"b\nc\",\"d\"\"e\"\r\n1,2,3\r\n4,\"5,6\",7\r\n8,9";
-        let json = "[\n  {\"a\": \"x,]}\\\"\"},\n  [1, 2],\n  3,\n  \"s,]\",\n  true,\n  null,\n  {\"b\": {}}\n]\n";
-        let object = "{\"a\": [1, 2], \"b\": \"c,d\", \"c\": 5, \"d\": false}";
-        let lines = "{\"a\":1}\n{\"a\":2}\n{\"a\"";
-        let after = |text: &str, part: &str| text.find(part).unwrap() + part.len();
-        // (where a record ends, how far the pipe must have read to know)
-        let at = |end: usize| (end, end);
-        let comma = |end: usize| (end, end + 1);
-        let cases = [
-            (
-                Records::Csv,
-                csv,
-                vec![
-                    at(after(csv, "\"e\"\r\n")),
-                    at(after(csv, "3\r\n")),
-                    at(after(csv, "7\r\n")),
-                ],
-            ),
-            // A value inside the root is whole where it ends: a container
-            // at its close, a string at its quote, a literal at its last
-            // letter; a number may go on, so at the comma after it.
-            (
-                Records::Json,
-                json,
-                vec![
-                    at(after(json, "\"\"}")),
-                    at(after(json, "[1, 2]")),
-                    comma(after(json, "3")),
-                    at(after(json, "\"s,]\"")),
-                    at(after(json, "true")),
-                    at(after(json, "null")),
-                    at(after(json, "{}}")),
-                    at(after(json, "{}}\n]")),
-                ],
-            ),
-            // In an object root a string before the colon is a key, and
-            // ends no record.
-            (
-                Records::Json,
-                object,
-                vec![
-                    at(after(object, "[1, 2]")),
-                    at(after(object, "\"c,d\"")),
-                    comma(after(object, "5")),
-                    at(after(object, "false")),
-                    at(object.len()),
-                ],
-            ),
-            (
-                Records::Lines,
-                lines,
-                vec![at(after(lines, ":1}\n")), at(after(lines, ":2}\n"))],
-            ),
-        ];
-        for (records, text, ends) in cases {
-            for piece in [1, 2, 3, 7, 64] {
-                for upto in 0..=text.len() {
-                    let out = Shared::default();
-                    let written = Arc::new(AtomicU64::new(0));
-                    let broken = Arc::new(AtomicBool::new(false));
-                    let mut pipe = Pipe::new(unstaged(&out, &written, &broken), records);
-                    for chunk in text.as_bytes()[..upto].chunks(piece) {
-                        assert_eq!(pipe.write(chunk).unwrap(), chunk.len());
-                    }
-                    let whole = ends
-                        .iter()
-                        .filter(|&&(_, seen)| seen <= upto)
-                        .map(|&(end, _)| end)
-                        .max()
-                        .unwrap_or(0);
-                    assert_eq!(
-                        out.text(),
-                        text[..whole],
-                        "{records:?} {text:?} to {upto} by {piece}"
-                    );
-                    assert_eq!(written.load(Ordering::Relaxed), whole as u64);
-                    pipe.flush().unwrap();
-                    assert_eq!(out.text(), text[..upto], "{records:?} flushed at {upto}");
-                }
-            }
-        }
-    }
-
-    /// A record too long to hold is written up to the end of one of its
-    /// own values where it has them (JSON), else as it comes (CSV), so the
-    /// pipe never holds much more than its limit.
-    #[test]
-    fn a_record_too_long_to_hold_is_written_as_it_comes() {
-        let json = "{\"a\": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], \"b\": 1";
-        let csv = "x,\"0123456789abcdefghijklmnop";
-        for (records, text) in [(Records::Json, json), (Records::Csv, csv)] {
-            let out = Shared::default();
-            let w = Arc::new(AtomicU64::new(0));
-            let b = Arc::new(AtomicBool::new(false));
-            let mut pipe = Pipe::new(unstaged(&out, &w, &b), records);
-            pipe.hold_max = 8;
-            for chunk in text.as_bytes().chunks(3) {
-                pipe.write_all(chunk).unwrap();
-            }
-            let written = out.text();
-            assert!(text.starts_with(&written), "{records:?}: {written:?}");
-            assert!(written.len() > 8, "{records:?}: something was let go");
-            assert!(
-                text.len() - written.len() <= 8 + 3,
-                "{records:?}: {written:?}"
-            );
-            if records == Records::Json {
-                // Up to a value's end, the member's own at its close: the
-                // comma after it is still held.
-                assert_eq!(&text[written.len()..], ", \"b\": 1", "{written:?}");
-            }
-        }
     }
 
     /// A run that fails part way leaves standard output at the end of a
@@ -2286,6 +2052,7 @@ mod tests {
             Format::Jsonc,
             Format::Zon,
             Format::Xml,
+            Format::Pgn,
         ] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
@@ -2295,14 +2062,19 @@ mod tests {
         }
         // Parsed whole, then walked: the imperative grammars, and those no
         // differential suite has verified, which build a tree of a schema's
-        // from their parse (proto's descriptor, expr's S-expressions).
+        // from their parse (proto's descriptor, expr's S-expressions, C's
+        // syntax tree, realized from its arena), and a grammar, the spec its
+        // compiler writes.
         for f in [
             Format::Toml,
             Format::Ini,
             Format::Feed,
             Format::Css,
             Format::Proto,
-            Format::Pgn,
+            Format::C,
+            Format::Abnf,
+            Format::Ebnf,
+            Format::Gbnf,
             Format::Expr,
             Format::Semver,
         ] {
@@ -2324,6 +2096,34 @@ mod tests {
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
         assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
         assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
+    }
+
+    /// A grammar whose compile ends past the deadline is too late, whatever
+    /// it gave: its spec is not walked, though the alarm, which fired while
+    /// it compiled, found no walk to stop; in time, it is walked whole.
+    #[test]
+    fn a_grammar_compiled_past_the_deadline_is_not_walked() {
+        let value = load::compile_notation(Format::Gbnf, "root ::= \"a\"\n").unwrap();
+        let parsed = AtomicBool::new(false);
+        let scope = || Scope::new(Vec::new(), Vec::<OwnedJsonEvent>::new());
+        let abort = AbortFlag::new();
+        let past = Deadline::after(Some(Duration::ZERO));
+        let ran = walk_compiled(&value, past.as_ref(), scope(), &abort, &parsed);
+        assert!(
+            matches!(&ran.outcome, Outcome::Failed(f) if f.code == Code::Aborted),
+            "{:?}",
+            ran.outcome
+        );
+        assert!(abort.is_aborted());
+        assert!(
+            parsed.load(Ordering::SeqCst),
+            "an alarm after this stops the walk"
+        );
+        let abort = AbortFlag::new();
+        let ahead = Deadline::after(Some(Duration::from_secs(600)));
+        let ran = walk_compiled(&value, ahead.as_ref(), scope(), &abort, &parsed);
+        assert!(matches!(ran.outcome, Outcome::Done), "{:?}", ran.outcome);
+        assert!(!abort.is_aborted());
     }
 
     /// A document is exported as the loader reads it: a .proto file as
@@ -2371,6 +2171,61 @@ mod tests {
         assert!(
             e.plain_report()
                 .starts_with("[proto/version]: version: unknown syntax version"),
+            "{}",
+            e.plain_report()
+        );
+        // A C file as its syntax tree, realized on the parse's thread, and
+        // refused as the loader refuses it: a tree too large written out,
+        // and a conditional that is a whole initializer, which its reader
+        // refuses with no token in hand, both with no place.
+        assert_eq!(
+            written(
+                Format::C,
+                ".children[0].children[0].children[0].src",
+                "int x = 1;"
+            ),
+            "\"int\"\n"
+        );
+        let refused_c = |text: &str| match run_text(&job(Format::C, Renderer::Json, "."), text) {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty(), "{text:?}");
+                error
+            }
+            other => panic!("{text:?}: {other:?}"),
+        };
+        let e = refused_c(&format!("int f(void) {{ return a{}; }}", ".b".repeat(40)));
+        assert_eq!(e.code, "too_deep");
+        assert!(e.message.contains("written out"), "{}", e.message);
+        assert_eq!((e.line, e.col), (0, 0));
+        let e = refused_c("int a = b ? c : d;");
+        assert_eq!(e.code, "too_deep");
+        assert!(
+            e.message.contains("than the c reader reads"),
+            "{}",
+            e.message
+        );
+        assert_eq!((e.line, e.col), (0, 0));
+        assert!(
+            e.plain_report().contains("--> (stdin)"),
+            "{}",
+            e.plain_report()
+        );
+        // A grammar as the spec its compiler writes, and refused as the
+        // loader refuses it, placed where its compiler says.
+        assert_eq!(
+            written(Format::Gbnf, ".options.rule.start", "root ::= \"a\"\n"),
+            "\"__start__\"\n"
+        );
+        let e = match run_text(&job(Format::Abnf, Renderer::Json, "."), "a = b\n") {
+            (Err(ExportError::Load { error, partial }), out) => {
+                assert!(!partial && out.is_empty());
+                error
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((e.code.as_str(), e.line, e.col), ("compile", 1, 5), "{e}");
+        assert!(
+            e.plain_report().contains("--> (stdin):1:5"),
             "{}",
             e.plain_report()
         );
@@ -2712,7 +2567,9 @@ mod tests {
     /// repeats a member, is read again whole when the input is a file, and
     /// the parsed value, which keeps the last of the two, is written, at
     /// the root as below it: what the text read whole writes. A reader that
-    /// cannot be read again keeps the refusal, with nothing written.
+    /// cannot be read again keeps the refusal, with what was whole before
+    /// it written: nothing at the root, where the refused record is the
+    /// first, and the first member below it, which is a record there.
     #[test]
     fn a_refused_record_from_a_file_falls_back_to_the_whole_value() {
         let text = "{\"a\": 1, \"a\": 2, \"b\": [1]}\n{\"a\": 3}\n";
@@ -2747,14 +2604,15 @@ mod tests {
                     assert_eq!(out, "[1]\n", "{at}");
                     continue;
                 }
+                let whole = if at == "." { "" } else { "{\"a\":1" };
                 match r {
                     Err(ExportError::Transduce(fail)) => {
                         assert_eq!(fail.code, Code::DuplicateMember, "{at} {fail:?}");
-                        assert!(!fail.committed_output, "{at} {fail:?}");
+                        assert_eq!(fail.committed_output, !whole.is_empty(), "{at} {fail:?}");
                     }
                     other => panic!("{at}: {other:?}"),
                 }
-                assert_eq!(out, "", "{at}");
+                assert_eq!(out, whole, "{at}");
             }
         }
         std::fs::remove_file(&path).ok();
@@ -2999,7 +2857,7 @@ mod tests {
         }
         // A jsonic source can refuse the stream only once it has streamed
         // the first value whole, so the stage holds that value, however
-        // long, until the pipe's own bound, and nothing has left when the
+        // long, until the writer's own bound, and nothing has left when the
         // refusal comes: the whole value is written instead.
         let long = "x".repeat(2 * STAGE_MAX);
         let j = job(Format::Jsonic, Renderer::Json, ".");
@@ -3088,7 +2946,6 @@ mod tests {
                 &j,
                 Input::Text("[1, 2, 3]"),
                 Box::new(Shared::default()),
-                Records::Json,
                 |_out, _abort| {
                     builds.fetch_add(1, Ordering::Relaxed);
                     Ok(Box::new(Refuses))

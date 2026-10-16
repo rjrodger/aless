@@ -469,6 +469,61 @@ fn align_nodes(doc: &mut Doc, range: Range<usize>, toks: &[Tok], look: Look) {
     }
 }
 
+/// Positions from a tree that carries its own: a C syntax tree, each of
+/// whose token nodes holds the token's text (`src`) and its place
+/// (`span`, with its `line` and its 1-based `col` in characters), which no
+/// alignment is needed for, and which an alignment by value would get
+/// wrong, the tree repeating a subtree under several members (`operand`
+/// beside `children`) and holding numbers of its own (every span's). A
+/// token node and its text take the token's place, and nothing else in it
+/// does (its kind, its name and the span's numbers are the reader's, not
+/// the document's); a token with no text (the reader's placeholder for one
+/// a path dropped) takes none. Containers take their first positioned
+/// child's, as everywhere, so a node the reader repeats takes its tokens'
+/// places each time it appears.
+pub fn align_spans(doc: &mut Doc) {
+    for i in 0..doc.nodes.len() {
+        if doc.nodes[i].kind != Kind::Object {
+            continue;
+        }
+        let (mut token, mut text, mut place) = (false, None, None);
+        for c in doc.children(i as u32) {
+            let node = &doc.nodes[c as usize];
+            match (node.key.name(), &node.kind) {
+                (Some("kind"), Kind::Str(kind)) => token = &**kind == "token",
+                (Some("src"), Kind::Str(src)) if !src.is_empty() => text = Some(c),
+                (Some("span"), Kind::Object) => place = span_place(doc, c),
+                _ => {}
+            }
+        }
+        if let (true, Some(text), Some((line, col))) = (token, text, place) {
+            for at in [i, text as usize] {
+                doc.nodes[at].line = line;
+                doc.nodes[at].col = col;
+            }
+        }
+    }
+    inherit_positions(doc);
+}
+
+/// The line and column a C token's `span` names, when it names both.
+fn span_place(doc: &Doc, span: u32) -> Option<(u32, u32)> {
+    let (mut line, mut col) = (None, None);
+    for c in doc.children(span) {
+        let node = &doc.nodes[c as usize];
+        let number = match node.kind {
+            Kind::Number(n) if n >= 1.0 && n <= f64::from(u32::MAX) && n.fract() == 0.0 => n as u32,
+            _ => continue,
+        };
+        match node.key.name() {
+            Some("line") => line = Some(number),
+            Some("col") => col = Some(number),
+            _ => {}
+        }
+    }
+    Some((line?, col?))
+}
+
 /// Containers without a position of their own take their first positioned
 /// child's; children have larger indices, so a reverse sweep sees them
 /// final.

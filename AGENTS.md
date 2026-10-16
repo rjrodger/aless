@@ -65,9 +65,11 @@ from jless. This file is the guide for any agent working here;
   JSONTestSuite's in the default run, every repository's `test/spec/*.tsv`
   in the ignored run CI makes in the `matrix` profile) and
   `tests/yaml_render.rs` (tabnas/yaml's spec and the vendored YAML Test
-  Suite). They come from checkouts of the eighteen grammar repositories
-  with translation parts (PGN's is tabnas/chess) at the tags of the
-  versions `Cargo.lock` pins:
+  Suite). They come from checkouts of the twenty grammar repositories
+  with translation parts and a `test/spec` corpus (PGN's is tabnas/chess;
+  tabnas/ebnf's and tabnas/gbnf's tags carry none, and aless's own
+  fixtures stand for them) at the tags of the versions `Cargo.lock`
+  pins:
   `scripts/fixtures.sh` clones them under `target/fixtures/` and prints
   the export lines, `TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`, and CI
   runs it before the tests. The tests fail when the variables are unset,
@@ -117,8 +119,9 @@ from jless. This file is the guide for any agent working here;
   (crossterm) and the only one with platform-specific code. Everything
   in the library is terminal-free and unit tested: `doc` (the arena
   model and rows), `fmt` (text forms, previews, JSON output, paths),
-  `load` (format detection, the grammars, errors, the size, depth and
-  time limits, the parse's own thread), `grammar` (custom grammars:
+  `load` (format detection, the grammars, the grammar notations'
+  documents compiled to their specs, errors, the size, depth and time
+  limits, the parse's own thread), `grammar` (custom grammars:
   `--grammar` and `--grammar-expr` read within `--max-size`, compiled
   once at startup by tabnas-abnf, on a thread of their own within
   `--timeout` and under the repetition caps, with the plain-text lexing

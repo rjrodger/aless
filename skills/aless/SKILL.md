@@ -1,6 +1,6 @@
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN and a version from documents of their own kind), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, grammars in ABNF, EBNF and GBNF, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN, C and a version from documents of their own kind, and ABNF, EBNF and GBNF from a grammar in any of the three), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
 ---
 
 # aless, headless
@@ -12,8 +12,8 @@ prints one JSON value on standard output and exits 0, or prints
 is then empty, with two exceptions: a failed `--check` still prints its
 report there (exit 1), and a `--render` or `--alchemy` stream that fails
 leaves there what it had written before the error: whole records, but
-for a record over 16 MB and another format's render (`--render yaml`),
-which can stop inside one.
+for a record over 16 MB and a render that marks no records
+(`--render markdown`), which can stop inside one.
 
 ## Rules
 
@@ -32,8 +32,8 @@ which can stop inside one.
    means standard output holds the answer (with `--check`, 1 still
    comes with a full report; a failed `--render` or `--alchemy` leaves
    only what it wrote before the failure, which a record over 16 MB or
-   another format's render, such as `--render yaml`, can leave cut
-   short).
+   a render that marks no records, such as `--render markdown`, can
+   leave cut short).
 4. **Quote paths** for the shell: `--path '.items[0]'`, since the shell
    would glob `[0]`.
 5. **Start small on a big or unknown file.** Use `--paths --depth 1`
@@ -131,7 +131,8 @@ Write any of those formats as any format that has a render, streamed the
 same way: `--render yaml`, `toml`, `ini`, `xml`, `zon`, `jsonl`,
 `markdown` (a table of the records), `json5`, `jsonc`, `jsonic`, `json`,
 `csv`, `feed` (Atom), `expr`, or, from documents of their own kind,
-`css`, `proto`, `pgn` and `semver`:
+`css`, `proto`, `pgn`, `c` and `semver`, and `abnf`, `ebnf` and `gbnf`
+from a grammar in any of the three:
 
 ```bash
 aless --render yaml data.csv                    # the records as YAML
@@ -160,8 +161,9 @@ source and the render (`wrap-object`, `wrap-array`, `embed`, `the
 inferred table`, `records`), `adapter` the one between a tree and a
 table, the inferred table or `records`, and `whole`, where the source's
 format says why its documents are read whole before anything is written
-(TOML, INI), that sentence: never below the root, nor for a program's
-output. Exit status 0 is success
+(TOML, INI, CSS, feeds, `.proto`, expressions, versions, C and the
+grammar notations), that sentence: never below the root, nor for a
+program's output. Exit status 0 is success
 whatever standard error holds. A member the input repeats (`{"a":1,"a":2}`) is
 written once, with the last value as `--json` reads it, when nothing had
 been written yet; otherwise the run fails with `DUPLICATE_MEMBER` and
@@ -172,11 +174,17 @@ that has no render (`tsv`) is a usage error that lists the ones that do,
 and so is one that names a format by an extension (`rss`), which names
 the format's render (`feed`) instead.
 
-Four renders take only their own kind of tree. `--render css`, `proto`
-and `pgn` write only the tree their own documents read as; given any
-other document (or a value below the root), they exit 2 with a `usage`
-error before reading the input, naming the route that can write one: a
-program that makes that tree, `--alchemy FILE --render proto`.
+Eight renders take only their own kind of tree. `--render css`, `proto`,
+`pgn` and `c` write only the tree their own documents read as, and
+`abnf`, `ebnf` and `gbnf` the grammar spec a grammar in any of the three
+reads as (so a grammar converts between them); given any other document
+(or a value below the root), they exit 2 with a `usage` error before
+reading the input, naming the route that can write one: a program that
+makes that tree, `--alchemy FILE --render proto`. A notation's render
+refuses a spec it cannot say (an action, such as an annotation of a
+`--grammar` grammar makes, or a terminal none of its forms matches) as
+semver's does below, exit 1, `TARGET_VALUE_UNREPRESENTABLE`, `output:
+"none"`, `file` its own render.
 `--render semver` writes only a tree that is a version (an object with
 `major`, `minor`, `patch`, and optionally `prerelease` and `build`); any
 other exits 1 with a `transduce` error, `code`
@@ -186,7 +194,15 @@ break. An expression (`-k expr`; `--render expr`) is read as
 S-expressions, `1+2*3` as `["+",1,["*",2,3]]`, and written back in
 infix; a version (`-k semver`) as `{major, minor, patch, prerelease,
 build}`, its file's one line break not part of it; a `.proto` file as
-its FileDescriptorProto, as protoc writes one in JSON.
+its FileDescriptorProto, as protoc writes one in JSON; a C file (`.c`,
+`.h`) as its concrete syntax tree, each node `kind`, `span`, `children`
+and `trivia`, each token `tname`, `src` and `span`, with members such as
+`operand` that repeat subtrees `children` holds. C is read as plain C23
+following no `#include`, so a header's typedef is not known for a type.
+A grammar (`.abnf`, `.ebnf`, `.gbnf`) is read as the grammar spec its
+compiler writes, `{options, rule, v, meta}`, each rule its `open` and
+`close` alternates, with no positions; `--check` on one says whether it
+compiles. To read a file with a grammar, name it with `--grammar`.
 
 Run a program in the [alchemy](https://github.com/tabnas/alchemy)
 streaming language over a file: select, project, reshape and render on
@@ -274,9 +290,11 @@ An **entry** describes one node:
 - `kind` is one of object, array, string, number, boolean or null.
 - `line` and `col` count from 1, columns in characters, and point where
   the node starts: at its key if it has one, else at its value. They are
-  exact for the JSON family, TOML, INI, CSV and ZON, best-effort for
-  YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
-  file's descriptor, and `null` when unknown.
+  exact for the JSON family, TOML, INI, CSV and ZON, and for C's tokens
+  (from the places its tree records; what the reader adds, a kind, a
+  token's name, a span's numbers, has none), best-effort for YAML, XML,
+  Markdown, CSS, PGN and expressions, loose for a `.proto` file's
+  descriptor, and `null` when unknown, as throughout a grammar's spec.
 - A container has `length`, its item count. A scalar has `value`.
   Strings over 200 characters are cut, and get `"truncated": true` and
   their full `length`.
@@ -330,14 +348,18 @@ value}`), `line` and `col` when the failure has them, and `output`:
 `"partial"` if some of the result had already been written (a stream
 cannot take it back), else `"none"`. What was written ends at the end of
 a record (a CSV row, a value directly inside the root JSON array or
-object, a bare number there ending at the comma after it, a JSON Lines
-line): every record whole when the failure came is
-on standard output before the error is reported, none held back in a
+object, a JSON Lines line, and for another format's render the record its
+package marks: a value inside the root in YAML, JSON5 and ZON, a root
+member's line in TOML, a line in INI, a child of the root element in XML,
+a rule in CSS, a game in PGN): every record whole when the failure came
+is on standard output before the error is reported, none held back in a
 buffer; a record half written is dropped, unless it is longer than 16 MB,
-which is written as it comes (a JSON one to the end of one of its own
-values). A program's own text is written an item at a time, and a `json`
-or `csv` render in the program a record at a time; another format's
-render (`--render yaml`) may stop inside a record. `DUPLICATE_MEMBER` means a key on the exported
+which is written as it comes. A program's own text is written a record
+at a time where the program marks them (each item `concat-map` writes,
+each `:record-end` among a `join`'s items), and a `json` or `csv` render
+in the program a record at a time; a render that marks no records
+(Markdown, feeds, expressions, versions, C, `.proto`, the grammar
+notations) may stop inside one. `DUPLICATE_MEMBER` means a key on the exported
 path is repeated
 in the document: `--json` keeps the last value, a stream cannot, so it
 refuses rather than export a different one. `[-1]` on an array is a usage
@@ -413,8 +435,26 @@ For those, pipe `--json` into jq.
   rather than crashing: past about 1,000 levels, or sooner where the
   grammar has a limit of its own: 127 for JSON, JSONL, JSONic, JSON5,
   YAML, TOML, INI, ZON and expressions (and 127 operations in one
-  expression), 256 for XML, 512 for JSONC, 768 open rules for CSS, and
-  braces 100 deep for a `.proto` file, counted before it is parsed. A `--grammar`
+  expression), 256 for XML, 512 for JSONC, 768 open rules for CSS,
+  braces 100 deep for a `.proto` file, counted before it is parsed, and
+  C's own: 127 operations in an expression (a call's arguments among
+  them), 1,024 open rules and a syntax tree 256 levels deep, these with
+  no `line` when the parse stopped between tokens; and a C tree of more
+  than 256 values a byte of the file written out (a million at least,
+  33,554,432 at most), or of more than 2,048 bytes of names and strings
+  a byte (8 MB at least, 256 MB at most), which its reader's repeated
+  subtrees make of a chain of subscripts or member accesses a few levels
+  deep, also with no `line`; and a grammar in ABNF, EBNF or GBNF at its compiler's limits,
+  groups and options nested about 500 levels in ABNF, 130 in EBNF and 128
+  in GBNF (no `line`), and elements nested 128 levels (the rule's
+  `line`); a grammar the compiler's left-recursion pass would grow past
+  512 alternatives added to one rule or 131,072 elements added to the
+  grammar is code `compile`, at the rule. A grammar's compile cannot be
+  stopped part way: past
+  `--timeout` aless stops waiting for it (`timeout`, exit 6), and a later
+  grammar in the same run is the same `timeout` at once while that
+  compile still runs, as is one whose time is up before its compile
+  starts. A `--grammar`
   grammar's nesting is measured on the value it built, after the parse
   (the error then has no `line`); a file of any length parses at the
   depth of one line, at about 2 KB of memory and 60 µs a line.
@@ -422,7 +462,8 @@ For those, pipe `--json` into jq.
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);
   the records leave as the parse proceeds for the JSON family, jsonic,
-  YAML, ZON, Markdown and XML, and after it for the rest. A document one of
+  YAML, ZON, Markdown, XML and PGN (a game at a time), and after it for
+  the rest. A document one of
   those grammars refuses to stream part-way (a jsonic implicit list, a
   YAML `---` stream or `<<` merge key) is parsed whole and exported all
   the same, when nothing has been written yet. So for a huge export,

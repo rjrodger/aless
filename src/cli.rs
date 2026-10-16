@@ -24,12 +24,12 @@ pub const TAGLINE: &str = "JSON, YAML, TOML, CSV, XML, INI, Markdown and more as
 /// What aless does, in a paragraph: the man page's DESCRIPTION.
 const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, \
     TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
-    .proto files, PGN chess games, expressions and semantic versions, and any \
-    line-oriented format an ABNF grammar describes, as one tree. In a terminal it shows \
-    the tree in a jless-style viewer, with tabs, panes, search and a watch mode that \
-    reloads a changed file and keeps your place. Without one it prints JSON on standard \
-    output for scripts and agents, and writes any of those formats as any other that \
-    has a render and can hold the document.";
+    .proto files, PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions \
+    and semantic versions, and any line-oriented format an ABNF grammar describes, as one \
+    tree. In a terminal it shows the tree in a jless-style viewer, with tabs, panes, \
+    search and a watch mode that reloads a changed file and keeps your place. Without one \
+    it prints JSON on standard output for scripts and agents, and writes any of those \
+    formats as any other that has a render and can hold the document.";
 
 /// Where an option belongs, and what giving it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,11 +218,15 @@ pub const OPTIONS: &[Opt] = &[
             {renders}. What FORMAT cannot hold is written by the convention its crate \
             declares rather than refused (NaN and the infinities as null in json; a \
             root TOML or INI cannot have as the one member --key names), and what it \
-            does not keep is said in a warning on standard error, on success too. Three \
+            does not keep is said in a warning on standard error, on success too. Seven \
             write only the tree their own documents read as, and have no convention for \
-            another: css, proto and pgn take a document of their own format, and any \
-            other is a usage error before anything is read, naming the route that writes \
-            one, --alchemy FILE --render FORMAT with a program that makes that tree. \
+            another: css, proto, pgn and c take a document of their own format, abnf, ebnf \
+            and gbnf a grammar in any of the three, each read as the grammar spec its \
+            compiler writes, and any other is a usage error before anything is read, \
+            naming the route that writes one, --alchemy FILE --render FORMAT with a \
+            program that makes that tree. A notation's render refuses a spec it cannot \
+            write in its notation (an action, a terminal none of its forms matches) before \
+            writing anything. \
             semver writes only a document that is a version, and refuses any other \
             before writing anything. Takes --path, not --at. With --alchemy it names the format the program's table or \
             JSON events are written as.",
@@ -837,9 +841,10 @@ const TOPICS: &[Topic] = &[
                     "line, col",
                     "where the node starts, from 1, columns in characters: at its key \
                     when it has one, else at its value. Exact for the JSON family, TOML, \
-                    INI, CSV and ZON, best-effort for YAML, XML, Markdown, CSS, PGN and \
-                    expressions, loose for a .proto file's descriptor, and null when \
-                    unknown",
+                    INI, CSV and ZON, and for C's tokens, from the places its syntax tree \
+                    records, best-effort for YAML, XML, Markdown, CSS, PGN and expressions, \
+                    loose for a .proto file's descriptor, and null when unknown, as \
+                    throughout a grammar's spec, which its compiler writes",
                 ),
                 (
                     "length",
@@ -919,7 +924,9 @@ const TOPICS: &[Topic] = &[
                 (wrap-object, wrap-array, embed, the inferred table, records), and adapter \
                 the one between a tree and a table, the inferred table or records, their \
                 sentences in loss after the format's own. Where the source's format says \
-                why its documents are read whole before anything is written (TOML, INI), \
+                why its documents are read whole before anything is written (TOML, INI, \
+                CSS, feeds, .proto, expressions, versions, C and the grammar \
+                notations), \
                 whole is that sentence; a value below the root, a program's output and a \
                 document of any other format have none. Status 0 is success whatever \
                 standard error holds.",
@@ -936,8 +943,8 @@ const TOPICS: &[Topic] = &[
                 then empty, with two exceptions: a failed --check still prints its report, \
                 and a --render or --alchemy stream that fails leaves what it had written, \
                 every record whole and none in part (but for a record over 16 MB, and \
-                another format's render, such as --render yaml, which can stop inside \
-                one). A parse error:",
+                a render that marks no records, such as --render markdown, which can \
+                stop inside one). A parse error:",
             ),
             Block::Code(
                 r#"{"error": {"kind": "parse", "file": "bad.json", "format": "json",
@@ -1080,8 +1087,8 @@ const TOPICS: &[Topic] = &[
                 "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
                 record at a time, whatever their size, so --max-size does not apply to \
                 them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, \
-                Markdown and XML write their records as the parse proceeds, and the other \
-                formats after it. A document a grammar refuses to stream part-way is read whole \
+                Markdown, XML and PGN (a game at a time) write their records as the parse \
+                proceeds, and the other formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\".",
             ),
@@ -1090,8 +1097,15 @@ const TOPICS: &[Topic] = &[
                 code too_deep: past about 1,000 levels, or sooner where the grammar has a \
                 limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
                 INI, ZON and expressions, an expression of 127 operations too, 256 for \
-                XML, 512 for JSONC, 768 open rules for CSS, and braces 100 deep for a \
-                .proto file, counted before it is parsed).",
+                XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
+                file, counted before it is parsed, for C an expression of 127 \
+                operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
+                values a byte of the file written out (33,554,432 at most) or 2,048 bytes \
+                of names and strings a byte (256 MB at most), its reader repeating \
+                subtrees, and \
+                for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
+                512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
+                128 deep).",
             ),
             Block::Text(
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
@@ -1343,6 +1357,10 @@ fn format_note(format: Format) -> &'static str {
             " (jsonic with arithmetic, an operation the list of its operator and terms)"
         }
         Format::Semver => " (a version: its major, minor, patch, prerelease and build)",
+        Format::C => " (its concrete syntax tree, every token with its place)",
+        Format::Abnf | Format::Ebnf | Format::Gbnf => {
+            " (the grammar spec its compiler writes, the three notations' one schema)"
+        }
         Format::Text => " (and every extension no format claims)",
         _ => "",
     }

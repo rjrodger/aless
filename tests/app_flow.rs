@@ -3,7 +3,7 @@
 //! the reader's place.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use aless::app::{App, Input, Key, Options, RELOAD_DEBOUNCE};
 use aless::fmt;
@@ -130,4 +130,35 @@ fn search_and_yank_through_the_key_map() {
     let screen = render::screen(&mut app).text();
     assert!(screen.contains("(source)"), "{screen}");
     assert!(screen.lines().any(|l| l.contains("value: 42")), "{screen}");
+}
+
+/// A grammar in a cycle of rules whose alternatives start with one
+/// another, which a compiler's left-recursion pass would multiply (2^20
+/// of them for twenty rules), opens at once as the compiler's refusal,
+/// tabnas-bnf's bound on the alternatives one rule gains, never as a
+/// viewer waiting on a compile it cannot stop.
+#[test]
+fn a_grammar_whose_alternatives_multiply_opens_as_its_refusal() {
+    let mut text = String::from("root ::= r0\n");
+    for i in 0..20 {
+        let next = (i + 1) % 20;
+        text.push_str(&format!(
+            "r{i} ::= r{next} \"a{i}\" | r{next} \"b{i}\" | \"x{i}\"\n"
+        ));
+    }
+    let path = temp("cycle.gbnf", &text);
+    let started = Instant::now();
+    let mut app = App::new(Options::default(), 100, 12);
+    app.open_path(&path, None);
+    let screen = render::screen(&mut app).text();
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "refused at once"
+    );
+    assert!(screen.contains("[gbnf/compile]"), "{screen}");
+    assert!(
+        screen.contains("left-recursion expansion limit of 512"),
+        "{screen}"
+    );
+    assert!(!screen.contains("timeout"), "{screen}");
 }

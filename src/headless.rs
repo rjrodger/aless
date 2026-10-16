@@ -511,8 +511,9 @@ fn translate(
         })?;
     let loss = translation.loss().to_vec();
     // Why the source's documents are read whole before anything is
-    // written, where its part says so (TOML's and INI's): said beside the
-    // loss, by the note and by a failure that carries it.
+    // written, where its part says so (TOML's, INI's, C's, a grammar
+    // notation's and the like): said beside the loss, by the note and by
+    // a failure that carries it.
     let whole = source_part.and_then(|p| p.whole.as_deref());
     let composition = match translation {
         translate::Translation::Composed(composition) => composition,
@@ -543,13 +544,11 @@ fn translate(
         max_output: None,
     };
     let metrics = Metrics::new();
-    let records = translate::records(part);
     let mut text = String::new();
     let opened = open_input(req, &source, &name, format, plan, stdin)?;
     let result = translate::run(
         &job,
         &composition,
-        records,
         opened.input(&mut text, req),
         out,
         metrics,
@@ -634,10 +633,11 @@ fn translation_failure(
 /// when one ran: every adapter that ran is named in `adapters`, in order,
 /// and the one between the two shapes, the inferred table or `records`,
 /// as `adapter`. `whole` is why the source's documents are read whole
-/// before anything is written, the sentence its part gives (TOML's and
-/// INI's), when the translation has a source part that gives one: never
-/// below the root, which no source part describes, nor for a program's
-/// output. Nothing, for a write that declares no loss.
+/// before anything is written, the sentence its part gives (TOML's,
+/// INI's, C's, a grammar notation's and the like), when the translation
+/// has a source part that gives one: never below the root, which no
+/// source part describes, nor for a program's output. Nothing, for a
+/// write that declares no loss.
 fn loss_note(
     part: &Part,
     loss: &[String],
@@ -761,14 +761,7 @@ fn run_program(
         max_output: req.max_output,
     };
     let run = |input: Input<'_>| match &composition {
-        Some((part, composition)) => translate::run(
-            &job,
-            composition,
-            translate::records(part),
-            input,
-            out,
-            Metrics::new(),
-        ),
+        Some((_, composition)) => translate::run(&job, composition, input, out, Metrics::new()),
         None => alchemy::run(&job, &compiled, render, input, out),
     };
     let mut text = String::new();
@@ -3447,9 +3440,9 @@ mod tests {
     }
 
     /// `whole`, why a source's documents are read whole before anything is
-    /// written, is the sentence the translation's source part gives (TOML's
-    /// and INI's): in the loss note on success and in a failure that
-    /// carries `loss` alike, through aless's own renderer (`json`) as
+    /// written, is the sentence the translation's source part gives (here
+    /// TOML's and INI's; `tests/agent.rs` reads every format's): in the
+    /// loss note on success and in a failure that carries `loss` alike, through aless's own renderer (`json`) as
     /// through a composed render (`yaml`). A source whose part gives none
     /// (JSON), a value below the root, which no source part describes, and
     /// a program's output, which stands in the source's place, have none.

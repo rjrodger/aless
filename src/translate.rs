@@ -15,8 +15,7 @@
 //! entry point and source text. aless reads each crate's descriptor once
 //! into alchemy's [`Part`], keyed by its `languageId`, and `--render`
 //! names that id. Nothing is copied here, and nothing here knows a format
-//! by name but JSON Lines, whose render writes a record a line
-//! ([`records`]).
+//! by name.
 //!
 //! alchemy composes the translation ([`tabnas_alchemy::translate`]): the
 //! source's lift, where the target writes from records and the source
@@ -33,7 +32,7 @@
 //! ([`Front::Tree`]). What a target cannot carry is a declared convention,
 //! not a refusal: each adapter's sentences join the render's own in the
 //! loss note. The one refusal composing makes is a schema-only target's (a
-//! tree's render with a schema and no embed: CSS, proto, PGN), which writes
+//! tree's render with a schema and no embed: CSS, proto, PGN, C), which writes
 //! only the tree its own documents read as, and which a program that makes
 //! that tree can write ([`schema_only`]). An embed may refuse a tree as it
 //! runs, as a render may refuse a value: a version's (semver's) takes only
@@ -66,7 +65,7 @@ use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink, TreeContract};
 
 use crate::alchemy::{renderers, routers};
-use crate::export::{self, ExportError, Input, Job, Records, Renderer};
+use crate::export::{self, ExportError, Input, Job, Renderer};
 use crate::load::Format;
 
 /// Each crate aless reads whose manifest may name translation parts, as
@@ -105,6 +104,10 @@ fn crates() -> Vec<Descriptor> {
         descriptor!("tabnas-chess", tabnas_chess),
         descriptor!("tabnas-expr", tabnas_expr),
         descriptor!("tabnas-semver", tabnas_semver),
+        descriptor!("tabnas-c", tabnas_c),
+        descriptor!("tabnas-abnf", tabnas_abnf),
+        descriptor!("tabnas-ebnf", tabnas_ebnf),
+        descriptor!("tabnas-gbnf", tabnas_gbnf),
     ]
     .into_iter()
     .flatten()
@@ -186,19 +189,6 @@ pub fn refusal(name: &str) -> String {
 /// The name the composed program's own line goes by in diagnostics.
 pub fn main_name(part: &Part) -> String {
     format!("--render {}", part.id)
-}
-
-/// Where the records of what `part`'s render writes end, for a run that
-/// fails part way ([`Records`]): alchemy's CSV and JSON write records the
-/// pipe can see, and JSON Lines a record a line; another format's render
-/// writes text of its own shape.
-pub fn records(part: &Part) -> Records {
-    match &part.render {
-        Render::Csv => Records::Csv,
-        Render::Json => Records::Json,
-        Render::Alc(_) if part.id == "jsonl" => Records::Lines,
-        Render::Alc(_) => Records::Any,
-    }
 }
 
 /// The adapter between the two shapes among `adapters`, the inferred table
@@ -367,7 +357,6 @@ pub fn compose_program(
 pub fn run(
     job: &Job,
     composition: &Composition,
-    records: Records,
     input: Input<'_>,
     out: Box<dyn Write + Send>,
     metrics: Arc<Metrics>,
@@ -378,12 +367,12 @@ pub fn run(
         max_output_bytes: job.max_output,
         ..Limits::default()
     };
-    export::run_program(job, input, out, records, |pipe, abort| {
+    export::run_program(job, input, out, |pipe, abort| {
         // The writer stage is aless's, as for a program (`alchemy::run`):
-        // the program's own coalescing writer, with no budget, so every
-        // fragment reaches the pipe as it comes and a record is on the
-        // output the moment it ends, rather than held, up to 32 KB of
-        // them, until the run's flush that a failure never makes.
+        // the program's own coalescing writer, with no budget, so a record
+        // reaches the pipe the moment the render marks its end, rather
+        // than held, up to 32 KB of them, until the run's flush that a
+        // failure never makes.
         let out = WriteOut::new(pipe)
             .with_budget(0)
             .with_limits(&limits)
@@ -475,14 +464,6 @@ mod tests {
             assert_eq!(alc.file, format!("tabnas-{id}/alchemy/render.alc"));
             assert_eq!(alc.entry, format!("{id}-render"), "{id}");
             assert!(alc.text.contains(&format!("def {id}-render [")), "{id}");
-            assert_eq!(
-                records(p),
-                if id == "jsonl" {
-                    Records::Lines
-                } else {
-                    Records::Any
-                }
-            );
         }
         let xml = part("xml").unwrap();
         assert_eq!(xml.schema.as_deref(), Some("xml-element"));
@@ -496,14 +477,12 @@ mod tests {
             assert_eq!(p.writes, Shape::Tree, "{id}");
             assert_eq!(p.root, Root::Any, "{id}");
             assert_eq!(p.render, Render::Json, "{id}");
-            assert_eq!(records(p), Records::Json, "{id}");
         }
         let csv = part("csv").expect("csv's manifest names csv");
         assert_eq!(csv.reads, vec![Shape::Tree]);
         assert_eq!(csv.writes, Shape::Records);
         assert_eq!(csv.root, Root::Array);
         assert_eq!(csv.render, Render::Csv);
-        assert_eq!(records(csv), Records::Csv);
         let md = part("markdown").expect("markdown's manifest names its parts");
         assert_eq!(md.reads, vec![Shape::Records, Shape::Tree]);
         assert_eq!(md.writes, Shape::Records);
@@ -529,14 +508,23 @@ mod tests {
             "JSON declares its one loss"
         );
         // Why a format's documents are read whole before anything is
-        // written, where its manifest says: TOML's and INI's alone, the two
-        // the README, the reference and the skill name.
+        // written, where its manifest says: every format with a part but
+        // those transduce streams as they parse (the JSON family, jsonic,
+        // YAML, XML, ZON, Markdown and PGN), those read a record at a time
+        // (CSV and JSON Lines). The README, the reference and the skill
+        // name them.
         let whole: Vec<&str> = parts()
             .iter()
             .filter(|p| p.whole.is_some())
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(whole, ["toml", "ini"]);
+        assert_eq!(
+            whole,
+            [
+                "toml", "ini", "feed", "css", "proto", "expr", "semver", "c", "abnf", "ebnf",
+                "gbnf"
+            ]
+        );
         // The trees with schemas of their own: an embed from a plain tree
         // into an expression's, a version's and a feed's; none into the
         // three that write only the trees their own documents read as.
@@ -547,6 +535,10 @@ mod tests {
             ("css", "css-ast", Root::Object, None),
             ("proto", "proto-descriptor", Root::Object, None),
             ("pgn", "pgn-database", Root::Array, None),
+            ("c", "c", Root::Object, None),
+            ("abnf", "grammar-spec", Root::Object, None),
+            ("ebnf", "grammar-spec", Root::Object, None),
+            ("gbnf", "grammar-spec", Root::Object, None),
         ] {
             let p = part(id).unwrap_or_else(|| panic!("{id}'s manifest names its render"));
             assert_eq!(p.reads, vec![Shape::Tree], "{id}");
@@ -560,7 +552,6 @@ mod tests {
             };
             assert_eq!(alc.entry, format!("{id}-render"), "{id}");
             assert!(!p.loss.is_empty(), "{id} declares its loss");
-            assert_eq!(records(p), Records::Any, "{id}");
         }
         assert_eq!(
             part("pgn").map(|p| match &p.render {
@@ -576,8 +567,8 @@ mod tests {
         assert_eq!(id_of("chess"), None, "PGN goes by its languageId");
         assert_eq!(
             names(),
-            "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, \
-             semver, toml, xml, yaml or zon"
+            "abnf, c, css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, \
+             markdown, pgn, proto, semver, toml, xml, yaml or zon"
         );
         assert_eq!(source_part(Format::Tsv).map(|p| p.id.as_str()), Some("csv"));
         for format in [
@@ -585,6 +576,10 @@ mod tests {
             Format::Css,
             Format::Proto,
             Format::Pgn,
+            Format::C,
+            Format::Abnf,
+            Format::Ebnf,
+            Format::Gbnf,
             Format::Expr,
             Format::Semver,
         ] {
@@ -603,8 +598,8 @@ mod tests {
 
     #[test]
     fn a_name_with_no_render_is_refused_by_what_it_is() {
-        let writes = "css, csv, expr, feed, ini, json, json5, jsonc, jsonic, jsonl, markdown, \
-                      pgn, proto, semver, toml, xml, yaml or zon";
+        let writes = "abnf, c, css, csv, ebnf, expr, feed, gbnf, ini, json, json5, jsonc, \
+                      jsonic, jsonl, markdown, pgn, proto, semver, toml, xml, yaml or zon";
         assert_eq!(
             refusal("tsv"),
             format!(
@@ -711,6 +706,10 @@ mod tests {
             ("css", Some(Adapter::WrapObject("items".into()))),
             ("proto", Some(Adapter::WrapObject("items".into()))),
             ("pgn", Some(Adapter::WrapArray)),
+            ("c", Some(Adapter::WrapObject("items".into()))),
+            ("abnf", Some(Adapter::WrapObject("items".into()))),
+            ("ebnf", Some(Adapter::WrapObject("items".into()))),
+            ("gbnf", Some(Adapter::WrapObject("items".into()))),
             ("semver", Some(Adapter::WrapObject("items".into()))),
             ("feed", Some(Adapter::WrapObject("items".into()))),
             ("expr", None),
@@ -720,6 +719,19 @@ mod tests {
                 route(own, id, &o),
                 (None, root.into_iter().collect(), Some(true)),
                 "{id}"
+            );
+        }
+        // The three notations read one schema, so a grammar in any of them
+        // is a document each writes: a translation between notations.
+        for (from, to) in [
+            (Format::Abnf, "gbnf"),
+            (Format::Gbnf, "ebnf"),
+            (Format::Ebnf, "abnf"),
+        ] {
+            assert_eq!(
+                route(source_part(from), to, &o),
+                (None, vec![Adapter::WrapObject("items".into())], Some(true)),
+                "{from} into {to}"
             );
         }
         // Below the root a value is a plain tree, whatever the document.
@@ -743,9 +755,10 @@ mod tests {
 
     /// Every pair composes into a program that writes text: each source
     /// part, and a plain tree, into each render; but a schema-only target
-    /// (a tree's render with a schema and no embed: css, proto, pgn), which
-    /// takes only a source of its own schema, and refuses any other with
-    /// the program route.
+    /// (a tree's render with a schema and no embed: css, proto, pgn, c and
+    /// the three grammar notations), which takes only a source of its own
+    /// schema, and refuses any other with the program route. The notations
+    /// share theirs, so each takes a grammar of any of the three.
     #[test]
     fn every_composition_compiles_and_writes_text() {
         let sources: Vec<Option<&Part>> = std::iter::once(None)
@@ -775,8 +788,13 @@ mod tests {
                 assert_eq!(c.program.output(), Output::Text, "{}", target.id);
             }
         }
-        // Three schema-only targets, and every source but their own.
-        assert_eq!(refused.len(), 3 * sources.len() - 3, "{refused:?}");
+        // Four schema-only targets with a schema each, and every source but
+        // their own; three that share one, and every source but the three.
+        assert_eq!(
+            refused.len(),
+            4 * (sources.len() - 1) + 3 * (sources.len() - 3),
+            "{refused:?}"
+        );
     }
 
     /// Under `--alchemy`, the program's output stands where the source's
@@ -893,7 +911,6 @@ mod tests {
             let result = run(
                 &job(&name, format, What::Part, true),
                 &composition,
-                records(target),
                 input(),
                 Box::new(composed.clone()),
                 Metrics::new(),
@@ -948,7 +965,6 @@ mod tests {
         run(
             &job("doc.json", Format::Json, What::Part, false),
             &composition,
-            Records::Any,
             Input::Text("[1, 2]"),
             Box::new(out.clone()),
             Metrics::new(),
@@ -1024,7 +1040,6 @@ mod tests {
             run(
                 &job("rows.csv", Format::Csv, What::Part, false),
                 &composition,
-                Records::Any,
                 Input::Lines(reader),
                 Box::new(std::io::sink()),
                 metrics.clone(),

@@ -21,7 +21,12 @@ $ aless --check bookshelf-openapi.yaml books.json
 }
 ```
 
-Each file is read as its extension says, as anywhere else in aless, so one command checks JSON, YAML and TOML together.
+Each file is read as its extension says, as anywhere else in aless, so one command checks JSON, YAML and TOML together. A grammar in ABNF, EBNF or GBNF is checked by compiling it, with the compiler's message where it does not compile:
+
+```console
+$ aless --check --compact hosts.abnf
+{"ok":true,"files":[{"file":"hosts.abnf","format":"abnf","ok":true,"error":null}]}
+```
 
 ## Read a failure
 

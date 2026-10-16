@@ -1,4 +1,4 @@
-.TH ALESS 1 "2026-10-10" "aless 0.3.0" "User Commands"
+.TH ALESS 1 "2026-10-14" "aless 0.4.4" "User Commands"
 .nh
 .SH NAME
 aless \- JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree: a
@@ -15,12 +15,13 @@ aless \-\-paths \-\-depth 1 FILE
 .SH DESCRIPTION
 aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV,
 XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers\(aq .proto files,
-PGN chess games, expressions and semantic versions, and any line\-oriented
-format an ABNF grammar describes, as one tree. In a terminal it shows the tree
-in a jless\-style viewer, with tabs, panes, search and a watch mode that
-reloads a changed file and keeps your place. Without one it prints JSON on
-standard output for scripts and agents, and writes any of those formats as any
-other that has a render and can hold the document.
+PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions and
+semantic versions, and any line\-oriented format an ABNF grammar describes, as
+one tree. In a terminal it shows the tree in a jless\-style viewer, with tabs,
+panes, search and a watch mode that reloads a changed file and keeps your
+place. Without one it prints JSON on standard output for scripts and agents,
+and writes any of those formats as any other that has a render and can hold the
+document.
 .SS "Without a screen"
 aless prints instead of starting the viewer when an option listed under OUTPUT
 OPTIONS is given, when standard output is not a terminal (a pipe, a file, an
@@ -96,19 +97,23 @@ its records (the elements of the array at the start, a value of another kind
 its one record; the lines of JSON Lines; the records of CSV and TSV) under a
 header row, every field quoted, CRLF line ends; json, the value as \-\-json
 writes it, but with each number spelled as in the source where that is JSON; or
-any format whose crate carries a render. FORMAT is one of css, csv, expr, feed,
-ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn, proto, semver, toml,
-xml, yaml or zon. What FORMAT cannot hold is written by the convention its
-crate declares rather than refused (NaN and the infinities as null in json; a
-root TOML or INI cannot have as the one member \-\-key names), and what it does
-not keep is said in a warning on standard error, on success too. Three write
-only the tree their own documents read as, and have no convention for another:
-css, proto and pgn take a document of their own format, and any other is a
-usage error before anything is read, naming the route that writes one,
-\-\-alchemy FILE \-\-render FORMAT with a program that makes that tree. semver
-writes only a document that is a version, and refuses any other before writing
-anything. Takes \-\-path, not \-\-at. With \-\-alchemy it names the format the
-program\(aqs table or JSON events are written as.
+any format whose crate carries a render. FORMAT is one of abnf, c, css, csv,
+ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn,
+proto, semver, toml, xml, yaml or zon. What FORMAT cannot hold is written by
+the convention its crate declares rather than refused (NaN and the infinities
+as null in json; a root TOML or INI cannot have as the one member \-\-key
+names), and what it does not keep is said in a warning on standard error, on
+success too. Seven write only the tree their own documents read as, and have no
+convention for another: css, proto, pgn and c take a document of their own
+format, abnf, ebnf and gbnf a grammar in any of the three, each read as the
+grammar spec its compiler writes, and any other is a usage error before
+anything is read, naming the route that writes one, \-\-alchemy FILE \-\-render
+FORMAT with a program that makes that tree. A notation\(aqs render refuses a
+spec it cannot write in its notation (an action, a terminal none of its forms
+matches) before writing anything. semver writes only a document that is a
+version, and refuses any other before writing anything. Takes \-\-path, not
+\-\-at. With \-\-alchemy it names the format the program\(aqs table or JSON
+events are written as.
 .TP 7
 \fB\-\-alchemy\fR \fIFILE\fR
 Run the alchemy program in FILE over the input, and stream what its export
@@ -157,9 +162,10 @@ status 5. SIZE is bytes, or a whole number with K, M or G (1024s).
 \fB\-k\fR, \fB\-\-kind\fR, \fB\-\-format\fR \fIFORMAT\fR
 Parse every input as FORMAT instead of by its extension: a format\(aqs name
 (json, jsonl, jsonic, jsonc, json5, yaml, toml, ini, csv, tsv, xml, zon,
-markdown, feed, css, proto, pgn, expr, semver or text), one of its extensions
-(yml, md, ndjson), or a \-\-grammar NAME. Standard input is read as JSON unless
-this says otherwise. \-\-format is another name for this option.
+markdown, feed, css, proto, pgn, c, abnf, ebnf, gbnf, expr, semver or text),
+one of its extensions (yml, md, ndjson), or a \-\-grammar NAME. Standard input
+is read as JSON unless this says otherwise. \-\-format is another name for this
+option.
 .TP 7
 \fB\-\-grammar\fR \fINAME=FILE\fR
 Read a file whose extension or whole name is NAME, in any case (x.hosts,
@@ -258,7 +264,7 @@ Stack the panes rather than place them side by side.
 Print a summary of the options (\-h), or this reference (\-\-help).
 .TP 7
 \fB\-V\fR, \fB\-\-version\fR
-Print the version: aless 0.3.0.
+Print the version: aless 0.4.4.
 .TP 7
 \fB\-\-generate\fR \fIWHAT\fR
 Print a file made from this reference: man, the man page (aless.1);
@@ -331,6 +337,18 @@ proto (its FileDescriptorProto, as protoc writes one in JSON)
 \fBpgn\fR
 pgn (chess games, each its tags and moves)
 .TP 10
+\fBc\fR
+c h (its concrete syntax tree, every token with its place)
+.TP 10
+\fBabnf\fR
+abnf (the grammar spec its compiler writes, the three notations\(aq one schema)
+.TP 10
+\fBebnf\fR
+ebnf (the grammar spec its compiler writes, the three notations\(aq one schema)
+.TP 10
+\fBgbnf\fR
+gbnf (the grammar spec its compiler writes, the three notations\(aq one schema)
+.TP 10
 \fBexpr\fR
 none, \-k expr (jsonic with arithmetic, an operation the list of its operator
 and terms)
@@ -377,9 +395,11 @@ object, array, string, number, boolean or null
 .TP 11
 \fBline, col\fR
 where the node starts, from 1, columns in characters: at its key when it has
-one, else at its value. Exact for the JSON family, TOML, INI, CSV and ZON,
-best\-effort for YAML, XML, Markdown, CSS, PGN and expressions, loose for a
-\&.proto file\(aqs descriptor, and null when unknown
+one, else at its value. Exact for the JSON family, TOML, INI, CSV and ZON, and
+for C\(aqs tokens, from the places its syntax tree records, best\-effort for
+YAML, XML, Markdown, CSS, PGN and expressions, loose for a .proto file\(aqs
+descriptor, and null when unknown, as throughout a grammar\(aqs spec, which its
+compiler writes
 .TP 11
 \fBlength\fR
 a container\(aqs item count, or the full length of a string cut short
@@ -438,15 +458,16 @@ between the source and the render (wrap\-object, wrap\-array, embed, the
 inferred table, records), and adapter the one between a tree and a table, the
 inferred table or records, their sentences in loss after the format\(aqs own.
 Where the source\(aqs format says why its documents are read whole before
-anything is written (TOML, INI), whole is that sentence; a value below the
-root, a program\(aqs output and a document of any other format have none.
-Status 0 is success whatever standard error holds.
+anything is written (TOML, INI, CSS, feeds, .proto, expressions, versions, C
+and the grammar notations), whole is that sentence; a value below the root, a
+program\(aqs output and a document of any other format have none. Status 0 is
+success whatever standard error holds.
 .SH "ERRORS"
 An error is one JSON object on standard error, and standard output is then
 empty, with two exceptions: a failed \-\-check still prints its report, and a
 \-\-render or \-\-alchemy stream that fails leaves what it had written, every
-record whole and none in part (but for a record over 16 MB, and another
-format\(aqs render, such as \-\-render yaml, which can stop inside one). A
+record whole and none in part (but for a record over 16 MB, and a render that
+marks no records, such as \-\-render markdown, which can stop inside one). A
 parse error:
 .PP
 .RS 2
@@ -560,18 +581,23 @@ and \-\-depth shrink the output, not the parse. A reader that stops early
 .PP
 \-\-render and \-\-alchemy stream instead. JSON Lines, CSV and TSV are read a
 record at a time, whatever their size, so \-\-max\-size does not apply to them
-(a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, Markdown and
-XML write their records as the parse proceeds, and the other formats after it.
-A document a grammar refuses to stream part\-way is read whole and written all
-the same when nothing has been written yet; otherwise the error says output
-"partial".
+(a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, Markdown, XML
+and PGN (a game at a time) write their records as the parse proceeds, and the
+other formats after it. A document a grammar refuses to stream part\-way is
+read whole and written all the same when nothing has been written yet;
+otherwise the error says output "partial".
 .PP
 A document nested deeper than aless reads fails as a parse error with the code
 too_deep: past about 1,000 levels, or sooner where the grammar has a limit of
 its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, INI, ZON and
 expressions, an expression of 127 operations too, 256 for XML, 512 for JSONC,
-768 open rules for CSS, and braces 100 deep for a .proto file, counted before
-it is parsed).
+768 open rules for CSS, braces 100 deep for a .proto file, counted before it is
+parsed, for C an expression of 127 operations, 1,024 open rules and a syntax
+tree 256 levels deep, or 256 values a byte of the file written out (33,554,432
+at most) or 2,048 bytes of names and strings a byte (256 MB at most), its
+reader repeating subtrees, and for a grammar its compiler\(aqs, 2,048 open
+rules for ABNF, 520 for EBNF and 512 for GBNF, some 500, 130 and 128 nested
+groups, and elements nested 128 deep).
 .PP
 Numbers are 64\-bit floats: \-\-json and entries give an integer beyond 2\(ha53
 as the nearest one, and \-\-json writes NaN and the infinities as null.

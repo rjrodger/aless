@@ -8,6 +8,161 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [0.4.4] - 2026-10-14
+
+### Changed
+
+- A PGN database streams through `--render` and `--alchemy` a game at a
+  time, as XML's elements do. tabnas-chess 0.1.17 stores a game in the
+  database only once it is complete, and tabnas-transduce 0.2.8 lists
+  `pgn` among the grammars it streams.
+  - The games already written are not kept behind them. The text is
+    still read whole, within `--max-size`.
+  - A failure in a game leaves every game before it on standard output,
+    with `output` partial. Before, nothing was written until the whole
+    database had parsed.
+  - PGN's loss note no longer has `whole`.
+
+## [0.4.3] - 2026-10-14
+
+### Changed
+
+- A `--render` or `--alchemy` run that fails part way stops at the end of
+  a record its renderer marks, held by tabnas-render's writer (0.2.5)
+  until the mark rather than found by scanning the bytes written: aless's
+  own record scanner is gone, and its writer passes each record on whole
+  the moment its end is marked (tabnas/alchemy#29).
+  - A value directly inside the root JSON array or object is whole where
+    it ends: a bare number no longer waits for the comma after it, so a
+    failure after it leaves it on standard output, with `output`
+    partial. Below `--path`, the first member of the object taken is a
+    record like any other.
+  - Another format's render leaves whole records where its package marks
+    them (tabnas-jsonl 0.1.17, tabnas-yaml 0.5.24, tabnas-toml 0.5.18,
+    tabnas-ini 0.5.20, tabnas-json5 0.5.16, tabnas-zon 0.5.17, tabnas-xml
+    0.7.18, tabnas-css 0.5.16, tabnas-chess 0.1.16): a value inside the
+    root in YAML, JSON5 and ZON, a root member's line in TOML, a line in
+    INI and JSON Lines, a child of the root element in XML, a node of the
+    stylesheet in CSS and a game in PGN. A render that marks none
+    (Markdown, feeds, expressions, versions, C, `.proto` and the grammar
+    notations) writes as it goes, as before.
+  - A program's own text is held a record at a time where the program
+    marks one: each item `concat-map` writes, and each `:record-end`
+    among a `join`'s items (tabnas-alchemy 0.2.7).
+  - A record longer than 16 MB is written as it comes; a JSON one is no
+    longer cut at the end of one of its own values.
+
+## [0.4.2] - 2026-10-14
+
+### Changed
+
+- `whole`, in `--render`'s loss note and in an error carrying `loss`, is
+  given for CSS too (tabnas-css 0.5.15): a stylesheet is read whole
+  because the reader builds each rule, at-rule, declaration and comment
+  before it adds the node to the list that holds it. Every format whose
+  crate reads a document whole now says why.
+
+## [0.4.1] - 2026-10-13
+
+### Changed
+
+- `whole`, in `--render`'s loss note and in an error carrying `loss`, is
+  given for nine more of the formats read whole before anything is
+  written, where it was given for TOML and INI alone: feeds, `.proto`,
+  PGN, expressions, versions, C and the three grammar notations now say
+  why in their manifests (tabnas-feed 0.6.18, tabnas-proto 0.6.11,
+  tabnas-chess 0.1.15, tabnas-expr 0.5.19, tabnas-semver 0.0.11, tabnas-c
+  0.5.15, tabnas-abnf 0.4.24, tabnas-ebnf 0.1.19 and tabnas-gbnf 0.1.20).
+  A C file, for one, is read whole because a conditional group is folded
+  into one node only once the whole file is parsed.
+
+## [0.4.0] - 2026-10-13
+
+### Added
+
+- C source (`.c`, `.h`, tabnas-c 0.5.14), read as its concrete syntax
+  tree, preprocessor directives parsed into it, and written by
+  `--render c` (admin ADR-27, phase 4's second batch). The tree is the
+  one tabnas-c realizes from its arena on the parse's thread: each node
+  its `kind`, `span`, `children` and `trivia`, each token its `tname`,
+  `src` and `span`, and the members a node names its parts by (`operand`,
+  `cond`), which repeat subtrees its `children` hold. Like CSS, `.proto`
+  and PGN, `--render c` writes only that tree, and refuses another
+  document before reading it with the `usage` error that names the
+  program route. A C file's tokens are placed where its tree says, not
+  by aligning values, and what the reader adds has no position. Its
+  reader's limits are `too_deep` errors: tabnas-expr's 127 operations in
+  an expression and 1,024 open rules, and tabnas-c's tree of 256 levels,
+  with no position where the parse stopped between two tokens. A `.c` or
+  `.h` file, read as plain text before, is read as C.
+- A C tree is refused as `too_deep`, before it is written out, when it
+  would hold more than 256 values a byte of the file written out (at
+  least a million, and never more than 33,554,432, so that a long comment
+  cannot raise the bound a short chain is held to), or more than 2,048
+  bytes of names and strings a byte (at least 8 MB, and never more than
+  256 MB, so that a long name in a subtree it repeats is held as well):
+  its reader shares the subtrees it repeats, so a chain of subscripts or
+  member accesses doubles the tree written out at each level, and 40
+  member accesses in one expression would otherwise hold more values
+  than a machine can.
+- Grammars in ABNF (`.abnf`, tabnas-abnf 0.4.23), EBNF (`.ebnf`,
+  tabnas-ebnf 0.1.18) and GBNF (`.gbnf`, tabnas-gbnf 0.1.19), each read
+  as the grammar spec its compiler writes, `options` and `rule`s with
+  the rules the compiler adds, and written by `--render abnf`, `ebnf` and
+  `gbnf` (admin ADR-27, phase 4's second batch). The three write one
+  schema, so a grammar in one notation is written in another; any other
+  document is the `usage` error that names the program route, and a spec
+  the target notation cannot say (an action, a terminal none of its
+  forms matches, in EBNF a counted repetition nested past the 128 levels
+  its own reader reads, so ABNF's `*65"a"` and longer) is
+  `TARGET_VALUE_UNREPRESENTABLE` before anything is written. A grammar's
+  compiler keeps no places, so no node of its spec has a position, and
+  the compiler's own limits are `too_deep` errors: groups and options
+  nested about 500 levels in ABNF, 130 in EBNF and 128 in GBNF, and
+  elements nested 128 levels. The compile runs on the parse's thread, or
+  within `--timeout` on a thread of its own, which aless stops waiting
+  for when the time is up, and does not start once it is; while a
+  compile it stopped waiting for runs on, no other starts, and a later
+  grammar in the run is the same `timeout` at once. `aless --check` on a
+  grammar file now says whether it compiles; such a file, read as plain
+  text before, is read as its spec. `--grammar` reads its grammar as
+  before.
+
+### Changed
+
+- tabnas-expr 0.5.18. `--render expr` refuses a tree its reader would
+  read back as another, with `TARGET_VALUE_UNREPRESENTABLE` naming the
+  object's path where it meets it: a list led by an object whose `src`
+  the reader takes for the list's operator, where that is no default
+  operator's text, as a C syntax tree's lists are. 0.5.17 wrote such a
+  list, and it read back with its leading object reduced to that text.
+- tabnas-abnf 0.4.23, from 0.4.20, the compiler behind `--grammar` too.
+- tabnas-bnf 0.1.30, the compiler the three notations and `--grammar`
+  share. A cycle of rules whose alternatives start with one another,
+  which its left-recursion pass multiplied until memory ran out (twenty
+  such rules, 0.7 KB), is refused before anything is built, past 512
+  alternatives added to one rule, at once and in every route; so is a
+  grammar the pass would grow past 131,072 elements, a chain of 5,000
+  rules each led by the next among them. A grammar of 10,000 rules
+  compiles in under two seconds, where it took ten. What the compiler
+  writes and holds is bounded too (3,500,000 units), so a grammar whose
+  spec would pass that is refused rather than built.
+- tabnas-feed 0.6.17, a version move.
+- tabnas-proto 0.6.10. A `.proto` file is read through the crate's own
+  descriptor tree (`to_descriptor_value`), so a descriptor's members now
+  come in the order the crate's other runtimes give them: the lists every
+  descriptor has first, then what a statement places (the syntax, the
+  package, a field's `proto3Optional`) in the order of the statements.
+  The output can differ from 0.3.0's in member order, and the package,
+  held after the lists, is past where positions are aligned, so it has
+  none. A number the reader reads as NaN (a digit separator, `1_0`) stays
+  NaN: `--json` writes it as null, as before, an entry gives `"NaN"`,
+  and `--render yaml` writes `.nan`. The refusals are as they were.
+  `--render proto` writes a backtick literal as itself, where 0.6.8
+  wrote one holding a line break as an aggregate its own reader refused,
+  and refuses a string no spelling of a `.proto` file holds with
+  `TARGET_VALUE_UNREPRESENTABLE`, before writing anything.
+
 ## [0.3.0] - 2026-10-10
 
 ### Added

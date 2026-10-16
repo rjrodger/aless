@@ -19,7 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use aless::export::{Input, Job, Records, What};
+use aless::export::{Input, Job, What};
 use aless::load::Format;
 use aless::translate;
 use tabnas_transduce::Metrics;
@@ -230,7 +230,6 @@ fn render(program: &translate::Composition, text: &str) -> Result<String, String
     translate::run(
         &job,
         program,
-        Records::Any,
         Input::Text(text),
         Box::new(out.clone()),
         Metrics::new(),

@@ -24,7 +24,7 @@ Directories are folds and files are leaves, each showing its size and the format
     broken.json  74 B  json
     export.alc  606 B
     hosts  538 B  hosts
-    hosts.abnf  358 B
+    hosts.abnf  358 B  abnf
     records.json  329 B  json
     table.alc  389 B
 
@@ -32,7 +32,7 @@ Directories are folds and files are leaves, each showing its size and the format
  /home/user/bookshelf                          directory · 8 entries · watching
 ```
 
-A directory's contents are listed when you unfold it (`l` or `Space`), one level ahead, so a folded directory's preview already shows how many entries it has and their first names. A file whose extension no format claims, such as `export.alc`, shows no format and opens as plain text. The file named `hosts` is read as a format of its own because the grammar in `hosts.abnf` was named on the command line ([Read a format aless does not know](/how-to/grammar.html)).
+A directory's contents are listed when you unfold it (`l` or `Space`), one level ahead, so a folded directory's preview already shows how many entries it has and their first names. A file whose extension no format claims, such as `export.alc`, shows no format and opens as plain text. The file named `hosts` is read as a format of its own because the grammar in `hosts.abnf` was named on the command line, and `hosts.abnf` itself opens as the grammar spec it compiles to ([Read a format aless does not know](/how-to/grammar.html)).
 
 ## Find and open a file
 

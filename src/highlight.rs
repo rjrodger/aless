@@ -588,7 +588,7 @@ mod tests {
     }
 
     /// The newer formats need no registering: the bundled registry knows
-    /// each by the name aless gives it (proto, css and expr by their
+    /// each by the name aless gives it (proto, css, c and expr by their
     /// package's, pgn and semver by their own `languageId`), with a clean
     /// lex stream, so each is coloured as its grammar lexes it.
     #[test]
@@ -602,6 +602,7 @@ mod tests {
             (Format::Pgn, "[Event \"e\"]\n\n1. e4 e5 1-0\n"),
             (Format::Expr, "a: 1+2*3\n"),
             (Format::Semver, "1.2.3-rc.1"),
+            (Format::C, "int x = 1;\n"),
         ] {
             let grammar = Grammar::Format(format);
             assert!(grammar.entry(Registry::bundled()).is_some(), "{format}");
@@ -622,6 +623,19 @@ mod tests {
             "{:?}",
             kinds(&p, pgn, 0)
         );
+        let c = "/* n */ int f(void) { return x; }\n";
+        let p = paint(Grammar::Format(Format::C), c, None).unwrap();
+        for run in [
+            ("/* n */", "comment"),
+            ("int", "keyword"),
+            ("return", "keyword"),
+        ] {
+            assert!(
+                kinds(&p, c, 0).contains(&(run.0.into(), run.1)),
+                "{:?}",
+                kinds(&p, c, 0)
+            );
+        }
         let expr = "a: 1+2\n";
         let p = paint(Grammar::Format(Format::Expr), expr, None).unwrap();
         assert!(
@@ -636,6 +650,13 @@ mod tests {
         let too_long = " ".repeat(MAX_BYTES + 1);
         assert_eq!(paint(Grammar::Format(Format::Json), &too_long, None), None);
         assert_eq!(paint(Grammar::Format(Format::Text), "a", None), None);
+        // A grammar's compiler lexes it with a parser of its own, which it
+        // does not hand over: the registry knows the three notations, and
+        // aless has nothing to colour them with.
+        for format in [Format::Abnf, Format::Ebnf, Format::Gbnf] {
+            assert!(Grammar::Format(format).entry(Registry::bundled()).is_some());
+            assert_eq!(paint(Grammar::Format(format), "a = \"x\"\n", None), None);
+        }
         let registry = Registry::from_json(
             r#"{"count": 1, "entries": [
                 {"name": "@tabnas/json", "languageId": "json", "lexStream": "speculative"}

@@ -204,10 +204,23 @@ fn build() -> Site {
             );
         }
     }
-    for name in ["style.css", "favicon.svg", "mark.svg", "CNAME"] {
+    for name in ["style.css", "favicon.svg", "logo.svg", "CNAME"] {
         let bytes = std::fs::read(sources().join(name)).unwrap();
         files.insert(name.to_string(), bytes);
     }
+    // The logo's dark twin: an SVG shown through <img> follows the system's
+    // colour scheme, not the header's toggle, so the dark theme is given the
+    // same drawing with its wordmark rule made unconditional.
+    let logo = read(&sources().join("logo.svg"));
+    let dark = logo.replace(
+        "@media (prefers-color-scheme: dark) { #aless-wordmark { fill: #f1e8cd } }",
+        "#aless-wordmark { fill: #f1e8cd }",
+    );
+    assert_ne!(
+        dark, logo,
+        "site/logo.svg no longer carries the wordmark's dark rule the build rewrites"
+    );
+    files.insert("logo-dark.svg".into(), dark.into_bytes());
     // The faces, served from the site itself: a page requests nothing
     // anywhere else.
     for entry in std::fs::read_dir(sources().join("fonts")).unwrap() {
@@ -884,12 +897,14 @@ fn twin_path(page: &Page) -> String {
 
 /// A page as Markdown, for a reader that prefers it, at its address with
 /// `.md` for `.html`: its own Markdown under its title, with the site's
-/// links made absolute, or for a page written from the binary, its text as
-/// the terminal shows it. The pages and `llms.txt` promise one for every
-/// page.
+/// links and images made absolute, or for a page written from the binary,
+/// its text as the terminal shows it. The pages and `llms.txt` promise one
+/// for every page.
 fn twin(page: &Page, pages: &[Page]) -> String {
     let body = match (&page.markdown, &page.text) {
-        (Some(markdown), _) => fill(markdown).replace("](/", &format!("]({HOMEPAGE}/")),
+        (Some(markdown), _) => fill(markdown)
+            .replace("](/", &format!("]({HOMEPAGE}/"))
+            .replace("src=\"/", &format!("src=\"{HOMEPAGE}/")),
         (None, Some(text)) => {
             // A fence longer than any run of backticks in the text.
             let run = Regex::new("`+")
