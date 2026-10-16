@@ -1,12 +1,12 @@
 # aless
 
 A [jless](https://jless.io)-style terminal viewer for **every format the
-[tabnas](https://github.com/tabnas) parsers read** — JSON, JSON Lines,
+[tabnas](https://github.com/tabnas) parsers read**: JSON, JSON Lines,
 jsonic, JSONC, JSON5, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown,
 RSS/Atom feeds, CSS, `.proto` files, PGN chess games, C source,
 grammars in ABNF, EBNF and GBNF, expressions and semantic versions, and
 any text format you describe with an ABNF grammar
-([Custom grammars](#custom-grammars)) — with **tabs** for several files
+([Custom grammars](#custom-grammars)), with **tabs** for several files
 at once and a **watch mode** that reloads a file when it changes while
 **keeping your place**.
 Without a screen it prints JSON instead, for scripts and agents: outlines,
@@ -36,8 +36,8 @@ design.
 /TAPL  [1/1]
 ```
 
-aless reproduces jless's interface — the key map, data and line modes,
-collapsed previews, regex search, the yank commands — and adds tabs,
+aless reproduces jless's interface (the key map, data and line modes,
+collapsed previews, regex search, the yank commands) and adds tabs,
 watching, and a reload that re-anchors the view. jless is credited in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Deviations from jless are
 listed [below](#deviations-from-jless).
@@ -339,9 +339,9 @@ except for a `--grammar` that does not compile, which adds the `grammar`
 name and, when it came from a file, the `file`. A grammar file that
 cannot be read is an `io` error, one over `--max-size` a `too_large`
 error and a compile past `--timeout` a `timeout` error, each with the
-fields of that kind — `file` the grammar file (`null` for
+fields of that kind, `file` the grammar file (`null` for
 `--grammar-expr`), `format` `null`, and `size`, `limit` or `seconds` as
-above — plus `grammar` ([Custom grammars](#custom-grammars)).
+above, plus `grammar` ([Custom grammars](#custom-grammars)).
 A document nested deeper than aless parses fails as a `parse` error with
 the code `too_deep`: past about 1,000 levels, or sooner where the grammar
 has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
@@ -371,7 +371,8 @@ large input can take minutes, so a caller with a deadline of its own
 should pass a shorter one, and get an error it can read rather than a
 kill. Pipes are safe both ways: standard input can be a pipe or a file,
 and a reader that stops early (`aless --json big.json | head`) ends
-aless quietly with status 0, though the parse has already been paid for.
+aless without an error, with status 0, though the parse has already been
+paid for.
 To take part of a large document, `--path` and `--depth` keep the output
 small; the input is still parsed in full. `--render` and `--alchemy` are
 the exceptions: they stream, as the next sections say.
@@ -480,7 +481,7 @@ $ aless --render csv broken.json
 }
 ```
 
-**Streaming, honestly.** JSON Lines, CSV and TSV are read from the file
+**Streaming, and what is read whole.** JSON Lines, CSV and TSV are read from the file
 a record (or a chunk of records) at a time, at the root and below it
 (`--path .[3]` takes the fourth record as it passes, and the rest of the
 file is read to its end the same way, to validate it), so the file is
@@ -717,7 +718,7 @@ $ aless --alchemy tests/fixtures/programs/export.alc tests/fixtures/records.json
 ```
 
 The input reaches the program the way an export reaches its renderer
-([Streaming, honestly](#exporting)): JSON Lines, CSV and TSV a record at
+([Streaming, and what is read whole](#exporting)): JSON Lines, CSV and TSV a record at
 a time, a verified grammar's events as the parse proceeds, with the parse
 pruned under the rows the program's plan names, and every other grammar's
 value after its parse; the same fallback when a grammar refuses to
@@ -833,7 +834,7 @@ text, one line per row, so every file is viewable.
 | gbnf | gbnf (the grammar spec its compiler writes) | tabnas-gbnf |
 | expr | none, `-k expr` (jsonic with arithmetic, an operation the list of its operator and terms) | tabnas-expr |
 | semver | none, `-k semver` (a version: its major, minor, patch, prerelease and build) | tabnas-semver |
-| text | txt, text, log, anything else | — |
+| text | txt, text, log, anything else | none |
 
 CSV and TSV show a list of records keyed by the header row. Map keys keep
 their **source order**. A `.proto` file shows the FileDescriptorProto its
@@ -1208,7 +1209,7 @@ at the end of its line.
 
 Every file tab watches its file (`--no-watch`, `W` or `:watch off` to opt
 out; the status bar says `watching`). Changes arrive through the platform
-file watcher (inotify, FSEvents, ReadDirectoryChangesW — on the file's
+file watcher (inotify, FSEvents, ReadDirectoryChangesW, on the file's
 directory, so an editor that saves by writing a temporary file and renaming
 it is seen), debounced so a save that takes several writes reloads once;
 a poll of the file's size and modification time on every half-second tick
@@ -1220,7 +1221,7 @@ A reload re-anchors the view instead of resetting it:
    its expanded or collapsed state; new containers start expanded.
 2. The focused node is found again by path. If that path is gone, the
    focus goes to its nearest surviving ancestor and, within that ancestor,
-   to the node **closest to the old source line** — so a renamed key or a
+   to the node **closest to the old source line**, so a renamed key or a
    reordered entry keeps the cursor where you were reading.
 3. The focused row stays on the same screen row.
 
@@ -1236,9 +1237,9 @@ tab waits for it.
 aless knows the line and column each node came from, shown as `12:8` in
 the status bar and used by the source view and by the reload fallback.
 The tabnas engine reports every token it lexes with its position, and
-aless aligns that stream with the parsed tree — keys and leaf values in
+aless aligns that stream with the parsed tree (keys and leaf values in
 document order against value-bearing tokens in source order, with a
-bounded lookahead — so no grammar has to record provenance itself. The
+bounded lookahead), so no grammar has to record provenance itself. The
 alignment is exact for the JSON family, TOML, INI, CSV/TSV and ZON, and
 best-effort where a grammar synthesises values (Markdown's AST, XML's
 element records, YAML, CSS's and PGN's trees, an expression's operators):
@@ -1256,15 +1257,15 @@ node of it has a position, and `--where` finds none.
 **Data mode** (default) is the streamlined view: keys unquoted when they
 are identifiers, no commas, no closing brackets, collapsed containers shown
 as `(N) {first: items, …}` previews. **Line mode** (`m`) shows every
-line of a pretty-printed rendering — quoted keys, commas, closing brackets
+line of a pretty-printed rendering: quoted keys, commas, closing brackets
 that `%` jumps between. **Source view** (`s`) shows the file as it is on
 disk with line numbers, the focused node's line highlighted.
 
 ## Copying
 
 `y` commands use the system clipboard (the `clipboard` feature, on by
-default, via `arboard`). When no clipboard is reachable — over SSH, in a
-container — aless falls back to the terminal's OSC 52 sequence, which
+default, via `arboard`). When no clipboard is reachable, over SSH or in a
+container, aless falls back to the terminal's OSC 52 sequence, which
 xterm, kitty, WezTerm, iTerm2, Alacritty, foot and Windows Terminal turn
 into a clipboard write; the status line says which happened. `p`
 commands print instead, so the text can be read or copied by the
@@ -1421,7 +1422,7 @@ The documentation site is Markdown under `site/`, built by
 their links; `ALESS_SITE_OUT=DIR cargo test --test site` writes the site
 into `DIR`. `AGENTS.md` says how its pages are written.
 
-Module map — `src/main.rs` is the only file that touches the terminal;
+Module map: `src/main.rs` is the only file that touches the terminal;
 the library is terminal-free and unit tested:
 
 | Module | Role |
@@ -1448,5 +1449,5 @@ the library is terminal-free and unit tested:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). jless is MIT too; its notice is in
+MIT: see [LICENSE](LICENSE). jless is MIT too; its notice is in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

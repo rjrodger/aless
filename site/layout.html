@@ -10,20 +10,38 @@
 <meta property="og:title" content="{{head_title}}">
 <meta property="og:description" content="{{description}}">
 <meta property="og:url" content="{{canonical}}">
+<link rel="alternate" type="text/markdown" href="{{twin}}">
 <link rel="icon" href="{{root}}favicon.svg" type="image/svg+xml">
+<link rel="preload" href="{{root}}fonts/atkinson-regular.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="{{root}}fonts/cormorant-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{root}}fonts/uncial-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{root}}style.css">
+<script>
+// The theme before the first paint: a choice the toggle stored, else the
+// system's preference. The toggle in the header changes both.
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (e) {}
+  var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+})();
+</script>
 </head>
 <body class="{{body_class}}">
 <a class="skip" href="#content">Skip to the content</a>
 <header class="site-header">
 <div class="bar">
-<a class="brand" href="{{root}}"><img src="{{root}}logo.svg" alt="aless" width="1490" height="430"></a>
-<nav class="sections" aria-label="Sections">
-<a href="{{root}}tutorials/index.html">Tutorials</a>
-<a href="{{root}}how-to/index.html">How-to guides</a>
-<a href="{{root}}reference/index.html">Reference</a>
-<a href="{{root}}explanation/index.html">Explanation</a>
-<a href="https://github.com/rjrodger/aless">Source</a>
+<a class="brand" href="{{root}}" aria-label="aless home"><img class="logo-light" src="{{root}}logo.svg" alt="aless" width="1490" height="430"><img class="logo-dark" src="{{root}}logo-dark.svg" alt="aless" width="1490" height="430"></a>
+<button class="menu-btn" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span><span></span><span></span></button>
+<nav id="site-nav" class="nav" aria-label="Sections">
+<a class="nav-link" data-section="tutorials" href="{{root}}tutorials/index.html">Tutorials</a>
+<a class="nav-link" data-section="how-to" href="{{root}}how-to/index.html">How-to guides</a>
+<a class="nav-link" data-section="reference" href="{{root}}reference/index.html">Reference</a>
+<a class="nav-link" data-section="explanation" href="{{root}}explanation/index.html">Explanation</a>
+<div class="actions">
+<a class="icon-link" href="https://github.com/rjrodger/aless" aria-label="aless on GitHub"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg></a>
+<button class="icon-link theme-toggle" aria-label="Toggle colour theme"><svg class="i-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-13a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1Zm0 15a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1ZM4 12a1 1 0 0 1-1 1H2a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1Zm18 0a1 1 0 0 1-1 1h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1ZM5.6 5.6a1 1 0 0 1 1.4 0l.7.7a1 1 0 1 1-1.4 1.4l-.7-.7a1 1 0 0 1 0-1.4Zm11 11a1 1 0 0 1 1.4 0l.7.7a1 1 0 1 1-1.4 1.4l-.7-.7a1 1 0 0 1 0-1.4Zm1.4-11a1 1 0 0 1 0 1.4l-.7.7a1 1 0 1 1-1.4-1.4l.7-.7a1 1 0 0 1 1.4 0Zm-11 11a1 1 0 0 1 0 1.4l-.7.7a1 1 0 0 1-1.4-1.4l.7-.7a1 1 0 0 1 1.4 0Z"></path></svg><svg class="i-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg></button>
+</div>
 </nav>
 </div>
 </header>
@@ -34,14 +52,71 @@
 {{page_head}}
 {{content}}
 </article>
+{{pager}}
+{{describes}}
 </main>
+{{toc}}
 </div>
 <footer class="site-footer">
-<p>aless {{version}}, MIT licence, a <a href="https://tabnas.dev">tabnas</a> project.
-<a href="https://github.com/rjrodger/aless">Source</a> ·
-<a href="https://github.com/rjrodger/aless/releases">releases</a> ·
-<a href="https://github.com/rjrodger/aless/blob/main/CHANGELOG.md">changelog</a> ·
-<a href="{{source}}">this page's source</a></p>
+<div class="inner">
+<div class="cols">
+<div class="about">
+<span class="word">aless</span>
+<p class="motto">{{tagline}}.</p>
+<p class="byline">Written by <a href="https://richardrodger.com">Richard Rodger</a>, as a <a href="https://tabnas.dev">tabnas</a> project. Its interface follows <a href="https://jless.io">jless</a>, by Paul Julius Martinez.</p>
+</div>
+<nav class="col" aria-label="Documentation">
+<p class="col-head">Documentation</p>
+<a href="{{root}}tutorials/index.html">Tutorials</a>
+<a href="{{root}}how-to/index.html">How-to guides</a>
+<a href="{{root}}reference/index.html">Reference</a>
+<a href="{{root}}explanation/index.html">Explanation</a>
+<a href="{{root}}reference/releases.html">Releases</a>
+</nav>
+<nav class="col" aria-label="For agents">
+<p class="col-head">For agents</p>
+<a href="{{root}}how-to/agents.html">Give an agent aless</a>
+<a href="{{root}}reference/command-line.html">The command line</a>
+<a href="{{root}}SKILL.md">The Agent Skill</a>
+<a href="{{root}}llms.txt">llms.txt</a>
+</nav>
+<nav class="col" aria-label="Project">
+<p class="col-head">Project</p>
+<a href="https://github.com/rjrodger/aless">Source</a>
+<a href="https://github.com/rjrodger/aless/releases">Releases on GitHub</a>
+<a href="https://github.com/rjrodger/aless/issues">Issues</a>
+<a href="https://crates.io/crates/aless">The crate</a>
+<a href="https://github.com/rjrodger/aless/blob/main/LICENSE">MIT licence</a>
+<a href="https://github.com/rjrodger/aless/blob/main/THIRD_PARTY_NOTICES.md">Notices</a>
+</nav>
+</div>
+<div class="legal">
+<span>aless {{version}}. Open source under the MIT licence.</span>
+<span><a href="{{source}}">This page's source</a> · <a href="{{twin}}">this page as Markdown</a></span>
+</div>
+</div>
 </footer>
+<script>
+// The header's menu on a narrow screen, and the theme toggle.
+(function () {
+  var btn = document.querySelector(".menu-btn");
+  var nav = document.getElementById("site-nav");
+  if (btn && nav) {
+    btn.addEventListener("click", function () {
+      var open = nav.classList.toggle("open");
+      btn.setAttribute("aria-expanded", String(open));
+    });
+  }
+  var toggle = document.querySelector(".theme-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", function () {
+      var root = document.documentElement;
+      var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+  }
+})();
+</script>
 </body>
 </html>

@@ -1,7 +1,8 @@
 ---
 title: Choose the format aless reads
-description: Read a file whose name does not tell its format, or standard input, as the format you name.
-order: 3
+description: Read a file whose name does not tell its format, or standard input, as the format you name, in the viewer or from the command line.
+group: From the command line
+order: 1
 ---
 aless takes a file's format from its extension, and reads a file whose extension no format claims as plain text, an array of its lines. When the name is wrong or missing, you name the format.
 
@@ -24,6 +25,10 @@ $ printf '1.4.0-rc.1\n' | aless -k semver --json --compact
 $ printf 'total: 2*(3+4)\n' | aless -k expr --json --compact
 {"total":["*",2,["(",["+",3,4]]]}
 ```
+
+## Open a grammar as a document
+
+A grammar in ABNF, EBNF or GBNF (`.abnf`, `.ebnf`, `.gbnf`) opens as the grammar spec its compiler writes, the options and rules a tabnas parser is made from, and `--check` on one says whether it compiles. To read a file with the grammar rather than read the grammar, name it with `--grammar` ([Read a format aless does not know](/how-to/grammar.html)).
 
 ## Read standard input
 

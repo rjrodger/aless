@@ -1,7 +1,8 @@
 ---
 title: Get values out of a file in a script
 description: Print the value at a path as JSON, in any of the formats aless reads, for jq, a script or an agent to use.
-order: 6
+group: From the command line
+order: 2
 ---
 aless prints a value as JSON whatever format it read it from, so the same commands work on JSON, YAML, TOML, CSV and the rest. The examples read [`books.json`](/examples/books.json), a list of three books.
 

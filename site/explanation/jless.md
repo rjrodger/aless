@@ -14,15 +14,16 @@ aless is an independent implementation, not a fork. Its tree, its rendering and 
 - Watching: a changed file is reloaded with your place kept.
 - A source view, and the line and column of every node.
 - Panes that show a conversion or a program's output beside the document.
-- The command line for scripts and agents, which prints JSON instead of opening the viewer.
+- A second face: the command line for scripts and agents, which prints JSON instead of opening the viewer, converts any format it reads to any it writes, and runs programs over a document.
 
-Each extension is on a key jless leaves free, so none of jless's keys means something else in aless.
+Each extension to the viewer is on a key jless leaves free, so none of jless's keys means something else in aless.
 
 ## Where they differ
 
 - Several files open in tabs rather than one document, so `q` closes the focused tab and quits only when it was the last.
 - Numbers are shown as their value (`1e+21`, `55`), not as the source spelled them, because the tree holds numbers as 64-bit floats ([One tree for every format](/explanation/one-tree.html)). The source view shows the spelling.
-- Search matches each node's own `"key": value` text, so a pattern cannot span rows.
+- Search matches each node's own `"key": value` text, so a pattern cannot span rows, where jless searches the whole document as one line ([Search a document](/how-to/search.html)).
+- Line numbers count the rows on screen, in data mode as in line mode, where jless numbers the lines of the pretty-printed document; the status bar gives the focused node's line and column in the source file ([Choose how the viewer draws a document](/how-to/display.html)).
 - `J` and `K` stop at the last sibling, rather than tracking a depth you asked for earlier.
 - jless's `--json` and `--yaml` name the input's format. In aless the format comes from the extension or `--kind`, and `--json` asks for JSON output.
 

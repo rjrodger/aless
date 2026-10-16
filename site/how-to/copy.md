@@ -1,7 +1,8 @@
 ---
 title: Copy a value or its path
 description: Copy the focused node's value, its key or its path from the viewer, on a desktop or over SSH.
-order: 5
+group: In the viewer
+order: 4
 ---
 The copy commands are jless's: `y` and a second key. Move the focus to the node, and type them. With the focus on the `operationId` of `listBooks` in the [tutorial's file](/examples/bookshelf-openapi.yaml):
 
@@ -23,6 +24,6 @@ aless copies to the system clipboard, and the status line says so: `Copied path 
 
 ## Print it instead
 
-Each copy command has a `p` twin that prints the text on screen rather than copying it, for you to read, or to select with the terminal's own mouse selection: `pp`, `pv`, `ps`, `pk`, `pP` (the path, since `pp` is the value), `pb` and `pq`.
+Each copy command has a `p` twin that prints the text on screen rather than copying it, for you to read, or to select with the terminal's own mouse selection: `pp`, `pv`, `ps`, `pk`, `pP` (the path, since `pp` is the value), `pb` and `pq`. A long string shows whole this way, where a row of the tree cuts it.
 
-In the [file explorer](/how-to/explore.html), `yp` copies the focused entry's path on disk.
+In the [file explorer](/how-to/explore.html), `yp` copies the focused entry's path on disk. The [keys](/reference/keys.html#copy-and-print) list every copy and print command.

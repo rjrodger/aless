@@ -1,7 +1,8 @@
 ---
 title: Give an agent aless
 description: Install the Agent Skill that teaches an AI agent to read, query, check and convert files with aless's command line.
-order: 13
+group: From the command line
+order: 7
 ---
 aless's command line was made to be driven by programs, and an agent is one more. It carries an [Agent Skill](https://agentskills.io), a Markdown file of instructions an agent loads when a task needs it, which teaches the outputs, the errors and the exit statuses. aless prints the skill itself, so its version always matches the binary's.
 
@@ -24,7 +25,7 @@ description: Read, query, validate and export structured files with the aless co
 ---
 ```
 
-Write it again after you upgrade aless.
+Write it again after you upgrade aless. The same file is published with this site, at [SKILL.md](/SKILL.md).
 
 ## Without the skill
 

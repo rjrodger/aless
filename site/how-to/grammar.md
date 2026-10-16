@@ -1,7 +1,8 @@
 ---
 title: Read a format aless does not know
 description: Describe a line-oriented text format in ABNF, and read its files in the viewer and from the command line like any built-in format.
-order: 9
+group: From the command line
+order: 5
 ---
 A text format aless has no parser for can be read with a grammar you write in [ABNF](https://github.com/tabnas/abnf), the notation of RFC 5234. You name the grammar on the command line, and aless reads with it the files whose extension, or whole file name, is that name. This guide uses `/etc/hosts`; download the grammar and a sample hosts file:
 
@@ -70,7 +71,9 @@ $ aless --grammar hosts=hosts.abnf --paths --depth 1 hosts
 }
 ```
 
-`NAME,NAME2=FILE` gives a grammar two names, `--grammar` repeats for several grammars, and `--grammar-expr NAME=ABNF` takes the grammar's text on the command line instead of from a file. Standard input has no name, so give it `-k NAME`: `crontab -l | aless --grammar crontab=crontab.abnf -k crontab`.
+The grammar file is a document of its own as well: `aless hosts.abnf` opens the spec it compiles to, the options and rules a parser is made from, and `aless --check hosts.abnf` says whether it compiles, with the compiler's message where it does not ([Check that files parse](/how-to/check.html)).
+
+`NAME,NAME2=FILE` gives a grammar two names, `--grammar` repeats for several grammars, and `--grammar-expr NAME=ABNF` takes the grammar's text on the command line instead of from a file. Standard input has no name, so give it `-k NAME`: `crontab -l | aless --grammar crontab=crontab.abnf -k crontab`. A conversion works too, `--render csv` on the hosts file giving a row per entry, though a grammar from the command line parses its input whole before it streams.
 
 ## Write your own
 

@@ -1,7 +1,8 @@
 ---
 title: Follow a file as it changes
 description: Keep a file open in the viewer while it is written, rewritten or regenerated, with your place kept, and stop following it when you want it still.
-order: 4
+group: In the viewer
+order: 1
 ---
 Every file aless opens in the viewer is watched, and reloaded when it changes on disk. There is nothing to turn on: the status bar says `watching`.
 
@@ -19,7 +20,7 @@ After a reload your view is where you left it. The folds you made stay made, and
 
 ## When a save breaks the file
 
-A save that does not parse does not take your document away. aless keeps the last version that parsed on screen, docks the parser's report beneath it, and marks the tab with `!`. The next save that parses clears it. Press `!` to see the report full size.
+A save that does not parse does not take your document away. aless keeps the last version that parsed on screen, docks the parser's report beneath it, and marks the tab with `!`. The next save that parses clears it. Press `!` to see the report full size, where `h` and `l` pan a line wider than the screen.
 
 A file that is deleted keeps its document on screen, and its tab is marked `✗`; when the file comes back, aless reloads it. A file that does not exist yet can be opened all the same, and its tab waits for it.
 
@@ -31,4 +32,4 @@ A file that is deleted keeps its document on screen, and its tab is marked `✗`
 aless --no-watch big.json
 ```
 
-A large file pauses the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often.
+A large file pauses the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often. [Large inputs, streaming and limits](/explanation/large-inputs.html) says what a parse costs.

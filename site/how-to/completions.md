@@ -1,6 +1,7 @@
 ---
 title: Set up completions and the man page
 description: Have your shell complete aless's options and their values, and man show its manual page, however you installed aless.
+group: Setting up
 order: 2
 ---
 aless carries its own manual page and completions for bash, zsh, fish and PowerShell. Homebrew installs them for you; with any other install, aless prints them.

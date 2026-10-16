@@ -164,28 +164,58 @@ from jless. This file is the guide for any agent working here;
   Diátaxis's kinds: `tutorials/` (lessons, followed from start to end),
   `how-to/` (one task each), `reference/` and `explanation/` (why).
   `tests/site.rs` builds it: it renders the pages with tabnas-markdown into
-  `site/layout.html`, and writes the reference's two pages from the binary
-  (`cli::reference_html`, `app::help_lines`), never by hand. It checks
-  every link and anchor, every option an example names, every `console`
-  example's output (on Unix, run by `sh` in a directory of the files the
-  site publishes under `/examples/`: `examples/*` and the
-  `tests/fixtures/` that `FIXTURES` names), and the prose's house style:
-  no phrase `site/reject.txt` bans, no em dash, no emoji, "we" in
-  tutorials alone, "I" nowhere. `ALESS_SITE_OUT=DIR` writes the site, and
-  `.github/workflows/pages.yml` publishes it from `main`. On a page:
+  `site/layout.html`, and writes the reference's pages from the binary
+  (`cli::reference_html`, `app::help_lines`) and from `CHANGELOG.md`
+  (the releases), never by hand. It checks every link and anchor, every
+  option an example names, every `console` example's output (on Unix,
+  run by `sh` in a directory of the files the site publishes under
+  `/examples/`: `examples/*` and the `tests/fixtures/` that `FIXTURES`
+  names), and the prose's house style (the next point), on every page and
+  on `README.md`. `ALESS_SITE_OUT=DIR` writes the site, and
+  `.github/workflows/pages.yml` publishes it from `main`. The site is
+  drawn as tabnas.dev is drawn: `site/style.css` carries tabnas/web's
+  design tokens whole, and `site/fonts/` its faces, so the two sites read
+  as one family and a page requests nothing anywhere else. On a page:
   - the front matter is `title`, `description` (one sentence) and,
     on a page in a section's list (every page of a section but its
-    index), `order`, its place in the list; the layout writes the `h1`,
-    so the Markdown starts at `##`;
+    index), `order`, its place in the list, and in a section listed by
+    group (the how-to guides: "Setting up", "In the viewer" and "From
+    the command line", the two faces of aless), `group`, the heading it
+    is under; the layout writes the `h1`, so the Markdown starts at `##`;
   - links between pages are from the site's root
     (`/how-to/convert.html`), and the build makes them relative;
   - output is pasted from a real run, in a `console` block with `$ `
     before each command; a capture of the viewer is a `screen` block, 80
-    columns, taken in a pty as `scripts/pty-smoke.py` drives one;
+    columns (60 on the home page, where two sit side by side), taken in
+    a pty as `scripts/pty-smoke.py` drives one;
   - `{{version}}` and `{{tagline}}` are filled in from the binary.
 
-  A new option or key reaches the reference by itself; a change to an
+  A new option or key reaches the reference by itself, and a release
+  reaches `/reference/releases.html` from `CHANGELOG.md`; a change to an
   output a page quotes fails `tests/site.rs` until the page matches.
+- **The documentation follows the tabnas style guide**,
+  [`doc/STYLE-GUIDE.md` in tabnas/parser](https://github.com/tabnas/parser/blob/main/doc/STYLE-GUIDE.md):
+  the site, `README.md`, `CHANGELOG.md` (which the site publishes as its
+  releases page) and the reference `--help` prints. Its rules, in short:
+  every page is one of Diátaxis's four kinds, and the normative statement
+  of a fact lives in the reference, which the other kinds link to; a
+  published page cites nothing internal (no decision records, no
+  `AGENTS.md`, no handover notes) and carries no project history (what an
+  option used to be called, which release moved it); the reader is "you",
+  "we" appears in tutorials alone and "I" nowhere; code is introduced by
+  a short sentence ending in a colon, and followed by the one thing to
+  notice; a page closes by handing the reader a link or a next step,
+  never a summary; no em dash in prose (a comma, parentheses, a colon or
+  a new sentence instead), a list item's gloss after a full stop rather
+  than a dash, sentence-style headings, British spellings, no emoji, at
+  most one exclamation mark on a page and only in a tutorial, and no
+  `**Bold term**: gloss` lists (sentences, or a table). `site/reject.txt`
+  is the guide's banned list, a copy of tabnas/parser's
+  `.vale/styles/config/vocabularies/Tabnas/reject.txt`; `tests/site.rs`
+  holds every page and the README to it, with the em dash, first person,
+  exclamation and emoji rules, and the rest is enforced at review. Quoted
+  output keeps its own punctuation: the gate strips code spans and fenced
+  blocks before it looks.
 - **The agent interface is a contract.** The output shapes (entries,
   listings, `--check` reports, `{"error": …}` objects) and the exit
   statuses are documented in four places that must agree with the code

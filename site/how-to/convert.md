@@ -1,7 +1,8 @@
 ---
 title: Convert a file to another format
 description: Write a document, or the records in it, as CSV, YAML, TOML, a Markdown table or any other format aless can write, streamed as it reads.
-order: 7
+group: From the command line
+order: 3
 ---
 `--render FORMAT` writes the value aless read as another format. Every format it reads can be written as every format it has a writer for that can hold it: `csv`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml`, `zon`, `feed` (an Atom feed) and `expr` take any document, and `css`, `proto`, `pgn`, `c`, `abnf`, `ebnf`, `gbnf` and `semver` only their own kind ([below](#formats-that-hold-only-their-own-kind)). The examples convert [`books.json`](/examples/books.json), a list of three books.
 
@@ -58,7 +59,7 @@ $ aless --render markdown books.json 2>/dev/null
 | The Index | C. Cataloguer | 2021 | \[\] |
 ```
 
-Strings and keys are quoted wherever the format quotes, and a character that would start Markdown's inline markup is escaped, so nothing reads back as another kind of value.
+Strings and keys are quoted wherever the format quotes, and a character that would start Markdown's inline markup is escaped, so nothing reads back as another kind of value. A format named by one of its extensions, as in `--render yml` or `--render rss`, is taken as that format's writer, `yaml` or `feed`.
 
 ## What a format cannot hold
 
@@ -123,4 +124,4 @@ $ aless --render csv books.json 2>/dev/null > books.csv; aless --json --compact 
 
 ## Large inputs
 
-A conversion streams: JSON Lines, CSV and TSV are read a record at a time, whatever their size, and most other formats write their records as the parse goes. `--render json` keeps each number as the source spelled it, where `--json` writes the 64-bit value. [Large inputs, streaming and limits](/explanation/large-inputs.html) has the details, and [Reshape a document with a program](/how-to/alchemy.html) goes further than conversion, choosing and renaming the fields on the way.
+A conversion streams: JSON Lines, CSV and TSV are read a record at a time, whatever their size and wherever `--path` starts, and the JSON family, jsonic, YAML, ZON, Markdown and XML write their records as the parse goes. `--render json` keeps each number as the source spelled it, where `--json` writes the 64-bit value. [Large inputs, streaming and limits](/explanation/large-inputs.html) has the details, and [Reshape a document with a program](/how-to/alchemy.html) goes further than conversion, choosing and renaming the fields on the way through. To watch a conversion follow a file you are editing, open it in a pane beside the document ([See a document beside its conversion](/how-to/panes.html)).
