@@ -476,6 +476,16 @@ fn attempt<S: Sink + Send + 'static>(
             Outcome::Failed(f) => {
                 (f.code == Code::StreamabilityUnknown && !programs)
                     || f.code == Code::DuplicateMember
+                    // A part's events nest as deep as the value its grammar
+                    // builds, and the transducer's `max_depth` refuses them
+                    // before a grammar from the command line meets the
+                    // value measure its parse is held to (`MAX_VALUE_DEPTH`):
+                    // the whole read says which of the two the document
+                    // passes, as it did before the part.
+                    || (matches!(mode, Mode::Part(_))
+                        && !failed.from_sink
+                        && f.code == Code::ResourceLimitExceeded
+                        && f.limit.as_ref().is_some_and(|l| l.name == "max_depth"))
                     // The rows sink refused a root that is not an array at
                     // its first event. For a grammar that may wrap the root
                     // in a list after streaming it (jsonic's implicit list,
@@ -3411,6 +3421,31 @@ mod tests {
             Transducer::Whole(why) if why.starts_with("the start rule ")
         ));
         assert_eq!(plan(plain), Some(Plan::Materialize));
+
+        // A value nested deeper than the transducer's `max_depth`: the
+        // part's events are refused at once, nothing written, and the
+        // whole read reports the document as the export always has, its
+        // limit within MAX_VALUE_DEPTH and `too_deep` past it.
+        let nest = register(
+            "part-nest",
+            "v = \"[\" *w \"]\"  ; @array\nw = v   ; @array\n",
+        );
+        assert_eq!(plan(nest), Some(Plan::Part));
+        let nested = |n: usize| "[".repeat(n) + &"]".repeat(n);
+        match run_text(&job(nest, Renderer::Json, "."), &nested(200)).0 {
+            Err(ExportError::Transduce(f)) => {
+                assert_eq!(f.code, Code::ResourceLimitExceeded, "{f}");
+                assert!(!f.committed_output, "{f}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match run_text(&job(nest, Renderer::Json, "."), &nested(600)).0 {
+            Err(ExportError::Load { error, partial }) => {
+                assert_eq!(error.code, "too_deep", "{}", error.message);
+                assert!(!partial);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// A parse that finishes late fails on the time, as the loader has
