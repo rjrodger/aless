@@ -490,8 +490,9 @@ transducer's own limits per record do (a line over `max_record_bytes`,
 64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
-JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and an
-annotated grammar from the command line the records are streamed out as
+JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and most
+annotated grammars from the command line ([Custom
+grammars](#custom-grammars) says which) the records are streamed out as
 the parse proceeds, and the exported array
 is not kept behind them (except in YAML and jsonic, whose grammars may
 still refer to it, and in a grammar from the command line, whose
@@ -897,9 +898,12 @@ annotated. Without annotations it is the compiler's parse tree, a
 viewer, `--json`, `--paths`, `--find`, `--where`, `--check` and
 `--render` work on it as on any format. `--render` writes the records
 of an annotated grammar as the parse makes them, through a transducer
-that aless generates from the annotations; the compiler's parse tree
-has the whole document's text at its root, before its children, so a
-grammar without annotations is parsed whole before anything is written.
+that aless generates from the annotations. A grammar whose first rule
+has no annotation, as in a grammar without any, builds the compiler's
+parse tree at its root, and that tree has the whole document's text
+before its children, so the grammar's documents are parsed whole before
+anything is written; so are those of any other grammar aless cannot
+generate a transducer for.
 An empty file is `null`; one holding only
 comments and blank lines is whatever the grammar builds from nothing,
 `[]` for the grammars below.

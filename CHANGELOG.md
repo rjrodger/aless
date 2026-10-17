@@ -19,9 +19,10 @@ bumps the version renames `Unreleased` to the version and its date
   - A failure part way leaves every record before it on standard
     output, with `output` partial. Before, nothing was written until the
     whole document had parsed.
-  - A grammar without annotations builds the compiler's parse tree,
-    whose root holds the whole document's text before its children, so
-    its documents are still parsed whole before anything is written.
+  - A grammar whose first rule has no annotation, as in a grammar
+    without any, builds the compiler's parse tree at its root, which
+    holds the whole document's text before its children, so its
+    documents are still parsed whole before anything is written.
 - Markdown's loss note gives `whole` (tabnas-markdown 0.7.13): a link can
   name a definition that comes later, so a document's tree is complete
   only at its end. Its records were already written only once its last

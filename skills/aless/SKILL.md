@@ -276,7 +276,9 @@ exits 6 (`timeout`, with `seconds`), each with that kind's fields
 grammar rejects is a `parse` error, exit 1, with `format` the grammar's
 name and the `line` and `col` it stopped at. `--render csv` works on
 the records, which leave as the parse makes them for an annotated
-grammar; a grammar without annotations is parsed whole first.
+grammar; a grammar whose first rule has no annotation (one without
+annotations, say) builds the parse tree at its root and is parsed whole
+first.
 
 ## Output
 
@@ -463,8 +465,8 @@ For those, pipe `--json` into jq.
   time, whatever their size, and `--max-size` does not apply to them.
   Every other format is still parsed whole (and read within `--max-size`);
   the records leave as the parse proceeds for the JSON family, jsonic,
-  YAML, ZON, XML, PGN (a game at a time) and an annotated grammar from
-  the command line, and after it for the rest. A document one of
+  YAML, ZON, XML, PGN (a game at a time) and most annotated grammars
+  from the command line, and after it for the rest. A document one of
   those grammars refuses to stream part-way (a jsonic implicit list, a
   YAML `---` stream or `<<` merge key) is parsed whole and exported all
   the same, when nothing has been written yet. So for a huge export,
