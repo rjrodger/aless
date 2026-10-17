@@ -985,12 +985,28 @@ fn through_part<S: Sink + Send + 'static>(
         .ok()
         .map(|scope| scope.into_inner().unwrap_or_else(|e| e.into_inner()));
     match outcome {
-        Ok(outcome) => Ran {
-            outcome: Outcome::of(outcome),
-            stop: Some(stop),
-            verdict: scope.as_ref().and_then(Scope::verdict),
-            from_sink: scope.is_some_and(|scope| scope.sink_failed),
-        },
+        Ok(outcome) => {
+            let from_sink = scope.as_ref().is_some_and(|scope| scope.sink_failed);
+            // The part's own `ABORTED`, the deadline's alarm raising its
+            // flag between two of its steps, is stamped with the place in
+            // the part's program it stopped at, which is no place in the
+            // input.
+            let outcome = match outcome {
+                Err(mut fail) if !from_sink && fail.code == Code::Aborted => {
+                    fail.row = None;
+                    fail.column = None;
+                    fail.file = None;
+                    Err(fail)
+                }
+                outcome => outcome,
+            };
+            Ran {
+                outcome: Outcome::of(outcome),
+                stop: Some(stop),
+                verdict: scope.as_ref().and_then(Scope::verdict),
+                from_sink,
+            }
+        }
         Err(what) => Ran {
             outcome: Outcome::Panicked(what),
             stop: Some(stop),
