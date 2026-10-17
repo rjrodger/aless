@@ -1149,9 +1149,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.10"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3104e149035228cfc21d9b7bcc119b2d7bcb5b88329aeba4fe7b9ff1ca691c"
+checksum = "3d51dccd3002bd0bdc6fe37d0b4898f7cea39554e1da896dff332667f617bf87"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -1434,9 +1434,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.9"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17905cd5810e784c38df9238c10685f457d378316f7ec633a481fbf0fed29a62"
+checksum = "0f05bed66617992fbcf96ca78f7429069665e0b8114c74e7e9640864328e1e19"
 dependencies = [
  "tabnas-alchemy",
  "tabnas-csv",
