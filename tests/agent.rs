@@ -1418,6 +1418,61 @@ fn a_large_xml_document_streams_as_the_json_familys_do() {
     assert!(out.stdout.is_empty());
 }
 
+/// A grammar from the command line with value annotations streams as the
+/// JSON family does, through the transducer its annotations generate: a
+/// failure on the last line finds every record before it already on
+/// standard output, with `output` partial. A grammar without annotations
+/// builds the compiler's tree, whose root holds the whole text before its
+/// children, and writes nothing before its parse ends.
+#[test]
+fn an_annotated_grammar_streams_its_records() {
+    let rows = 2_000;
+    let body: String = (0..rows)
+        .map(|i| format!("10.0.{}.{} host{i}\n", i / 256, i % 256))
+        .collect();
+    let grammar = format!("hosts={GRAMMARS}/hosts.abnf");
+    let hosts = [
+        "--grammar",
+        &grammar,
+        "-k",
+        "hosts",
+        "--render",
+        "json",
+        "--compact",
+    ];
+    let out = aless(&hosts, Some(&body));
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stdout).as_array().map(Vec::len), Some(rows));
+    // An address with no names on the last line: the parse fails at the
+    // end, every record already written.
+    let out = aless(&hosts, Some(&format!("{body}10.9.9.9\n")));
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    let e = &json(&out.stderr)["error"];
+    assert_eq!(e["code"], json!("INPUT_INVALID"), "{e}");
+    assert_eq!(e["output"], json!("partial"), "{e}");
+    assert_eq!(e["line"], json!(rows + 1), "{e}");
+    let written = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(written.matches("{\"address\":").count(), rows);
+    // Without annotations: parsed whole, so nothing is written before the
+    // failure, a blank line the grammar has no rule for.
+    let plain = "plain=lines = *( line %x0A ) [ line ]\nline = 1*word\nword = ( TX )\n";
+    let out = aless(
+        &[
+            "--grammar-expr",
+            plain,
+            "-k",
+            "plain",
+            "--render",
+            "json",
+            "--compact",
+        ],
+        Some(&format!("{body}\n10.9.9.9 host\n")),
+    );
+    assert_eq!(code(&out), 1, "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(json(&out.stderr)["error"]["output"], json!("none"));
+    assert!(out.stdout.is_empty());
+}
+
 /// A PGN database streams a game at a time, as XML's elements do:
 /// tabnas-chess stores a game in the database only once it is complete,
 /// so a failure in the database's last game finds every game before it
@@ -2212,8 +2267,8 @@ fn custom_grammars_work_with_every_operation() {
     assert_eq!(v["total"], json!(1));
     assert_eq!(v["matches"][0]["path"], json!(".[0].value"));
     // --render csv: the records as rows, a nested array as JSON text in
-    // its cell; the grammar is parsed whole first (no grammar from the
-    // command line streams).
+    // its cell, written as the parse makes them through the part the
+    // grammar's annotations generate.
     let sample = format!("{GRAMMARS}/impl-words");
     let out = aless(&["--grammar", &words, "--render", "csv", &sample], None);
     assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));

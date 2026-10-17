@@ -490,10 +490,13 @@ transducer's own limits per record do (a line over `max_record_bytes`,
 64 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
-JSON family, jsonic, YAML, ZON, Markdown, XML and PGN (a game at a time)
-the records are streamed out as the parse proceeds, and the exported
-array is not kept behind them (except in YAML, jsonic and Markdown, whose
-grammars may still refer to it); for the rest they are streamed out after
+JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and most
+annotated grammars from the command line ([Custom
+grammars](#custom-grammars) says which) the records are streamed out as
+the parse proceeds, and the exported array
+is not kept behind them (except in YAML and jsonic, whose grammars may
+still refer to it, and in a grammar from the command line, whose
+transducer reads the parse's steps rather than its value); for the rest they are streamed out after
 the parse, from the value it built. Where one of those grammars refuses to stream a particular
 document part-way (a jsonic implicit list whose first element is a
 container, a YAML stream of several documents or a `<<` merge key, a
@@ -627,9 +630,9 @@ read. The sentences come from the format's manifest:
 Where a source's format says why its documents are read whole before
 anything is written, the warning says it too, as `whole`, in the
 format's own sentence: TOML's (a later header can add to a table),
-INI's (a later header can name a section again), and those of CSS,
-feeds, `.proto`, expressions, versions, C and the three grammar
-notations,
+INI's (a later header can name a section again), Markdown's (a link
+can name a definition that comes later), and those of CSS, feeds,
+`.proto`, expressions, versions, C and the three grammar notations,
 each a reason the document's tree is complete only at its end. An error
 that carries `loss` carries it as well. A value below the root (`--path`) is written
 as a plain tree, whatever its document, and has none; nor has a
@@ -893,9 +896,15 @@ rule that produces a value, nested where that part's own rule is
 annotated. Without annotations it is the compiler's parse tree, a
 `{"rule": …, "src": …, "kids": […]}` node per rule. Either way the
 viewer, `--json`, `--paths`, `--find`, `--where`, `--check` and
-`--render` work on it as on any format; `--render` parses the input
-whole before it streams, since no grammar from the command line is one
-the transducer has verified. An empty file is `null`; one holding only
+`--render` work on it as on any format. `--render` writes the records
+of an annotated grammar as the parse makes them, through a transducer
+that aless generates from the annotations. A grammar whose first rule
+has no annotation, as in a grammar without any, builds the compiler's
+parse tree at its root, and that tree has the whole document's text
+before its children, so the grammar's documents are parsed whole before
+anything is written; so are those of any other grammar aless cannot
+generate a transducer for.
+An empty file is `null`; one holding only
 comments and blank lines is whatever the grammar builds from nothing,
 `[]` for the grammars below.
 

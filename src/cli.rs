@@ -925,7 +925,7 @@ const TOPICS: &[Topic] = &[
                 the one between a tree and a table, the inferred table or records, their \
                 sentences in loss after the format's own. Where the source's format says \
                 why its documents are read whole before anything is written (TOML, INI, \
-                CSS, feeds, .proto, expressions, versions, C and the grammar \
+                Markdown, CSS, feeds, .proto, expressions, versions, C and the grammar \
                 notations), \
                 whole is that sentence; a value below the root, a program's output and a \
                 document of any other format have none. Status 0 is success whatever \
@@ -1087,8 +1087,9 @@ const TOPICS: &[Topic] = &[
                 "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
                 record at a time, whatever their size, so --max-size does not apply to \
                 them (a record over 64 MB fails); the JSON family, jsonic, YAML, ZON, \
-                Markdown, XML and PGN (a game at a time) write their records as the parse \
-                proceeds, and the other formats after it. A document a grammar refuses to stream part-way is read whole \
+                XML, PGN (a game at a time) and most annotated grammars from the \
+                command line write their records as the parse proceeds, and the other \
+                formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\".",
             ),
@@ -1126,12 +1127,17 @@ const TOPICS: &[Topic] = &[
                 NAME, in any case, with the ABNF grammar in FILE (RFC 5234, compiled by \
                 tabnas/abnf), and -k NAME reads any input with it. ; @object a b and ; \
                 @array comments on a rule say what it builds; without them the value is \
-                the compiler's parse tree, a {\"rule\", \"src\", \"kids\"} node per rule. The \
-                input is read as plain text: { } [ ] : , are ordinary characters, # starts \
-                a comment to the end of the line, and a word is the token TX (NR, ST and \
-                VL bring numbers, quoted strings and true, false and null back). A \
-                grammar that does not compile is a usage error before any input is read, \
-                and so is a repetition count over 1,024, or repetitions that would have \
+                the compiler's parse tree, a {\"rule\", \"src\", \"kids\"} node per rule. \
+                --render and --alchemy write an annotated grammar's records as the parse \
+                makes them, through a transducer aless generates from the annotations; a \
+                grammar whose first rule has no annotation builds the parse tree at its \
+                root and is parsed whole first, as is any grammar aless cannot generate \
+                a transducer for. The input is read as plain text: { } [ ] : , are \
+                ordinary characters, # starts a comment to the end of the line, and a \
+                word is the token TX (NR, ST and VL bring numbers, quoted strings and \
+                true, false and null back). A grammar that does not compile is a usage \
+                error before any input is read, and so is a repetition count over 1,024, \
+                or repetitions that would have \
                 the compiler write more than 1,024 rules. An input the grammar does not \
                 accept is a parse error, with format the grammar's name.",
             ),

@@ -510,7 +510,7 @@ mod tests {
         // Why a format's documents are read whole before anything is
         // written, where its manifest says: every format with a part but
         // those transduce streams as they parse (the JSON family, jsonic,
-        // YAML, XML, ZON, Markdown and PGN), those read a record at a time
+        // YAML, XML, ZON and PGN), those read a record at a time
         // (CSV and JSON Lines). The README, the reference and the skill
         // name them.
         let whole: Vec<&str> = parts()
@@ -521,8 +521,8 @@ mod tests {
         assert_eq!(
             whole,
             [
-                "toml", "ini", "feed", "css", "proto", "expr", "semver", "c", "abnf", "ebnf",
-                "gbnf"
+                "toml", "ini", "markdown", "feed", "css", "proto", "expr", "semver", "c", "abnf",
+                "ebnf", "gbnf"
             ]
         );
         // The trees with schemas of their own: an embed from a plain tree
