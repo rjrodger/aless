@@ -52,14 +52,15 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tabnas::Tabnas;
+use tabnas_alchemy::Program;
 use tabnas_render::{
     CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut, DEFAULT_HOLD,
 };
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
     capability, AbortFlag, Cell, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
-    ParserSource, Prune, Schema, Selector, Sink, Source, SourceMode, TableBinding, TableEvent,
-    TableFromJson, TableSink, TreeContract, ValueSource,
+    ParserEventSource, ParserSource, Prune, Schema, Selector, Sink, Source, SourceMode,
+    TableBinding, TableEvent, TableFromJson, TableSink, TreeContract, ValueSource,
 };
 
 use crate::fmt;
@@ -115,6 +116,10 @@ pub enum Plan {
     /// JSON Lines, CSV or TSV: a record at a time from a reader, never the
     /// file whole, whether the export starts at the root or below it.
     Lines,
+    /// The text whole, its parser's rule passes through the format's
+    /// transducer part ([`transducer`]), the events leaving as the part
+    /// makes them.
+    Part,
     /// The text whole, its grammar's events leaving as the parse proceeds;
     /// `prune` says whether the exported array is emptied behind them.
     Incremental { prune: bool },
@@ -144,6 +149,7 @@ pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
         Format::Jsonl | Format::Csv | Format::Tsv => Plan::Lines,
+        f if transducer(f).is_some() => Plan::Part,
         // A grammar from the command line is nobody's verified grammar,
         // whatever it is named (it may take a built-in's name).
         Format::Custom(_) => Plan::Materialize,
@@ -152,6 +158,18 @@ pub fn plan(format: Format) -> Option<Plan> {
         },
         _ => Plan::Materialize,
     })
+}
+
+/// The transducer part a format's documents are read through, when it has
+/// one: an alchemy program over the parser's rule passes that makes the
+/// document's events of them. A grammar from the command line has the part
+/// its value annotations generate ([`crate::grammar::Transducer`]); a
+/// format with none keeps the route [`plan`] gives it.
+pub fn transducer(format: Format) -> Option<&'static Program> {
+    match format {
+        Format::Custom(id) => crate::grammar::get(id)?.compiled.transducer().part(),
+        _ => None,
+    }
 }
 
 /// What a run produces.
@@ -471,9 +489,7 @@ fn attempt<S: Sink + Send + 'static>(
         };
     match text {
         Some(text)
-            if refused
-                && mode != SourceMode::Materialize
-                && written.load(Ordering::Relaxed) == 0 =>
+            if refused && !matches!(mode, Mode::Whole) && written.load(Ordering::Relaxed) == 0 =>
         {
             // The stream's start, whole records though they are, is
             // dropped for the whole value's, which writes them again.
@@ -484,7 +500,7 @@ fn attempt<S: Sink + Send + 'static>(
                 job,
                 Input::Text(text),
                 chain(program.clone())?,
-                SourceMode::Materialize,
+                Mode::Whole,
                 abort,
                 program,
             )
@@ -508,7 +524,7 @@ fn attempt<S: Sink + Send + 'static>(
                         job,
                         Input::Text(&whole),
                         chain(program.clone())?,
-                        SourceMode::Materialize,
+                        Mode::Whole,
                         abort,
                         program,
                     )
@@ -624,12 +640,15 @@ fn run<S: Sink + Send + 'static>(
     job: &Job,
     input: Input<'_>,
     scope: Scope<S>,
-    mode: SourceMode,
+    mode: Mode,
     abort: AbortFlag,
     program: AbortFlag,
 ) -> Result<(), Box<Failed>> {
     let format = job.format;
     let lines = matches!(input, Input::Lines(_) | Input::File { .. });
+    // A transducer part is a program, and reads the program's flag, which
+    // the alarm raises in every mode, between the steps of one pass.
+    let steps = program.clone();
     let alarm = Alarm {
         lines,
         parsed: Arc::new(AtomicBool::new(false)),
@@ -712,15 +731,16 @@ fn run<S: Sink + Send + 'static>(
                     };
                 }
                 match mode {
-                    SourceMode::Materialize => {
+                    Mode::Whole => {
                         materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
                     }
-                    mode => {
+                    Mode::Part(part) => through_part(parser, text, part, scope, abort, steps, stop),
+                    Mode::Stream(prune) => {
                         // The source checks the grammar's name against the
                         // verified list itself, and refuses an unlisted one
                         // before parsing.
                         let source = ParserSource::new(parser, text)
-                            .mode(mode)
+                            .mode(SourceMode::Incremental { prune })
                             .grammar(format.name())
                             .limits(limits())
                             .abort(abort);
@@ -909,14 +929,109 @@ fn walk<S: Sink>(
     }
 }
 
-/// The source mode for a text input: incremental where the grammar is
-/// verified, pruning the exported array as it streams where [`plan`]
-/// allows.
-fn mode_for(job: &Job) -> SourceMode {
-    // A custom grammar builds its value whole; nothing streams it.
-    if job.format.is_custom() {
-        return SourceMode::Materialize;
+/// How a text input is read: [`mode_for`]'s answer for a job.
+#[derive(Clone)]
+enum Mode {
+    /// Parsed whole, then its value walked.
+    Whole,
+    /// The grammar's events as the parse proceeds, the exported array
+    /// pruned behind them as [`plan`] allows.
+    Stream(Prune),
+    /// The parser's rule passes through the format's transducer part.
+    Part(&'static Program),
+}
+
+/// Drive the parser's rule passes through the format's transducer part
+/// into `scope`, under aless's guard on the parser and the transducer's
+/// limits: the source's on the passes, and the part's on the events it
+/// makes, as on a source's own. The events are held to a tree's contract
+/// before the scope sees them, so a document whose events are no tree's (a
+/// member the part streams twice, which the grammar's value keeps once, or
+/// a second root) is refused as the part's, which [`attempt`] reads whole
+/// once more when nothing was written. `steps` is the flag the part's
+/// program reads between steps.
+fn through_part<S: Sink + Send + 'static>(
+    parser: Tabnas,
+    text: &str,
+    part: &Program,
+    scope: Scope<S>,
+    abort: AbortFlag,
+    steps: AbortFlag,
+    stop: Arc<Stop>,
+) -> Ran {
+    let shared = Arc::new(Mutex::new(scope));
+    let down: Box<dyn Sink + Send> = Box::new(TreeContract::new(SharedScope(shared.clone())));
+    let head = match part
+        .with_abort(steps)
+        .parser_sink_into(down, &limits(), Metrics::new())
+    {
+        Ok(head) => head,
+        Err(fail) => {
+            return Ran {
+                outcome: Outcome::Failed(fail),
+                stop: Some(stop),
+                verdict: None,
+                from_sink: false,
+            }
+        }
+    };
+    let source = ParserEventSource::new(parser, text)
+        .limits(limits())
+        .abort(abort);
+    // The part's chain, and the scope's other handle with it, is dropped
+    // when the run returns, so the scope is the run's alone again.
+    let outcome = load::catch_grammar(|| source.run_boxed(head).0);
+    let scope = Arc::try_unwrap(shared)
+        .ok()
+        .map(|scope| scope.into_inner().unwrap_or_else(|e| e.into_inner()));
+    match outcome {
+        Ok(outcome) => Ran {
+            outcome: Outcome::of(outcome),
+            stop: Some(stop),
+            verdict: scope.as_ref().and_then(Scope::verdict),
+            from_sink: scope.is_some_and(|scope| scope.sink_failed),
+        },
+        Err(what) => Ran {
+            outcome: Outcome::Panicked(what),
+            stop: Some(stop),
+            verdict: None,
+            from_sink: false,
+        },
     }
+}
+
+/// The scope, as the part's chain holds it while the run goes on: the run
+/// reads the scope's verdict once the chain has let it go.
+struct SharedScope<S>(Arc<Mutex<Scope<S>>>);
+
+impl<S: Sink> Sink for SharedScope<S> {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).event(ev)
+    }
+}
+
+/// The source mode for a text input: through the format's transducer part
+/// where it has one; incremental where the grammar is verified, pruning
+/// the exported array as it streams where [`plan`] allows; whole
+/// otherwise.
+fn mode_for(job: &Job) -> Mode {
+    if let Some(part) = transducer(job.format) {
+        return Mode::Part(part);
+    }
+    // A custom grammar with no part builds its value whole; nothing
+    // streams it.
+    if job.format.is_custom() {
+        return Mode::Whole;
+    }
+    match incremental(job) {
+        SourceMode::Incremental { prune } => Mode::Stream(prune),
+        SourceMode::Materialize => Mode::Whole,
+    }
+}
+
+/// The incremental source's mode for a job whose format it verifies, or
+/// `Materialize`.
+fn incremental(job: &Job) -> SourceMode {
     let prune = match plan(job.format) {
         Some(Plan::Incremental { prune }) => prune,
         // A line-delimited format handed over as one text: JSON Lines is
@@ -2996,7 +3111,7 @@ mod tests {
             &j,
             Input::Text(&toml),
             Scope::new(Vec::new(), Slow),
-            SourceMode::Materialize,
+            Mode::Whole,
             AbortFlag::new(),
             AbortFlag::new(),
         )
@@ -3018,7 +3133,7 @@ mod tests {
             &j,
             Input::Text("a = 1\n"),
             Scope::new(Vec::new(), Slow),
-            SourceMode::Materialize,
+            Mode::Whole,
             AbortFlag::new(),
             AbortFlag::new(),
         )
@@ -3062,13 +3177,8 @@ mod tests {
             }
         }
         for (format, mode) in [
-            (
-                Format::Json,
-                SourceMode::Incremental {
-                    prune: Prune::Never,
-                },
-            ),
-            (Format::Toml, SourceMode::Materialize),
+            (Format::Json, Mode::Stream(Prune::Never)),
+            (Format::Toml, Mode::Whole),
         ] {
             let text = match format {
                 Format::Json => "[1, 2, 3]",
@@ -3192,6 +3302,99 @@ mod tests {
             lines: false,
         };
         classify(&j, failed, &AtomicU64::new(0), &AtomicBool::new(false))
+    }
+
+    /// A grammar from the command line with value annotations is read
+    /// through the transducer part they generate: its records leave as the
+    /// parse makes them, so a failure at the document's end finds every
+    /// record before it written, with output partial, where a whole read
+    /// writes nothing; and its events are the walk's, below a path as at
+    /// the root. A grammar without annotations builds the compiler's tree,
+    /// whose root holds the whole document's text, and is parsed whole.
+    #[test]
+    fn an_annotated_custom_grammar_streams_through_its_part() {
+        use crate::grammar::{self, Definition, Transducer};
+        let register = |name: &str, abnf: &str| {
+            let def = Definition::parse("--grammar-expr", &format!("{name}={abnf}")).unwrap();
+            Format::Custom(grammar::register(def, crate::load::Limits::NONE).unwrap())
+        };
+        let hosts = register(
+            "part-hosts",
+            "hosts   = *( entry %x0A / %x0A ) [ entry ]   ; @array\n\
+             entry   = address names                      ; @object address names\n\
+             address = word\n\
+             names   = 1*word                             ; @array\n\
+             word    = ( TX )\n",
+        );
+        assert_eq!(plan(hosts), Some(Plan::Part));
+        let lines: String = (0..500)
+            .map(|i| format!("10.0.{}.{} host{i} h{i}.example\n", i / 256, i % 256))
+            .collect();
+        // The events, as the part makes them and as the walk of the
+        // grammar's value does.
+        struct Collect(Arc<Mutex<Vec<OwnedJsonEvent>>>);
+        impl Sink for Collect {
+            fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                self.0.lock().unwrap().push(ev.to_owned());
+                Ok(Flow::Continue)
+            }
+        }
+        let events = |mode: Mode| {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let j = job(hosts, Renderer::Json, ".");
+            let scope = Scope::new(Vec::new(), Collect(seen.clone()));
+            let ran = run(
+                &j,
+                Input::Text(&lines),
+                scope,
+                mode,
+                AbortFlag::new(),
+                AbortFlag::new(),
+            );
+            assert!(ran.is_ok(), "{:?}", ran.err().map(|f| f.why));
+            let seen = seen.lock().unwrap().clone();
+            seen
+        };
+        let part = transducer(hosts).expect("the part its annotations make");
+        let streamed = events(Mode::Part(part));
+        assert_eq!(
+            streamed.len(),
+            1 + 500 * 9 + 2,
+            "the root, nine a record, the ends"
+        );
+        assert_eq!(streamed, events(Mode::Whole));
+        let (r, out) = run_text(&job(hosts, Renderer::Json, ".[3].names"), &lines);
+        r.unwrap();
+        assert_eq!(out.trim_end(), "[\"host3\",\"h3.example\"]");
+        // A last line with no names: the parse fails at the end, every
+        // record before it written.
+        let (r, out) = run_text(
+            &job(hosts, Renderer::Csv, "."),
+            &format!("{lines}10.9.9.9\n"),
+        );
+        match r {
+            Err(ExportError::Transduce(f)) => {
+                assert_eq!(f.code, Code::InputInvalid, "{f}");
+                assert!(f.committed_output, "{f}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            out.matches("\r\n").count(),
+            501,
+            "a header and every record"
+        );
+
+        // No annotations: the compiler's tree, read whole.
+        let plain = register("part-plain", "doc = word\nword = ( TX )\n");
+        let Format::Custom(id) = plain else {
+            unreachable!()
+        };
+        assert!(matches!(
+            grammar::get(id).unwrap().compiled.transducer(),
+            Transducer::Whole(why) if why.starts_with("the start rule ")
+        ));
+        assert_eq!(plan(plain), Some(Plan::Materialize));
     }
 
     /// A parse that finishes late fails on the time, as the loader has

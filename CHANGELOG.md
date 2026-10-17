@@ -8,6 +8,25 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- A grammar from the command line with value annotations streams
+  through `--render` and `--alchemy` as the JSON family does. aless
+  generates a transducer from the annotations (tabnas-abnf 0.4.25), and
+  the records leave as the parse makes them.
+  - A failure part way leaves every record before it on standard
+    output, with `output` partial. Before, nothing was written until the
+    whole document had parsed.
+  - A grammar without annotations builds the compiler's parse tree,
+    whose root holds the whole document's text before its children, so
+    its documents are still parsed whole before anything is written.
+- Markdown's loss note gives `whole` (tabnas-markdown 0.7.13): a link can
+  name a definition that comes later, so a document's tree is complete
+  only at its end. Its records were already written only once its last
+  line was read.
+
 ## [0.4.4] - 2026-10-14
 
 ### Changed

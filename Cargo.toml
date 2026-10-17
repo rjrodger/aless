@@ -55,19 +55,19 @@ arboard = { version = "3.6", optional = true, default-features = false, features
 # which the published crates do not ship, from checkouts at the locked
 # versions' tags: TABNAS_FIXTURES_DIR and TABNAS_YAML_DIR name them, and
 # scripts/fixtures.sh clones them.
-tabnas = { package = "tabnas-parser", version = "0.12.11" }
-tabnas-json = "0.5.17"
-tabnas-jsonl = "0.1.17"
-tabnas-jsonic = "0.7.9"
-tabnas-jsonc = "0.5.14"
-tabnas-json5 = "0.5.16"
-tabnas-yaml = "0.5.24"
+tabnas = { package = "tabnas-parser", version = "0.12.12" }
+tabnas-json = "0.5.18"
+tabnas-jsonl = "0.1.18"
+tabnas-jsonic = "0.7.10"
+tabnas-jsonc = "0.5.15"
+tabnas-json5 = "0.5.17"
+tabnas-yaml = "0.5.25"
 tabnas-toml = "0.5.18"
 tabnas-ini = "0.5.20"
-tabnas-csv = "0.6.6"
-tabnas-xml = "0.7.18"
-tabnas-zon = "0.5.17"
-tabnas-markdown = "0.7.12"
+tabnas-csv = "0.6.7"
+tabnas-xml = "0.7.19"
+tabnas-zon = "0.5.18"
+tabnas-markdown = "0.7.13"
 tabnas-feed = "0.6.18"
 tabnas-expr = "0.5.19"
 tabnas-semver = "0.0.11"
@@ -80,17 +80,17 @@ tabnas-c = "0.5.15"
 # The ABNF compiler is also behind --grammar and --grammar-expr: a custom
 # grammar's text becomes a GrammarSpec at startup. Each emits through
 # tabnas-bnf, the compiler the BNF-family front-ends share.
-tabnas-abnf = "0.4.24"
+tabnas-abnf = "0.4.25"
 tabnas-ebnf = "0.1.19"
 tabnas-gbnf = "0.1.20"
 # The streaming transducer and its renderers, behind `--render`.
-tabnas-transduce = "0.2.8"
+tabnas-transduce = "0.2.9"
 tabnas-render = "0.2.5"
 # The alchemy language, behind `--alchemy`: a program compiled onto the
 # transducer's routers and the renderers, which aless passes in, and run
 # over any document the grammars read. The two crates above take their
 # shared types from it; it depends on neither.
-tabnas-alchemy = "0.2.7"
+tabnas-alchemy = "0.2.10"
 # Colour for a pane's text: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
 # feature is on: aless supplies the parsers, and needs neither the
