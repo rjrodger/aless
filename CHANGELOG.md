@@ -8,6 +8,15 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- An alchemy program run by `--alchemy` no longer slows down as a value
+  it builds grows (tabnas-alchemy 0.2.13). `push` and `pop` cost the
+  same at any length of vector, and `string-join` adds to a long string
+  without copying it.
+
 ## [0.4.5] - 2026-10-18
 
 ### Changed
