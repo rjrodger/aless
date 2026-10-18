@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use tabnas::{Tabnas, Token, Value};
+use tabnas::{Tabnas, Tin, Token, Value};
 
 use crate::doc::{Doc, Key, Kind};
 
@@ -80,15 +80,25 @@ pub enum TokVal {
 }
 
 impl Tok {
-    pub fn from_token(t: &Token) -> Tok {
+    /// The part of `t` that alignment needs. `fixed` is the text of the
+    /// fixed token `t`'s identity names, if it names one: the lexer gives
+    /// a fixed token no value, its text being its `src`, and the token
+    /// stands for that text, as each character of a semver version does.
+    /// A token another matcher makes under a fixed identity (ZON's `.{`
+    /// is `#OB`) is the fixed token only when its text is the fixed one.
+    pub fn from_token(t: &Token, fixed: Option<&str>) -> Tok {
         let src = t.src.as_str();
+        let stands_for = match &t.val {
+            Value::String(v) => Some(v.as_str()),
+            Value::Undefined if fixed == Some(src) => Some(src),
+            _ => None,
+        };
         let val = match &t.val {
-            Value::String(s) => TokVal::Str(s.clone()),
             Value::Text(s) => TokVal::Str(s.string.clone()),
             Value::Number(n) => TokVal::Num(*n),
             Value::Bool(b) => TokVal::Bool(*b),
             Value::Null => TokVal::Null,
-            _ => TokVal::Other,
+            _ => stands_for.map_or(TokVal::Other, |s| TokVal::Str(s.to_string())),
         };
         let bare = src.trim();
         let mut chars = bare.chars();
@@ -104,7 +114,7 @@ impl Tok {
                 "{" | ".{" => Some(false),
                 _ => None,
             },
-            bare_punct: single_punct && matches!(&t.val, Value::String(v) if v == bare),
+            bare_punct: single_punct && stands_for == Some(bare),
             text: t.name.as_str() == "#TX",
             rows: src.matches('\n').count() as u32,
             sep: t.name.as_str() == "#CA",
@@ -160,8 +170,16 @@ pub fn capture_cells(parser: &mut Tabnas) -> Capture {
 fn capture_with(parser: &mut Tabnas, words: bool, cells: bool) -> Capture {
     let sink: Capture = Arc::new(Mutex::new(Vec::new()));
     let s2 = sink.clone();
+    // Each fixed token's text, by the identity the lexer gives it.
+    let fixed: HashMap<Tin, String> = parser
+        .config()
+        .fixed
+        .tokens
+        .values()
+        .map(|t| (t.tin, t.source.clone()))
+        .collect();
     parser.subscribe_tokens(move |t: &Token| {
-        let tok = Tok::from_token(t);
+        let tok = Tok::from_token(t, fixed.get(&t.tin).map(String::as_str));
         let kept = worth_keeping(&tok)
             || (words && tok.text && tok.has_src)
             || (cells && (tok.sep || tok.line_end));
@@ -647,6 +665,27 @@ mod tests {
             vals,
             vec!["{", "a", "[", "1", "true", "null", "b", "x", "c", "-"]
         );
+    }
+
+    /// The lexer gives a fixed token no value, its text being its `src`,
+    /// and the token stands for that text: under tabnas-semver every
+    /// character of a version is a fixed token, so its numbers are kept and
+    /// placed, and its dots, being punctuation, are not kept.
+    #[test]
+    fn a_fixed_token_stands_for_its_text() {
+        let mut p = tabnas_semver::make();
+        let sink = capture(&mut p);
+        let v = p.parse("1.0.2").unwrap();
+        let toks = sink.lock().unwrap();
+        let kept: Vec<(u32, TokVal)> = toks.iter().map(|t| (t.col, t.val.clone())).collect();
+        let str = |s: &str| TokVal::Str(s.to_string());
+        assert_eq!(kept, vec![(1, str("1")), (3, str("0")), (5, str("2"))]);
+        let mut doc = Doc::from_value(&v);
+        align(&mut doc, &toks);
+        let cols: Vec<u32> = doc.nodes.iter().map(|n| n.col).collect();
+        // The root, then major, minor and patch; the empty pre-release and
+        // build lists have nothing in the source.
+        assert_eq!(&cols[..4], &[1, 1, 3, 5]);
     }
 
     /// Under a grammar of plain text a lone punctuation character is a
