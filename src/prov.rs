@@ -80,13 +80,19 @@ pub enum TokVal {
 }
 
 impl Tok {
+    /// The part of `t` that alignment needs, read as a token no fixed
+    /// token's identity names: [`Tok::from_token_with`] with no fixed text.
+    pub fn from_token(t: &Token) -> Tok {
+        Tok::from_token_with(t, None)
+    }
+
     /// The part of `t` that alignment needs. `fixed` is the text of the
     /// fixed token `t`'s identity names, if it names one: the lexer gives
     /// a fixed token no value, its text being its `src`, and the token
     /// stands for that text, as each character of a semver version does.
     /// A token another matcher makes under a fixed identity (ZON's `.{`
     /// is `#OB`) is the fixed token only when its text is the fixed one.
-    pub fn from_token(t: &Token, fixed: Option<&str>) -> Tok {
+    pub fn from_token_with(t: &Token, fixed: Option<&str>) -> Tok {
         let src = t.src.as_str();
         let stands_for = match &t.val {
             Value::String(v) => Some(v.as_str()),
@@ -179,7 +185,7 @@ fn capture_with(parser: &mut Tabnas, words: bool, cells: bool) -> Capture {
         .map(|t| (t.tin, t.source.clone()))
         .collect();
     parser.subscribe_tokens(move |t: &Token| {
-        let tok = Tok::from_token(t, fixed.get(&t.tin).map(String::as_str));
+        let tok = Tok::from_token_with(t, fixed.get(&t.tin).map(String::as_str));
         let kept = worth_keeping(&tok)
             || (words && tok.text && tok.has_src)
             || (cells && (tok.sep || tok.line_end));
