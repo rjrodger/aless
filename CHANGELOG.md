@@ -8,6 +8,15 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- Reading a long document takes less memory (tabnas-parser 0.12.14).
+  The engine's lexer kept a byte offset beside each character of the
+  text, eight bytes a character, and keeps none now for a text that is
+  all ASCII, where a character's place is its offset.
+
 ## [0.4.6] - 2026-10-18
 
 ### Changed
