@@ -12,6 +12,18 @@ bumps the version renames `Unreleased` to the version and its date
 
 ### Changed
 
+- JSON, YAML and XML stream through `--render` and `--alchemy` by the
+  transducers their packages ship (tabnas-json, tabnas-yaml and
+  tabnas-xml), which make a document's records of its parse's steps, as
+  a grammar from the command line's annotations do. The records are the
+  same, and they leave as the parse proceeds, as before.
+  - Nothing of the parse is kept behind them, so a long YAML or XML
+    document takes much less memory: 40,000 records of YAML in 60 MiB
+    rather than 133, and of XML in 74 MiB rather than 355.
+  - It takes longer: about a fifth longer for JSON, and four times as
+    long for YAML and XML.
+  - A YAML alias to a mapping or a sequence is read whole, as a stream
+    of several documents is, when nothing has been written yet.
 - Reading a long document takes less memory (tabnas-parser 0.12.14).
   The engine's lexer kept a byte offset beside each character of the
   text, eight bytes a character, and keeps none now for a text that is

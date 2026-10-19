@@ -59,7 +59,7 @@ use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
 pub use tabnas_alchemy::translate::{Adapter, Front, Native, Options, Part, Render, Root, Shape};
-use tabnas_alchemy::translate::{Composition as Composed, Descriptor, PartText};
+use tabnas_alchemy::translate::{Alc, Composition as Composed, Descriptor, PartText};
 use tabnas_alchemy::{Output, Program, Source};
 use tabnas_render::WriteOut;
 use tabnas_transduce::{Code, Fail, Limits, Metrics, Sink, TreeContract};
@@ -112,6 +112,36 @@ fn crates() -> Vec<Descriptor> {
     .into_iter()
     .flatten()
     .collect()
+}
+
+/// The transducer part a format's crate ships, as alchemy reads it with
+/// the manifest that names it (`translate.transduce`): the `.alc` file
+/// whose entry makes the format's JSON events of its parser's rule passes.
+/// Only the crates whose formats aless reads through their parts are
+/// asked ([`export::transducer`]); a manifest and a crate that disagree
+/// give none, and the format keeps the route it had.
+pub fn transducer(format: Format) -> Option<Alc> {
+    macro_rules! transducer {
+        ($name:literal, $module:ident) => {
+            $module::translate().and_then(|parts| {
+                let descriptor = Descriptor {
+                    package: $name.to_string(),
+                    manifest: parts.manifest.to_string(),
+                    lift: None,
+                    embed: None,
+                    render: None,
+                };
+                let text = parts.transduce.map(|p| PartText::new(p.entry, p.source));
+                Part::transducer(&descriptor, text.as_ref()).flatten()
+            })
+        };
+    }
+    match format {
+        Format::Json => transducer!("tabnas-json", tabnas_json),
+        Format::Yaml => transducer!("tabnas-yaml", tabnas_yaml),
+        Format::Xml => transducer!("tabnas-xml", tabnas_xml),
+        _ => None,
+    }
 }
 
 /// Every part the crates hand over, read once. A crate whose manifest

@@ -468,8 +468,9 @@ For those, pipe `--json` into jq.
   YAML, ZON, XML, PGN (a game at a time) and most annotated grammars
   from the command line, and after it for the rest. A document one of
   those grammars refuses to stream part-way (a jsonic implicit list, a
-  YAML `---` stream or `<<` merge key) is parsed whole and exported all
-  the same, when nothing has been written yet. So for a huge export,
+  YAML `---` stream, `<<` merge key or alias to a mapping or a sequence)
+  is parsed whole and exported all the same, when nothing has been
+  written yet. So for a huge export,
   prefer JSON Lines or CSV input, or convert once with `--render json`.
 - `--alchemy` streams the same way, and holds only what the program
   retains (`--explain` says what, and under which limit): a table over a

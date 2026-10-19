@@ -493,14 +493,17 @@ per input byte stands. What differs is when the output starts: for the
 JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and most
 annotated grammars from the command line ([Custom
 grammars](#custom-grammars) says which) the records are streamed out as
-the parse proceeds, and the exported array
-is not kept behind them (except in YAML and jsonic, whose grammars may
-still refer to it, and in a grammar from the command line, whose
-transducer reads the parse's steps rather than its value); for the rest they are streamed out after
-the parse, from the value it built. Where one of those grammars refuses to stream a particular
-document part-way (a jsonic implicit list whose first element is a
-container, a YAML stream of several documents or a `<<` merge key, a
-repeated member the grammar merges), aless falls back once to parsing it
+the parse proceeds, and the records already written are not kept behind
+them (except in jsonic, whose grammar may still refer to them, and in a
+grammar from the command line, whose transducer reads the parse's steps
+rather than its value); for the rest they are streamed out after the
+parse, from the value it built. JSON, YAML and XML are streamed through
+the transducers their packages ship, which make the records of the
+parse's steps as it takes them. Where one of those grammars refuses to
+stream a particular document part-way (a jsonic implicit list whose
+first element is a container; a YAML stream of several documents, a
+`<<` merge key or an alias to a mapping or a sequence; a repeated member
+the grammar merges), aless falls back once to parsing it
 whole and streaming its value, provided nothing has been written yet;
 otherwise the refusal is reported with `output: "partial"`. A JSON Lines
 record that repeats a member is refused so too, its stream holding the
@@ -723,8 +726,9 @@ $ aless --alchemy tests/fixtures/programs/export.alc tests/fixtures/records.json
 The input reaches the program the way an export reaches its renderer
 ([Streaming, and what is read whole](#exporting)): JSON Lines, CSV and TSV a record at
 a time, a verified grammar's events as the parse proceeds, with the parse
-pruned under the rows the program's plan names, and every other grammar's
-value after its parse; the same fallback when a grammar refuses to
+pruned behind them (JSON, YAML and XML, through their transducers) or
+under the rows the program's plan names (the rest), and every other
+grammar's value after its parse; the same fallback when a grammar refuses to
 stream, the same `--timeout` and depth caps, and the transducer's default
 limits, which a failure names. What the run holds is what the program
 retains (`--explain` says what, and under which limit), so a table over a
