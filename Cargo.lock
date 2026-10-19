@@ -1377,9 +1377,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-parser"
-version = "0.12.13"
+version = "0.12.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d93ee91b630e1b66f2edeaf0f199c9649bcfae7af0067c8d554e76413efd0912"
+checksum = "45ed901434ad65c2b85e9f2bfbd41b9f3e0285268784b6eed39f996289762a02"
 dependencies = [
  "indexmap",
  "regex",
