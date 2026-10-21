@@ -725,10 +725,8 @@ $ aless --alchemy tests/fixtures/programs/export.alc tests/fixtures/records.json
 
 The input reaches the program the way an export reaches its renderer
 ([Streaming, and what is read whole](#exporting)): JSON Lines, CSV and TSV a record at
-a time, a verified grammar's events as the parse proceeds, with the parse
-pruned behind them (each format whose package ships a transducer,
-through it) or
-under the rows the program's plan names (the rest), and every other
+a time, a format whose package ships a transducer through it as the
+parse proceeds, with the parse pruned behind it, and every other
 grammar's value after its parse; the same fallback when a grammar refuses to
 stream, the same `--timeout` and depth caps, and the transducer's default
 limits, which a failure names. What the run holds is what the program

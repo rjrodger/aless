@@ -6,9 +6,9 @@
 //! JSON events. aless compiles the program, asks it what it produces, and
 //! drives the document into the sink it builds through the same source
 //! plumbing `--render` runs on ([`export::run_program`]): JSON Lines, CSV
-//! and TSV a record at a time, a grammar the transducer has verified for
-//! incremental streaming as the parse proceeds, pruned under the rows the
-//! program's plan names, and every other grammar parsed whole and walked.
+//! and TSV a record at a time, a format whose package ships a transducer
+//! part through it as the parse proceeds, the engine's arrays emptied
+//! behind the stream, and every other grammar parsed whole and walked.
 //! The output is written as it is produced; what the run holds is what
 //! the program retains, under the transducer's limits.
 //!

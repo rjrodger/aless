@@ -8,6 +8,16 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- Markdown is parsed whole and then streamed, as every format whose
+  package ships no transducer is. It was streamed by tabnas-transduce's
+  incremental source, which began only once the last line was in, so its
+  output and its memory are as they were; aless no longer uses that
+  source, which tabnas-transduce is retiring.
+
 ## [0.4.7] - 2026-10-21
 
 ### Changed
