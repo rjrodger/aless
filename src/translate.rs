@@ -138,8 +138,13 @@ pub fn transducer(format: Format) -> Option<Alc> {
     }
     match format {
         Format::Json => transducer!("tabnas-json", tabnas_json),
+        Format::Jsonc => transducer!("tabnas-jsonc", tabnas_jsonc),
+        Format::Json5 => transducer!("tabnas-json5", tabnas_json5),
+        Format::Jsonic => transducer!("tabnas-jsonic", tabnas_jsonic),
         Format::Yaml => transducer!("tabnas-yaml", tabnas_yaml),
         Format::Xml => transducer!("tabnas-xml", tabnas_xml),
+        Format::Zon => transducer!("tabnas-zon", tabnas_zon),
+        Format::Pgn => transducer!("tabnas-chess", tabnas_chess),
         _ => None,
     }
 }

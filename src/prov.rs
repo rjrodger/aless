@@ -154,7 +154,14 @@ pub fn worth_keeping(tok: &Tok) -> bool {
 
 /// Subscribe to the parser's token stream, returning the sink it fills.
 pub fn capture(parser: &mut Tabnas) -> Capture {
-    capture_with(parser, false, false)
+    capture_with(parser, false, false, &[])
+}
+
+/// [`capture`], keeping no token the names given identify: a grammar's
+/// number tokens whose values the tree also holds as counts of its own
+/// making, which an alignment by value would match out of place.
+pub fn capture_except(parser: &mut Tabnas, names: &'static [&'static str]) -> Capture {
+    capture_with(parser, false, false, names)
 }
 
 /// [`capture`], keeping a word token (`#TX`) too when it is a single
@@ -162,7 +169,7 @@ pub fn capture(parser: &mut Tabnas) -> Capture {
 /// is plain, so `*` (a passwd password) is a word and a value, where under
 /// the JSON family punctuation stands for itself and is not kept.
 pub fn capture_words(parser: &mut Tabnas) -> Capture {
-    capture_with(parser, true, false)
+    capture_with(parser, true, false, &[])
 }
 
 /// [`capture`], keeping every field separator and line end too, for a
@@ -170,10 +177,15 @@ pub fn capture_words(parser: &mut Tabnas) -> Capture {
 /// column structure [`align_records`] aligns by, where a value's text
 /// alone cannot tell which cell it is.
 pub fn capture_cells(parser: &mut Tabnas) -> Capture {
-    capture_with(parser, false, true)
+    capture_with(parser, false, true, &[])
 }
 
-fn capture_with(parser: &mut Tabnas, words: bool, cells: bool) -> Capture {
+fn capture_with(
+    parser: &mut Tabnas,
+    words: bool,
+    cells: bool,
+    except: &'static [&'static str],
+) -> Capture {
     let sink: Capture = Arc::new(Mutex::new(Vec::new()));
     let s2 = sink.clone();
     // Each fixed token's text, by the identity the lexer gives it.
@@ -185,6 +197,9 @@ fn capture_with(parser: &mut Tabnas, words: bool, cells: bool) -> Capture {
         .map(|t| (t.tin, t.source.clone()))
         .collect();
     parser.subscribe_tokens(move |t: &Token| {
+        if except.contains(&t.name.as_str()) {
+            return;
+        }
         let tok = Tok::from_token_with(t, fixed.get(&t.tin).map(String::as_str));
         let kept = worth_keeping(&tok)
             || (words && tok.text && tok.has_src)

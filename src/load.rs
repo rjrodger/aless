@@ -2383,6 +2383,14 @@ fn parse_guarded(
         Some(prov::capture_words(&mut parser))
     } else if format.keyed_by_header() {
         Some(prov::capture_cells(&mut parser))
+    } else if format == Format::Pgn {
+        // tabnas-chess counts a game's moves itself, so the tree holds a
+        // number for every move, most of which the source never spells,
+        // and a move number and a glyph are number tokens: matched by
+        // value, a count no token spells would take the next game's `1.`,
+        // and leave that game's tags behind the cursor. They place
+        // nothing, as before their tokens carried values.
+        Some(prov::capture_except(&mut parser, &["#MVN", "#NAG"]))
     } else {
         Some(prov::capture(&mut parser))
     };

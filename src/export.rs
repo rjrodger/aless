@@ -140,24 +140,23 @@ pub enum Plan {
 /// to its end a record at a time as it does at the root. `None` for plain
 /// text, which has no grammar and so no events.
 ///
-/// JSON, YAML and XML are read through the transducer parts their crates
-/// ship, and a grammar from the command line through the part its
-/// annotations make ([`transducer`]); that route empties each array in
-/// the engine's tree behind the stream for a grammar transduce verifies
-/// alike pruned and not ([`capability::prunable`]), never for a grammar
-/// from the command line.
+/// Every format whose crate ships a transducer part is read through it
+/// (JSON, JSONC, JSON5, jsonic, YAML, XML, ZON and PGN), and a grammar
+/// from the command line through the part its annotations make
+/// ([`transducer`]); that route empties each array in the engine's tree
+/// behind the stream for a grammar transduce verifies alike pruned and not
+/// ([`capability::prunable`]), never for a grammar from the command line.
 ///
-/// The incremental route prunes the exported array in the engine's tree
-/// as its elements are streamed, which is sound only while the grammar
-/// never reads that array back. YAML does, should it come this way: an
-/// alias copies its anchor's value when the alias is met. jsonic rewrites
-/// containers in place after they are built (a value promoted into an
-/// implicit list, repeated members merged), and Markdown builds its tree
-/// imperatively, appending to nodes it already inserted; whether either
-/// reads a streamed array back is not established, so neither is pruned.
-/// The rest keep the memory saving. So does PGN: tabnas-chess builds a
-/// game on a stack of its own and only appends it, complete, to the
-/// database, which it never reads back.
+/// The incremental route is left to Markdown, whose manifest says why it
+/// is read whole and which transduce's inference streams only once its
+/// last line is in. It prunes the exported array in the engine's tree as
+/// its elements are streamed, which is sound only while the grammar never
+/// reads that array back. Markdown builds its tree imperatively, appending
+/// to nodes it already inserted; whether it reads a streamed array back is
+/// not established, so it is not pruned. YAML and jsonic, which came this
+/// way before their parts, were not pruned either: an alias copies its
+/// anchor's value when the alias is met, and jsonic rewrites containers in
+/// place after they are built.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -176,13 +175,20 @@ pub fn plan(format: Format) -> Option<Plan> {
 /// The transducer part a format's documents are read through, when it has
 /// one: an alchemy program over the parser's rule passes that makes the
 /// document's events of them. A grammar from the command line has the part
-/// its value annotations generate ([`crate::grammar::Transducer`]); JSON,
-/// YAML and XML have the parts their crates ship ([`shipped`]); a format
-/// with none keeps the route [`plan`] gives it.
+/// its value annotations generate ([`crate::grammar::Transducer`]); a
+/// format whose crate ships a part has it ([`shipped`]); a format with
+/// none keeps the route [`plan`] gives it.
 pub fn transducer(format: Format) -> Option<&'static Program> {
     match format {
         Format::Custom(id) => crate::grammar::get(id)?.compiled.transducer().part(),
-        Format::Json | Format::Yaml | Format::Xml => shipped(format),
+        Format::Json
+        | Format::Jsonc
+        | Format::Json5
+        | Format::Jsonic
+        | Format::Yaml
+        | Format::Xml
+        | Format::Zon
+        | Format::Pgn => shipped(format),
         _ => None,
     }
 }
@@ -193,12 +199,22 @@ pub fn transducer(format: Format) -> Option<&'static Program> {
 /// and the format keeps the route it had.
 fn shipped(format: Format) -> Option<&'static Program> {
     static JSON: OnceLock<Option<Program>> = OnceLock::new();
+    static JSONC: OnceLock<Option<Program>> = OnceLock::new();
+    static JSON5: OnceLock<Option<Program>> = OnceLock::new();
+    static JSONIC: OnceLock<Option<Program>> = OnceLock::new();
     static YAML: OnceLock<Option<Program>> = OnceLock::new();
     static XML: OnceLock<Option<Program>> = OnceLock::new();
+    static ZON: OnceLock<Option<Program>> = OnceLock::new();
+    static PGN: OnceLock<Option<Program>> = OnceLock::new();
     let compiled = match format {
         Format::Json => &JSON,
+        Format::Jsonc => &JSONC,
+        Format::Json5 => &JSON5,
+        Format::Jsonic => &JSONIC,
         Format::Yaml => &YAML,
         Format::Xml => &XML,
+        Format::Zon => &ZON,
+        Format::Pgn => &PGN,
         _ => return None,
     };
     compiled
@@ -801,7 +817,7 @@ fn run<S: Sink + Send + 'static>(
                         } else {
                             source
                         };
-                        through_part(source, part, scope, format.is_custom(), steps, stop)
+                        through_part(source, part, scope, held_to_a_tree(format), steps, stop)
                     }
                     Mode::Stream(prune) => {
                         // The source checks the grammar's name against the
@@ -1016,21 +1032,21 @@ enum Mode {
 /// parser and the transducer's limits: the source's on the passes, and the
 /// part's on the events it makes, as on a source's own.
 ///
-/// With `contract`, for the part a grammar from the command line's
-/// annotations make, the events are held to a tree's contract before the
-/// scope sees them, so a document whose events are no tree's (a member the
-/// part streams twice, which the grammar's value keeps once, or a second
-/// root) is refused as the part's, which [`attempt`] reads whole once
-/// more, parsing it again, when nothing was written. A part a crate ships
-/// is held to the walk of its grammar's value on every fixture by
-/// alchemy-cli's differential suite, a repeated member streamed as each
-/// occurrence, as the incremental source streams it, for the host to
-/// judge; so its events are held to one root alone ([`OneRoot`]), which
-/// is what YAML's part leaves to the host for a stream of several
-/// documents, and the export settles a repeated member as it always has
-/// (the scope refuses one on the path, and the renderer's own chain one
-/// inside the value), a member repeated off the path no refusal at all.
-/// `steps` is the flag the part's program reads between steps.
+/// With `contract` ([`held_to_a_tree`]), the events are held to a tree's
+/// contract before the scope sees them, so a document whose events are no
+/// tree's (a member the part streams twice, which the grammar's value
+/// keeps once, or a second root) is refused as the part's, which
+/// [`attempt`] reads whole once more, parsing it again, when nothing was
+/// written. A part a crate ships is held to the walk of its grammar's
+/// value on every fixture by alchemy-cli's differential suite, a repeated
+/// member streamed as each occurrence, as the incremental source streams
+/// it, for the host to judge; so its events are held to one root alone
+/// ([`OneRoot`]), which is what YAML's part leaves to the host for a
+/// stream of several documents, and the export settles a repeated member
+/// as it always has (the scope refuses one on the path, and the renderer's
+/// own chain one inside the value), a member repeated off the path no
+/// refusal at all. `steps` is the flag the part's program reads between
+/// steps.
 fn through_part<S: Sink + Send + 'static>(
     source: ParserEventSource<'_>,
     part: &Program,
@@ -1095,6 +1111,17 @@ fn through_part<S: Sink + Send + 'static>(
             from_sink: false,
         },
     }
+}
+
+/// Whether a part's events are held to a tree's whole contract
+/// ([`through_part`]) rather than to one root: those of the part a grammar
+/// from the command line's annotations make, and jsonic's. jsonic's
+/// grammar merges a repeated member (`map.extend`), which its part streams
+/// as each occurrence; the export settles a repeated member by keeping the
+/// last, as JSON's value does, which is not jsonic's, so a document of
+/// jsonic's with one is read whole, as its part asks of a host.
+fn held_to_a_tree(format: Format) -> bool {
+    format.is_custom() || matches!(format, Format::Jsonic)
 }
 
 /// A part's events held to one root value, as a tree's contract holds
@@ -2313,9 +2340,18 @@ mod tests {
             assert_eq!(plan(f), Some(Plan::Lines), "{f}");
         }
         // Through the parts their crates ship, the engine's arrays emptied
-        // behind the stream, since transduce verifies the three alike
-        // pruned and not.
-        for f in [Format::Json, Format::Yaml, Format::Xml] {
+        // behind the stream, since transduce verifies each alike pruned
+        // and not.
+        for f in [
+            Format::Json,
+            Format::Jsonc,
+            Format::Json5,
+            Format::Jsonic,
+            Format::Yaml,
+            Format::Xml,
+            Format::Zon,
+            Format::Pgn,
+        ] {
             assert_eq!(plan(f), Some(Plan::Part), "{f}");
             let j = job(f, Renderer::Json, ".");
             assert!(
@@ -2323,13 +2359,11 @@ mod tests {
                 "{f}"
             );
         }
-        for f in [Format::Json5, Format::Jsonc, Format::Zon, Format::Pgn] {
-            assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
-        }
-        // Verified, but they may read a streamed container back.
-        for f in [Format::Jsonic, Format::Markdown] {
-            assert_eq!(plan(f), Some(Plan::Incremental { prune: false }), "{f}");
-        }
+        // Verified, but it may read a streamed container back.
+        assert_eq!(
+            plan(Format::Markdown),
+            Some(Plan::Incremental { prune: false })
+        );
         // Parsed whole, then walked: the imperative grammars, and those no
         // differential suite has verified, which build a tree of a schema's
         // from their parse (proto's descriptor, expr's S-expressions, C's
@@ -2515,6 +2549,26 @@ mod tests {
         let (r, out) = run_text(&j, stream);
         r.unwrap();
         assert_eq!(out, "[{\"a\":1},{\"b\":2}]\n");
+    }
+
+    /// jsonic's grammar merges a repeated member (`map.extend`), which its
+    /// part streams as each occurrence, where a table keeps the last of a
+    /// repeated member, as JSON's value does: held to a tree's contract,
+    /// jsonic's stream is refused at the second occurrence, and the export
+    /// reads the document whole, the merge written. JSON's is not.
+    #[test]
+    fn a_member_jsonic_merges_is_read_whole() {
+        let j = job(Format::Jsonic, Renderer::Csv, ".");
+        let rows = "[{a:{b:1},a:{c:2}}]";
+        let fail = scoped(&j, rows, mode_for(&j)).unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
+        let (r, out) = run_text(&j, rows);
+        r.unwrap();
+        assert_eq!(out, "\"a\"\r\n\"{\"\"b\"\":1,\"\"c\"\":2}\"\r\n");
+        let j = job(Format::Json, Renderer::Csv, ".");
+        let (r, out) = run_text(&j, r#"[{"a":{"b":1},"a":{"c":2}}]"#);
+        r.unwrap();
+        assert_eq!(out, "\"a\"\r\n\"{\"\"c\"\":2}\"\r\n");
     }
 
     /// A grammar whose compile ends past the deadline is too late, whatever
