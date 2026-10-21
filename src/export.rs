@@ -17,18 +17,25 @@
 //!   `--max-size` does not apply to it: at the root the records are the
 //!   export's, and below it (`--path`) the scope takes the value it names
 //!   from the records as they pass;
+//! - JSON, YAML and XML, and a grammar from the command line whose
+//!   annotations make a part, are parsed whole and read through a
+//!   transducer part ([`transducer`]): an alchemy program makes the
+//!   document's events of the parser's rule passes, which leave as the
+//!   parse proceeds, and the engine's arrays are emptied behind the stream
+//!   for a grammar transduce verifies alike pruned and not;
 //! - a grammar the transducer has verified for incremental streaming
-//!   (`capability::incremental`: the JSON family, jsonic, YAML, ZON and
-//!   Markdown) is parsed whole, the events leaving as the parse proceeds,
-//!   and the exported array is emptied behind the stream so it is not held
-//!   twice — except where the grammar may read a container back after it
-//!   was streamed (see [`plan`]);
+//!   (`capability::incremental`: the rest of the JSON family, jsonic, ZON,
+//!   PGN and Markdown) is parsed whole, the events leaving as the parse
+//!   proceeds, and the exported array is emptied behind the stream so it
+//!   is not held twice, except where the grammar may read a container back
+//!   after it was streamed (see [`plan`]);
 //! - every other grammar is parsed whole and its value walked afterwards.
 //!
-//! A verified grammar may still refuse to stream a particular document
-//! part-way (a jsonic implicit list whose first element is a container, a
-//! YAML stream of several documents or a `<<` merge key, a repeated member
-//! the grammar merges): the transducer stops with `STREAMABILITY_UNKNOWN`
+//! A part or a verified grammar may still refuse to stream a particular
+//! document part-way (a jsonic implicit list whose first element is a
+//! container; a YAML stream of several documents, a `<<` merge key or an
+//! alias to a mapping or a sequence; a repeated member the grammar
+//! merges): the transducer stops with `STREAMABILITY_UNKNOWN`
 //! or `DUPLICATE_MEMBER` before a wrong stream can complete. When nothing
 //! has reached the output yet, the export falls back once to the other
 //! path, parsing the document whole and streaming its value; when output
@@ -47,7 +54,7 @@
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -68,6 +75,7 @@ use crate::headless::{kind_of_event, Seg, KEYS_LISTED};
 use crate::load::{
     self, Deadline, Deep, Format, LoadError, Stop, STOP_DEPTH, STOP_TIME, STOP_VALUE_DEPTH,
 };
+use crate::translate;
 
 /// The output `--render` writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,19 +140,24 @@ pub enum Plan {
 /// to its end a record at a time as it does at the root. `None` for plain
 /// text, which has no grammar and so no events.
 ///
-/// Pruning empties the exported array in the engine's tree as its
-/// elements are streamed, which is sound only while the grammar never
-/// reads that array back. YAML does: an alias copies its anchor's value
-/// when the alias is met. jsonic rewrites containers in place after they
-/// are built (a value promoted into an implicit list, repeated members
-/// merged), and Markdown builds its tree imperatively, appending to nodes
-/// it already inserted; whether either reads a streamed array back is not
-/// established, so neither is pruned. The rest keep the memory saving,
-/// XML among them: its rules only append to an element's children, in a
-/// list of one owner until the element closes, which tabnas-xml keeps so
-/// that pruning empties the list the element stores. So does PGN:
-/// tabnas-chess builds a game on a stack of its own and only appends it,
-/// complete, to the database, which it never reads back.
+/// JSON, YAML and XML are read through the transducer parts their crates
+/// ship, and a grammar from the command line through the part its
+/// annotations make ([`transducer`]); that route empties each array in
+/// the engine's tree behind the stream for a grammar transduce verifies
+/// alike pruned and not ([`capability::prunable`]), never for a grammar
+/// from the command line.
+///
+/// The incremental route prunes the exported array in the engine's tree
+/// as its elements are streamed, which is sound only while the grammar
+/// never reads that array back. YAML does, should it come this way: an
+/// alias copies its anchor's value when the alias is met. jsonic rewrites
+/// containers in place after they are built (a value promoted into an
+/// implicit list, repeated members merged), and Markdown builds its tree
+/// imperatively, appending to nodes it already inserted; whether either
+/// reads a streamed array back is not established, so neither is pruned.
+/// The rest keep the memory saving. So does PGN: tabnas-chess builds a
+/// game on a stack of its own and only appends it, complete, to the
+/// database, which it never reads back.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
@@ -163,13 +176,48 @@ pub fn plan(format: Format) -> Option<Plan> {
 /// The transducer part a format's documents are read through, when it has
 /// one: an alchemy program over the parser's rule passes that makes the
 /// document's events of them. A grammar from the command line has the part
-/// its value annotations generate ([`crate::grammar::Transducer`]); a
-/// format with none keeps the route [`plan`] gives it.
+/// its value annotations generate ([`crate::grammar::Transducer`]); JSON,
+/// YAML and XML have the parts their crates ship ([`shipped`]); a format
+/// with none keeps the route [`plan`] gives it.
 pub fn transducer(format: Format) -> Option<&'static Program> {
     match format {
         Format::Custom(id) => crate::grammar::get(id)?.compiled.transducer().part(),
+        Format::Json | Format::Yaml | Format::Xml => shipped(format),
         _ => None,
     }
+}
+
+/// The part a format's crate ships ([`translate::transducer`]), compiled
+/// once, its entry exported by a main of its own as a grammar from the
+/// command line's is. A part that does not compile is its crate's defect,
+/// and the format keeps the route it had.
+fn shipped(format: Format) -> Option<&'static Program> {
+    static JSON: OnceLock<Option<Program>> = OnceLock::new();
+    static YAML: OnceLock<Option<Program>> = OnceLock::new();
+    static XML: OnceLock<Option<Program>> = OnceLock::new();
+    let compiled = match format {
+        Format::Json => &JSON,
+        Format::Yaml => &YAML,
+        Format::Xml => &XML,
+        _ => return None,
+    };
+    compiled
+        .get_or_init(|| {
+            let alc = translate::transducer(format)?;
+            let main = format!("def export [input] ({} input)", alc.entry);
+            let sources = [
+                tabnas_alchemy::Source::new(&alc.file, &alc.text),
+                tabnas_alchemy::Source::new("aless", &main),
+            ];
+            tabnas_alchemy::compile_sources_with(
+                &sources,
+                tabnas_alchemy::Input::ParserEvents,
+                crate::alchemy::routers(),
+                crate::alchemy::renderers(),
+            )
+            .ok()
+        })
+        .as_ref()
 }
 
 /// What a run produces.
@@ -482,7 +530,7 @@ fn attempt<S: Sink + Send + 'static>(
                     // value measure its parse is held to (`MAX_VALUE_DEPTH`):
                     // the whole read says which of the two the document
                     // passes, as it did before the part.
-                    || (matches!(mode, Mode::Part(_))
+                    || (matches!(mode, Mode::Part { .. })
                         && !failed.from_sink
                         && f.code == Code::ResourceLimitExceeded
                         && f.limit.as_ref().is_some_and(|l| l.name == "max_depth"))
@@ -744,7 +792,17 @@ fn run<S: Sink + Send + 'static>(
                     Mode::Whole => {
                         materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
                     }
-                    Mode::Part(part) => through_part(parser, text, part, scope, abort, steps, stop),
+                    Mode::Part { part, prune } => {
+                        let source = ParserEventSource::new(parser, text)
+                            .limits(limits())
+                            .abort(abort);
+                        let source = if prune {
+                            source.grammar(format.name()).prune()
+                        } else {
+                            source
+                        };
+                        through_part(source, part, scope, format.is_custom(), steps, stop)
+                    }
                     Mode::Stream(prune) => {
                         // The source checks the grammar's name against the
                         // verified list itself, and refuses an unlisted one
@@ -947,30 +1005,46 @@ enum Mode {
     /// The grammar's events as the parse proceeds, the exported array
     /// pruned behind them as [`plan`] allows.
     Stream(Prune),
-    /// The parser's rule passes through the format's transducer part.
-    Part(&'static Program),
+    /// The parser's rule passes through the format's transducer part,
+    /// the engine's arrays emptied behind the stream when `prune` says so
+    /// ([`mode_for`]).
+    Part { part: &'static Program, prune: bool },
 }
 
-/// Drive the parser's rule passes through the format's transducer part
-/// into `scope`, under aless's guard on the parser and the transducer's
-/// limits: the source's on the passes, and the part's on the events it
-/// makes, as on a source's own. The events are held to a tree's contract
-/// before the scope sees them, so a document whose events are no tree's (a
-/// member the part streams twice, which the grammar's value keeps once, or
-/// a second root) is refused as the part's, which [`attempt`] reads whole
-/// once more when nothing was written. `steps` is the flag the part's
-/// program reads between steps.
+/// Drive the parser's rule passes, as `source` relays them, through the
+/// format's transducer part into `scope`, under aless's guard on the
+/// parser and the transducer's limits: the source's on the passes, and the
+/// part's on the events it makes, as on a source's own.
+///
+/// With `contract`, for the part a grammar from the command line's
+/// annotations make, the events are held to a tree's contract before the
+/// scope sees them, so a document whose events are no tree's (a member the
+/// part streams twice, which the grammar's value keeps once, or a second
+/// root) is refused as the part's, which [`attempt`] reads whole once
+/// more, parsing it again, when nothing was written. A part a crate ships
+/// is held to the walk of its grammar's value on every fixture by
+/// alchemy-cli's differential suite, a repeated member streamed as each
+/// occurrence, as the incremental source streams it, for the host to
+/// judge; so its events are held to one root alone ([`OneRoot`]), which
+/// is what YAML's part leaves to the host for a stream of several
+/// documents, and the export settles a repeated member as it always has
+/// (the scope refuses one on the path, and the renderer's own chain one
+/// inside the value), a member repeated off the path no refusal at all.
+/// `steps` is the flag the part's program reads between steps.
 fn through_part<S: Sink + Send + 'static>(
-    parser: Tabnas,
-    text: &str,
+    source: ParserEventSource<'_>,
     part: &Program,
     scope: Scope<S>,
-    abort: AbortFlag,
+    contract: bool,
     steps: AbortFlag,
     stop: Arc<Stop>,
 ) -> Ran {
     let shared = Arc::new(Mutex::new(scope));
-    let down: Box<dyn Sink + Send> = Box::new(TreeContract::new(SharedScope(shared.clone())));
+    let down: Box<dyn Sink + Send> = if contract {
+        Box::new(TreeContract::new(SharedScope(shared.clone())))
+    } else {
+        Box::new(OneRoot::new(SharedScope(shared.clone())))
+    };
     let head = match part
         .with_abort(steps)
         .parser_sink_into(down, &limits(), Metrics::new())
@@ -985,9 +1059,6 @@ fn through_part<S: Sink + Send + 'static>(
             }
         }
     };
-    let source = ParserEventSource::new(parser, text)
-        .limits(limits())
-        .abort(abort);
     // The part's chain, and the scope's other handle with it, is dropped
     // when the run returns, so the scope is the run's alone again.
     let outcome = load::catch_grammar(|| source.run_boxed(head).0);
@@ -1026,6 +1097,56 @@ fn through_part<S: Sink + Send + 'static>(
     }
 }
 
+/// A part's events held to one root value, as a tree's contract holds
+/// them, with its code and its words: a value once the root is whole is
+/// refused (`STREAMABILITY_UNKNOWN`, `not_a_tree`), and not passed on.
+/// Nothing else of the contract is asked of a part a crate ships
+/// ([`through_part`]).
+struct OneRoot<S> {
+    inner: S,
+    /// The containers open.
+    depth: usize,
+    /// A whole root value has passed.
+    done: bool,
+}
+
+impl<S> OneRoot<S> {
+    fn new(inner: S) -> OneRoot<S> {
+        OneRoot {
+            inner,
+            depth: 0,
+            done: false,
+        }
+    }
+}
+
+impl<S: Sink> Sink for OneRoot<S> {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        match &ev {
+            JsonEvent::End | JsonEvent::Key(_) => {}
+            JsonEvent::ObjectEnd | JsonEvent::ArrayEnd => {
+                self.depth = self.depth.saturating_sub(1);
+                self.done = self.depth == 0;
+            }
+            value => {
+                if self.depth == 0 && self.done {
+                    return Err(Fail::new(
+                        Code::StreamabilityUnknown,
+                        "not_a_tree: the stream holds a second root value, which a tree's \
+                         events never do, so it is not a tree's",
+                    )
+                    .at_path("."));
+                }
+                match value {
+                    JsonEvent::ObjectStart | JsonEvent::ArrayStart => self.depth += 1,
+                    _ => self.done = self.depth == 0,
+                }
+            }
+        }
+        self.inner.event(ev)
+    }
+}
+
 /// The scope, as the part's chain holds it while the run goes on: the run
 /// reads the scope's verdict once the chain has let it go.
 struct SharedScope<S>(Arc<Mutex<Scope<S>>>);
@@ -1042,7 +1163,11 @@ impl<S: Sink> Sink for SharedScope<S> {
 /// otherwise.
 fn mode_for(job: &Job) -> Mode {
     if let Some(part) = transducer(job.format) {
-        return Mode::Part(part);
+        // The passes are the same pruned or not for a grammar transduce
+        // lists, whatever reads them; a grammar from the command line is
+        // on no list, whatever it is named.
+        let prune = !job.format.is_custom() && capability::prunable(job.format.name());
+        return Mode::Part { part, prune };
     }
     // A custom grammar with no part builds its value whole; nothing
     // streams it.
@@ -2187,18 +2312,22 @@ mod tests {
         for f in [Format::Jsonl, Format::Csv, Format::Tsv] {
             assert_eq!(plan(f), Some(Plan::Lines), "{f}");
         }
-        for f in [
-            Format::Json,
-            Format::Json5,
-            Format::Jsonc,
-            Format::Zon,
-            Format::Xml,
-            Format::Pgn,
-        ] {
+        // Through the parts their crates ship, the engine's arrays emptied
+        // behind the stream, since transduce verifies the three alike
+        // pruned and not.
+        for f in [Format::Json, Format::Yaml, Format::Xml] {
+            assert_eq!(plan(f), Some(Plan::Part), "{f}");
+            let j = job(f, Renderer::Json, ".");
+            assert!(
+                matches!(mode_for(&j), Mode::Part { prune: true, .. }),
+                "{f}"
+            );
+        }
+        for f in [Format::Json5, Format::Jsonc, Format::Zon, Format::Pgn] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: true }), "{f}");
         }
         // Verified, but they may read a streamed container back.
-        for f in [Format::Yaml, Format::Jsonic, Format::Markdown] {
+        for f in [Format::Jsonic, Format::Markdown] {
             assert_eq!(plan(f), Some(Plan::Incremental { prune: false }), "{f}");
         }
         // Parsed whole, then walked: the imperative grammars, and those no
@@ -2237,6 +2366,155 @@ mod tests {
         assert_eq!(Renderer::Part("yaml").name(), "yaml");
         assert_eq!(Renderer::from_name("toml"), Some(Renderer::Part("toml")));
         assert_eq!(Renderer::from_name("tsv"), None, "TSV is written as csv");
+    }
+
+    /// The events a run hands its scope's sink, in the mode given.
+    fn scoped(job: &Job, text: &str, mode: Mode) -> Result<Vec<OwnedJsonEvent>, Fail> {
+        struct Collect(Arc<Mutex<Vec<OwnedJsonEvent>>>);
+        impl Sink for Collect {
+            fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                self.0.lock().unwrap().push(ev.to_owned());
+                Ok(Flow::Continue)
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let scope = Scope::new(job.path.clone(), Collect(seen.clone()));
+        let ran = run(
+            job,
+            Input::Text(text),
+            scope,
+            mode,
+            AbortFlag::new(),
+            AbortFlag::new(),
+        );
+        match ran {
+            Ok(()) => Ok(seen.lock().unwrap().clone()),
+            Err(failed) => match failed.why {
+                Outcome::Failed(fail) => Err(fail),
+                other => panic!("{other:?}"),
+            },
+        }
+    }
+
+    /// The events with their numbers' lexemes dropped: a part's numbers
+    /// keep the text the document spelled them in, which the walk of the
+    /// grammar's value does not have.
+    fn plain(events: Vec<OwnedJsonEvent>) -> Vec<OwnedJsonEvent> {
+        events
+            .into_iter()
+            .map(|e| match e {
+                OwnedJsonEvent::Number { value, .. } => OwnedJsonEvent::Number {
+                    value,
+                    lexeme: None,
+                },
+                e => e,
+            })
+            .collect()
+    }
+
+    /// JSON, YAML and XML are read through the parts their crates ship,
+    /// the engine's arrays emptied behind the stream: over records of
+    /// every kind of scalar, the events are the same pruned and not, and
+    /// they are the walk of the grammar's value.
+    #[test]
+    fn json_yaml_and_xml_read_through_their_crates_parts() {
+        let n = 300;
+        let json = format!(
+            "[{}]",
+            (0..n)
+                .map(|i| format!(
+                    "{{\"id\": {i}, \"name\": \"n{i}\", \"ok\": {}, \"none\": null, \"tags\": \
+                     [\"a\", {i}.5]}}",
+                    i % 2 == 0
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let yaml: String = (0..n)
+            .map(|i| {
+                format!(
+                    "- id: {i}\n  name: n{i}\n  ok: {}\n  tags: [a, {i}.5]\n",
+                    i % 2 == 0
+                )
+            })
+            .collect();
+        let xml = format!(
+            "<rows>{}</rows>",
+            (0..n)
+                .map(|i| format!("<row id=\"{i}\"><name>n{i}</name><tag/></row>"))
+                .collect::<String>()
+        );
+        for (format, text) in [
+            (Format::Json, json),
+            (Format::Yaml, yaml),
+            (Format::Xml, xml),
+        ] {
+            let j = job(format, Renderer::Json, ".");
+            let part = transducer(format).unwrap_or_else(|| panic!("{format}'s part compiles"));
+            assert!(
+                matches!(mode_for(&j), Mode::Part { prune: true, .. }),
+                "{format}"
+            );
+            let pruned = scoped(&j, &text, mode_for(&j)).unwrap();
+            assert_eq!(
+                pruned,
+                scoped(&j, &text, Mode::Part { part, prune: false }).unwrap(),
+                "{format}: pruned and not"
+            );
+            assert_eq!(
+                plain(pruned),
+                plain(scoped(&j, &text, Mode::Whole).unwrap()),
+                "{format}: the part and the walk"
+            );
+        }
+    }
+
+    /// A shipped part streams a repeated member as each occurrence, as the
+    /// incremental source does, and the export settles it as it always
+    /// has: the scope refuses the path's own key repeated, and a member
+    /// repeated off the path, after the records were taken, is no refusal.
+    #[test]
+    fn a_member_repeated_off_the_path_is_no_refusal() {
+        let j = job(Format::Json, Renderer::Csv, ".rows");
+        let rows = scoped(
+            &j,
+            r#"{"rows": [{"v": 1}, {"v": 2}], "meta": {"a": 1, "a": 2}}"#,
+            mode_for(&j),
+        )
+        .unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|e| matches!(e, OwnedJsonEvent::Key(k) if &**k == "v"))
+                .count(),
+            2
+        );
+        let fail = scoped(
+            &j,
+            r#"{"rows": [{"v": 1}], "rows": [{"v": 2}]}"#,
+            mode_for(&j),
+        )
+        .unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
+        assert!(
+            fail.message.contains("--render has taken the first"),
+            "{fail}"
+        );
+    }
+
+    /// YAML's part streams the first document of a stream of several
+    /// before the sequence of them is known, and leaves the second root
+    /// to the host: refused at it, as a tree's contract refuses it, and
+    /// the export reads the stream whole, every document written.
+    #[test]
+    fn a_yaml_stream_of_documents_is_read_whole() {
+        let stream = "---\na: 1\n---\nb: 2\n";
+        let j = job(Format::Yaml, Renderer::Json, ".");
+        let fail = scoped(&j, stream, mode_for(&j)).unwrap_err();
+        assert_eq!(fail.code, Code::StreamabilityUnknown, "{fail}");
+        assert!(fail.message.starts_with("not_a_tree: "), "{fail}");
+        let (r, out) = run_text(&j, stream);
+        r.unwrap();
+        assert_eq!(out, "[{\"a\":1},{\"b\":2}]\n");
     }
 
     /// A grammar whose compile ends past the deadline is too late, whatever
@@ -3382,7 +3660,7 @@ mod tests {
             seen
         };
         let part = transducer(hosts).expect("the part its annotations make");
-        let streamed = events(Mode::Part(part));
+        let streamed = events(Mode::Part { part, prune: false });
         assert_eq!(
             streamed.len(),
             1 + 500 * 9 + 2,
