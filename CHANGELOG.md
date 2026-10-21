@@ -24,6 +24,18 @@ bumps the version renames `Unreleased` to the version and its date
     long for YAML and XML.
   - A YAML alias to a mapping or a sequence is read whole, as a stream
     of several documents is, when nothing has been written yet.
+- JSONC, JSON5, jsonic, ZON and PGN stream through their packages'
+  transducers too (tabnas-jsonc, tabnas-json5, tabnas-jsonic, tabnas-zon
+  and tabnas-chess), so every format whose package ships a transducer is
+  read through it. The records are the same, and they leave as the parse
+  proceeds, as before.
+  - jsonic keeps nothing of the parse behind them now: 40,000 records in
+    65 MiB rather than 167.
+  - It takes longer: about a tenth to a fifth longer for JSONC and
+    JSON5, three and a half times as long for jsonic and ZON, and six
+    times as long for PGN.
+  - tabnas-chess 0.1.18 ships PGN's transducer, and tabnas-alchemy
+    0.2.14 the natives it is written with.
 - Reading a long document takes less memory (tabnas-parser 0.12.14).
   The engine's lexer kept a byte offset beside each character of the
   text, eight bytes a character, and keeps none now for a text that is
