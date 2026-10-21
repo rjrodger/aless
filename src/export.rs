@@ -1039,14 +1039,13 @@ enum Mode {
 /// [`attempt`] reads whole once more, parsing it again, when nothing was
 /// written. A part a crate ships is held to the walk of its grammar's
 /// value on every fixture by alchemy-cli's differential suite, a repeated
-/// member streamed as each occurrence, as the incremental source streams
-/// it, for the host to judge; so its events are held to one root alone
-/// ([`OneRoot`]), which is what YAML's part leaves to the host for a
-/// stream of several documents, and the export settles a repeated member
-/// as it always has (the scope refuses one on the path, and the renderer's
-/// own chain one inside the value), a member repeated off the path no
-/// refusal at all. `steps` is the flag the part's program reads between
-/// steps.
+/// member streamed as each occurrence, for the host to judge. Where the
+/// grammar's value keeps the last of a repeated member, as JSON's does,
+/// the part is held to one root alone ([`OneRoot`]), and the export
+/// settles a repeated member as it always has (the scope refuses one on
+/// the path, and the renderer's own chain one inside the value), a member
+/// repeated off the path no refusal at all. `steps` is the flag the part's
+/// program reads between steps.
 fn through_part<S: Sink + Send + 'static>(
     source: ParserEventSource<'_>,
     part: &Program,
@@ -1114,14 +1113,17 @@ fn through_part<S: Sink + Send + 'static>(
 }
 
 /// Whether a part's events are held to a tree's whole contract
-/// ([`through_part`]) rather than to one root: those of the part a grammar
-/// from the command line's annotations make, and jsonic's. jsonic's
-/// grammar merges a repeated member (`map.extend`), which its part streams
-/// as each occurrence; the export settles a repeated member by keeping the
-/// last, as JSON's value does, which is not jsonic's, so a document of
-/// jsonic's with one is read whole, as its part asks of a host.
+/// ([`through_part`]) rather than to one root: every part's, but those of
+/// the formats whose grammar's value keeps the last of a repeated member,
+/// JSON's, JSONC's and JSON Lines'. The export settles a repeated member by
+/// keeping the last, which is their value and no other's: jsonic, JSON5
+/// and YAML merge the two, which their parts stream one after the other,
+/// so a document of theirs that repeats a member is read whole, as
+/// jsonic's part asks of a host. A grammar from the command line keeps
+/// whatever its spec's actions keep, and is held too; the other formats'
+/// parts stream no member twice, so the contract never refuses them.
 fn held_to_a_tree(format: Format) -> bool {
-    format.is_custom() || matches!(format, Format::Jsonic)
+    !matches!(format, Format::Json | Format::Jsonc | Format::Jsonl)
 }
 
 /// A part's events held to one root value, as a tree's contract holds
@@ -2551,24 +2553,33 @@ mod tests {
         assert_eq!(out, "[{\"a\":1},{\"b\":2}]\n");
     }
 
-    /// jsonic's grammar merges a repeated member (`map.extend`), which its
-    /// part streams as each occurrence, where a table keeps the last of a
-    /// repeated member, as JSON's value does: held to a tree's contract,
-    /// jsonic's stream is refused at the second occurrence, and the export
-    /// reads the document whole, the merge written. JSON's is not.
+    /// jsonic, JSON5 and YAML merge a repeated member, which their parts
+    /// stream as each occurrence, where a table keeps the last of a
+    /// repeated member, as JSON's and JSONC's values do: held to a tree's
+    /// contract, the merging grammars' streams are refused at the second
+    /// occurrence, and the export reads the document whole, the merge
+    /// written. JSON's and JSONC's are not.
     #[test]
-    fn a_member_jsonic_merges_is_read_whole() {
-        let j = job(Format::Jsonic, Renderer::Csv, ".");
-        let rows = "[{a:{b:1},a:{c:2}}]";
-        let fail = scoped(&j, rows, mode_for(&j)).unwrap_err();
-        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
-        let (r, out) = run_text(&j, rows);
-        r.unwrap();
-        assert_eq!(out, "\"a\"\r\n\"{\"\"b\"\":1,\"\"c\"\":2}\"\r\n");
-        let j = job(Format::Json, Renderer::Csv, ".");
-        let (r, out) = run_text(&j, r#"[{"a":{"b":1},"a":{"c":2}}]"#);
-        r.unwrap();
-        assert_eq!(out, "\"a\"\r\n\"{\"\"c\"\":2}\"\r\n");
+    fn a_member_the_grammar_merges_is_read_whole() {
+        let merged = "\"a\"\r\n\"{\"\"b\"\":1,\"\"c\"\":2}\"\r\n";
+        for (format, rows) in [
+            (Format::Jsonic, "[{a:{b:1},a:{c:2}}]"),
+            (Format::Json5, "[{a:{b:1},a:{c:2}}]"),
+            (Format::Yaml, "a:\n  b: 1\na:\n  c: 2\n"),
+        ] {
+            let j = job(format, Renderer::Csv, ".");
+            let fail = scoped(&j, rows, mode_for(&j)).unwrap_err();
+            assert_eq!(fail.code, Code::DuplicateMember, "{format}: {fail}");
+            let (r, out) = run_text(&j, rows);
+            r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
+            assert_eq!(out, merged, "{format}");
+        }
+        for format in [Format::Json, Format::Jsonc] {
+            let j = job(format, Renderer::Csv, ".");
+            let (r, out) = run_text(&j, r#"[{"a":{"b":1},"a":{"c":2}}]"#);
+            r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
+            assert_eq!(out, "\"a\"\r\n\"{\"\"c\"\":2}\"\r\n", "{format}");
+        }
     }
 
     /// A grammar whose compile ends past the deadline is too late, whatever
