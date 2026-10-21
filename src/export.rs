@@ -817,7 +817,7 @@ fn run<S: Sink + Send + 'static>(
                         } else {
                             source
                         };
-                        through_part(source, part, scope, format.is_custom(), steps, stop)
+                        through_part(source, part, scope, held_to_a_tree(format), steps, stop)
                     }
                     Mode::Stream(prune) => {
                         // The source checks the grammar's name against the
@@ -1032,21 +1032,21 @@ enum Mode {
 /// parser and the transducer's limits: the source's on the passes, and the
 /// part's on the events it makes, as on a source's own.
 ///
-/// With `contract`, for the part a grammar from the command line's
-/// annotations make, the events are held to a tree's contract before the
-/// scope sees them, so a document whose events are no tree's (a member the
-/// part streams twice, which the grammar's value keeps once, or a second
-/// root) is refused as the part's, which [`attempt`] reads whole once
-/// more, parsing it again, when nothing was written. A part a crate ships
-/// is held to the walk of its grammar's value on every fixture by
-/// alchemy-cli's differential suite, a repeated member streamed as each
-/// occurrence, as the incremental source streams it, for the host to
-/// judge; so its events are held to one root alone ([`OneRoot`]), which
-/// is what YAML's part leaves to the host for a stream of several
-/// documents, and the export settles a repeated member as it always has
-/// (the scope refuses one on the path, and the renderer's own chain one
-/// inside the value), a member repeated off the path no refusal at all.
-/// `steps` is the flag the part's program reads between steps.
+/// With `contract` ([`held_to_a_tree`]), the events are held to a tree's
+/// contract before the scope sees them, so a document whose events are no
+/// tree's (a member the part streams twice, which the grammar's value
+/// keeps once, or a second root) is refused as the part's, which
+/// [`attempt`] reads whole once more, parsing it again, when nothing was
+/// written. A part a crate ships is held to the walk of its grammar's
+/// value on every fixture by alchemy-cli's differential suite, a repeated
+/// member streamed as each occurrence, as the incremental source streams
+/// it, for the host to judge; so its events are held to one root alone
+/// ([`OneRoot`]), which is what YAML's part leaves to the host for a
+/// stream of several documents, and the export settles a repeated member
+/// as it always has (the scope refuses one on the path, and the renderer's
+/// own chain one inside the value), a member repeated off the path no
+/// refusal at all. `steps` is the flag the part's program reads between
+/// steps.
 fn through_part<S: Sink + Send + 'static>(
     source: ParserEventSource<'_>,
     part: &Program,
@@ -1111,6 +1111,17 @@ fn through_part<S: Sink + Send + 'static>(
             from_sink: false,
         },
     }
+}
+
+/// Whether a part's events are held to a tree's whole contract
+/// ([`through_part`]) rather than to one root: those of the part a grammar
+/// from the command line's annotations make, and jsonic's. jsonic's
+/// grammar merges a repeated member (`map.extend`), which its part streams
+/// as each occurrence; the export settles a repeated member by keeping the
+/// last, as JSON's value does, which is not jsonic's, so a document of
+/// jsonic's with one is read whole, as its part asks of a host.
+fn held_to_a_tree(format: Format) -> bool {
+    format.is_custom() || matches!(format, Format::Jsonic)
 }
 
 /// A part's events held to one root value, as a tree's contract holds
@@ -2538,6 +2549,26 @@ mod tests {
         let (r, out) = run_text(&j, stream);
         r.unwrap();
         assert_eq!(out, "[{\"a\":1},{\"b\":2}]\n");
+    }
+
+    /// jsonic's grammar merges a repeated member (`map.extend`), which its
+    /// part streams as each occurrence, where a table keeps the last of a
+    /// repeated member, as JSON's value does: held to a tree's contract,
+    /// jsonic's stream is refused at the second occurrence, and the export
+    /// reads the document whole, the merge written. JSON's is not.
+    #[test]
+    fn a_member_jsonic_merges_is_read_whole() {
+        let j = job(Format::Jsonic, Renderer::Csv, ".");
+        let rows = "[{a:{b:1},a:{c:2}}]";
+        let fail = scoped(&j, rows, mode_for(&j)).unwrap_err();
+        assert_eq!(fail.code, Code::DuplicateMember, "{fail}");
+        let (r, out) = run_text(&j, rows);
+        r.unwrap();
+        assert_eq!(out, "\"a\"\r\n\"{\"\"b\"\":1,\"\"c\"\":2}\"\r\n");
+        let j = job(Format::Json, Renderer::Csv, ".");
+        let (r, out) = run_text(&j, r#"[{"a":{"b":1},"a":{"c":2}}]"#);
+        r.unwrap();
+        assert_eq!(out, "\"a\"\r\n\"{\"\"c\"\":2}\"\r\n");
     }
 
     /// A grammar whose compile ends past the deadline is too late, whatever

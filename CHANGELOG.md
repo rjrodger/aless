@@ -34,6 +34,9 @@ bumps the version renames `Unreleased` to the version and its date
   - It takes longer: about a tenth to a fifth longer for JSONC and
     JSON5, three and a half times as long for jsonic and ZON, and six
     times as long for PGN.
+  - A jsonic document that repeats a member is read whole, when nothing
+    has been written yet: jsonic merges the two, which its transducer
+    streams one after the other.
   - tabnas-chess 0.1.18 ships PGN's transducer, and tabnas-alchemy
     0.2.14 the natives it is written with.
 - Reading a long document takes less memory (tabnas-parser 0.12.14).
