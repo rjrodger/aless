@@ -411,12 +411,7 @@ fn render_within(
                 (Output::TableRows, None) => Format::Csv,
                 (Output::JsonEvents, None) => Format::Json,
             };
-            (
-                What::Program {
-                    rows: compiled.program.row_selector().cloned(),
-                },
-                out,
-            )
+            (What::Program, out)
         }
     };
     let job = Job {

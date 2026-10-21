@@ -45,10 +45,10 @@ use aless::export::{self, ExportError, Input, Job, Plan, Renderer, What};
 use aless::load::Format;
 use aless::translate::{self, Options, Part, Shape, Translation};
 use tabnas::Tabnas;
-use tabnas_alchemy::{Output, Source};
+use tabnas_alchemy::{Output, Program, Source};
 use tabnas_transduce::{
-    capability, Code, Datum, DatumBuilder, Duplicates, Fail, Flow, JsonEvent, Limits, Metrics,
-    ParserSource, Prune, Sink, SourceMode,
+    Code, Datum, DatumBuilder, Duplicates, Fail, Flow, JsonEvent, Limits, Metrics,
+    ParserEventSource, ParserSource, Sink, TreeContract,
 };
 
 /// What a run wrote, shared with the test.
@@ -345,6 +345,20 @@ fn parser(id: &str) -> Tabnas {
 /// The events of a document, collected into a value.
 struct Collect(DatumBuilder);
 
+/// [`Collect`], shared, so that a sink handed on by value leaves its value
+/// where the caller takes it.
+#[derive(Clone)]
+struct SharedCollect(Arc<Mutex<DatumBuilder>>);
+
+impl Sink for SharedCollect {
+    fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+        if !matches!(ev, JsonEvent::End) {
+            self.0.lock().unwrap().event(ev)?;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
 impl Sink for Collect {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
         if !matches!(ev, JsonEvent::End) {
@@ -364,11 +378,11 @@ fn read_by_aless(id: &str) -> bool {
     matches!(id, "proto" | "expr" | "semver" | "c") || NOTATIONS.contains(&id)
 }
 
-/// A document read whole with a format's grammar, as a value: its events,
-/// incrementally where the grammar is verified (so a number keeps the
-/// lexeme the document spelled it with), collected, or the grammar's value
-/// where the incremental source cannot follow it. A repeated member keeps
-/// its last value. A document aless reads as more than its grammar's value
+/// A document read whole with a format's grammar, as a value: its events
+/// as aless reads them, through the part its crate ships (so a number
+/// keeps the lexeme the document spelled it with), collected, or the
+/// grammar's value where the format has no part or the part cannot follow
+/// the document. A repeated member keeps its last value. A document aless reads as more than its grammar's value
 /// ([`read_by_aless`]) is read as aless's own JSON export writes it, which
 /// holds every value those formats' trees can: no number in them is one
 /// JSON cannot spell (proto's descriptor holds a NaN as null, a C syntax
@@ -387,32 +401,48 @@ fn read(id: &str, text: &str) -> Result<Datum, Fail> {
             .map_err(|e| Fail::input(format!("aless wrote no UTF-8: {e}")))?;
         return read("json", &json);
     }
-    let once = |mode: SourceMode| {
-        let collect = Collect(DatumBuilder::new(
-            usize::MAX,
-            "max_capture_bytes",
-            Duplicates::LastWins,
-        ));
-        let (outcome, mut collect) = ParserSource::new(parser(id), text)
-            .grammar(id)
-            .mode(mode)
-            .limits(Limits::default())
-            .run_owned(collect);
-        outcome?;
-        collect
-            .0
-            .take()
-            .ok_or_else(|| Fail::input("the document holds no value"))
-    };
-    if capability::incremental(id) {
-        match once(SourceMode::Incremental {
-            prune: Prune::Never,
-        }) {
+    if let Some(part) = export::transducer(format(id)) {
+        match through(part, id, text) {
             Err(f) if matches!(f.code, Code::StreamabilityUnknown | Code::DuplicateMember) => {}
             outcome => return outcome,
         }
     }
-    once(SourceMode::Materialize)
+    let collect = Collect(DatumBuilder::new(
+        usize::MAX,
+        "max_capture_bytes",
+        Duplicates::LastWins,
+    ));
+    let (outcome, mut collect) = ParserSource::new(parser(id), text)
+        .grammar(id)
+        .limits(Limits::default())
+        .run_owned(collect);
+    outcome?;
+    collect
+        .0
+        .take()
+        .ok_or_else(|| Fail::input("the document holds no value"))
+}
+
+/// A document read through a format's transducer part, as aless reads it:
+/// the part's events over the parser's rule passes, held to a tree's
+/// contract (one root, each key once in an object) and collected.
+fn through(part: &Program, id: &str, text: &str) -> Result<Datum, Fail> {
+    let collected = SharedCollect(Arc::new(Mutex::new(DatumBuilder::new(
+        usize::MAX,
+        "max_capture_bytes",
+        Duplicates::LastWins,
+    ))));
+    let head = part.parser_sink_into(
+        Box::new(TreeContract::new(collected.clone())),
+        &Limits::default(),
+        Metrics::new(),
+    )?;
+    ParserEventSource::new(parser(id), text)
+        .limits(Limits::default())
+        .run_boxed(head)
+        .0?;
+    let value = collected.0.lock().unwrap().take();
+    value.ok_or_else(|| Fail::input("the document holds no value"))
 }
 
 thread_local! {
@@ -1762,7 +1792,7 @@ fn every_fixture_of_every_format_translates_into_every_format() {
 #[test]
 fn ten_times_the_records_leave_what_a_render_retains_flat() {
     type Doc = fn(usize) -> String;
-    let sources: [(&str, Doc); 11] = [
+    let sources: [(&str, Doc); 10] = [
         ("jsonl", |n| {
             (0..n)
                 .map(|i| format!("{{\"n\": {i}, \"s\": \"row {i}\"}}\n"))
@@ -1810,10 +1840,6 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
                 .map(|i| format!(".{{ .n = {i}, .s = \"row {i}\" }}"))
                 .collect();
             format!(".{{ {} }}", rows.join(", "))
-        }),
-        ("markdown", |n| {
-            let rows: String = (0..n).map(|i| format!("| {i} | row {i} |\n")).collect();
-            format!("| n | s |\n| --- | --- |\n{rows}")
         }),
         ("xml", |n| {
             let rows: String = (0..n)

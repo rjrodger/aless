@@ -17,22 +17,18 @@
 //!   `--max-size` does not apply to it: at the root the records are the
 //!   export's, and below it (`--path`) the scope takes the value it names
 //!   from the records as they pass;
-//! - JSON, YAML and XML, and a grammar from the command line whose
+//! - JSON, JSONC, JSON5, jsonic, YAML, XML, ZON and PGN, JSON Lines handed
+//!   over as one text, and a grammar from the command line whose
 //!   annotations make a part, are parsed whole and read through a
 //!   transducer part ([`transducer`]): an alchemy program makes the
 //!   document's events of the parser's rule passes, which leave as the
 //!   parse proceeds, and the engine's arrays are emptied behind the stream
 //!   for a grammar transduce verifies alike pruned and not;
-//! - a grammar the transducer has verified for incremental streaming
-//!   (`capability::incremental`: the rest of the JSON family, jsonic, ZON,
-//!   PGN and Markdown) is parsed whole, the events leaving as the parse
-//!   proceeds, and the exported array is emptied behind the stream so it
-//!   is not held twice, except where the grammar may read a container back
-//!   after it was streamed (see [`plan`]);
-//! - every other grammar is parsed whole and its value walked afterwards.
+//! - every other grammar, Markdown among them, is parsed whole and its
+//!   value walked afterwards.
 //!
-//! A part or a verified grammar may still refuse to stream a particular
-//! document part-way (a jsonic implicit list whose first element is a
+//! A part may still refuse to stream a particular document part-way (a
+//! jsonic implicit list whose first element is a
 //! container; a YAML stream of several documents, a `<<` merge key or an
 //! alias to a mapping or a sequence; a repeated member the grammar
 //! merges): the transducer stops with `STREAMABILITY_UNKNOWN`
@@ -66,8 +62,8 @@ use tabnas_render::{
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
     capability, AbortFlag, Cell, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
-    ParserEventSource, ParserSource, Prune, Schema, Selector, Sink, Source, SourceMode,
-    TableBinding, TableEvent, TableFromJson, TableSink, TreeContract, ValueSource,
+    ParserEventSource, Schema, Selector, Sink, Source, TableBinding, TableEvent, TableFromJson,
+    TableSink, TreeContract, ValueSource,
 };
 
 use crate::fmt;
@@ -128,9 +124,6 @@ pub enum Plan {
     /// transducer part ([`transducer`]), the events leaving as the part
     /// makes them.
     Part,
-    /// The text whole, its grammar's events leaving as the parse proceeds;
-    /// `prune` says whether the exported array is emptied behind them.
-    Incremental { prune: bool },
     /// The text whole, parsed and then walked.
     Materialize,
 }
@@ -146,28 +139,13 @@ pub enum Plan {
 /// ([`transducer`]); that route empties each array in the engine's tree
 /// behind the stream for a grammar transduce verifies alike pruned and not
 /// ([`capability::prunable`]), never for a grammar from the command line.
-///
-/// The incremental route is left to Markdown, whose manifest says why it
-/// is read whole and which transduce's inference streams only once its
-/// last line is in. It prunes the exported array in the engine's tree as
-/// its elements are streamed, which is sound only while the grammar never
-/// reads that array back. Markdown builds its tree imperatively, appending
-/// to nodes it already inserted; whether it reads a streamed array back is
-/// not established, so it is not pruned. YAML and jsonic, which came this
-/// way before their parts, were not pruned either: an alias copies its
-/// anchor's value when the alias is met, and jsonic rewrites containers in
-/// place after they are built.
+/// Every other format is parsed whole and walked: Markdown, whose manifest
+/// says why it is read whole, among them.
 pub fn plan(format: Format) -> Option<Plan> {
     Some(match format {
         Format::Text => return None,
         Format::Jsonl | Format::Csv | Format::Tsv => Plan::Lines,
         f if transducer(f).is_some() => Plan::Part,
-        // A grammar from the command line is nobody's verified grammar,
-        // whatever it is named (it may take a built-in's name).
-        Format::Custom(_) => Plan::Materialize,
-        f if capability::incremental(f.name()) => Plan::Incremental {
-            prune: !matches!(f, Format::Yaml | Format::Jsonic | Format::Markdown),
-        },
         _ => Plan::Materialize,
     })
 }
@@ -176,7 +154,8 @@ pub fn plan(format: Format) -> Option<Plan> {
 /// one: an alchemy program over the parser's rule passes that makes the
 /// document's events of them. A grammar from the command line has the part
 /// its value annotations generate ([`crate::grammar::Transducer`]); a
-/// format whose crate ships a part has it ([`shipped`]); a format with
+/// format whose crate ships a part has it ([`shipped`]), JSON Lines among
+/// them, whose part reads a file handed over as one text; a format with
 /// none keeps the route [`plan`] gives it.
 pub fn transducer(format: Format) -> Option<&'static Program> {
     match format {
@@ -185,6 +164,7 @@ pub fn transducer(format: Format) -> Option<&'static Program> {
         | Format::Jsonc
         | Format::Json5
         | Format::Jsonic
+        | Format::Jsonl
         | Format::Yaml
         | Format::Xml
         | Format::Zon
@@ -202,6 +182,7 @@ fn shipped(format: Format) -> Option<&'static Program> {
     static JSONC: OnceLock<Option<Program>> = OnceLock::new();
     static JSON5: OnceLock<Option<Program>> = OnceLock::new();
     static JSONIC: OnceLock<Option<Program>> = OnceLock::new();
+    static JSONL: OnceLock<Option<Program>> = OnceLock::new();
     static YAML: OnceLock<Option<Program>> = OnceLock::new();
     static XML: OnceLock<Option<Program>> = OnceLock::new();
     static ZON: OnceLock<Option<Program>> = OnceLock::new();
@@ -211,6 +192,7 @@ fn shipped(format: Format) -> Option<&'static Program> {
         Format::Jsonc => &JSONC,
         Format::Json5 => &JSON5,
         Format::Jsonic => &JSONIC,
+        Format::Jsonl => &JSONL,
         Format::Yaml => &YAML,
         Format::Xml => &XML,
         Format::Zon => &ZON,
@@ -242,11 +224,9 @@ pub enum What {
     /// `--render`: the records at the path as CSV, or the value there as
     /// JSON text.
     Render(Renderer),
-    /// `--alchemy`: a program's output, whatever it is; `rows` is the
-    /// selector the program reads its rows under, when its plan names
-    /// one, so the parse can be pruned under it as an export's is under
-    /// the exported array (see [`crate::alchemy`]).
-    Program { rows: Option<Selector> },
+    /// `--alchemy`: a program's output, whatever it is (see
+    /// [`crate::alchemy`]).
+    Program,
     /// `--render` through a format's own render, or a program's output
     /// through one: a program over the value at the path, pruned behind
     /// it as JSON's render is (see [`crate::translate`]).
@@ -382,7 +362,7 @@ fn export_staged(
     stage_max: usize,
 ) -> Result<(), ExportError> {
     let renderer = match &job.what {
-        What::Render(Renderer::Part(_)) | What::Part | What::Program { .. } => {
+        What::Render(Renderer::Part(_)) | What::Part | What::Program => {
             return Err(ExportError::Usage(
                 "a program's run, a part's among them, goes through run_program".to_string(),
             ))
@@ -534,7 +514,7 @@ fn attempt<S: Sink + Send + 'static>(
     // the same program again: only the source's refusal falls back. A
     // repeated member is the stream's whoever meets it first, and the
     // whole value, which keeps one, has none.
-    let programs = failed.from_sink && matches!(job.what, What::Program { .. } | What::Part);
+    let programs = failed.from_sink && matches!(job.what, What::Program | What::Part);
     let refused = failed.verdict.is_none()
         && match &failed.why {
             Outcome::Failed(f) => {
@@ -819,30 +799,6 @@ fn run<S: Sink + Send + 'static>(
                         };
                         through_part(source, part, scope, held_to_a_tree(format), steps, stop)
                     }
-                    Mode::Stream(prune) => {
-                        // The source checks the grammar's name against the
-                        // verified list itself, and refuses an unlisted one
-                        // before parsing.
-                        let source = ParserSource::new(parser, text)
-                            .mode(SourceMode::Incremental { prune })
-                            .grammar(format.name())
-                            .limits(limits())
-                            .abort(abort);
-                        match load::catch_grammar(|| source.run_owned(scope)) {
-                            Ok((outcome, scope)) => Ran {
-                                outcome: Outcome::of(outcome),
-                                stop: Some(stop),
-                                verdict: scope.verdict(),
-                                from_sink: scope.sink_failed,
-                            },
-                            Err(what) => Ran {
-                                outcome: Outcome::Panicked(what),
-                                stop: Some(stop),
-                                verdict: None,
-                                from_sink: false,
-                            },
-                        }
-                    }
                 }
             }
         },
@@ -1018,9 +974,6 @@ fn walk<S: Sink>(
 enum Mode {
     /// Parsed whole, then its value walked.
     Whole,
-    /// The grammar's events as the parse proceeds, the exported array
-    /// pruned behind them as [`plan`] allows.
-    Stream(Prune),
     /// The parser's rule passes through the format's transducer part,
     /// the engine's arrays emptied behind the stream when `prune` says so
     /// ([`mode_for`]).
@@ -1187,56 +1140,19 @@ impl<S: Sink> Sink for SharedScope<S> {
 }
 
 /// The source mode for a text input: through the format's transducer part
-/// where it has one; incremental where the grammar is verified, pruning
-/// the exported array as it streams where [`plan`] allows; whole
-/// otherwise.
+/// where it has one, the engine's arrays emptied behind the stream for a
+/// grammar transduce lists; whole otherwise.
 fn mode_for(job: &Job) -> Mode {
-    if let Some(part) = transducer(job.format) {
+    match transducer(job.format) {
         // The passes are the same pruned or not for a grammar transduce
         // lists, whatever reads them; a grammar from the command line is
         // on no list, whatever it is named.
-        let prune = !job.format.is_custom() && capability::prunable(job.format.name());
-        return Mode::Part { part, prune };
+        Some(part) => Mode::Part {
+            part,
+            prune: !job.format.is_custom() && capability::prunable(job.format.name()),
+        },
+        None => Mode::Whole,
     }
-    // A custom grammar with no part builds its value whole; nothing
-    // streams it.
-    if job.format.is_custom() {
-        return Mode::Whole;
-    }
-    match incremental(job) {
-        SourceMode::Incremental { prune } => Mode::Stream(prune),
-        SourceMode::Materialize => Mode::Whole,
-    }
-}
-
-/// The incremental source's mode for a job whose format it verifies, or
-/// `Materialize`.
-fn incremental(job: &Job) -> SourceMode {
-    let prune = match plan(job.format) {
-        Some(Plan::Incremental { prune }) => prune,
-        // A line-delimited format handed over as one text: JSON Lines is
-        // verified, CSV and TSV are not.
-        Some(Plan::Lines) if capability::incremental(job.format.name()) => true,
-        _ => return SourceMode::Materialize,
-    };
-    let prune = if prune {
-        match &job.what {
-            // The array exported: named by its elements for CSV, as the
-            // rows selector does, and by itself for JSON; the source
-            // prunes the same array either way.
-            What::Render(Renderer::Csv) => Prune::Under(selector_of(&job.path).each_index()),
-            What::Render(Renderer::Json) | What::Render(Renderer::Part(_)) | What::Part => {
-                Prune::Under(selector_of(&job.path))
-            }
-            // The rows a program reads, when its plan names them; a
-            // program that reads the document some other way keeps it.
-            What::Program { rows: Some(rows) } => Prune::Under(rows.clone()),
-            What::Program { rows: None } => Prune::Never,
-        }
-    } else {
-        Prune::Never
-    };
-    SourceMode::Incremental { prune }
 }
 
 /// The line-delimited format of a [`Plan::Lines`] input.
@@ -1250,20 +1166,6 @@ fn line_format(format: Format) -> LineFormat {
         Format::Csv => LineFormat::csv(),
         _ => LineFormat::Jsonl,
     }
-}
-
-/// A path as a transducer selector, strictly: a name selects a member, an
-/// index an element. (The lenient reading `--path` has, a decimal name for
-/// an index, is the scope's; this only decides what is pruned.)
-fn selector_of(path: &[Seg]) -> Selector {
-    let mut s = Selector::root();
-    for seg in path {
-        s = match seg {
-            Seg::Name(n) => s.property(n.as_str()),
-            Seg::Index(i) => s.index(usize::try_from(*i).unwrap_or(usize::MAX)),
-        };
-    }
-    s
 }
 
 /// A path in jq's syntax, as the outputs print one ([`fmt::path_jq`]),
@@ -1373,7 +1275,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
                 // how far the parse got only when it stops the parse
                 // itself, which the arm above reports with that position;
                 // a run the sink stopped mid-item has none to give.
-                What::Program { .. } | What::Part if from_sink => (0, 0),
+                What::Program | What::Part if from_sink => (0, 0),
                 _ => position(&fail),
             };
             load(timed_out(job, line, col))
@@ -1399,9 +1301,7 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
             // raising it (a grammar that refused to stream part-way, once
             // output had left) is the input's, whatever the code.
             match job.what {
-                What::Program { .. } | What::Part if from_sink => {
-                    ExportError::Program(Box::new(fail))
-                }
+                What::Program | What::Part if from_sink => ExportError::Program(Box::new(fail)),
                 _ => ExportError::Transduce(Box::new(fail)),
             }
         }
@@ -1483,7 +1383,7 @@ fn timed_out(job: &Job, line: u32, col: u32) -> LoadError {
                  --timeout 0 for no limit."
             ),
         ),
-        What::Program { .. } | What::Part => (
+        What::Program | What::Part => (
             format!("timeout: the run (the parse and the program) ran longer than {limit} s"),
             format!(
                 "--timeout {limit} stopped the run, in the parse or in the program's work on an \
@@ -2322,17 +2222,31 @@ mod tests {
         rec
     }
 
-    /// The events as the parse emits them, a repeated key included: the
-    /// grammar's value, which [`events`] walks, keeps only the last.
+    /// The events JSON's part makes of the parse, a repeated key included:
+    /// the grammar's value, which [`events`] walks, keeps only the last.
     fn streamed(json: &str) -> Vec<OwnedJsonEvent> {
-        let (r, rec) = ParserSource::new(tabnas_json::make(), json)
-            .mode(SourceMode::Incremental {
-                prune: Prune::Never,
-            })
-            .grammar("json")
-            .run_owned(Vec::new());
-        r.unwrap();
-        rec
+        struct Collect(Arc<Mutex<Vec<OwnedJsonEvent>>>);
+        impl Sink for Collect {
+            fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
+                self.0.lock().unwrap().push(ev.to_owned());
+                Ok(Flow::Continue)
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let head = transducer(Format::Json)
+            .expect("JSON's part compiles")
+            .parser_sink_into(
+                Box::new(Collect(seen.clone())),
+                &Limits::default(),
+                Metrics::new(),
+            )
+            .unwrap();
+        ParserEventSource::new(tabnas_json::make(), json)
+            .run_boxed(head)
+            .0
+            .unwrap();
+        let events = seen.lock().unwrap().clone();
+        events
     }
 
     #[test]
@@ -2361,17 +2275,19 @@ mod tests {
                 "{f}"
             );
         }
-        // Verified, but it may read a streamed container back.
-        assert_eq!(
-            plan(Format::Markdown),
-            Some(Plan::Incremental { prune: false })
-        );
-        // Parsed whole, then walked: the imperative grammars, and those no
-        // differential suite has verified, which build a tree of a schema's
-        // from their parse (proto's descriptor, expr's S-expressions, C's
-        // syntax tree, realized from its arena), and a grammar, the spec its
-        // compiler writes.
+        // JSON Lines handed over as one text, rather than read a record at
+        // a time, goes through the part its crate ships.
+        assert!(matches!(
+            mode_for(&job(Format::Jsonl, Renderer::Json, ".")),
+            Mode::Part { prune: true, .. }
+        ));
+        // Parsed whole, then walked: the formats whose crates ship no part,
+        // Markdown among them, which build a tree of a schema's from their
+        // parse (proto's descriptor, expr's S-expressions, C's syntax tree,
+        // realized from its arena), and a grammar, the spec its compiler
+        // writes.
         for f in [
+            Format::Markdown,
             Format::Toml,
             Format::Ini,
             Format::Feed,
@@ -2802,9 +2718,9 @@ mod tests {
         assert_eq!(fail.code, Code::DuplicateMember);
         assert!(fail.message.contains("\"a\" of ."), "{}", fail.message);
         // Repeated keys off the path, and inside the target, are the
-        // stream's to pass on. (Built by hand: the incremental source
-        // misplaces the values after a repeated key off the path, which is
-        // its defect, not the scope's; see the agents guide.)
+        // stream's to pass on. (Built by hand: what a source makes of a
+        // repeated key off the path is the source's to get right, not the
+        // scope's.)
         use OwnedJsonEvent as E;
         let n = |v: f64| E::Number {
             value: v,
@@ -3422,7 +3338,7 @@ mod tests {
                 ))
             }
         }
-        for what in [What::Program { rows: None }, What::Part] {
+        for what in [What::Program, What::Part] {
             let mut j = job(Format::Json, Renderer::Json, ".");
             j.what = what.clone();
             let builds = std::sync::atomic::AtomicUsize::new(0);
@@ -3511,10 +3427,10 @@ mod tests {
 
     /// The deadline reaches a program's sink in every mode. A sink that
     /// works on one item until its flag is raised stands for a program
-    /// slow per item: under the incremental source, where the parser is
-    /// inside an event while the sink works and no guard of aless's runs,
-    /// the alarm must raise the program's flag, or the run would last as
-    /// long as the item's work. The run ends a moment after the deadline,
+    /// slow per item: through a part, where the parser is inside a rule
+    /// pass while the sink works and no guard of aless's runs, the alarm
+    /// must raise the program's flag, or the run would last as long as the
+    /// item's work. The run ends a moment after the deadline,
     /// as a timeout worded for the run and with no position: the sink's
     /// `Aborted` is not the parse's stop, and the program's own span, if
     /// a sink stamps one on it, is no position in the input.
@@ -3546,7 +3462,13 @@ mod tests {
             }
         }
         for (format, mode) in [
-            (Format::Json, Mode::Stream(Prune::Never)),
+            (
+                Format::Json,
+                Mode::Part {
+                    part: transducer(Format::Json).expect("JSON's part compiles"),
+                    prune: false,
+                },
+            ),
             (Format::Toml, Mode::Whole),
         ] {
             let text = match format {
@@ -3554,7 +3476,7 @@ mod tests {
                 _ => "a = 1\n",
             };
             let mut j = job(format, Renderer::Json, ".");
-            j.what = What::Program { rows: None };
+            j.what = What::Program;
             // A deadline a debug build meets for a one-line document on a slow
             // runner too, with the tests running in parallel (a grammar is
             // built first); the sink then outlasts it by design.

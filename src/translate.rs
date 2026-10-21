@@ -141,6 +141,7 @@ pub fn transducer(format: Format) -> Option<Alc> {
         Format::Jsonc => transducer!("tabnas-jsonc", tabnas_jsonc),
         Format::Json5 => transducer!("tabnas-json5", tabnas_json5),
         Format::Jsonic => transducer!("tabnas-jsonic", tabnas_jsonic),
+        Format::Jsonl => transducer!("tabnas-jsonl", tabnas_jsonl),
         Format::Yaml => transducer!("tabnas-yaml", tabnas_yaml),
         Format::Xml => transducer!("tabnas-xml", tabnas_xml),
         Format::Zon => transducer!("tabnas-zon", tabnas_zon),

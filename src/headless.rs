@@ -750,9 +750,7 @@ fn run_program(
         name: name.clone(),
         origin,
         format,
-        what: What::Program {
-            rows: compiled.row_selector().cloned(),
-        },
+        what: What::Program,
         path: Vec::new(),
         compact: req.compact,
         indent: req.indent,
