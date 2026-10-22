@@ -1458,9 +1458,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.25"
+version = "0.5.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd3a5200006642a5d18a7dd117b5aec8af1d2bc98fb80f6a95bc8bac0454364"
+checksum = "d4e1312feed8cff0517962cf4ed9f03f56d7211cf838cd3b2de4572790b722d1"
 dependencies = [
  "indexmap",
  "regex",
