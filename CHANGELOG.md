@@ -18,6 +18,14 @@ bumps the version renames `Unreleased` to the version and its date
   output and its memory are as they were; aless no longer uses that
   source, which tabnas-transduce is retiring.
 
+### Fixed
+
+- YAML reads a sequence entry's mapping (`- a: ...`) as it reads any
+  other (tabnas-yaml 0.5.26). A key the entry repeats is merged, where
+  the later value was kept. A key with an empty value before a sibling
+  key is null, where the sibling became its value. And an entry with
+  more than one space after its dash reads, where it was refused.
+
 ## [0.4.7] - 2026-10-21
 
 ### Changed

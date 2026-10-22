@@ -2474,7 +2474,9 @@ mod tests {
     /// repeated member, as JSON's and JSONC's values do: held to a tree's
     /// contract, the merging grammars' streams are refused at the second
     /// occurrence, and the export reads the document whole, the merge
-    /// written. JSON's and JSONC's are not.
+    /// written. JSON's and JSONC's are not. YAML merges a sequence entry's
+    /// repeated key too (`- a: ...`, tabnas-yaml 0.5.26), where it kept
+    /// the later value.
     #[test]
     fn a_member_the_grammar_merges_is_read_whole() {
         let merged = "\"a\"\r\n\"{\"\"b\"\":1,\"\"c\"\":2}\"\r\n";
@@ -2482,6 +2484,7 @@ mod tests {
             (Format::Jsonic, "[{a:{b:1},a:{c:2}}]"),
             (Format::Json5, "[{a:{b:1},a:{c:2}}]"),
             (Format::Yaml, "a:\n  b: 1\na:\n  c: 2\n"),
+            (Format::Yaml, "- a:\n    b: 1\n  a:\n    c: 2\n"),
         ] {
             let j = job(format, Renderer::Csv, ".");
             let fail = scoped(&j, rows, mode_for(&j)).unwrap_err();
@@ -2495,6 +2498,23 @@ mod tests {
             let (r, out) = run_text(&j, r#"[{"a":{"b":1},"a":{"c":2}}]"#);
             r.unwrap_or_else(|e| panic!("{format}: {e:?}"));
             assert_eq!(out, "\"a\"\r\n\"{\"\"c\"\":2}\"\r\n", "{format}");
+        }
+    }
+
+    /// A YAML sequence entry's keys stand at the column its content starts
+    /// at (tabnas-yaml 0.5.26): a key with an empty value before a sibling
+    /// is null, not the sibling's parent, and an entry with more than one
+    /// space after its dash reads, through YAML's part.
+    #[test]
+    fn a_yaml_sequence_entry_keeps_its_keys_at_their_column() {
+        let j = job(Format::Yaml, Renderer::Json, ".");
+        for (doc, want) in [
+            ("- a:\n  b: 1\n", "[{\"a\":null,\"b\":1}]\n"),
+            ("-   a: 1\n    b: 2\n", "[{\"a\":1,\"b\":2}]\n"),
+        ] {
+            let (r, out) = run_text(&j, doc);
+            r.unwrap_or_else(|e| panic!("{doc:?}: {e:?}"));
+            assert_eq!(out, want, "{doc:?}");
         }
     }
 
