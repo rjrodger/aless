@@ -288,6 +288,16 @@ pub enum Input<'a> {
         path: PathBuf,
         max_size: Option<u64>,
     },
+    /// A file read through its format's transducer part: through a reader,
+    /// a window of it at a time, when its grammar declares `lex.window`
+    /// (`Tabnas::parse_reader`, tabnas/parser's admin ADR-30), and
+    /// otherwise whole, within `max_size`, as [`Input::Text`]. A stream the
+    /// part refuses before anything was written has the file read again
+    /// whole for the whole value's route, as [`Input::File`]'s does.
+    Path {
+        path: PathBuf,
+        max_size: Option<u64>,
+    },
 }
 
 /// The node `--path` did reach when it named nothing, for a `not_found`
@@ -485,10 +495,12 @@ fn attempt<S: Sink + Send + 'static>(
     let mode = mode_for(job);
     let text = match &input {
         Input::Text(text) => Some(*text),
-        Input::Lines(_) | Input::File { .. } => None,
+        Input::Lines(_) | Input::File { .. } | Input::Path { .. } => None,
     };
     let again = match &input {
-        Input::File { path, max_size, .. } => Some((path.clone(), *max_size)),
+        Input::File { path, max_size, .. } | Input::Path { path, max_size } => {
+            Some((path.clone(), *max_size))
+        }
         _ => None,
     };
     // Two flags per attempt, both fresh: the source polls one, raised by
@@ -563,9 +575,10 @@ fn attempt<S: Sink + Send + 'static>(
                 classify(job, *f, written, broken)
             })
         }
-        // A file read a record at a time is read again whole, within the
-        // size limit the record-at-a-time read did not need; a file over
-        // it, or gone, leaves the stream's own refusal standing.
+        // A file read a record at a time, or through a reader, is read
+        // again whole, within the size limit the record-at-a-time read did
+        // not need; a file over it, or gone, leaves the stream's own
+        // refusal standing.
         None if refused && written.load(Ordering::Relaxed) == 0 => {
             let whole =
                 again.and_then(|(path, max_size)| load::read_path_within(&path, max_size).ok());
@@ -752,53 +765,70 @@ fn run<S: Sink + Send + 'static>(
                 }
             }
             Input::Text(text) => {
-                let mut parser = match load::make_parser(format) {
-                    Ok(parser) => parser.expect("plain text is refused before a run"),
-                    // A custom grammar's engine would not take its spec:
-                    // reported as the grammar's failure, which it is.
-                    Err(e) => {
-                        return Ran {
-                            outcome: Outcome::Panicked(e.message),
-                            stop: None,
-                            verdict: None,
-                            from_sink: false,
+                let (parser, stop) = match guarded_parser(format, &deadline, &abort) {
+                    Ok(made) => made,
+                    Err(ran) => return *ran,
+                };
+                run_text(
+                    parser, stop, format, text, mode, deadline, &abort, &parsed, scope, steps,
+                )
+            }
+            Input::Path { path, max_size } => {
+                let (parser, stop) = match guarded_parser(format, &deadline, &abort) {
+                    Ok(made) => made,
+                    Err(ran) => return *ran,
+                };
+                match mode {
+                    // A grammar that declares `lex.window` reads the file a
+                    // window at a time, through the part, holding a window
+                    // of its text rather than all of it; a text the loader
+                    // prepares past its byte-order mark is read whole.
+                    Mode::Part { part, prune }
+                        if parser.options.lex.window
+                            && !format.is_notation()
+                            && !load::prepares_text(format) =>
+                    {
+                        match load::open_windowed(&path, max_size) {
+                            Ok(reader) => {
+                                #[cfg(test)]
+                                READ_A_WINDOW_AT_A_TIME.lock().unwrap().push(path.clone());
+                                let source = ParserEventSource::from_reader(parser, reader)
+                                    .limits(limits())
+                                    .abort(abort);
+                                let source = if prune {
+                                    source.grammar(format.name()).prune()
+                                } else {
+                                    source
+                                };
+                                through_part(
+                                    source,
+                                    part,
+                                    scope,
+                                    held_to_a_tree(format),
+                                    steps,
+                                    stop,
+                                )
+                            }
+                            Err(e) => Ran {
+                                outcome: Outcome::Refused(Box::new(e)),
+                                stop: Some(stop),
+                                verdict: None,
+                                from_sink: false,
+                            },
                         }
                     }
-                };
-                let notify = abort.clone();
-                let stop = load::guard(
-                    &mut parser,
-                    deadline.clone(),
-                    load::MAX_RULE_DEPTH,
-                    move || notify.abort(),
-                );
-                // Without its byte-order mark, and a version without its
-                // file's line break, as the loader reads it: the same lines
-                // and columns.
-                let text = load::parse_text(text, format);
-                if let Err(e) = load::check_text(format, text) {
-                    return Ran {
-                        outcome: Outcome::Refused(Box::new(e)),
-                        stop: Some(stop),
-                        verdict: None,
-                        from_sink: false,
-                    };
-                }
-                match mode {
-                    Mode::Whole => {
-                        materialize(parser, format, text, deadline, &abort, &parsed, scope, stop)
-                    }
-                    Mode::Part { part, prune } => {
-                        let source = ParserEventSource::new(parser, text)
-                            .limits(limits())
-                            .abort(abort);
-                        let source = if prune {
-                            source.grammar(format.name()).prune()
-                        } else {
-                            source
-                        };
-                        through_part(source, part, scope, held_to_a_tree(format), steps, stop)
-                    }
+                    mode => match load::read_path_within(&path, max_size) {
+                        Ok(whole) => run_text(
+                            parser, stop, format, &whole, mode, deadline, &abort, &parsed, scope,
+                            steps,
+                        ),
+                        Err(e) => Ran {
+                            outcome: Outcome::Refused(Box::new(e)),
+                            stop: Some(stop),
+                            verdict: None,
+                            from_sink: false,
+                        },
+                    },
                 }
             }
         },
@@ -812,6 +842,84 @@ fn run<S: Sink + Send + 'static>(
             from_sink: ran.from_sink,
             lines,
         })),
+    }
+}
+
+/// The files a run read a window at a time, for the tests that hold a
+/// file's path to that route.
+#[cfg(test)]
+static READ_A_WINDOW_AT_A_TIME: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// A format's parser for a run, with the guard that stops it at the
+/// deadline and at [`load::MAX_RULE_DEPTH`]: the run's failure when the
+/// grammar's engine would not take its spec.
+fn guarded_parser(
+    format: Format,
+    deadline: &Option<Deadline>,
+    abort: &AbortFlag,
+) -> Result<(Tabnas, Arc<Stop>), Box<Ran>> {
+    let mut parser = match load::make_parser(format) {
+        Ok(parser) => parser.expect("plain text is refused before a run"),
+        // A custom grammar's engine would not take its spec: reported as
+        // the grammar's failure, which it is.
+        Err(e) => {
+            return Err(Box::new(Ran {
+                outcome: Outcome::Panicked(e.message),
+                stop: None,
+                verdict: None,
+                from_sink: false,
+            }))
+        }
+    };
+    let notify = abort.clone();
+    let stop = load::guard(
+        &mut parser,
+        deadline.clone(),
+        load::MAX_RULE_DEPTH,
+        move || notify.abort(),
+    );
+    Ok((parser, stop))
+}
+
+/// A text's run: parsed and walked whole, or its passes through the
+/// format's part.
+#[allow(clippy::too_many_arguments)]
+fn run_text<S: Sink + Send + 'static>(
+    parser: Tabnas,
+    stop: Arc<Stop>,
+    format: Format,
+    text: &str,
+    mode: Mode,
+    deadline: Option<Deadline>,
+    abort: &AbortFlag,
+    parsed: &AtomicBool,
+    scope: Scope<S>,
+    steps: AbortFlag,
+) -> Ran {
+    // Without its byte-order mark, and a version without its file's line
+    // break, as the loader reads it: the same lines and columns.
+    let text = load::parse_text(text, format);
+    if let Err(e) = load::check_text(format, text) {
+        return Ran {
+            outcome: Outcome::Refused(Box::new(e)),
+            stop: Some(stop),
+            verdict: None,
+            from_sink: false,
+        };
+    }
+    match mode {
+        Mode::Whole => materialize(parser, format, text, deadline, abort, parsed, scope, stop),
+        Mode::Part { part, prune } => {
+            let source = ParserEventSource::new(parser, text)
+                .limits(limits())
+                .abort(abort.clone());
+            let source = if prune {
+                source.grammar(format.name()).prune()
+            } else {
+                source
+            };
+            through_part(source, part, scope, held_to_a_tree(format), steps, stop)
+        }
     }
 }
 
@@ -2173,11 +2281,141 @@ mod tests {
         (r, out.text())
     }
 
+    /// `bytes` written to a file of its own and exported from it by its
+    /// path ([`Input::Path`]), within `max_size`.
+    fn run_path(
+        job: &Job,
+        name: &str,
+        bytes: &[u8],
+        max_size: Option<u64>,
+    ) -> (Result<(), ExportError>, String) {
+        let path = path_for(name);
+        std::fs::write(&path, bytes).unwrap();
+        let out = Shared::default();
+        let r = export(
+            job,
+            Input::Path {
+                path: path.clone(),
+                max_size,
+            },
+            Box::new(out.clone()),
+        );
+        std::fs::remove_file(&path).unwrap();
+        (r, out.text())
+    }
+
+    fn path_for(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("aless-path-{}-{name}", std::process::id()))
+    }
+
+    /// Whether a run read the file at `name`'s path a window at a time.
+    fn read_a_window_at_a_time(name: &str) -> bool {
+        READ_A_WINDOW_AT_A_TIME
+            .lock()
+            .unwrap()
+            .contains(&path_for(name))
+    }
+
     fn run_lines(job: &Job, text: &str) -> (Result<(), ExportError>, String) {
         let out = Shared::default();
         let reader = Box::new(io::BufReader::new(text.as_bytes()));
         let r = export(job, Input::Lines(reader), Box::new(out.clone()));
         (r, out.text())
+    }
+
+    /// A file exported by its path exports what its text read whole does:
+    /// JSON's and JSONC's grammars declare `lex.window` and read it through
+    /// a reader, a window at a time (tabnas/parser's admin ADR-30), and any
+    /// other grammar reads it whole. A byte-order mark is skipped, a
+    /// refused stream falls back to the whole value, and an error is the
+    /// error, as the text's.
+    #[test]
+    fn a_file_by_its_path_exports_what_its_text_does() {
+        let documents: &[(Format, &str)] = &[
+            (Format::Json, r#"[{"a":1,"b":"x"},{"a":2,"b":"y"}]"#),
+            (Format::Json, "\u{feff}[{\"a\":1},{\"a\":2}]"),
+            (
+                Format::Json,
+                r#"{"rows":[{"v":1},{"v":2}],"meta":{"a":[1,2]}}"#,
+            ),
+            (Format::Json, r#"[{"a":{"b":1},"a":{"c":2}}]"#),
+            (Format::Json, "[{\"a\": 1},\n {\"a\": 2},"),
+            (Format::Jsonc, "// rows\n[{\"a\": 1, /* c */ \"b\": 2,}]"),
+            (
+                Format::Jsonc,
+                "{\"rows\": [{\"v\": 1}, {\"v\": 2}], // meta\n \"meta\": 1}",
+            ),
+            (Format::Yaml, "- a: 1\n- a: 2\n"),
+            (Format::Yaml, "a:\n  b: 1\na:\n  c: 2\n"),
+        ];
+        let mut compared = 0;
+        for (index, (format, text)) in documents.iter().enumerate() {
+            for renderer in [Renderer::Json, Renderer::Csv] {
+                for at in [".", ".rows"] {
+                    let j = job(*format, renderer, at);
+                    let (whole, whole_out) = run_text(&j, text);
+                    let name = format!("{index}-{renderer:?}-{at}");
+                    let (path, path_out) = run_path(&j, &name, text.as_bytes(), None);
+                    // A refused stream reads the file again whole, after its
+                    // window: the window was read all the same.
+                    assert_eq!(
+                        read_a_window_at_a_time(&name),
+                        matches!(format, Format::Json | Format::Jsonc),
+                        "{format} {text:?}: the route its grammar declares"
+                    );
+                    let whole = whole.map_err(|e| format!("{e:?}"));
+                    let path = path.map_err(|e| format!("{e:?}"));
+                    assert_eq!(path, whole, "{format} {text:?} to {renderer:?} at {at}");
+                    assert_eq!(
+                        path_out, whole_out,
+                        "{format} {text:?} to {renderer:?} at {at}"
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        assert_eq!(compared, documents.len() * 4);
+    }
+
+    /// Bytes that are not UTF-8 are replaced, as a text read whole has them
+    /// replaced, and a long document reads through the window as its text.
+    #[test]
+    fn a_file_by_its_path_reads_bytes_and_length_as_its_text() {
+        let j = job(Format::Json, Renderer::Csv, ".");
+        let bytes: &[u8] = b"[{\"a\":\"x\xffy\"},{\"a\":\"\xe2\x82\"}]";
+        let (whole, whole_out) = run_text(&j, &String::from_utf8_lossy(bytes));
+        let (path, path_out) = run_path(&j, "lossy.json", bytes, None);
+        whole.unwrap();
+        path.unwrap();
+        assert_eq!(path_out, whole_out);
+        assert!(path_out.contains('\u{fffd}'), "{path_out:?}");
+
+        let records: Vec<String> = (0..20_000)
+            .map(|i| format!("{{\"id\":{i},\"name\":\"ñ{i}\",\"tags\":[\"a\",\"b\"]}}"))
+            .collect();
+        let text = format!("[{}]", records.join(",\n"));
+        let (whole, whole_out) = run_text(&j, &text);
+        let (path, path_out) = run_path(&j, "long.json", text.as_bytes(), None);
+        whole.unwrap();
+        path.unwrap();
+        assert_eq!(path_out, whole_out);
+    }
+
+    /// A file over `--max-size` is refused before any of it is read, as its
+    /// text would be.
+    #[test]
+    fn a_file_by_its_path_over_the_size_limit_is_refused() {
+        let j = job(Format::Json, Renderer::Json, ".");
+        let text = r#"[{"a":1},{"a":2}]"#;
+        let (r, out) = run_path(&j, "over.json", text.as_bytes(), Some(4));
+        let e = r.unwrap_err();
+        assert!(
+            format!("{e:?}").contains("too large") || format!("{e:?}").contains("max-size"),
+            "{e:?}"
+        );
+        assert!(out.is_empty(), "{out:?}");
+        let (r, _) = run_path(&j, "within.json", text.as_bytes(), Some(text.len() as u64));
+        r.unwrap();
     }
 
     /// A run that fails part way leaves standard output at the end of a

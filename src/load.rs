@@ -1523,6 +1523,14 @@ pub(crate) fn parse_text(src: &str, format: Format) -> &str {
     }
 }
 
+/// Whether `format`'s text is prepared past its byte-order mark before its
+/// grammar parses it: a version's line break ([`parse_text`]) and proto's
+/// braces ([`check_text`]). Such a text is read whole, never through a
+/// reader ([`open_windowed`]).
+pub(crate) fn prepares_text(format: Format) -> bool {
+    matches!(format, Format::Semver | Format::Proto)
+}
+
 /// What a format's crate checks of a text before its grammar parses it:
 /// proto counts a document's braces, and refuses one that nests them
 /// deeper than [`tabnas_proto::MAX_NESTING_DEPTH`], since the tree its
@@ -2764,6 +2772,144 @@ pub fn load_path_within(
     let source = read_path_within(path, limits.max_size)?;
     let format = format.unwrap_or_else(|| Format::detect(path));
     load_str_within(source, format, limits).map_err(|e| e.with_origin(&origin_of(path)))
+}
+
+/// A file for a parse that reads it a window at a time
+/// (`Tabnas::parse_reader`, tabnas/parser's admin ADR-30), opened as
+/// [`read_path_within`] opens one: a file known to be over `max_size` is
+/// refused before any of it is read, and the error names the file as a
+/// report does ([`origin_of`]). It reads as [`read_path_within`] reads it,
+/// and [`parser_text`] then takes it: no more than `max_size` bytes, bytes
+/// that are not UTF-8 replaced, and without its byte-order mark, so a parse
+/// of it reads what a parse of its text read whole does.
+pub fn open_windowed(
+    path: &Path,
+    max_size: Option<u64>,
+) -> Result<Box<dyn Read + Send>, LoadError> {
+    let origin = origin_of(path);
+    let file = std::fs::File::open(path)
+        .map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
+    if let (Some(max), Ok(meta)) = (max_size, file.metadata()) {
+        if meta.is_file() && meta.len() > max {
+            return Err(LoadError::too_large(Some(meta.len()), max).with_origin(&origin));
+        }
+    }
+    Ok(Box::new(AsWhole::new(file, max_size)))
+}
+
+/// A reader that reads as [`read_path_within`] and [`parser_text`] read a
+/// text whole ([`open_windowed`]): it refuses its source past `max` bytes,
+/// skips a byte-order mark at its start, and replaces each sequence of
+/// bytes that is not UTF-8 with U+FFFD, as `String::from_utf8_lossy` does,
+/// holding a character a read split until its last byte.
+struct AsWhole<R> {
+    inner: R,
+    /// Bytes the source may still give before it is over the limit.
+    left: Option<u64>,
+    max: Option<u64>,
+    /// The buffer a read fills, kept from one read to the next.
+    chunk: Vec<u8>,
+    /// Bytes read and not yet decoded: a character a read split.
+    raw: Vec<u8>,
+    /// Decoded bytes not yet handed on, from `out_at`.
+    out: Vec<u8>,
+    out_at: usize,
+    /// The byte-order mark is still to be looked for.
+    start: bool,
+    /// The source has given its last byte.
+    done: bool,
+}
+
+impl<R> AsWhole<R> {
+    fn new(inner: R, max: Option<u64>) -> Self {
+        AsWhole {
+            inner,
+            left: max,
+            max,
+            chunk: vec![0u8; 64 * 1024],
+            raw: Vec::new(),
+            out: Vec::new(),
+            out_at: 0,
+            start: true,
+            done: false,
+        }
+    }
+}
+
+impl<R: Read> Read for AsWhole<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.out_at < self.out.len() {
+                let n = buf.len().min(self.out.len() - self.out_at);
+                buf[..n].copy_from_slice(&self.out[self.out_at..self.out_at + n]);
+                self.out_at += n;
+                return Ok(n);
+            }
+            if self.done && self.raw.is_empty() {
+                return Ok(0);
+            }
+            self.out.clear();
+            self.out_at = 0;
+            if !self.done {
+                let n = match self.inner.read(&mut self.chunk) {
+                    Ok(n) => n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                };
+                if n == 0 {
+                    self.done = true;
+                }
+                if let (Some(left), Some(max)) = (&mut self.left, self.max) {
+                    if n as u64 > *left {
+                        return Err(io::Error::other(
+                            LoadError::too_large(None, max).to_string(),
+                        ));
+                    }
+                    *left -= n as u64;
+                }
+                self.raw.extend_from_slice(&self.chunk[..n]);
+            }
+            if self.start {
+                // Three bytes decide a byte-order mark.
+                if self.raw.len() < 3 && !self.done {
+                    continue;
+                }
+                if self.raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                    self.raw.drain(..3);
+                }
+                self.start = false;
+            }
+            loop {
+                match std::str::from_utf8(&self.raw) {
+                    Ok(_) => {
+                        self.out.extend_from_slice(&self.raw);
+                        self.raw.clear();
+                        break;
+                    }
+                    Err(e) => {
+                        let valid = e.valid_up_to();
+                        self.out.extend_from_slice(&self.raw[..valid]);
+                        match e.error_len() {
+                            Some(bad) => {
+                                self.out.extend_from_slice("\u{fffd}".as_bytes());
+                                self.raw.drain(..valid + bad);
+                            }
+                            // A character the read split, or the source
+                            // ends inside: held, or replaced at the end.
+                            None => {
+                                self.raw.drain(..valid);
+                                if self.done {
+                                    self.out.extend_from_slice("\u{fffd}".as_bytes());
+                                    self.raw.clear();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Read a file's text, holding no more than `max_size` bytes of it: a file

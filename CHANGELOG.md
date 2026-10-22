@@ -8,6 +8,21 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- A JSON or JSONC file exported through its format's transducer part is
+  read a window at a time. tabnas-parser 0.12.15 parses from a reader,
+  tabnas-transduce 0.2.12 streams a part's passes from one, and
+  tabnas-json 0.5.19 and tabnas-jsonc 0.5.16 declare `lex.window`. (JSON
+  Lines and CSV files are already read a record at a time.) The parse
+  holds a window of the file rather than the whole text, so the memory
+  such an export needs no longer grows with the file. What is written is what the file read whole writes: its
+  byte-order mark skipped, bytes that are not UTF-8 replaced, and a
+  stream the part refuses read again whole. Standard input, a pipe, and
+  every other format are read as before.
+
 ## [0.4.8] - 2026-10-22
 
 ### Changed
