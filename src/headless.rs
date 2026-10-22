@@ -865,6 +865,10 @@ enum Opened<'a> {
     /// `--max-size` does not apply to it; with the file's path when it is
     /// one, which a refused record has read again whole.
     Lines(Box<dyn BufRead + Send + 'a>, Option<PathBuf>),
+    /// A file read through its format's transducer part, a window of it at
+    /// a time where its grammar declares `lex.window` ([`Input::Path`]),
+    /// checked against `--max-size` before any of it is read.
+    Path(PathBuf),
 }
 
 impl<'a> Opened<'a> {
@@ -886,6 +890,10 @@ impl<'a> Opened<'a> {
                 max_size: req.max_size,
             },
             Opened::Lines(lines, None) => Input::Lines(lines),
+            Opened::Path(path) => Input::Path {
+                path,
+                max_size: req.max_size,
+            },
         }
     }
 }
@@ -949,6 +957,24 @@ fn open_input<'a>(
                 Box::new(io::BufReader::new(file)),
                 Some(p.clone()),
             ))
+        }
+        // A file read through a part is handed over by its path, and read
+        // a window at a time where its grammar can; refused as too large,
+        // or unreadable, here as its text would be. A file that is no
+        // regular file is read whole: a stream the part refuses reads it
+        // again, which a pipe could not.
+        (Source::File(p), Plan::Part) if file_size(p).is_some() => {
+            if let (Some(max), Some(size)) = (req.max_size, file_size(p)) {
+                if size > max {
+                    let e = LoadError::too_large(Some(size), max).with_origin(&load::origin_of(p));
+                    return Err(too_large(&e, Some(size)));
+                }
+            }
+            std::fs::File::open(p).map_err(|e| {
+                let e = LoadError::new(e.to_string()).with_origin(&load::origin_of(p));
+                Failure::load(name, format, &e)
+            })?;
+            Ok(Opened::Path(p.clone()))
         }
         (Source::File(p), _) => {
             let text =
