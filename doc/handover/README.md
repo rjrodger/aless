@@ -253,18 +253,17 @@ compatible.
 5. **transduce 0.3.0: released.** tabnas/transduce#69 (`312000b`),
    then `release.yml`. npm, the Go proxy and crates.io were checked;
    transduce's Releases carry no assets (0.2.12's had none either).
-6. **alchemy-cli 0.1.17: tabnas/alchemy-cli#58, open.** Step 2 moved
-   Go's requires to alchemy v0.2.15, csv v0.6.9, transduce v0.3.0, json
-   v0.5.19, jsonc v0.5.16, jsonl v0.1.19 and parser v0.12.15, and
-   `go test ./...` passes on them.
+6. **alchemy-cli 0.1.17: tabnas/alchemy-cli#58, merged (`11bdbcb`);
+   its release is running.** Step 2 moved Go's requires to alchemy
+   v0.2.15, csv v0.6.9, transduce v0.3.0, json v0.5.19, jsonc v0.5.16,
+   jsonl v0.1.19 and parser v0.12.15.
    - Its first Rust gate failed the lock check: step 2 moves only a
      lock's version lines, and tabnas-transduce 0.3.0's entry no longer
-     lists csv and json (#67). `fb12e82` is `cargo update --workspace`'s
-     rewrite. CI is running again; then merge and dispatch.
+     lists csv and json (#67). `cargo update --workspace` fixed it.
    - alchemy's `downstream` on alchemy's `main` failed the same check
-     (it clones alchemy-cli's `main`). Re-run it once #58 merges.
+     (it clones alchemy-cli's `main`); its re-run is in progress.
    - render's lock had the same stale entry, though render was not
-     released: tabnas/render#27 rewrites it (open).
+     released: tabnas/render#27 rewrote it (merged, `f897868`).
 7. **aless: rjrodger/aless#94, open** (`af2480e`, one commit), from
    `claude/csv-through-part` in
    `~/Projects/tabnas-worktrees/aless-csv/aless`, on the released crates
