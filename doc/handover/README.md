@@ -222,7 +222,19 @@ needs.
    - A header cell that isn't a string names its column as the csv
      grammar names it.
    - Checked: `ci/rust/run.sh` green, TypeScript 548 of 548, Go passing.
-   - `downstream.yml` runs alchemy-cli's gates against it.
+   - `downstream.yml` runs alchemy-cli's gates against it. It clones
+     each sibling at the pull request's branch name when that repository
+     has one, so it ran my csv and transduce branches together with
+     alchemy's.
+   - That run failed `transduce.tsv` row 38. alchemy's `transduce.tsv`
+     keeps csv's old hand-written part inline (rows 37 to 47), and that
+     part matched the trailing empty cell's groups exactly
+     (`["comma"]`), which the tag makes `["comma" "empty"]`.
+   - `3c25436` reads the cell by `comma` being among the groups. That
+     holds in both states: Go's runner against csv's untagged release
+     passes all ten rows. Its re-run is pending.
+   - Once csv's tags are on `main`, a follow-up switches those rows to
+     csv's shipped part, the `transduce-records` spec.
 2. **csv: pushed, no pull request yet.** The branch is
    `claude/transduce-records` (`5124125`).
    - Both rule sets in Rust, TypeScript and Go tag `elem`'s two
@@ -233,20 +245,28 @@ needs.
    - The tags and the part must land together: the old part matched
      the trailing alternate's groups exactly (`["comma"]`).
    - It opens after alchemy#105 merges. csv's CI doesn't run the part;
-     alchemy-cli's, which clones csv's `main`, does.
+     alchemy-cli's, which clones csv's `main`, does. Rust and Go pass,
+     and TypeScript passes 256 of 256.
 3. **transduce: pushed, no pull request yet.** The branch is
    `claude/transduce-records` (`cea4265`).
    - `TransduceRecords` in `rs/src/transduce_records.rs` is offered by
      `TransduceRouters::transduce_records`.
    - Five unit tests pass, including a refusal at exactly the library's
      state measure.
-   - Still to do: an integration test over the csv grammar's own passes
-     (once csv's tags are on `main`), `docs/reference.md`, `AGENTS.md`
-     and a BENCH note.
+   - `rs/tests/records_test.rs` (`98efd5b`) holds the native to the walk
+     over the csv grammar's own passes. 198 of 199 documents agree; the
+     other repeats a header name. Reading from a reader 1 to 3 bytes at
+     a time gives the same events. It needs csv's tags on `main`.
+   - `docs/reference.md`, `AGENTS.md` and a BENCH section ("Records,
+     natively") are pushed (`46f677a`). The local gate is running.
    - It opens after csv's pull request merges.
-4. **alchemy-cli:** a differential test holding the native to the
-   library over csv's corpus, as `transduce_tree_native_and_interpreted_agree`
-   does.
+4. **alchemy-cli: written, not pushed yet.** `rs/tests/stdlib_test.rs`
+   gains two tests. `transduce_records_native_and_interpreted_agree`
+   covers four specs over csv's corpus, the CSV fixtures, generated
+   records and edge cases. `transduce_records_state_is_bounded_alike`
+   covers the bound. `CountingRouters` now counts native records too.
+   They are running locally. Pushing the branch puts them into
+   alchemy#105's downstream run as well.
 5. **The release wave, then aless.**
    - aless reads CSV and TSV through the part.
    - Step 12 then finishes for CSV:
