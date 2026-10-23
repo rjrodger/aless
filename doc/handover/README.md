@@ -249,7 +249,7 @@ needs.
    - It opens after alchemy#105 merges. csv's CI doesn't run the part;
      alchemy-cli's, which clones csv's `main`, does. Rust and Go pass,
      and TypeScript passes 256 of 256.
-3. **transduce: tabnas/transduce#65, open.** The branch is
+3. **transduce: tabnas/transduce#65, merged (`d935469`).** The branch is
    `claude/transduce-records` (`46f677a`).
    - `TransduceRecords` in `rs/src/transduce_records.rs` is offered by
      `TransduceRouters::transduce_records`.
@@ -262,14 +262,13 @@ needs.
    - `docs/reference.md`, `AGENTS.md` and a BENCH section ("Records,
      natively") are pushed (`46f677a`). The local gate is running.
    - Its CI needs csv's tags, which are on `main` now.
-4. **alchemy-cli: pushed (`e079405`), no pull request yet.** `rs/tests/stdlib_test.rs`
+4. **alchemy-cli: tabnas/alchemy-cli#57, open.** `rs/tests/stdlib_test.rs`
    gains two tests. `transduce_records_native_and_interpreted_agree`
    covers four specs over csv's corpus, the CSV fixtures, generated
    records and edge cases. `transduce_records_state_is_bounded_alike`
    covers the bound. `CountingRouters` now counts native records too.
    Both pass locally: 848 documents agree, and every bound refuses
-   alike. Its pull request goes last, because its CI clones siblings
-   from `main`.
+   alike.
 5. **The release wave, then aless.**
    - aless reads CSV and TSV through the part.
    - Step 12 then finishes for CSV:
@@ -277,8 +276,10 @@ needs.
        Go keep theirs.
      - aless drops `Plan`, `line_format`, and the line source's part in
        the `--max-size` exemptions.
-6. **alchemy's plan record** for rulings 7 to 10 and the measurements
-   above.
+6. **alchemy's plan record** for rulings 8 to 10 and the measurements
+   above is pushed on `claude/plan-csv-records` (`18c6d3c`), in
+   `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`. Its pull
+   request opens once the code has merged.
 
 ## Carried over
 
