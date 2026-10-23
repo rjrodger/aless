@@ -205,52 +205,45 @@ native and the library refuse at the same point.
 Sibling CI clones `main`, so each change lands only after the change it
 needs.
 
-1. **alchemy: code-complete, pushed, no pull request yet.** The work is on
+1. **alchemy: tabnas/alchemy#105, open.** Its branch is
    `claude/transduce-records` in
-   `~/Projects/tabnas-worktrees/csv-records/alchemy`: seven commits, the
-   last `1ed5a06`.
-   - The library's sixteen definitions are in `stdlib/transduce.alc`.
-     `node ts/embed-grammar.js` copied them into `rs/`, `go/` and `ts/`.
-   - Their signatures are in all three checkers, and in the three
-     runtimes' name lists (TypeScript's count is now 60).
-   - `docs/language.md` has the prose, and an `alchemy`/`core` pair for
-     each definition. `pipe.tsv` has a row for each definition, and
-     `check.tsv` has the explain report and two refusals.
-   - A header cell that isn't a string names its column as the csv
-     grammar names it: `null`, `true` or `false`, and a number as
-     `scalar-text` writes it.
+   `~/Projects/tabnas-worktrees/csv-records/alchemy`.
+   - It holds the library (sixteen definitions) and their signatures in
+     all three runtimes, the name lists, `docs/language.md`, and rows in
+     `pipe.tsv` and `check.tsv`.
    - Rust:
-     - `rs/src/shared/records.rs` holds `RecordsSpec` and its contract
-       pass for pass, the state's measure and refusal, and
-       `records_name`.
-     - `is_json_number`, `shortest_number` and `number_text` moved to
-       `rs/src/shared/number.rs`, so transduce's native writes a number
-       as `scalar-text` does. They are re-exported at their old paths.
+     - `shared::records` holds `RecordsSpec`, its contract pass for pass,
+       the state's measure and refusal, and `records_name`.
+     - `shared::number` holds `number_text` and its kin, moved there so
+       transduce's native writes a number as `scalar-text` does.
      - `Routers::transduce_records` declines by default.
-     - In `lower.rs`: `records_spec`, `native_records` (the library's two
-       scans over the host's parser events), and the hook in `events()`.
-       It holds the spec's state to `max_metadata_bytes` and is tried
-       before `transduce-tree`.
-     - Three tests: the spec read and refused; the native offered,
-       declined and off; the library's scans by hand over csv-shaped
-       passes.
-   - Rust's lib and spec tests and clippy pass. TypeScript passes 548
-     of 548, and Go passes.
-   - Next: alchemy's full gate (`ci/rust/run.sh`), then the pull
-     request. Its `downstream.yml` runs alchemy-cli's gates against it.
-2. **transduce:** `TransduceRecords` in Rust, offered by
-   `TransduceRouters` and held to the walk over csv's documents. The
-   probe's code in
-   `~/Projects/tabnas-worktrees/csv-native/transduce/rs/examples/csv_native_probe.rs`
-   is a start.
-3. **csv:**
-   - Tag `elem`'s two empty-cell alternates with the group `empty`, in
-     both rule sets (strict and relaxed), in `rs/src/lib.rs`,
-     `ts/src/csv.ts` and `go/csv.go`.
-   - Rewrite `alchemy/transduce.alc` as the spec; `npm run embed` in
-     `ts/` copies it.
-   - The part needs alchemy's `transduce-records`, so alchemy is
-     released first.
+     - `lower.rs` holds `records_spec` and `native_records`, and the hook
+       in `events()`, with three tests.
+   - A header cell that isn't a string names its column as the csv
+     grammar names it.
+   - Checked: `ci/rust/run.sh` green, TypeScript 548 of 548, Go passing.
+   - `downstream.yml` runs alchemy-cli's gates against it.
+2. **csv: pushed, no pull request yet.** The branch is
+   `claude/transduce-records` (`5124125`).
+   - Both rule sets in Rust, TypeScript and Go tag `elem`'s two
+     empty-cell alternates with the group `empty`.
+   - `alchemy/transduce.alc` is the `transduce-records` spec, and its
+     copies are re-embedded.
+   - Rust and Go pass; TypeScript is not run yet.
+   - The tags and the part must land together: the old part matched
+     the trailing alternate's groups exactly (`["comma"]`).
+   - It opens after alchemy#105 merges. csv's CI doesn't run the part;
+     alchemy-cli's, which clones csv's `main`, does.
+3. **transduce: pushed, no pull request yet.** The branch is
+   `claude/transduce-records` (`cea4265`).
+   - `TransduceRecords` in `rs/src/transduce_records.rs` is offered by
+     `TransduceRouters::transduce_records`.
+   - Five unit tests pass, including a refusal at exactly the library's
+     state measure.
+   - Still to do: an integration test over the csv grammar's own passes
+     (once csv's tags are on `main`), `docs/reference.md`, `AGENTS.md`
+     and a BENCH note.
+   - It opens after csv's pull request merges.
 4. **alchemy-cli:** a differential test holding the native to the
    library over csv's corpus, as `transduce_tree_native_and_interpreted_agree`
    does.
