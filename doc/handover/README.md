@@ -234,9 +234,10 @@ needs.
      holds in both states: Go's runner against csv's untagged release
      passes all ten rows, and the re-run with the tagged branches was
      green.
-   - Once csv's tags are on `main`, a follow-up switches those rows to
-     csv's shipped part, the `transduce-records` spec.
-2. **csv: tabnas/csv#108, open.** The branch is
+   - tabnas/alchemy#106 (open) adds rows for csv's shipped part, the
+     spec, beside the hand-written ones, which stay as a scan of a
+     program's own.
+2. **csv: tabnas/csv#108, merged (`a024e7a`).** The branch is
    `claude/transduce-records` (`5124125`).
    - Both rule sets in Rust, TypeScript and Go tag `elem`'s two
      empty-cell alternates with the group `empty`.
@@ -248,8 +249,8 @@ needs.
    - It opens after alchemy#105 merges. csv's CI doesn't run the part;
      alchemy-cli's, which clones csv's `main`, does. Rust and Go pass,
      and TypeScript passes 256 of 256.
-3. **transduce: pushed, no pull request yet.** The branch is
-   `claude/transduce-records` (`cea4265`).
+3. **transduce: tabnas/transduce#65, open.** The branch is
+   `claude/transduce-records` (`46f677a`).
    - `TransduceRecords` in `rs/src/transduce_records.rs` is offered by
      `TransduceRouters::transduce_records`.
    - Five unit tests pass, including a refusal at exactly the library's
@@ -260,7 +261,7 @@ needs.
      a time gives the same events. It needs csv's tags on `main`.
    - `docs/reference.md`, `AGENTS.md` and a BENCH section ("Records,
      natively") are pushed (`46f677a`). The local gate is running.
-   - It opens after csv's pull request merges.
+   - Its CI needs csv's tags, which are on `main` now.
 4. **alchemy-cli: pushed (`e079405`), no pull request yet.** `rs/tests/stdlib_test.rs`
    gains two tests. `transduce_records_native_and_interpreted_agree`
    covers four specs over csv's corpus, the CSV fixtures, generated
