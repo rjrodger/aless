@@ -5,7 +5,8 @@ This session ran on the maintainer's machine on 2026-10-22 and
 [`docs/streaming-plan.md`](https://github.com/tabnas/alchemy/blob/main/docs/streaming-plan.md)
 in tabnas/alchemy records step by step in its section 11. It began at
 step 10's fourth item, the hosts reading a file through a reader. It
-built CSV's native route and is now releasing it, the records wave.
+built CSV's native route and released it in the records wave, which
+ended with aless 0.4.10.
 
 aless is the host the plan serves, so its handover is kept here. The
 fleet's earlier page, parser's
@@ -87,18 +88,27 @@ Every pull request below is merged.
 | records | tabnas/alchemy-cli#57 | `75d0108` | The native and the library agree on 848 documents, and refuse at the same bounds. |
 | 12 | tabnas/transduce#66 | `6a43c75` | `LinesSource`, `LineFormat` and `DEFAULT_CHUNK_BYTES` go (breaking). |
 | docs | tabnas/parser#318 | `2d64381` | parser's old handover page goes. |
+| 12 | tabnas/transduce#67 | `10948ac` | tabnas-json and tabnas-csv are dev-dependencies (ruling 12); `tools/port-deps.json` records that TypeScript and Go keep them. |
+| 12 | tabnas/transduce#68 | `e164694` | The register names its pull requests as `tabnas/transduce#N`. |
+| 12 | tabnas/admin#156 | `edbd605` | `docs/deps` after #67. |
+| wave | tabnas/csv#109 | `6d7f250` | csv 0.6.9. |
+| wave | tabnas/alchemy#107 | `c6688b2` | alchemy 0.2.15. |
+| wave | tabnas/transduce#69 | `312000b` | transduce 0.3.0. |
+| wave | tabnas/alchemy-cli#58 | `11bdbcb` | alchemy-cli 0.1.17; its lock's transduce entry rewritten. |
+| wave | tabnas/render#27 | `f897868` | render's lock after the wave (not released). |
+| 12 | rjrodger/aless#94 | `4add7d4` | CSV and TSV through csv's part, natively; `Plan` and `line_format` gone. |
+| wave | rjrodger/aless#95 | `bfe611a` | aless 0.4.10. |
 
-**Released:** aless 0.4.9 and alchemy-cli 0.1.16.
+**Released**, each checked where it is published (npm, the Go proxy,
+crates.io and the GitHub Release; for aless also the Homebrew tap's
+formula, a checksum and the attestation):
 
-**Unreleased on `main`**, now going out in the records wave (ruling 11):
+- before the wave: aless 0.4.9 and alchemy-cli 0.1.16;
+- the records wave (ruling 11): csv 0.6.9, alchemy 0.2.15, transduce
+  0.3.0 (breaking: steps 12 and 13), alchemy-cli 0.1.17 and aless
+  0.4.10.
 
-- csv: #108, as 0.6.9.
-- alchemy: #105 and #106, as 0.2.15.
-- transduce: #62 to #66, and #67 once merged, as 0.3.0, a breaking
-  release.
-- alchemy-cli: #56 and #57.
-- aless: #91 and #92. `CHANGELOG.md` lists #91 under Unreleased.
-- render: changes to docs and benches only, so it is not released.
+**Unreleased on `main`:** render's docs, benches and lock only.
 
 ## Measurements
 
@@ -179,6 +189,22 @@ table. Each figure is the median of three interleaved runs:
   refuses it. It is the one document of 199 where the native and the
   walk differ.
 
+### CSV in aless, the line source against the part
+
+Matrix builds of aless's `main` (the line source) and of #94 (the part,
+natively), the medians of three interleaved runs, the outputs byte for
+byte the same (`scratchpad/aless-csv-bench.sh`):
+
+| Input | `--render` | Line source | Part |
+|---|---|---|---|
+| 100,000 rows, 3.6 MB | csv | 4.23 s, 17 MiB | 5.88 s, 14 MiB |
+| 100,000 rows | json | 4.13 s | 6.22 s |
+| 700,000 rows, 26.9 MB | csv | 29.35 s | 43.98 s |
+| 700,000 rows | json | 29.27 s | 40.72 s |
+
+Two fifths to a half longer, at a slightly lower peak. The released
+0.4.10 binary (full LTO) takes 5.28 s for the 100,000 rows.
+
 ## CSV's native route (rulings 9 and 10)
 
 `transduce-records spec input` is in alchemy's `stdlib/transduce.alc`.
@@ -223,75 +249,47 @@ def csv-transduce [input]
   `number_text` and its kin, so the native writes a number as
   `scalar-text` does.
 
-## In progress: the records wave, then aless
+## How the wave went
 
-Ruling 11 is being carried out. The wave's order comes from admin's
-`node tasks/dep-order.js --edges`: csv and alchemy, then transduce
-(which needs both), then alchemy-cli. render needs no release, because
-its only runtime dependency is alchemy's shared types and 0.2.15 is
-compatible.
+The order came from admin's `node tasks/dep-order.js --edges`: csv and
+alchemy, then transduce (which needs both), then alchemy-cli; aless
+last, from crates.io. render needed no release, since its only runtime
+dependency is alchemy's shared types.
 
-1. **transduce: tabnas/transduce#67, merged (`10948ac`)** (ruling 12).
-   tabnas-json and tabnas-csv are in `[dev-dependencies]`.
-   - Its first CI run failed the fleet's port-deps test (ADR-24),
-     because the ports now differ: TypeScript and Go still parse each
-     line with those grammars in their `LinesSource`.
-   - `tools/port-deps.json` records both differences with their reason
-     and their repair, step 12 in the ports. tabnas/transduce#68
-     (`e164694`) names its pull requests as `tabnas/transduce#N`, since
-     admin's page copies the text.
-   - admin's `docs/deps` went stale, as expected: tabnas/admin#156
-     regenerates it (open).
-2. **csv 0.6.9: released.** tabnas/csv#109 (`6d7f250`), then
-   `release.yml`. npm, the Go proxy, crates.io and the `go/v0.6.9`
-   Release (6 assets) were checked.
-3. **alchemy 0.2.15: tabnas/alchemy#107, merged (`c6688b2`).** Go's
-   requires moved to json v0.5.19 and parser v0.12.15. Its downstream
-   job, alchemy-cli's gates against the branch, took 29 minutes.
-4. **alchemy 0.2.15: released.** npm, the Go proxy, crates.io and the
-   `go/v0.2.15` Release (6 assets) were checked.
-5. **transduce 0.3.0: released.** tabnas/transduce#69 (`312000b`),
-   then `release.yml`. npm, the Go proxy and crates.io were checked;
-   transduce's Releases carry no assets (0.2.12's had none either).
-6. **alchemy-cli 0.1.17: released.** tabnas/alchemy-cli#58
-   (`11bdbcb`), then `release.yml`; npm, the Go proxy and crates.io were
-   checked (its Releases carry no assets, as 0.1.16's did not).
-   - Its first Rust gate failed the lock check: step 2 moves only a
-     lock's version lines, and tabnas-transduce 0.3.0's entry no longer
-     lists csv and json (#67). `cargo update --workspace` fixed it.
-   - alchemy's `downstream` on alchemy's `main` failed the same check
-     (it clones alchemy-cli's `main`); re-run after #58 merged, it is
-     green.
-   - render's lock had the same stale entry, though render was not
-     released: tabnas/render#27 rewrote it (merged, `f897868`).
-7. **aless: rjrodger/aless#94, merged (`4add7d4`).** CSV and TSV are
-   read through csv's part, natively; `Plan` and `line_format` are
-   gone. CI was green on every platform, the full matrix included.
-   - Measured, main's matrix build (the line source) against the
-     branch's (the part, natively), medians of three interleaved runs,
-     the outputs byte for byte the same (`scratchpad/aless-csv-bench.sh`):
+- **transduce#67 failed the fleet's port-deps test (ADR-24) first.**
+  Moving one port's dependency makes the ports differ until
+  `tools/port-deps.json` records it. Its text is copied into admin's
+  `docs/deps`, so references there name their repository (#68), and
+  admin's page went stale until #156 regenerated it.
+- **alchemy-cli#58 failed the Rust gate's lock check first.** publish.sh's
+  step 2 moves only a lock's version lines; transduce 0.3.0's entry no
+  longer lists csv and json, which `cargo update --workspace` fixed.
+  The same stale entry failed alchemy's `downstream` job on alchemy's
+  `main` (it clones alchemy-cli's lock; re-run green after #58), and
+  would have failed render's next run (#27). The release-wave memory
+  now says so.
+- **aless was built against the local transduce, alchemy and parser
+  first** (`scratchpad/aless-patched.sh`: cargo `--config` patches into
+  a target dir of its own, restoring `Cargo.lock`), so its tests ran
+  before transduce 0.3.0 was cut. A patch stops matching once the local
+  checkout's version moves past the lock's, which pulls in two copies of
+  a crate: move the pin to the release then.
+- **TSV is pruned by CSV's grammar name** (`grammar_name` in aless's
+  export), since transduce's `capability::PRUNABLE` lists `csv` only.
+- **A repeated header name, probed through every route** before the
+  release, as the release-wave memory asks: `--render csv` keeps the
+  last cell from standard input and from a file; json, yaml, toml and
+  jsonl refuse standard input with `DUPLICATE_MEMBER`, and read a file
+  again whole, as `--json` reads it. The CHANGELOG says so, since the
+  line source wrote the last cell from standard input too.
 
-     | Input | `--render` | Line source | Part |
-     |---|---|---|---|
-     | 100,000 rows, 3.6 MB | csv | 4.23 s, 17 MiB | 5.88 s, 14 MiB |
-     | 100,000 rows | json | 4.13 s | 6.22 s |
-     | 700,000 rows, 26.9 MB | csv | 29.35 s | 43.98 s |
-     | 700,000 rows | json | 29.27 s | 40.72 s |
+## Open
 
-   - A repeated header name: `--render csv` keeps the last cell from
-     standard input and from a file; json, yaml, toml and jsonl refuse
-     standard input with `DUPLICATE_MEMBER`, and read a file again
-     whole, as `--json` reads it. The CHANGELOG says so.
-   - TSV is pruned by CSV's grammar name (`grammar_name`), since
-     transduce's `capability::PRUNABLE` lists `csv` only.
-8. **aless 0.4.10: rjrodger/aless#95, merged (`bfe611a`).** The dry
-   run (`release.yml`, `tag=dry-run`, run 40035678571) is building
-   every target. Then dispatch `tag=v0.4.10`, and verify crates.io, the
-   Homebrew tap's formula, the checksums and the attestation.
-9. **alchemy's plan record** for rulings 8 to 12, the measurements and
-   the wave is on `claude/plan-csv-records` (`0213464`, rebased on
-   `main`), in `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`.
-   Its pull request opens once aless 0.4.10 is out, naming it.
+- **tabnas/alchemy#108**, the plan's record of the route, step 12 for
+  CSV and the wave (docs only), from `claude/plan-csv-records` in
+  `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`. Merge when
+  green.
+- **rjrodger/aless#93**, this page.
 
 ## Carried over
 
@@ -324,19 +322,23 @@ compatible.
 
 ## Local state, on the maintainer's machine
 
-- **`~/Projects/tabnas-worktrees/release-records/`** holds the wave.
-  csv and alchemy are worktrees on their release branches, and
-  `admin-deps` is admin#156's; the rest are symlinks to the main
-  checkouts.
-- **`~/Projects/tabnas-worktrees/aless-csv/aless`** is aless's CSV move.
-- **`~/Projects/tabnas-worktrees/csv-records/`** holds the route's
-  worktrees. The ones for #105 to #108, #57 and #66 are merged, and
-  transduce is on #67's branch. alchemy-plan holds the plan record.
-- **`~/Projects/tabnas-worktrees/csv-native/`** holds the probe:
-  transduce on `claude/csv-native-probe`, its example uncommitted. The
-  native has landed, so it can go once the wave is out. Its inputs came
-  from transduce's `tests/support` `records_csv`;
-  `csv_native_probe gen ROWS FILE` makes them again.
+Every set below but `evaluator-tune`, `fixes` and `handover` holds only
+merged work, and can be removed as ruling 7 had it once alchemy#108
+merges: check each worktree is clean and its `HEAD` is its merged pull
+request's head, then `git worktree remove` from its main checkout.
+
+- **`~/Projects/tabnas-worktrees/csv-records/`**: the route's
+  worktrees (alchemy, csv, alchemy-cli, transduce) and alchemy-plan
+  (#108, open).
+- **`~/Projects/tabnas-worktrees/release-records/`**: the wave's
+  release branches (csv, alchemy, transduce, alchemy-cli, render) and
+  `admin-deps`; the rest are symlinks.
+- **`~/Projects/tabnas-worktrees/aless-csv/`**: aless's worktree (#94
+  and #95, on `claude/release-0.4.10` now), with `target-patched`, the
+  patched build's target dir, beside it.
+- **`~/Projects/tabnas-worktrees/csv-native/`**: the probe, transduce
+  on `claude/csv-native-probe` with its example uncommitted. The native
+  has landed.
 - **`~/Projects/tabnas-worktrees/evaluator-tune/`** holds the interning
   experiment: one commit on `claude/tune-rule-record`, never pushed.
 - **`~/Projects/tabnas-worktrees/fixes/`** is not this session's and was
@@ -370,6 +372,9 @@ compatible.
   2026-09-27 numbers came from another machine.
 - **`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`** catches stale
   intra-doc links that the gates miss.
+- **Run `cargo update --workspace` after publish.sh's step 2**, and
+  in every repository whose lock names a crate whose dependency list
+  changed: step 2 moves only version lines.
 - **Check that a removed worktree is merged.** Before removing one,
   check that it is clean and that its `HEAD` is its merged pull
   request's head. Then use `git worktree remove` from its main checkout.
