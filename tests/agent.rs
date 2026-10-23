@@ -3458,7 +3458,7 @@ fn alchemy_failures_have_their_shapes_and_statuses() {
 
 /// A program slow on one item works inside one of the parser's events,
 /// where no guard of aless's can stop it: `--timeout` must reach the
-/// program's own flag, in the incremental mode JSON runs in, or the
+/// program's own flag, as JSON runs, through its part, or the
 /// command runs as long as the item's work (seconds here, for one row).
 /// It ends a moment after the deadline instead, status 6, with a
 /// `timeout` worded for the run, the parse and the program, and `output`,
@@ -3705,9 +3705,9 @@ fn every_fixture_renders_as_yaml() {
 /// is refused before the render writes it, and the run falls back to the
 /// parsed value, as `--json` reads it, when nothing was written yet; once
 /// output has left, the refusal is the answer, the output partial. A
-/// stream no tree has (the member's value before its key, which the
-/// incremental YAML source streams for a key that is a mapping) falls back
-/// the same way.
+/// YAML key that is a mapping, whose member's value the rule-event
+/// inference once streamed before its key (tabnas/transduce#7), is
+/// written as the walk writes it.
 #[test]
 fn render_yaml_holds_a_stream_to_a_trees_events() {
     let out = aless(&["--render", "yaml"], Some("{\"a\":1,\"a\":2}"));

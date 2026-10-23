@@ -1,16 +1,16 @@
-//! The cross product `--render` answers for (admin ADR-27, plan item
-//! P3.2): every document of every corpus, read with its format's grammar,
-//! written by aless in every format it writes, read back with that
-//! format's grammar, and compared with the document's own value under the
-//! target's declared conventions (its loss list). The writes run aless's
-//! own routes, the native JSON and CSV ones and the composed ones alike,
-//! from the source aless's plan takes for the format: JSON Lines and CSV a
-//! record at a time, the verified grammars as the parse proceeds, the rest
-//! whole. A pair that fails to write, that writes a document its own
-//! grammar refuses, or that reads back as anything but the conventions say
-//! is a failure, and so is a corpus that shrinks, but for a defect of a
-//! format's crate pinned in [`KNOWN_DEFECTS`] until a release fixes it,
-//! which must go on failing. Three refusals are a
+//! The cross product `--render` answers for (admin ADR-27, plan item P3.2):
+//! every document of every corpus, read with its format's grammar, written
+//! by aless in every format it writes, read back with that format's
+//! grammar, and compared with the document's own value under the target's
+//! declared conventions (its loss list). The writes run aless's own routes,
+//! the native JSON and CSV ones and the composed ones alike, from the
+//! source aless's plan takes for the format: CSV a chunk of records at a
+//! time, a format whose crate ships a transducer part through it as the
+//! parse proceeds, the rest whole. A pair that fails to write, that writes
+//! a document its own grammar refuses, or that reads back as anything but
+//! the conventions say is a failure, and so is a corpus that shrinks, but
+//! for a defect of a format's crate pinned in [`KNOWN_DEFECTS`] until a
+//! release fixes it, which must go on failing. Three refusals are a
 //! target's declared outcome, and counted as such: a schema-only target's
 //! (CSS, proto, PGN, C, and the grammar notations, ABNF, EBNF and GBNF,
 //! which write only the tree their own documents read as) of a document of
@@ -413,7 +413,6 @@ fn read(id: &str, text: &str) -> Result<Datum, Fail> {
         Duplicates::LastWins,
     ));
     let (outcome, mut collect) = ParserSource::new(parser(id), text)
-        .grammar(id)
         .limits(Limits::default())
         .run_owned(collect);
     outcome?;

@@ -12,18 +12,20 @@
 //! than the document. Where the events come from is [`plan`]'s decision,
 //! and the one place the input format matters:
 //!
-//! - JSON Lines, CSV and TSV are read a record (or a chunk of records) at
-//!   a time from a reader, so the file is never in memory whole and
-//!   `--max-size` does not apply to it: at the root the records are the
-//!   export's, and below it (`--path`) the scope takes the value it names
-//!   from the records as they pass;
+//! - JSON Lines, CSV and TSV are read from a reader as the run goes
+//!   ([`streams_as_read`]), CSV and TSV a chunk of records at a time and
+//!   JSON Lines a window at a time through its part, so the file is never
+//!   in memory whole and `--max-size` does not apply to it: at the root
+//!   the records are the export's, and below it (`--path`) the scope takes
+//!   the value it names from the records as they pass;
 //! - JSON, JSONC, JSON5, jsonic, YAML, XML, ZON and PGN, JSON Lines handed
 //!   over as one text, and a grammar from the command line whose
-//!   annotations make a part, are parsed whole and read through a
-//!   transducer part ([`transducer`]): an alchemy program makes the
-//!   document's events of the parser's rule passes, which leave as the
-//!   parse proceeds, and the engine's arrays are emptied behind the stream
-//!   for a grammar transduce verifies alike pruned and not;
+//!   annotations make a part, are read through a transducer part
+//!   ([`transducer`]), a file a window at a time where its grammar can
+//!   ([`Input::Path`]) and the text whole otherwise: an alchemy program
+//!   makes the document's events of the parser's rule passes, which leave
+//!   as the parse proceeds, and the engine's arrays are emptied behind the
+//!   stream for a grammar transduce verifies alike pruned and not;
 //! - every other grammar, Markdown among them, is parsed whole and its
 //!   value walked afterwards.
 //!
@@ -351,7 +353,7 @@ pub enum ExportError {
     /// positions, so a position on a failure that came this way is in the
     /// program). A code the language shares with the source
     /// (`STREAMABILITY_UNKNOWN`: the checker's or the evaluator's, and a
-    /// verified grammar's refusal to stream part-way) is the program's
+    /// format's part's refusal to stream part-way) is the program's
     /// only when it came this way. A `Code::Aborted` that came this way
     /// is the deadline's and is classified as a `timeout` instead, with
     /// no position.
@@ -491,7 +493,7 @@ pub fn run_program(
 }
 
 /// Run the export through a fresh chain of sinks from `chain`, and once
-/// more through the whole-value path when the incremental stream was
+/// more through the whole-value path when the part's stream was
 /// refused part-way before anything reached the output (see the module
 /// doc); a refusal after output was written is reported as it is. The
 /// whole records a failed run had ready are written before it is
@@ -2749,9 +2751,10 @@ mod tests {
     }
 
     /// A shipped part streams a repeated member as each occurrence, as the
-    /// incremental source does, and the export settles it as it always
-    /// has: the scope refuses the path's own key repeated, and a member
-    /// repeated off the path, after the records were taken, is no refusal.
+    /// rule-event inference it replaced did, and the export settles it as
+    /// it always has: the scope refuses the path's own key repeated, and a
+    /// member repeated off the path, after the records were taken, is no
+    /// refusal.
     #[test]
     fn a_member_repeated_off_the_path_is_no_refusal() {
         let j = job(Format::Json, Renderer::Csv, ".rows");
@@ -3597,10 +3600,10 @@ mod tests {
     #[test]
     fn a_stream_refused_part_way_falls_back_to_the_whole_value() {
         // A jsonic top-level implicit list whose first element is a
-        // container, and a YAML stream of documents: the incremental
-        // source streams the first value as the root, then finds it
-        // wrapped, and refuses. Nothing had reached the output, so the
-        // export runs again from the whole value, and agrees with --json.
+        // container, and a YAML stream of documents: the format's part
+        // streams the first value as the root, then finds it wrapped, and
+        // refuses. Nothing had reached the output, so the export runs
+        // again from the whole value, and agrees with --json.
         for (format, text) in [
             (Format::Jsonic, "{a:1}\n{b:2}\n"),
             (Format::Yaml, "a: 1\n---\nb: 2\n"),

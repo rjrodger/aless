@@ -814,7 +814,7 @@ fn run_program(
         }
         // One from the program's sink with neither (a renderer's, over the
         // rows the program built), and the source's whatever its code (a
-        // verified grammar that refused to stream part-way, once output
+        // format's part that refused to stream part-way, once output
         // had left: `STREAMABILITY_UNKNOWN` too), are the input's.
         ExportError::Program(fail) | ExportError::Transduce(fail) => {
             Failure::transduce(&name, format, &fail)
@@ -3216,7 +3216,7 @@ mod tests {
 
     /// A program slow on one item works inside one of the parser's events,
     /// where no guard of aless's runs: `--timeout` reaches the program's
-    /// own flag, in the incremental mode JSON runs in, and the run ends a
+    /// own flag, as JSON runs, through its part, and the run ends a
     /// moment after the deadline, status 6, with a `timeout` that says the
     /// run (the parse and the program) ran too long, not the parse alone,
     /// and carries no input position (`line` and `col` null, the report's
