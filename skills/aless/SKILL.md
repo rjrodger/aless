@@ -105,7 +105,7 @@ streamed as the file is read:
 aless --render csv data.jsonl                                   # one line, one row
 aless --render csv --path .response.payload.deep.records api.json
 aless --render json big.yaml                                    # the document as JSON, streamed
-aless -k jsonl --render csv < events.log                        # stdin, a record at a time
+aless -k jsonl --render csv < events.log                        # stdin, read as it arrives
 ```
 
 `--render json` writes what `--json` writes, indented the same way
@@ -223,7 +223,7 @@ is the same usage error with `--explain` as without it.
 aless --alchemy export.alc api.json                       # a table the program renders, as CSV
 aless --alchemy table.alc --render json api.json          # the same rows as JSON records
 aless --alchemy-expr 'def export [input] input' data.yaml # the document as JSON
-aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
+aless -k jsonl --alchemy filter.alc < events.log          # stdin, read as it arrives
 aless --alchemy export.alc --explain                      # the plan; no run
 ```
 

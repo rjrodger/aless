@@ -2797,6 +2797,17 @@ pub fn open_windowed(
     Ok(Box::new(AsWhole::new(file, max_size)))
 }
 
+/// A reader of a line-delimited input, for a parse that reads it a window
+/// at a time, as [`open_windowed`] hands a file over: it reads as a text
+/// read whole does, without its byte-order mark and with bytes that are
+/// not UTF-8 replaced, and no more than `max_size` bytes of it.
+pub fn windowed<'a>(
+    reader: impl Read + Send + 'a,
+    max_size: Option<u64>,
+) -> Box<dyn Read + Send + 'a> {
+    Box::new(AsWhole::new(reader, max_size))
+}
+
 /// A reader that reads as [`read_path_within`] and [`parser_text`] read a
 /// text whole ([`open_windowed`]): it refuses its source past `max` bytes,
 /// skips a byte-order mark at its start, and replaces each sequence of
