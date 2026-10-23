@@ -253,42 +253,19 @@ compatible.
 5. **transduce 0.3.0: released.** tabnas/transduce#69 (`312000b`),
    then `release.yml`. npm, the Go proxy and crates.io were checked;
    transduce's Releases carry no assets (0.2.12's had none either).
-6. **alchemy-cli 0.1.17: tabnas/alchemy-cli#58, merged (`11bdbcb`);
-   its release is running.** Step 2 moved Go's requires to alchemy
-   v0.2.15, csv v0.6.9, transduce v0.3.0, json v0.5.19, jsonc v0.5.16,
-   jsonl v0.1.19 and parser v0.12.15.
+6. **alchemy-cli 0.1.17: released.** tabnas/alchemy-cli#58
+   (`11bdbcb`), then `release.yml`; npm, the Go proxy and crates.io were
+   checked (its Releases carry no assets, as 0.1.16's did not).
    - Its first Rust gate failed the lock check: step 2 moves only a
      lock's version lines, and tabnas-transduce 0.3.0's entry no longer
      lists csv and json (#67). `cargo update --workspace` fixed it.
    - alchemy's `downstream` on alchemy's `main` failed the same check
-     (it clones alchemy-cli's `main`); its re-run is in progress.
+     (it clones alchemy-cli's `main`); it was re-run after #58 merged.
    - render's lock had the same stale entry, though render was not
      released: tabnas/render#27 rewrote it (merged, `f897868`).
-7. **aless: rjrodger/aless#94, open** (`af2480e`, one commit), from
-   `claude/csv-through-part` in
-   `~/Projects/tabnas-worktrees/aless-csv/aless`, on the released crates
-   (transduce 0.3.0, alchemy 0.2.15, csv 0.6.9). fmt, clippy and
-   `cargo test` pass locally; the ignored matrix is running locally.
-   aless 0.4.10's release pull request follows its merge.
-   - CSV and TSV go through csv's part. Each joins all three part
-     lists: `translate::transducer`, `export::shipped` and
-     `export::transducer`.
-   - TSV asks transduce for pruning by CSV's grammar name
-     (`grammar_name`), since `capability::PRUNABLE` lists `csv` only.
-     A test holds TSV's events alike pruned and not, and to the walk.
-   - A header that repeats a name is settled as JSON's repeated member
-     is (`held_to_a_tree` false for CSV and TSV): a table keeps the
-     last cell, as the line source did, and `--render json` refuses
-     before writing, which reads a file again whole. Standard input then
-     fails with `DUPLICATE_MEMBER`, where the line source wrote the last
-     cell. aless 0.4.6 was probed for the old behaviour.
-   - Built against the local transduce, alchemy and parser checkouts
-     (`scratchpad/aless-patched.sh`: cargo `--config` patches into
-     `aless-csv/target-patched`, restoring `Cargo.lock` after), it
-     type-checks clean and the library's 317 tests pass, the new ones
-     among them. agent.rs failed only `the_generated_files_are_current`,
-     since the reference changed; the man page is regenerated with the
-     patched binary.
+7. **aless: rjrodger/aless#94, merged (`4add7d4`).** CSV and TSV are
+   read through csv's part, natively; `Plan` and `line_format` are
+   gone. CI was green on every platform, the full matrix included.
    - Measured, main's matrix build (the line source) against the
      branch's (the part, natively), medians of three interleaved runs,
      the outputs byte for byte the same (`scratchpad/aless-csv-bench.sh`):
@@ -300,27 +277,21 @@ compatible.
      | 700,000 rows, 26.9 MB | csv | 29.35 s | 43.98 s |
      | 700,000 rows | json | 29.27 s | 40.72 s |
 
-     So two fifths to a half longer, at a slightly lower peak; the
-     CHANGELOG says so.
-   - The probe of a repeated header name, through the branch's binary:
-     `--render csv` keeps the last cell from standard input and from a
-     file; json, yaml, toml and jsonl refuse standard input with
-     `DUPLICATE_MEMBER` and nothing written, and read a file again
-     whole, as `--json` reads it.
-   - On the released crates, clippy and `cargo test` pass
-     (`scratchpad/aless-csv-gate.sh`).
-   - `Plan`, `line_format`, the use of `LinesSource`, the alarm's
-     `lines` flag and the `--max-size` exemption's wording for the line
-     source all go. `streams_as_read` stays.
-   - Tests and docs follow. Then the release: a bump pull request,
-     `release.yml` with `tag=dry-run`, then `tag=v0.4.10`.
-   - Before release, probe a CSV with a repeated header name through
-     `--render csv` beside `--json`. The part streams both cells, so the
-     tree contract must refuse it, as it does for jsonic.
-8. **alchemy's plan record** for rulings 8 to 12 and the measurements
-   above is on `claude/plan-csv-records` (`18c6d3c`), in
-   `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`. It needs
-   #106, #57, #66 and the wave added before its pull request opens.
+   - A repeated header name: `--render csv` keeps the last cell from
+     standard input and from a file; json, yaml, toml and jsonl refuse
+     standard input with `DUPLICATE_MEMBER`, and read a file again
+     whole, as `--json` reads it. The CHANGELOG says so.
+   - TSV is pruned by CSV's grammar name (`grammar_name`), since
+     transduce's `capability::PRUNABLE` lists `csv` only.
+8. **aless 0.4.10: rjrodger/aless#95, open** (the bump, on
+   `claude/release-0.4.10` in the same worktree). Once merged, dispatch
+   `release.yml` on `main` with `tag=dry-run`, then `tag=v0.4.10`, and
+   verify crates.io, the Homebrew tap's formula, the checksums and the
+   attestation.
+9. **alchemy's plan record** for rulings 8 to 12, the measurements and
+   the wave is on `claude/plan-csv-records` (`0213464`, rebased on
+   `main`), in `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`.
+   Its pull request opens once aless 0.4.10 is out, naming it.
 
 ## Carried over
 
