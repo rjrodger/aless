@@ -130,9 +130,10 @@ from jless. This file is the guide for any agent working here;
   JSON errors), `cli` (every option, in the one table the parser reads;
   the reference `--help` prints, the summary `-h` prints, the man page
   and the shells' completions), `export` (`--render csv` and `json`: the
-  input streamed through the tabnas transducer as its format's plan
-  allows, a record at a time, the parse's events as it proceeds, or the
-  parsed value walked, into aless's own renderers; the fallback when a
+  input streamed through the tabnas transducer as its format allows, the
+  parse's events through the format's part as it proceeds (JSON Lines,
+  CSV and TSV from a reader, a window at a time), or the parsed value
+  walked, into aless's own renderers; the fallback when a
   grammar refuses to stream, whole records only on a failure, each
   failure sorted by what it means; the source plumbing `alchemy` and
   `translate` run on),

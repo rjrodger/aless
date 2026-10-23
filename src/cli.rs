@@ -244,8 +244,8 @@ pub const OPTIONS: &[Opt] = &[
             records, an object per row), JSON events as compact JSON (--render csv: a \
             table of them); --render FORMAT writes a table or JSON events as FORMAT. \
             The program selects what it reads, so no --path, --at or other output \
-            option goes with it. The input reaches it as --render reads it: CSV and \
-            TSV a record at a time, and JSON Lines a window at a time.",
+            option goes with it. The input reaches it as --render reads it: JSON \
+            Lines, CSV and TSV a window at a time.",
     },
     Opt {
         short: None,
@@ -417,9 +417,9 @@ pub const OPTIONS: &[Opt] = &[
         detail: "Refuse an input larger than SIZE (default 64M; 0 for no limit), and a \
             --grammar or --alchemy file too, with a too_large error, status 5: a parse \
             takes about 40 bytes of memory per byte of input. SIZE is bytes, or a whole \
-            number with K, M or G (1024s). CSV and TSV that --render or --alchemy \
-            streams are read a record at a time, and JSON Lines a window at a time, and \
-            the limit does not apply to them.",
+            number with K, M or G (1024s). JSON Lines, CSV and TSV that --render or \
+            --alchemy streams are read a window at a time, and the limit does not apply \
+            to them.",
     },
     Opt {
         short: None,
@@ -981,8 +981,7 @@ const TOPICS: &[Topic] = &[
                     "timeout",
                     "past --timeout: a parse error's fields, line and col showing how far \
                     the parse got (null when the input was still being read, or the parse \
-                    finished late; a read a record at a time names the line its record \
-                    starts on, col null), plus seconds",
+                    finished late), plus seconds",
                 ),
                 (
                     "not_found",
@@ -1084,18 +1083,18 @@ const TOPICS: &[Topic] = &[
                 with status 0.",
             ),
             Block::Text(
-                "--render and --alchemy stream instead. CSV and TSV are read a record at a \
-                time (a record over 64 MB fails), and JSON Lines a window at a time, \
-                whatever their size, so --max-size does not apply to them; the JSON \
-                family, jsonic, YAML, ZON, \
+                "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
+                window at a time, whatever their size, so --max-size does not apply to \
+                them (a value or a field over 16 MB fails); the JSON family, jsonic, CSV, \
+                TSV, YAML, ZON, \
                 XML, PGN (a game at a time) and most annotated grammars from the \
                 command line write their records as the parse proceeds, and the other \
                 formats after it. A document a grammar refuses to stream part-way is read whole \
                 and written all the same when nothing has been written yet; otherwise the \
                 error says output \"partial\". A stream reads ahead of what it writes, a \
-                window of 64 KB for JSON Lines and a chunk of 256 KB for CSV and TSV, so when \
-                a writer to standard input goes quiet and --timeout stops the run, the \
-                records still in that read-ahead are not written.",
+                window of 64 KB, so when a writer to standard input goes quiet and \
+                --timeout stops the run, the records still in that read-ahead are not \
+                written.",
             ),
             Block::Text(
                 "A document nested deeper than aless reads fails as a parse error with the \

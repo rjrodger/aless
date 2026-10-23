@@ -4,9 +4,9 @@
 //! grammar, and compared with the document's own value under the target's
 //! declared conventions (its loss list). The writes run aless's own routes,
 //! the native JSON and CSV ones and the composed ones alike, from the
-//! source aless's plan takes for the format: CSV a chunk of records at a
-//! time, a format whose crate ships a transducer part through it as the
-//! parse proceeds, the rest whole. A pair that fails to write, that writes
+//! route aless takes for a file of the format: through the transducer part
+//! its crate ships as the parse proceeds (JSON Lines, CSV and TSV among
+//! them), the rest whole. A pair that fails to write, that writes
 //! a document its own grammar refuses, or that reads back as anything but
 //! the conventions say is a failure, and so is a corpus that shrinks, but
 //! for a defect of a format's crate pinned in [`KNOWN_DEFECTS`] until a
@@ -36,12 +36,12 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, Cursor, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use aless::export::{self, ExportError, Input, Job, Plan, Renderer, What};
+use aless::export::{self, ExportError, Input, Job, Renderer, What};
 use aless::load::Format;
 use aless::translate::{self, Options, Part, Shape, Translation};
 use tabnas::Tabnas;
@@ -393,7 +393,7 @@ fn read(id: &str, text: &str) -> Result<Datum, Fail> {
         let out = Buffer::default();
         export::export(
             &job(id, format(id), What::Render(Renderer::Json)),
-            input(format(id), text),
+            input(text),
             Box::new(out.clone()),
         )
         .map_err(|e| Fail::input(format!("aless does not read it: {e:?}")))?;
@@ -467,15 +467,11 @@ fn job(name: &str, from: Format, what: What) -> Job {
     }
 }
 
-/// The input as aless's plan for the format reads it.
-fn input(from: Format, text: &str) -> Input<'_> {
-    match export::plan(from).expect("a format with a grammar") {
-        Plan::Lines => {
-            let reader: Box<dyn BufRead + Send> = Box::new(Cursor::new(text.as_bytes().to_vec()));
-            Input::Lines(reader)
-        }
-        _ => Input::Text(text),
-    }
+/// The input as aless reads a file: its text, which a stream the format's
+/// part refuses before writing anything reads again whole, as a file named
+/// on the command line is read again.
+fn input(text: &str) -> Input<'_> {
+    Input::Text(text)
 }
 
 /// A write that wrote no document.
@@ -542,13 +538,13 @@ fn render(name: &str, from: &str, to: &str, text: &str) -> Result<String, Unwrit
     let result = match &*translation {
         Translation::Native { renderer, .. } => export::export(
             &job(name, format(from), What::Render(*renderer)),
-            input(format(from), text),
+            input(text),
             Box::new(out.clone()),
         ),
         Translation::Composed(c) => translate::run(
             &job(name, format(from), What::Part),
             c,
-            input(format(from), text),
+            input(text),
             Box::new(out.clone()),
             Metrics::new(),
         ),
@@ -601,7 +597,7 @@ fn through_program(file: &str, program: &str, from: &str, text: &str) -> Result<
     translate::run(
         &job(file, format(from), What::Part),
         &c,
-        input(format(from), text),
+        input(text),
         Box::new(out.clone()),
         Metrics::new(),
     )
@@ -1456,7 +1452,7 @@ const PAST_READER: &str = "written past its notation's reader";
 fn grammar_back(to: &str, written: &str) -> Result<(), String> {
     let result = export::export(
         &job(to, format(to), What::Render(Renderer::Json)),
-        input(format(to), written),
+        input(written),
         Box::new(Buffer::default()),
     );
     match result {
@@ -1785,9 +1781,8 @@ fn every_fixture_of_every_format_translates_into_every_format() {
 }
 
 /// Ten times the records leave what the composed render retains where it
-/// was, for every source aless streams a record at a time or as the parse
-/// proceeds: the render keeps one marker per open container, never the
-/// rows behind it.
+/// was, for every source aless streams as the parse proceeds: the render
+/// keeps one marker per open container, never the rows behind it.
 #[test]
 fn ten_times_the_records_leave_what_a_render_retains_flat() {
     type Doc = fn(usize) -> String;
@@ -1850,10 +1845,7 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
     let yaml = target("yaml");
     for (id, doc) in sources {
         let from = format(id);
-        assert!(
-            !matches!(export::plan(from), Some(Plan::Materialize)),
-            "{id} streams"
-        );
+        assert!(export::transducer(from).is_some(), "{id} streams");
         let composition =
             translate::compose(translate::source_part(from), yaml, &Options::default())
                 .unwrap_or_else(|f| panic!("{id}: {f}"));
@@ -1863,7 +1855,7 @@ fn ten_times_the_records_leave_what_a_render_retains_flat() {
             translate::run(
                 &job(id, from, What::Part),
                 &composition,
-                input(from, &text),
+                input(&text),
                 Box::new(std::io::sink()),
                 metrics.clone(),
             )

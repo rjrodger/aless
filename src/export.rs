@@ -8,19 +8,18 @@
 //! (`tabnas-transduce`) turns a parse into a stream of `JsonEvents/1`, a
 //! table transducer projects the selected rows into `TableRows/1`, and a
 //! renderer (`tabnas-render`) writes each row as it completes. What the
-//! run holds is one row, or one chunk of a line-delimited file, rather
-//! than the document. Where the events come from is [`plan`]'s decision,
-//! and the one place the input format matters:
+//! run holds is one row, or one window of a line-delimited file, rather
+//! than the document. Where the events come from is the one place the
+//! input format matters:
 //!
 //! - JSON Lines, CSV and TSV are read from a reader as the run goes
-//!   ([`streams_as_read`]), CSV and TSV a chunk of records at a time and
-//!   JSON Lines a window at a time through its part, so the file is never
-//!   in memory whole and `--max-size` does not apply to it: at the root
-//!   the records are the export's, and below it (`--path`) the scope takes
-//!   the value it names from the records as they pass;
-//! - JSON, JSONC, JSON5, jsonic, YAML, XML, ZON and PGN, JSON Lines handed
-//!   over as one text, and a grammar from the command line whose
-//!   annotations make a part, are read through a transducer part
+//!   ([`streams_as_read`]), a window at a time through their parts, so the
+//!   file is never in memory whole and `--max-size` does not apply to it:
+//!   at the root the records are the export's, and below it (`--path`) the
+//!   scope takes the value it names from the records as they pass;
+//! - JSON, JSONC, JSON5, jsonic, YAML, XML, ZON and PGN, the line-delimited
+//!   formats handed over as one text, and a grammar from the command line
+//!   whose annotations make a part, are read through a transducer part
 //!   ([`transducer`]), a file a window at a time where its grammar can
 //!   ([`Input::Path`]) and the text whole otherwise: an alchemy program
 //!   makes the document's events of the parser's rule passes, which leave
@@ -43,11 +42,10 @@
 //! result is a value `headless` turns into JSON. aless's own caps hold as
 //! they do for a parse: the depth cap and `--timeout` through [`load::guard`]
 //! on the grammar's parser while it parses, and the deadline's alarm
-//! through the transducer's abort flag for the rest of the run (a
-//! line-by-line read, and the walk of a value after its parse) and
-//! through a program's own flag in every mode, so the whole operation is
-//! under the deadline; a grammar that panics is caught at the same
-//! boundary the loader has.
+//! through the transducer's abort flag for the rest of the run (the walk
+//! of a value after its parse) and through a program's own flag in every
+//! mode, so the whole operation is under the deadline; a grammar that
+//! panics is caught at the same boundary the loader has.
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -61,7 +59,6 @@ use tabnas_alchemy::Program;
 use tabnas_render::{
     CsvOptions, CsvRenderer, JsonOptions, JsonRenderer, MissingText, WriteOut, DEFAULT_HOLD,
 };
-use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
     capability, AbortFlag, Cell, Code, Duplicates, Fail, Flow, Guarded, JsonEvent, Limits, Metrics,
     ParserEventSource, Schema, Selector, Sink, Source, TableBinding, TableEvent, TableFromJson,
@@ -116,49 +113,13 @@ impl Renderer {
     }
 }
 
-/// How an input reaches the transducer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Plan {
-    /// CSV or TSV: a record at a time from a reader, never the file whole,
-    /// whether the export starts at the root or below it.
-    Lines,
-    /// The parser's rule passes through the format's transducer part
-    /// ([`transducer`]), the events leaving as the part makes them: over
-    /// the text whole, a file a window at a time where its grammar can
-    /// ([`Input::Path`]), and JSON Lines a window at a time as the run
-    /// reads it ([`Input::Lines`], [`streams_as_read`]).
-    Part,
-    /// The text whole, parsed and then walked.
-    Materialize,
-}
-
-/// The plan for a format, wherever the export starts: a path into a
-/// line-delimited file is a scope over its records, which reads the file
-/// to its end as the run goes, as it does at the root. `None` for plain
-/// text, which has no grammar and so no events.
-///
-/// Every format whose crate ships a transducer part is read through it
-/// (JSON, JSONC, JSON5, jsonic, JSON Lines, YAML, XML, ZON and PGN), and a grammar
-/// from the command line through the part its annotations make
-/// ([`transducer`]); that route empties each array in the engine's tree
-/// behind the stream for a grammar transduce verifies alike pruned and not
-/// ([`capability::prunable`]), never for a grammar from the command line.
-/// Every other format is parsed whole and walked: Markdown, whose manifest
-/// says why it is read whole, among them.
-pub fn plan(format: Format) -> Option<Plan> {
-    Some(match format {
-        Format::Text => return None,
-        Format::Csv | Format::Tsv => Plan::Lines,
-        f if transducer(f).is_some() => Plan::Part,
-        _ => Plan::Materialize,
-    })
-}
-
 /// Whether a format's input is read as the run goes, whatever its size,
-/// so that `--max-size` does not apply to it: CSV and TSV a record at a
-/// time ([`Plan::Lines`]), and JSON Lines a window at a time through its
-/// part, which reads a record's repeated key as its grammar does, keeping
-/// the last, and so never needs the input again ([`Input::Lines`]).
+/// so that `--max-size` does not apply to it ([`Input::Lines`]): JSON
+/// Lines, CSV and TSV, a window at a time through their parts. Their
+/// grammars' values keep the last of a repeated member (a record's key, or
+/// a header's name), and the export settles one as JSON's
+/// ([`held_to_a_tree`]): a table keeps the last, and a stream that cannot
+/// is refused, which has a file read again whole ([`Input::File`]).
 pub fn streams_as_read(format: Format) -> bool {
     matches!(format, Format::Jsonl | Format::Csv | Format::Tsv)
 }
@@ -167,9 +128,14 @@ pub fn streams_as_read(format: Format) -> bool {
 /// one: an alchemy program over the parser's rule passes that makes the
 /// document's events of them. A grammar from the command line has the part
 /// its value annotations generate ([`crate::grammar::Transducer`]); a
-/// format whose crate ships a part has it ([`shipped`]), JSON Lines among
-/// them, whose part reads a file handed over as one text; a format with
-/// none keeps the route [`plan`] gives it.
+/// format whose crate ships a part has it ([`shipped`]): JSON, JSONC,
+/// JSON5, jsonic, JSON Lines, CSV and TSV (whose grammar is CSV's), YAML,
+/// XML, ZON and PGN. That route empties each array in the engine's tree
+/// behind the stream for a grammar transduce verifies alike pruned and not
+/// ([`capability::prunable`]), never for a grammar from the command line.
+/// A format with none is parsed whole and its value walked: Markdown,
+/// whose manifest says why it is read whole, among them; plain text has
+/// no grammar, and so no events.
 pub fn transducer(format: Format) -> Option<&'static Program> {
     match format {
         Format::Custom(id) => crate::grammar::get(id)?.compiled.transducer().part(),
@@ -178,6 +144,8 @@ pub fn transducer(format: Format) -> Option<&'static Program> {
         | Format::Json5
         | Format::Jsonic
         | Format::Jsonl
+        | Format::Csv
+        | Format::Tsv
         | Format::Yaml
         | Format::Xml
         | Format::Zon
@@ -188,14 +156,16 @@ pub fn transducer(format: Format) -> Option<&'static Program> {
 
 /// The part a format's crate ships ([`translate::transducer`]), compiled
 /// once, its entry exported by a main of its own as a grammar from the
-/// command line's is. A part that does not compile is its crate's defect,
-/// and the format keeps the route it had.
+/// command line's is: TSV's is CSV's, whose rule passes a tab-separated
+/// document makes alike. A part that does not compile is its crate's
+/// defect, and the format is parsed whole.
 fn shipped(format: Format) -> Option<&'static Program> {
     static JSON: OnceLock<Option<Program>> = OnceLock::new();
     static JSONC: OnceLock<Option<Program>> = OnceLock::new();
     static JSON5: OnceLock<Option<Program>> = OnceLock::new();
     static JSONIC: OnceLock<Option<Program>> = OnceLock::new();
     static JSONL: OnceLock<Option<Program>> = OnceLock::new();
+    static CSV: OnceLock<Option<Program>> = OnceLock::new();
     static YAML: OnceLock<Option<Program>> = OnceLock::new();
     static XML: OnceLock<Option<Program>> = OnceLock::new();
     static ZON: OnceLock<Option<Program>> = OnceLock::new();
@@ -206,6 +176,7 @@ fn shipped(format: Format) -> Option<&'static Program> {
         Format::Json5 => &JSON5,
         Format::Jsonic => &JSONIC,
         Format::Jsonl => &JSONL,
+        Format::Csv | Format::Tsv => &CSV,
         Format::Yaml => &YAML,
         Format::Xml => &XML,
         Format::Zon => &ZON,
@@ -283,21 +254,21 @@ impl Job {
     }
 }
 
-/// The input, as [`plan`] chose to read it.
+/// The input, as its format is read: whole, from a reader as the run goes
+/// ([`streams_as_read`]), or a file by its path.
 pub enum Input<'a> {
     /// The whole text, already read within `--max-size`.
     Text(&'a str),
     /// A reader over a line-delimited input, read as the run goes
-    /// ([`streams_as_read`]): CSV and TSV a record at a time, and JSON
-    /// Lines through its part, a window at a time.
+    /// ([`streams_as_read`]), a window at a time through its format's
+    /// part.
     Lines(Box<dyn BufRead + Send + 'a>),
     /// A reader over a line-delimited file that can be read again whole.
     /// A record the stream refuses before anything was written (one that
-    /// repeats a member, whose last value a record-at-a-time stream cannot
-    /// keep once the first has left) has the file read once more, within
-    /// `max_size`, for the whole value's route, as a text's refusal does;
-    /// a reader that cannot be read again (standard input) keeps the
-    /// refusal.
+    /// repeats a member, whose last value a stream cannot keep once the
+    /// first has left) has the file read once more, within `max_size`, for
+    /// the whole value's route, as a text's refusal does; a reader that
+    /// cannot be read again (standard input) keeps the refusal.
     File {
         lines: Box<dyn BufRead + Send + 'a>,
         path: PathBuf,
@@ -462,7 +433,7 @@ fn export_staged(
 }
 
 /// Run a program's sink over `input`, through the source plumbing an
-/// export runs on: the input read as [`plan`] says, the parse pruned under
+/// export runs on: the input read as its format is, the parse pruned under
 /// the program's rows, aless's caps and `--timeout` on the parse and the
 /// deadline's alarm on the rest, the one fallback to the whole value when
 /// a grammar refuses to stream before anything was written, and the same
@@ -590,10 +561,9 @@ fn attempt<S: Sink + Send + 'static>(
                 classify(job, *f, written, broken)
             })
         }
-        // A file read a record at a time, or through a reader, is read
-        // again whole, within the size limit the record-at-a-time read did
-        // not need; a file over it, or gone, leaves the stream's own
-        // refusal standing.
+        // A file read through a reader is read again whole, within the
+        // size limit the read as the run went did not need; a file over
+        // it, or gone, leaves the stream's own refusal standing.
         None if refused && written.load(Ordering::Relaxed) == 0 => {
             let whole =
                 again.and_then(|(path, max_size)| load::read_path_within(&path, max_size).ok());
@@ -667,7 +637,7 @@ struct Ran {
 
 /// A failure with what the run knew: the guard's record, how far the
 /// parse got, whether the sink raised it, and whether the input was read
-/// a record at a time as the run went.
+/// from a reader as the run went.
 #[derive(Debug)]
 struct Failed {
     why: Outcome,
@@ -683,11 +653,10 @@ struct Failed {
 /// deadline first, between two steps, and records where the parse was
 /// before it raises the abort flag; the alarm leaves the flag alone then,
 /// since the transducer's own guard runs ahead of the budget and would
-/// stop the parse without the position. Everywhere else nothing but the
-/// abort flag stops the run: a line-by-line read, which parses a record at
-/// a time under no guard of aless's, and the walk of a parsed value, which
-/// the source polls the flag on at every event. The alarm raises the flag
-/// in those cases, so the deadline covers the whole operation.
+/// stop the parse without the position. After the parse, nothing but the
+/// abort flag stops the run: the walk of a parsed value, which the source
+/// polls the flag on at every event. The alarm raises the flag then, so
+/// the deadline covers the whole operation.
 ///
 /// A program's sink has a flag of its own, which the alarm raises in
 /// every mode: while the sink works on one item the parser is inside an
@@ -696,7 +665,6 @@ struct Failed {
 /// stake, since the parser's guard sees the deadline first the moment
 /// the sink returns.
 struct Alarm {
-    lines: bool,
     /// The parse of a whole text has returned, and its value is being
     /// walked.
     parsed: Arc<AtomicBool>,
@@ -709,7 +677,7 @@ struct Alarm {
 impl Alarm {
     fn fire(&self) {
         self.program.abort();
-        if self.lines || self.parsed.load(Ordering::SeqCst) {
+        if self.parsed.load(Ordering::SeqCst) {
             self.abort.abort();
         }
     }
@@ -731,11 +699,7 @@ fn run<S: Sink + Send + 'static>(
     // A transducer part is a program, and reads the program's flag, which
     // the alarm raises in every mode, between the steps of one pass.
     let steps = program.clone();
-    // The alarm stops a line source at the deadline; JSON Lines, read
-    // through its part, has the parse guard stop it, which says how far
-    // the parse got.
     let alarm = Alarm {
-        lines: lines && line_format(format).is_some(),
         parsed: Arc::new(AtomicBool::new(false)),
         abort: abort.clone(),
         program,
@@ -746,84 +710,60 @@ fn run<S: Sink + Send + 'static>(
         job.started,
         move || alarm.fire(),
         move |deadline: Option<Deadline>| match input {
-            Input::Lines(reader) | Input::File { lines: reader, .. } => match line_format(format) {
-                Some(line_format) => {
-                    let source = LinesSource::new(reader, line_format)
-                        .limits(limits())
-                        .abort(abort);
-                    match load::catch_grammar(|| source.run_owned(scope)) {
-                        Ok((outcome, scope)) => Ran {
-                            outcome: Outcome::of(outcome),
-                            stop: None,
-                            verdict: scope.verdict(),
-                            from_sink: scope.sink_failed,
-                        },
-                        Err(what) => Ran {
-                            outcome: Outcome::Panicked(what),
-                            stop: None,
-                            verdict: None,
-                            from_sink: false,
-                        },
+            // JSON Lines, CSV and TSV: the rule passes through the format's
+            // part, read from the reader a window at a time as the grammar
+            // declares, whatever the input's size; a format with no part, or
+            // whose grammar reads no window, is read whole.
+            Input::Lines(reader) | Input::File { lines: reader, .. } => {
+                let (parser, stop) = match guarded_parser(format, &deadline, &abort) {
+                    Ok(made) => made,
+                    Err(ran) => return *ran,
+                };
+                match mode {
+                    Mode::Part { part, prune }
+                        if parser.options.lex.window
+                            && !format.is_notation()
+                            && !load::prepares_text(format) =>
+                    {
+                        #[cfg(test)]
+                        LINES_THROUGH_A_PART.fetch_add(1, Ordering::SeqCst);
+                        let source =
+                            ParserEventSource::from_reader(parser, load::windowed(reader, None))
+                                .limits(limits())
+                                .abort(abort);
+                        let source = if prune {
+                            source.grammar(grammar_name(format)).prune()
+                        } else {
+                            source
+                        };
+                        through_part(source, part, scope, held_to_a_tree(format), steps, stop)
                     }
-                }
-                // JSON Lines: its rule passes through its part, read from
-                // the reader a window at a time as the grammar declares,
-                // whatever the input's size; any other format read whole.
-                None => {
-                    let (parser, stop) = match guarded_parser(format, &deadline, &abort) {
-                        Ok(made) => made,
-                        Err(ran) => return *ran,
-                    };
-                    match mode {
-                        Mode::Part { part, prune }
-                            if parser.options.lex.window
-                                && !format.is_notation()
-                                && !load::prepares_text(format) =>
-                        {
-                            #[cfg(test)]
-                            LINES_THROUGH_A_PART.fetch_add(1, Ordering::SeqCst);
-                            let source = ParserEventSource::from_reader(
+                    mode => {
+                        let mut bytes = Vec::new();
+                        let mut reader = reader;
+                        match io::Read::read_to_end(&mut reader, &mut bytes) {
+                            Ok(_) => run_text(
                                 parser,
-                                load::windowed(reader, None),
-                            )
-                            .limits(limits())
-                            .abort(abort);
-                            let source = if prune {
-                                source.grammar(format.name()).prune()
-                            } else {
-                                source
-                            };
-                            through_part(source, part, scope, held_to_a_tree(format), steps, stop)
-                        }
-                        mode => {
-                            let mut bytes = Vec::new();
-                            let mut reader = reader;
-                            match io::Read::read_to_end(&mut reader, &mut bytes) {
-                                Ok(_) => run_text(
-                                    parser,
-                                    stop,
-                                    format,
-                                    &String::from_utf8_lossy(&bytes),
-                                    mode,
-                                    deadline,
-                                    &abort,
-                                    &parsed,
-                                    scope,
-                                    steps,
-                                ),
-                                Err(e) => Ran {
-                                    outcome: Outcome::Refused(Box::new(LoadError::new(
-                                        e.to_string(),
-                                    ))),
-                                    stop: Some(stop),
-                                    verdict: None,
-                                    from_sink: false,
-                                },
-                            }
+                                stop,
+                                format,
+                                &String::from_utf8_lossy(&bytes),
+                                mode,
+                                deadline,
+                                &abort,
+                                &parsed,
+                                scope,
+                                steps,
+                            ),
+                            Err(e) => Ran {
+                                outcome: Outcome::Refused(Box::new(LoadError::new(e.to_string()))),
+                                stop: Some(stop),
+                                verdict: None,
+                                from_sink: false,
+                            },
                         }
                     }
                 }
-            },
+            }
             // A grammar is compiled by its notation's compiler, as the
             // loader compiles it, and the spec it writes walked; the
             // compile cannot be stopped part way, so the deadline bounds
@@ -873,7 +813,7 @@ fn run<S: Sink + Send + 'static>(
                                     .limits(limits())
                                     .abort(abort);
                                 let source = if prune {
-                                    source.grammar(format.name()).prune()
+                                    source.grammar(grammar_name(format)).prune()
                                 } else {
                                     source
                                 };
@@ -928,7 +868,7 @@ fn run<S: Sink + Send + 'static>(
 static READ_A_WINDOW_AT_A_TIME: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// How many line-delimited inputs a run read through a part, for the tests
-/// that hold JSON Lines to that route.
+/// that hold JSON Lines, CSV and TSV to that route.
 #[cfg(test)]
 static LINES_THROUGH_A_PART: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -997,7 +937,7 @@ fn run_text<S: Sink + Send + 'static>(
                 .limits(limits())
                 .abort(abort.clone());
             let source = if prune {
-                source.grammar(format.name()).prune()
+                source.grammar(grammar_name(format)).prune()
             } else {
                 source
             };
@@ -1259,15 +1199,20 @@ fn through_part<S: Sink + Send + 'static>(
 /// Whether a part's events are held to a tree's whole contract
 /// ([`through_part`]) rather than to one root: every part's, but those of
 /// the formats whose grammar's value keeps the last of a repeated member,
-/// JSON's, JSONC's and JSON Lines'. The export settles a repeated member by
-/// keeping the last, which is their value and no other's: jsonic, JSON5
-/// and YAML merge the two, which their parts stream one after the other,
-/// so a document of theirs that repeats a member is read whole, as
-/// jsonic's part asks of a host. A grammar from the command line keeps
-/// whatever its spec's actions keep, and is held too; the other formats'
-/// parts stream no member twice, so the contract never refuses them.
+/// JSON's, JSONC's and JSON Lines', and CSV's and TSV's, whose records
+/// keep the last cell of a name the header repeats. The export settles a
+/// repeated member by keeping the last, which is their value and no
+/// other's: jsonic, JSON5 and YAML merge the two, which their parts stream
+/// one after the other, so a document of theirs that repeats a member is
+/// read whole, as jsonic's part asks of a host. A grammar from the command
+/// line keeps whatever its spec's actions keep, and is held too; the other
+/// formats' parts stream no member twice, so the contract never refuses
+/// them.
 fn held_to_a_tree(format: Format) -> bool {
-    !matches!(format, Format::Json | Format::Jsonc | Format::Jsonl)
+    !matches!(
+        format,
+        Format::Json | Format::Jsonc | Format::Jsonl | Format::Csv | Format::Tsv
+    )
 }
 
 /// A part's events held to one root value, as a tree's contract holds
@@ -1340,24 +1285,20 @@ fn mode_for(job: &Job) -> Mode {
         // on no list, whatever it is named.
         Some(part) => Mode::Part {
             part,
-            prune: !job.format.is_custom() && capability::prunable(job.format.name()),
+            prune: !job.format.is_custom() && capability::prunable(grammar_name(job.format)),
         },
         None => Mode::Whole,
     }
 }
 
-/// The line-delimited format of a [`Plan::Lines`] input, CSV's or TSV's;
-/// `None` for any other format's, JSON Lines', which is read through its
-/// part.
-fn line_format(format: Format) -> Option<LineFormat> {
+/// The grammar a format's parser implements, by the name transduce asks
+/// for it by ([`capability::prunable`]): TSV's is CSV's, with a tab for its
+/// separator, which lexes a field differently and passes through the same
+/// rules.
+fn grammar_name(format: Format) -> &'static str {
     match format {
-        Format::Tsv => {
-            let mut options = tabnas_csv::CsvOptions::default();
-            options.field.separation = Some("\t".to_string());
-            Some(LineFormat::csv_with(true, options))
-        }
-        Format::Csv => Some(LineFormat::csv()),
-        _ => None,
+        Format::Tsv => Format::Csv.name(),
+        f => f.name(),
     }
 }
 
@@ -1456,9 +1397,9 @@ fn classify(job: &Job, failed: Failed, written: &AtomicU64, broken: &AtomicBool)
     }
     match fail.code {
         // Only the deadline's alarm raises the abort flags ahead of the
-        // guard: the source's on a line-by-line read, or once a parse has
-        // returned and its value is being walked, where there is no
-        // position to give; and a program's in every mode.
+        // guard: the source's once a parse has returned and its value is
+        // being walked, where there is no position to give; and a
+        // program's in every mode.
         Code::Aborted => {
             let (line, col) = match job.what {
                 // The program's sink returns the deadline's Aborted with
@@ -1524,8 +1465,7 @@ fn absolute(mut fail: Fail, base: &[Seg]) -> Fail {
 
 /// A load error of aless's own with a position, named for the report:
 /// `[aless/<code>]: message` over `--> origin:line:col`, or
-/// `--> origin:line` for a position that names no column (a line-by-line
-/// read stopped at its deadline names only the line it was reading).
+/// `--> origin:line` for a position that names no column.
 fn positioned(
     job: &Job,
     code: &str,
@@ -2573,43 +2513,37 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_follows_the_format() {
-        // A record at a time, under a path as at the root.
-        for f in [Format::Csv, Format::Tsv] {
-            assert_eq!(plan(f), Some(Plan::Lines), "{f}");
+    fn the_route_follows_the_format() {
+        // Read as the run goes, whatever the size, under a path as at the
+        // root.
+        for f in [Format::Jsonl, Format::Csv, Format::Tsv] {
             assert!(streams_as_read(f), "{f}");
         }
-        // JSON Lines through its part, read as the run goes, a window at a
-        // time, and so with no size limit, as CSV and TSV are.
-        assert!(streams_as_read(Format::Jsonl));
         assert!(!streams_as_read(Format::Json));
         // Through the parts their crates ship, the engine's arrays emptied
         // behind the stream, since transduce verifies each alike pruned
-        // and not.
+        // and not: TSV's grammar is CSV's, whose part it takes.
         for f in [
             Format::Json,
             Format::Jsonc,
             Format::Json5,
             Format::Jsonic,
             Format::Jsonl,
+            Format::Csv,
+            Format::Tsv,
             Format::Yaml,
             Format::Xml,
             Format::Zon,
             Format::Pgn,
         ] {
-            assert_eq!(plan(f), Some(Plan::Part), "{f}");
+            assert!(transducer(f).is_some(), "{f}");
             let j = job(f, Renderer::Json, ".");
             assert!(
                 matches!(mode_for(&j), Mode::Part { prune: true, .. }),
                 "{f}"
             );
         }
-        // JSON Lines handed over as one text, rather than read a record at
-        // a time, goes through the part its crate ships.
-        assert!(matches!(
-            mode_for(&job(Format::Jsonl, Renderer::Json, ".")),
-            Mode::Part { prune: true, .. }
-        ));
+        assert_eq!(grammar_name(Format::Tsv), "csv");
         // Parsed whole, then walked: the formats whose crates ship no part,
         // Markdown among them, which build a tree of a schema's from their
         // parse (proto's descriptor, expr's S-expressions, C's syntax tree,
@@ -2629,9 +2563,12 @@ mod tests {
             Format::Expr,
             Format::Semver,
         ] {
-            assert_eq!(plan(f), Some(Plan::Materialize), "{f}");
+            assert!(transducer(f).is_none(), "{f}");
+            assert!(
+                matches!(mode_for(&job(f, Renderer::Json, ".")), Mode::Whole),
+                "{f}"
+            );
         }
-        assert_eq!(plan(Format::Text), None);
         // Every name is a part's, the built-ins' among them, since their
         // manifests name aless's own renderers.
         assert_eq!(Renderer::from_name(" CSV "), Some(Renderer::Part("csv")));
@@ -2693,12 +2630,14 @@ mod tests {
             .collect()
     }
 
-    /// JSON, YAML and XML are read through the parts their crates ship,
-    /// the engine's arrays emptied behind the stream: over records of
-    /// every kind of scalar, the events are the same pruned and not, and
-    /// they are the walk of the grammar's value.
+    /// JSON, YAML, XML, CSV and TSV are read through the parts their
+    /// crates ship, the engine's arrays emptied behind the stream: over
+    /// records of every kind of scalar, and of every kind of cell (quoted,
+    /// empty, and missing at a record's end), the events are the same
+    /// pruned and not, and they are the walk of the grammar's value. TSV
+    /// takes CSV's part and CSV's verdict on pruning, with its tab.
     #[test]
-    fn json_yaml_and_xml_read_through_their_crates_parts() {
+    fn json_yaml_xml_csv_and_tsv_read_through_their_crates_parts() {
         let n = 300;
         let json = format!(
             "[{}]",
@@ -2725,10 +2664,26 @@ mod tests {
                 .map(|i| format!("<row id=\"{i}\"><name>n{i}</name><tag/></row>"))
                 .collect::<String>()
         );
+        let csv: String = std::iter::once("id,name,note,blank\n".to_string())
+            .chain((0..n).map(|i| match i % 3 {
+                0 => format!("{i},n{i},\"a, \"\"{i}\"\"\",\n"),
+                1 => format!("{i},,x{i},y\n"),
+                _ => format!("{i},n{i}\n"),
+            }))
+            .collect();
+        let tsv: String = std::iter::once("id\tname\tnote\n".to_string())
+            .chain((0..n).map(|i| match i % 3 {
+                0 => format!("{i}\tn {i}\t\n"),
+                1 => format!("{i}\t\"t\t{i}\"\tx\n"),
+                _ => format!("{i}\n"),
+            }))
+            .collect();
         for (format, text) in [
             (Format::Json, json),
             (Format::Yaml, yaml),
             (Format::Xml, xml),
+            (Format::Csv, csv),
+            (Format::Tsv, tsv),
         ] {
             let j = job(format, Renderer::Json, ".");
             let part = transducer(format).unwrap_or_else(|| panic!("{format}'s part compiles"));
@@ -3113,7 +3068,6 @@ mod tests {
     #[test]
     fn the_alarm_raises_the_sources_flag_only_where_no_guard_will() {
         let alarm = Alarm {
-            lines: false,
             parsed: Arc::new(AtomicBool::new(false)),
             abort: AbortFlag::new(),
             program: AbortFlag::new(),
@@ -3127,15 +3081,6 @@ mod tests {
         alarm.parsed.store(true, Ordering::Relaxed);
         alarm.fire();
         assert!(alarm.abort.is_aborted(), "the walk after the parse");
-        let alarm = Alarm {
-            lines: true,
-            parsed: Arc::new(AtomicBool::new(false)),
-            abort: AbortFlag::new(),
-            program: AbortFlag::new(),
-        };
-        alarm.fire();
-        assert!(alarm.abort.is_aborted(), "a line-by-line read");
-        assert!(alarm.program.is_aborted());
     }
 
     #[test]
@@ -3255,15 +3200,58 @@ mod tests {
         assert_eq!(out, "[{\"a\":\"1\",\"b\":\"2\"}]\n");
     }
 
-    /// A path into JSON Lines, CSV or TSV is a scope over the records as
-    /// they pass, read as the run goes, CSV and TSV a record at a time and
-    /// JSON Lines through its part: what it writes, and how it fails, is
-    /// what the same document read whole writes (CSV and TSV parsed and
-    /// walked, JSON Lines streamed as one text), for a record,
-    /// a value inside one, a path the document does not have, a path that
-    /// counts from the end, and a later record the grammar refuses.
+    /// A CSV header that names a column twice: the grammar's value keeps
+    /// each record's last cell of the name, as JSON's keeps the last of a
+    /// repeated member, and csv's part streams both cells. A table keeps
+    /// the last, read as the run goes as from the text. JSON's stream
+    /// cannot, and refuses the record before anything is written: a text,
+    /// or a file, is read again whole, and a reader that cannot be read
+    /// again (standard input) keeps the refusal.
     #[test]
-    fn a_path_into_a_line_delimited_file_reads_it_a_record_at_a_time() {
+    fn a_header_that_repeats_a_name_keeps_the_last_cell() {
+        let text = "a,a,b\n1,2,3\n4,5,6\n";
+        let j = job(Format::Csv, Renderer::Csv, ".");
+        for (r, out) in [run_text(&j, text), run_lines(&j, text)] {
+            r.unwrap();
+            assert_eq!(out, "\"a\",\"b\"\r\n\"2\",\"3\"\r\n\"5\",\"6\"\r\n");
+        }
+        let value = "[{\"a\":\"2\",\"b\":\"3\"},{\"a\":\"5\",\"b\":\"6\"}]\n";
+        let j = job(Format::Csv, Renderer::Json, ".");
+        let (r, out) = run_text(&j, text);
+        r.unwrap();
+        assert_eq!(out, value);
+        let (r, out) = run_lines(&j, text);
+        match r {
+            Err(ExportError::Transduce(fail)) => {
+                assert_eq!(fail.code, Code::DuplicateMember, "{fail:?}");
+                assert!(!fail.committed_output, "{fail:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(out, "");
+        let path =
+            std::env::temp_dir().join(format!("aless-repeated-name-{}.csv", std::process::id()));
+        std::fs::write(&path, text).unwrap();
+        let out = Shared::default();
+        let input = Input::File {
+            lines: Box::new(io::BufReader::new(std::fs::File::open(&path).unwrap())),
+            path: path.clone(),
+            max_size: None,
+        };
+        let r = export(&j, input, Box::new(out.clone()));
+        std::fs::remove_file(&path).ok();
+        r.unwrap();
+        assert_eq!(out.text(), value);
+    }
+
+    /// A path into JSON Lines, CSV or TSV is a scope over the records as
+    /// they pass, read as the run goes through the format's part: what it
+    /// writes, and how it fails, is what the same document handed over as
+    /// one text writes, for a record, a value inside one, a path the
+    /// document does not have, a path that counts from the end, and a
+    /// later record the grammar refuses.
+    #[test]
+    fn a_path_into_a_line_delimited_file_reads_it_as_the_run_goes() {
         let jsonl =
             "{\"a\": 1, \"b\": [1, 2]}\n{\"a\": 2.50, \"b\": []}\n\n{\"a\": \"x\", \"b\": [3]}\n";
         let csv = "a,b\n1,x\n2,\"y,z\"\n3,\"q\"\"r\"\n";
@@ -3297,7 +3285,7 @@ mod tests {
                 }
             }
         }
-        // The file is read to its end, a record at a time, so a later
+        // The file is read to its end as the run goes, so a later
         // record the grammar refuses fails the run after the value the
         // scope took was written whole: the failure says so, as one at the
         // root does, and names its line.
@@ -3369,38 +3357,63 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// JSON Lines read as the run goes is read through its part, a window
-    /// at a time, and writes what its text read whole writes: a byte-order
-    /// mark skipped, bytes that are not UTF-8 replaced as the whole read
-    /// replaces them, blank lines, values of every kind and a long file,
-    /// into JSON and CSV alike.
+    /// JSON Lines, CSV and TSV read as the run goes are read through their
+    /// parts, a window at a time, and write what their texts read whole
+    /// write: a byte-order mark skipped, bytes that are not UTF-8 replaced
+    /// as the whole read replaces them, blank lines, values and cells of
+    /// every kind (a quoted CSV field holding a line break among them), and
+    /// a long file, into JSON and CSV alike.
     #[test]
-    fn json_lines_read_as_the_run_goes_is_read_through_its_part() {
-        let long: String = (0..20_000)
+    fn line_delimited_inputs_read_as_the_run_goes_are_read_through_their_parts() {
+        let long_jsonl: String = (0..20_000)
             .map(|i| format!("{{\"id\":{i},\"name\":\"\u{f1}{i}\",\"n\":{i}.50}}\n"))
             .collect();
-        let documents: [&[u8]; 5] = [
-            b"{\"a\": 1, \"b\": [1, 2]}\n\n{\"a\": 2.50}\n",
-            b"\xef\xbb\xbf{\"a\": 1}\n{\"a\": 2}\n",
-            b"{\"a\": \"x\xffy\"}\n{\"a\": \"\xe2\x82\"}\n",
-            b"[1, 2]\n\"x\"\n{\"a\": null}\n3\n",
-            long.as_bytes(),
+        let long_csv: String = std::iter::once("id,name,n\n".to_string())
+            .chain((0..20_000).map(|i| format!("{i},\"\u{f1}, {i}\",{i}.50\n")))
+            .collect();
+        let long_tsv: String = std::iter::once("id\tname\n".to_string())
+            .chain((0..20_000).map(|i| format!("{i}\t\u{f1} {i}\n")))
+            .collect();
+        let documents: [(Format, &[u8]); 13] = [
+            (
+                Format::Jsonl,
+                b"{\"a\": 1, \"b\": [1, 2]}\n\n{\"a\": 2.50}\n",
+            ),
+            (Format::Jsonl, b"\xef\xbb\xbf{\"a\": 1}\n{\"a\": 2}\n"),
+            (
+                Format::Jsonl,
+                b"{\"a\": \"x\xffy\"}\n{\"a\": \"\xe2\x82\"}\n",
+            ),
+            (Format::Jsonl, b"[1, 2]\n\"x\"\n{\"a\": null}\n3\n"),
+            (Format::Jsonl, long_jsonl.as_bytes()),
+            (Format::Csv, b"a,b\n1,\"x\n\"\"y\"\"\"\n\n2,\n3\n"),
+            (Format::Csv, b"\xef\xbb\xbfa,b\r\n1,2\r\n"),
+            (Format::Csv, b"a,b\nx\xffy,\xe2\x82\n"),
+            (Format::Csv, b"a,b\n"),
+            (Format::Csv, long_csv.as_bytes()),
+            (Format::Tsv, b"a\tb\n1\t\"x\ty\"\n2\t\n"),
+            (Format::Tsv, b"\xef\xbb\xbfa\tb\n1\t2\n"),
+            (Format::Tsv, long_tsv.as_bytes()),
         ];
         let before = LINES_THROUGH_A_PART.load(Ordering::SeqCst);
-        for bytes in documents {
+        for (format, bytes) in documents {
             let text = String::from_utf8_lossy(bytes);
             for renderer in [Renderer::Json, Renderer::Csv] {
-                let j = job(Format::Jsonl, renderer, ".");
+                let j = job(format, renderer, ".");
                 let (whole, whole_out) = run_text(&j, &text);
                 let out = Shared::default();
                 let reader = Box::new(io::BufReader::new(bytes));
                 let lines = export(&j, Input::Lines(reader), Box::new(out.clone()));
-                let at = format!("{:?} into {}", &text[..text.len().min(30)], renderer.name());
+                let at = format!(
+                    "{format} {:?} into {}",
+                    text.chars().take(30).collect::<String>(),
+                    renderer.name()
+                );
                 assert_eq!(format!("{lines:?}"), format!("{whole:?}"), "{at}");
                 assert_eq!(out.text(), whole_out, "{at}");
             }
         }
-        assert!(LINES_THROUGH_A_PART.load(Ordering::SeqCst) >= before + 10);
+        assert!(LINES_THROUGH_A_PART.load(Ordering::SeqCst) >= before + 26);
     }
 
     #[test]
@@ -4002,7 +4015,7 @@ mod tests {
              names   = 1*word                             ; @array\n\
              word    = ( TX )\n",
         );
-        assert_eq!(plan(hosts), Some(Plan::Part));
+        assert!(transducer(hosts).is_some());
         let lines: String = (0..500)
             .map(|i| format!("10.0.{}.{} host{i} h{i}.example\n", i / 256, i % 256))
             .collect();
@@ -4070,7 +4083,7 @@ mod tests {
             grammar::get(id).unwrap().compiled.transducer(),
             Transducer::Whole(why) if why.starts_with("the start rule ")
         ));
-        assert_eq!(plan(plain), Some(Plan::Materialize));
+        assert!(transducer(plain).is_none());
 
         // A value nested deeper than the transducer's `max_depth`: the
         // part's events are refused at once, nothing written, and the
@@ -4080,7 +4093,7 @@ mod tests {
             "part-nest",
             "v = \"[\" *w \"]\"  ; @array\nw = v   ; @array\n",
         );
-        assert_eq!(plan(nest), Some(Plan::Part));
+        assert!(transducer(nest).is_some());
         let nested = |n: usize| "[".repeat(n) + &"]".repeat(n);
         match run_text(&job(nest, Renderer::Json, "."), &nested(200)).0 {
             Err(ExportError::Transduce(f)) => {
@@ -4149,16 +4162,12 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        // A record-at-a-time read (CSV) stopped at its deadline names the
-        // line the record it was reading starts on, and no column, since the
-        // deadline lands between two of the engine's steps
-        // (tabnas/transduce#19): the JSON form writes the missing column as
-        // `null`, and the report names the line alone. The input arrives
-        // slowly, a buffer every few milliseconds, so that the deadline lands
-        // while a record is being read on any machine: raised before the
-        // first record, the abort would name no line, so the input is long
-        // enough, and the deadline late enough, that the first chunk (256
-        // KiB, some 60 ms of reads) is behind it.
+        // JSON Lines and CSV, read through their parts a window at a time,
+        // are stopped as any part's input is: by the parse's guard, which
+        // says how far the parse got, or by the part's own step, whichever
+        // meets the deadline first. The input arrives slowly, a buffer every
+        // few milliseconds, so that the deadline lands part way on any
+        // machine.
         struct Slow<'a>(&'a [u8]);
         impl io::Read for Slow<'_> {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -4170,36 +4179,20 @@ mod tests {
         for i in 0..120_000 {
             csv.push_str(&format!("{i},item {i}\n"));
         }
-        let mut j = job(Format::Csv, Renderer::Csv, ".");
-        j.timeout = Some(Duration::from_millis(150));
-        let reader = Box::new(io::BufReader::new(Slow(csv.as_bytes())));
-        match export(&j, Input::Lines(reader), Box::new(Shared::default())).unwrap_err() {
-            ExportError::Load { error, .. } => {
-                assert_eq!(error.code, "timeout");
-                assert!(error.line > 0, "the record being read");
-                assert_eq!(error.col, 0, "no column");
-                assert_eq!(
-                    error.plain_report().lines().nth(1),
-                    Some(format!("  --> (stdin):{}", error.line).as_str())
-                );
-            }
-            other => panic!("{other:?}"),
-        }
-        // JSON Lines, read through its part a window at a time, is stopped
-        // as any part's input is: by the parse's guard, which says how far
-        // the parse got, or by the part's own step, whichever meets the
-        // deadline first.
         let lines: String = (0..40_000)
             .map(|i| format!("{{\"id\": {i}, \"name\": \"item {i}\"}}\n"))
             .collect();
+        let mut j = job(Format::Csv, Renderer::Csv, ".");
         let mut jl = job(Format::Jsonl, Renderer::Csv, ".");
-        jl.timeout = Some(Duration::from_millis(50));
-        let reader = Box::new(io::BufReader::new(Slow(lines.as_bytes())));
-        match export(&jl, Input::Lines(reader), Box::new(Shared::default())).unwrap_err() {
-            ExportError::Load { error, .. } => {
-                assert_eq!(error.code, "timeout");
+        for (j, text) in [(&mut j, &csv), (&mut jl, &lines)] {
+            j.timeout = Some(Duration::from_millis(50));
+            let reader = Box::new(io::BufReader::new(Slow(text.as_bytes())));
+            match export(j, Input::Lines(reader), Box::new(Shared::default())).unwrap_err() {
+                ExportError::Load { error, .. } => {
+                    assert_eq!(error.code, "timeout", "{}", j.format);
+                }
+                other => panic!("{}: {other:?}", j.format),
             }
-            other => panic!("{other:?}"),
         }
         // Time enough: the same inputs export.
         j.timeout = Some(Duration::from_secs(120));

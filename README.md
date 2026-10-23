@@ -482,12 +482,12 @@ $ aless --render csv broken.json
 ```
 
 **Streaming, and what is read whole.** JSON Lines, CSV and TSV are read from the file
-a record (or a chunk of records) at a time, at the root and below it
+a window at a time, at the root and below it
 (`--path .[3]` takes the fourth record as it passes, and the rest of the
 file is read to its end the same way, to validate it), so the file is
 never in memory whole and `--max-size` does not apply to it; the
-transducer's own limits per record do (a line over `max_record_bytes`,
-64 MB, fails). Every other format is parsed whole by
+transducer's own limits do (a value or a field over `max_scalar_bytes`,
+16 MB, fails). Every other format is parsed whole by
 the tabnas engine, within `--max-size`, and the note above about memory
 per input byte stands. What differs is when the output starts: for the
 JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and most
@@ -497,19 +497,23 @@ the parse proceeds, and the records already written are not kept behind
 them (except in a grammar from the command line, whose transducer reads
 the parse's steps rather than its value); for the rest they are
 streamed out after the parse, from the value it built. JSON, JSONC,
-JSON5, jsonic, YAML, ZON, XML and PGN are streamed through the
-transducers their packages ship, which make the records of the parse's
-steps as it takes them. Where one of those grammars refuses to
+JSON5, jsonic, JSON Lines, CSV, TSV (through CSV's), YAML, ZON, XML and
+PGN are streamed through the transducers their packages ship, which
+make the records of the parse's steps as it takes them. Where one of
+those grammars refuses to
 stream a particular document part-way (a jsonic implicit list whose
 first element is a container; a YAML stream of several documents, a
 `<<` merge key or an alias to a mapping or a sequence; a repeated member
 the grammar merges), aless falls back once to parsing it
 whole and streaming its value, provided nothing has been written yet;
 otherwise the refusal is reported with `output: "partial"`. A JSON Lines
-record that repeats a member is refused so too, its stream holding the
-member twice: before anything was written, a file is read again whole,
-within `--max-size`, and its value written; standard input, which cannot
-be read again, keeps the refusal. `--timeout`
+record that repeats a member, and a CSV or TSV record whose header names
+a column twice, are refused so too where the output cannot keep the
+last of the two, their streams holding both: before anything was
+written, a file is read again whole, within `--max-size`, and its value
+written; standard input, which cannot be read again, keeps the refusal.
+A table keeps the last, as `--json` does, so `--render csv` writes
+them. `--timeout`
 stops either kind at the deadline, with `output` saying whether records
 had already been written.
 
@@ -523,8 +527,8 @@ input is read. Every format aless reads can be written as every format
 that has a render and can hold it (eight hold only their own kind of
 tree, below), so it is a translation: CSV's records become a YAML
 sequence of mappings, a JSON document a TOML table, a Markdown table a
-CSV file. The input is read as `--render json` reads it: CSV and TSV a
-record at a time and JSON Lines a window at a time, `--path` to start
+CSV file. The input is read as `--render json` reads it: JSON Lines,
+CSV and TSV a window at a time, `--path` to start
 below the root, `--timeout` over the whole run. A format's lift reads a whole document, so it runs
 at the root only: below the root, `--path` selects a value of the
 document's tree, rows or a tree by its own shape (a Markdown file's

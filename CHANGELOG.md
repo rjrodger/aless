@@ -21,7 +21,24 @@ bumps the version renames `Unreleased` to the version and its date
   named the line the record being read started on. When a writer to
   standard input goes quiet and `--timeout` stops the run, the records
   within the window not yet parsed are not written, where every record
-  received was. CSV and TSV are still read a record at a time.
+  received was.
+- CSV and TSV are read through tabnas-csv's transducer part, a window at
+  a time, where they were read a record at a time. tabnas-transduce
+  0.3.0 runs the part natively. A file or standard input of any size
+  still passes through in a window's memory, `--max-size` still does not
+  apply to it, and the output is the same. It takes two fifths to a half
+  longer than the record-at-a-time read did, at a slightly lower peak of
+  memory. A `--timeout` that stops it is reported as one that stops any
+  format's part is, where it named the line the record being read
+  started on, and the read-ahead past the records written is a 64 KB
+  window, where it was a 256 KB chunk.
+- A CSV or TSV header that names a column twice is settled as a JSON
+  Lines record that repeats a key is. Each record keeps its last cell of
+  the name, as `--json` does, and `--render csv` writes that. A stream
+  that cannot keep the last, such as `--render json`'s, refuses the
+  record before writing anything: a file is read again whole, within
+  `--max-size`, and standard input fails with `DUPLICATE_MEMBER`, where
+  the record-at-a-time read wrote the last cell.
 
 ## [0.4.9] - 2026-10-22
 

@@ -121,8 +121,8 @@ answers: a text as it is, a table as CSV (\-\-render json: JSON records, an
 object per row), JSON events as compact JSON (\-\-render csv: a table of them);
 \-\-render FORMAT writes a table or JSON events as FORMAT. The program selects
 what it reads, so no \-\-path, \-\-at or other output option goes with it. The
-input reaches it as \-\-render reads it: CSV and TSV a record at a time, and
-JSON Lines a window at a time.
+input reaches it as \-\-render reads it: JSON Lines, CSV and TSV a window at a
+time.
 .TP 7
 \fB\-\-alchemy\-expr\fR \fITEXT\fR
 \-\-alchemy, with the program\(aqs text on the command line: \-\-alchemy\-expr
@@ -197,9 +197,9 @@ pane takes it too.
 Refuse an input larger than SIZE (default 64M; 0 for no limit), and a
 \-\-grammar or \-\-alchemy file too, with a too_large error, status 5: a parse
 takes about 40 bytes of memory per byte of input. SIZE is bytes, or a whole
-number with K, M or G (1024s). CSV and TSV that \-\-render or \-\-alchemy
-streams are read a record at a time, and JSON Lines a window at a time, and the
-limit does not apply to them.
+number with K, M or G (1024s). JSON Lines, CSV and TSV that \-\-render or
+\-\-alchemy streams are read a window at a time, and the limit does not apply
+to them.
 .TP 7
 \fB\-\-timeout\fR \fISECONDS\fR
 Stop a parse, or a \-\-grammar compile, that runs longer than SECONDS (2.5,
@@ -502,8 +502,7 @@ input, which is read no further) and limit, in bytes; the hint names the
 \fBtimeout\fR
 past \-\-timeout: a parse error\(aqs fields, line and col showing how far the
 parse got (null when the input was still being read, or the parse finished
-late; a read a record at a time names the line its record starts on, col null),
-plus seconds
+late), plus seconds
 .TP 11
 \fBnot_found\fR
 \-\-path or \-\-at names nothing: file, format, message, the path or at given,
@@ -579,17 +578,16 @@ a deadline of its own should pass a \-\-timeout a few seconds shorter. \-\-path
 and \-\-depth shrink the output, not the parse. A reader that stops early
 (aless \-\-json big.json | head) ends aless quietly, with status 0.
 .PP
-\-\-render and \-\-alchemy stream instead. CSV and TSV are read a record at a
-time (a record over 64 MB fails), and JSON Lines a window at a time, whatever
-their size, so \-\-max\-size does not apply to them; the JSON family, jsonic,
-YAML, ZON, XML, PGN (a game at a time) and most annotated grammars from the
-command line write their records as the parse proceeds, and the other formats
-after it. A document a grammar refuses to stream part\-way is read whole and
-written all the same when nothing has been written yet; otherwise the error
-says output "partial". A stream reads ahead of what it writes, a window of 64
-KB for JSON Lines and a chunk of 256 KB for CSV and TSV, so when a writer to
-standard input goes quiet and \-\-timeout stops the run, the records still in
-that read\-ahead are not written.
+\-\-render and \-\-alchemy stream instead. JSON Lines, CSV and TSV are read a
+window at a time, whatever their size, so \-\-max\-size does not apply to them
+(a value or a field over 16 MB fails); the JSON family, jsonic, CSV, TSV, YAML,
+ZON, XML, PGN (a game at a time) and most annotated grammars from the command
+line write their records as the parse proceeds, and the other formats after it.
+A document a grammar refuses to stream part\-way is read whole and written all
+the same when nothing has been written yet; otherwise the error says output
+"partial". A stream reads ahead of what it writes, a window of 64 KB, so when a
+writer to standard input goes quiet and \-\-timeout stops the run, the records
+still in that read\-ahead are not written.
 .PP
 A document nested deeper than aless reads fails as a parse error with the code
 too_deep: past about 1,000 levels, or sooner where the grammar has a limit of
