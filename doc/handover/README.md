@@ -269,14 +269,25 @@ needs.
    covers the bound. `CountingRouters` now counts native records too.
    Both pass locally: 848 documents agree, and every bound refuses
    alike.
-5. **The release wave, then aless.**
-   - aless reads CSV and TSV through the part.
-   - Step 12 then finishes for CSV:
-     - transduce retires `LinesSource` and `LineFormat`; TypeScript and
-       Go keep theirs.
-     - aless drops `Plan`, `line_format`, and the line source's part in
-       the `--max-size` exemptions.
-6. **alchemy's plan record** for rulings 8 to 10 and the measurements
+5. **Step 12 for CSV in transduce: tabnas/transduce#66, open.** The
+   branch is `claude/retire-lines-source`.
+   - `LinesSource`, `LineFormat` and `DEFAULT_CHUNK_BYTES` go.
+   - `common::rust_rows` skips the ports' modes (`incremental`, `lines`,
+     `lines-incremental`) for every Rust runner, and the TypeScript and
+     Go ports keep their line sources.
+   - The docs follow. The rustdoc link I reintroduced in #65 is fixed.
+   - The local gate is green.
+   - tabnas-json and tabnas-csv are now used only by tests. Moving them
+     to `[dev-dependencies]` is the maintainer's call, flagged in the
+     pull request.
+6. **The release wave, then aless.** These need the maintainer's go
+   (ruling 6 held the releases).
+   - alchemy, csv, transduce 0.3.0 (breaking: #62, #63 and #66), and
+     alchemy-cli.
+   - Then aless reads CSV and TSV through the part, and drops `Plan`,
+     `line_format` and the line source's part in the `--max-size`
+     exemptions, for aless 0.4.10.
+7. **alchemy's plan record** for rulings 8 to 10 and the measurements
    above is pushed on `claude/plan-csv-records` (`18c6d3c`), in
    `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`. Its pull
    request opens once the code has merged.
