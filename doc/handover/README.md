@@ -231,33 +231,48 @@ Ruling 11 is being carried out. The wave's order comes from admin's
 its only runtime dependency is alchemy's shared types and 0.2.15 is
 compatible.
 
-1. **transduce: tabnas/transduce#67, open** (ruling 12). The branch is
-   `claude/grammars-as-dev-deps` in
-   `~/Projects/tabnas-worktrees/csv-records/transduce`.
-   - tabnas-json and tabnas-csv move to `[dev-dependencies]`.
+1. **transduce: tabnas/transduce#67, merged (`10948ac`)** (ruling 12).
+   tabnas-json and tabnas-csv are in `[dev-dependencies]`.
    - Its first CI run failed the fleet's port-deps test (ADR-24),
-     because the ports now differ. TypeScript and Go still parse each
+     because the ports now differ: TypeScript and Go still parse each
      line with those grammars in their `LinesSource`.
-   - `d78a962` adds `tools/port-deps.json`, which records both
-     differences with their reason and their repair: step 12 in the
-     ports. CI is running again.
-   - After it merges, admin's `docs/deps` may need
-     `node tasks/port-deps.js --write --root ~/Projects/tabnas`.
-2. **csv 0.6.9: tabnas/csv#109, open.** It was bumped with publish.sh's
-   step 2, and no dependency moves.
+   - `tools/port-deps.json` records both differences with their reason
+     and their repair, step 12 in the ports. tabnas/transduce#68
+     (`e164694`) names its pull requests as `tabnas/transduce#N`, since
+     admin's page copies the text.
+   - admin's `docs/deps` went stale, as expected: tabnas/admin#156
+     regenerates it (open).
+2. **csv 0.6.9: released.** tabnas/csv#109 (`6d7f250`), then
+   `release.yml`. npm, the Go proxy, crates.io and the `go/v0.6.9`
+   Release (6 assets) were checked.
 3. **alchemy 0.2.15: tabnas/alchemy#107, open.** Go's requires move to
    json v0.5.19 and parser v0.12.15, and `go test ./...` passes on
-   them.
-4. **Then dispatch both:**
-   `gh workflow run release.yml -R tabnas/<repo> --ref main -f go=true`.
+   them. Its downstream job (alchemy-cli's Rust gate) is the last check
+   running.
+4. **Then dispatch alchemy's release:**
+   `gh workflow run release.yml -R tabnas/alchemy --ref main -f go=true`.
    Check npm, the Go proxy, crates.io and the `go/vX` Release.
 5. **transduce 0.3.0**, once csv and alchemy are published: bump with
    step 2 (it moves Go's requires), then a pull request, then dispatch.
 6. **alchemy-cli 0.1.17**, the same way.
-7. **aless:**
+7. **aless: in progress** on `claude/csv-through-part` in
+   `~/Projects/tabnas-worktrees/aless-csv/aless`, written and not yet
+   built: it needs transduce 0.3.0 and alchemy 0.2.15 on crates.io.
    - CSV and TSV go through csv's part. Each joins all three part
      lists: `translate::transducer`, `export::shipped` and
      `export::transducer`.
+   - TSV asks transduce for pruning by CSV's grammar name
+     (`grammar_name`), since `capability::PRUNABLE` lists `csv` only.
+     A test holds TSV's events alike pruned and not, and to the walk.
+   - A header that repeats a name is settled as JSON's repeated member
+     is (`held_to_a_tree` false for CSV and TSV): a table keeps the
+     last cell, as the line source did, and `--render json` refuses
+     before writing, which reads a file again whole. Standard input then
+     fails with `DUPLICATE_MEMBER`, where the line source wrote the last
+     cell. aless 0.4.6 was probed for the old behaviour.
+   - Measure aless `--render csv` on the 26.9 MB file
+     (`scratchpad/csv-700k.csv`), main's matrix build against the
+     branch's, for the CHANGELOG's "a third longer, half the memory".
    - `Plan`, `line_format`, the use of `LinesSource`, the alarm's
      `lines` flag and the `--max-size` exemption's wording for the line
      source all go. `streams_as_read` stays.
@@ -303,8 +318,10 @@ compatible.
 ## Local state, on the maintainer's machine
 
 - **`~/Projects/tabnas-worktrees/release-records/`** holds the wave.
-  csv and alchemy are worktrees on their release branches; the rest are
-  symlinks to the main checkouts.
+  csv and alchemy are worktrees on their release branches, and
+  `admin-deps` is admin#156's; the rest are symlinks to the main
+  checkouts.
+- **`~/Projects/tabnas-worktrees/aless-csv/aless`** is aless's CSV move.
 - **`~/Projects/tabnas-worktrees/csv-records/`** holds the route's
   worktrees. The ones for #105 to #108, #57 and #66 are merged, and
   transduce is on #67's branch. alchemy-plan holds the plan record.
