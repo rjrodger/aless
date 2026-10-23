@@ -256,10 +256,21 @@ compatible.
 6. **alchemy-cli 0.1.17: tabnas/alchemy-cli#58, open.** Step 2 moved
    Go's requires to alchemy v0.2.15, csv v0.6.9, transduce v0.3.0, json
    v0.5.19, jsonc v0.5.16, jsonl v0.1.19 and parser v0.12.15, and
-   `go test ./...` passes on them. Merge when green, then dispatch.
-7. **aless: in progress** on `claude/csv-through-part` in
-   `~/Projects/tabnas-worktrees/aless-csv/aless`, now on the released
-   crates (transduce 0.3.0, alchemy 0.2.15, csv 0.6.9).
+   `go test ./...` passes on them.
+   - Its first Rust gate failed the lock check: step 2 moves only a
+     lock's version lines, and tabnas-transduce 0.3.0's entry no longer
+     lists csv and json (#67). `fb12e82` is `cargo update --workspace`'s
+     rewrite. CI is running again; then merge and dispatch.
+   - alchemy's `downstream` on alchemy's `main` failed the same check
+     (it clones alchemy-cli's `main`). Re-run it once #58 merges.
+   - render's lock had the same stale entry, though render was not
+     released: tabnas/render#27 rewrites it (open).
+7. **aless: rjrodger/aless#94, open** (`af2480e`, one commit), from
+   `claude/csv-through-part` in
+   `~/Projects/tabnas-worktrees/aless-csv/aless`, on the released crates
+   (transduce 0.3.0, alchemy 0.2.15, csv 0.6.9). fmt, clippy and
+   `cargo test` pass locally; the ignored matrix is running locally.
+   aless 0.4.10's release pull request follows its merge.
    - CSV and TSV go through csv's part. Each joins all three part
      lists: `translate::transducer`, `export::shipped` and
      `export::transducer`.
@@ -297,9 +308,8 @@ compatible.
      file; json, yaml, toml and jsonl refuse standard input with
      `DUPLICATE_MEMBER` and nothing written, and read a file again
      whole, as `--json` reads it.
-   - On the released crates (transduce 0.3.0, alchemy 0.2.15, csv
-     0.6.9), clippy and `cargo test` are running
-     (`scratchpad/aless-csv-gate.sh`). Then the pull request.
+   - On the released crates, clippy and `cargo test` pass
+     (`scratchpad/aless-csv-gate.sh`).
    - `Plan`, `line_format`, the use of `LinesSource`, the alarm's
      `lines` flag and the `--max-size` exemption's wording for the line
      source all go. `streams_as_read` stays.
