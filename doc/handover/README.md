@@ -260,7 +260,8 @@ compatible.
      lock's version lines, and tabnas-transduce 0.3.0's entry no longer
      lists csv and json (#67). `cargo update --workspace` fixed it.
    - alchemy's `downstream` on alchemy's `main` failed the same check
-     (it clones alchemy-cli's `main`); it was re-run after #58 merged.
+     (it clones alchemy-cli's `main`); re-run after #58 merged, it is
+     green.
    - render's lock had the same stale entry, though render was not
      released: tabnas/render#27 rewrote it (merged, `f897868`).
 7. **aless: rjrodger/aless#94, merged (`4add7d4`).** CSV and TSV are
@@ -283,11 +284,10 @@ compatible.
      whole, as `--json` reads it. The CHANGELOG says so.
    - TSV is pruned by CSV's grammar name (`grammar_name`), since
      transduce's `capability::PRUNABLE` lists `csv` only.
-8. **aless 0.4.10: rjrodger/aless#95, open** (the bump, on
-   `claude/release-0.4.10` in the same worktree). Once merged, dispatch
-   `release.yml` on `main` with `tag=dry-run`, then `tag=v0.4.10`, and
-   verify crates.io, the Homebrew tap's formula, the checksums and the
-   attestation.
+8. **aless 0.4.10: rjrodger/aless#95, merged (`bfe611a`).** The dry
+   run (`release.yml`, `tag=dry-run`, run 40035678571) is building
+   every target. Then dispatch `tag=v0.4.10`, and verify crates.io, the
+   Homebrew tap's formula, the checksums and the attestation.
 9. **alchemy's plan record** for rulings 8 to 12, the measurements and
    the wave is on `claude/plan-csv-records` (`0213464`, rebased on
    `main`), in `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`.
