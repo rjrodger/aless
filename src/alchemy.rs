@@ -129,7 +129,7 @@ pub struct Compiled {
 /// `DSL_TYPE_ERROR`, `STREAM_REUSED`, `STREAMABILITY_UNKNOWN`): from a
 /// compile, or from the program's sink at run time, the program is at
 /// fault and not the input. `STREAMABILITY_UNKNOWN` is the source's code
-/// too (a verified grammar that refuses to stream a document part-way),
+/// too (a format's part that refuses to stream a document part-way),
 /// so for a failure met while the program ran the code alone does not
 /// say whose it is: `export` says where it came from
 /// ([`ExportError::Program`]), and `headless` reads that, the code and
