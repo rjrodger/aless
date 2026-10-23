@@ -250,11 +250,13 @@ compatible.
    job, alchemy-cli's gates against the branch, took 29 minutes.
 4. **alchemy 0.2.15: released.** npm, the Go proxy, crates.io and the
    `go/v0.2.15` Release (6 assets) were checked.
-5. **transduce 0.3.0: tabnas/transduce#69, open.** Step 2 moved Go's
-   requires to alchemy v0.2.15 and csv v0.6.9, and `go test ./...`
-   passes on them. Merge it when green, then dispatch `release.yml`
-   with `go=true` and check the four places.
-6. **alchemy-cli 0.1.17**, the same way.
+5. **transduce 0.3.0: released.** tabnas/transduce#69 (`312000b`),
+   then `release.yml`. npm, the Go proxy and crates.io were checked;
+   transduce's Releases carry no assets (0.2.12's had none either).
+6. **alchemy-cli 0.1.17: tabnas/alchemy-cli#58, open.** Step 2 moved
+   Go's requires to alchemy v0.2.15, csv v0.6.9, transduce v0.3.0, json
+   v0.5.19, jsonc v0.5.16, jsonl v0.1.19 and parser v0.12.15, and
+   `go test ./...` passes on them. Merge when green, then dispatch.
 7. **aless: in progress** on `claude/csv-through-part` in
    `~/Projects/tabnas-worktrees/aless-csv/aless`, written and not yet
    built: it needs transduce 0.3.0 and alchemy 0.2.15 on crates.io.
@@ -277,9 +279,27 @@ compatible.
      among them. agent.rs failed only `the_generated_files_are_current`,
      since the reference changed; the man page is regenerated with the
      patched binary.
-   - Measure aless `--render csv` on the 26.9 MB file
-     (`scratchpad/csv-700k.csv`), main's matrix build against the
-     branch's, for the CHANGELOG's "a third longer, half the memory".
+   - Measured, main's matrix build (the line source) against the
+     branch's (the part, natively), medians of three interleaved runs,
+     the outputs byte for byte the same (`scratchpad/aless-csv-bench.sh`):
+
+     | Input | `--render` | Line source | Part |
+     |---|---|---|---|
+     | 100,000 rows, 3.6 MB | csv | 4.23 s, 17 MiB | 5.88 s, 14 MiB |
+     | 100,000 rows | json | 4.13 s | 6.22 s |
+     | 700,000 rows, 26.9 MB | csv | 29.35 s | 43.98 s |
+     | 700,000 rows | json | 29.27 s | 40.72 s |
+
+     So two fifths to a half longer, at a slightly lower peak; the
+     CHANGELOG says so.
+   - The probe of a repeated header name, through the branch's binary:
+     `--render csv` keeps the last cell from standard input and from a
+     file; json, yaml, toml and jsonl refuse standard input with
+     `DUPLICATE_MEMBER` and nothing written, and read a file again
+     whole, as `--json` reads it.
+   - On the released crates (transduce 0.3.0, alchemy 0.2.15, csv
+     0.6.9), clippy and `cargo test` are running
+     (`scratchpad/aless-csv-gate.sh`). Then the pull request.
    - `Plan`, `line_format`, the use of `LinesSource`, the alarm's
      `lines` flag and the `--max-size` exemption's wording for the line
      source all go. `streams_as_read` stays.
