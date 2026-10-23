@@ -247,7 +247,7 @@ compatible.
    Release (6 assets) were checked.
 3. **alchemy 0.2.15: tabnas/alchemy#107, merged (`c6688b2`).** Go's
    requires moved to json v0.5.19 and parser v0.12.15. Its downstream
-   job, alchemy-cli's gates against the branch, took 33 minutes.
+   job, alchemy-cli's gates against the branch, took 29 minutes.
 4. **alchemy's release is running** (`release.yml`, run 40018986003),
    dispatched once `main`'s Rust, ci and CodeQL runs passed on the tree
    the pull request had tested. Then check npm, the Go proxy, crates.io
