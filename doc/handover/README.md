@@ -258,8 +258,8 @@ compatible.
    v0.5.19, jsonc v0.5.16, jsonl v0.1.19 and parser v0.12.15, and
    `go test ./...` passes on them. Merge when green, then dispatch.
 7. **aless: in progress** on `claude/csv-through-part` in
-   `~/Projects/tabnas-worktrees/aless-csv/aless`, written and not yet
-   built: it needs transduce 0.3.0 and alchemy 0.2.15 on crates.io.
+   `~/Projects/tabnas-worktrees/aless-csv/aless`, now on the released
+   crates (transduce 0.3.0, alchemy 0.2.15, csv 0.6.9).
    - CSV and TSV go through csv's part. Each joins all three part
      lists: `translate::transducer`, `export::shipped` and
      `export::transducer`.
