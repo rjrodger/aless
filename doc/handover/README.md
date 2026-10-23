@@ -248,12 +248,12 @@ compatible.
 3. **alchemy 0.2.15: tabnas/alchemy#107, merged (`c6688b2`).** Go's
    requires moved to json v0.5.19 and parser v0.12.15. Its downstream
    job, alchemy-cli's gates against the branch, took 29 minutes.
-4. **alchemy's release is running** (`release.yml`, run 40018986003),
-   dispatched once `main`'s Rust, ci and CodeQL runs passed on the tree
-   the pull request had tested. Then check npm, the Go proxy, crates.io
-   and the `go/v0.2.15` Release.
-5. **transduce 0.3.0**, once csv and alchemy are published: bump with
-   step 2 (it moves Go's requires), then a pull request, then dispatch.
+4. **alchemy 0.2.15: released.** npm, the Go proxy, crates.io and the
+   `go/v0.2.15` Release (6 assets) were checked.
+5. **transduce 0.3.0: tabnas/transduce#69, open.** Step 2 moved Go's
+   requires to alchemy v0.2.15 and csv v0.6.9, and `go test ./...`
+   passes on them. Merge it when green, then dispatch `release.yml`
+   with `go=true` and check the four places.
 6. **alchemy-cli 0.1.17**, the same way.
 7. **aless: in progress** on `claude/csv-through-part` in
    `~/Projects/tabnas-worktrees/aless-csv/aless`, written and not yet
