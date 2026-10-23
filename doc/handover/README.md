@@ -245,13 +245,13 @@ compatible.
 2. **csv 0.6.9: released.** tabnas/csv#109 (`6d7f250`), then
    `release.yml`. npm, the Go proxy, crates.io and the `go/v0.6.9`
    Release (6 assets) were checked.
-3. **alchemy 0.2.15: tabnas/alchemy#107, open.** Go's requires move to
-   json v0.5.19 and parser v0.12.15, and `go test ./...` passes on
-   them. Its downstream job (alchemy-cli's Rust gate) is the last check
-   running.
-4. **Then dispatch alchemy's release:**
-   `gh workflow run release.yml -R tabnas/alchemy --ref main -f go=true`.
-   Check npm, the Go proxy, crates.io and the `go/vX` Release.
+3. **alchemy 0.2.15: tabnas/alchemy#107, merged (`c6688b2`).** Go's
+   requires moved to json v0.5.19 and parser v0.12.15. Its downstream
+   job, alchemy-cli's gates against the branch, took 33 minutes.
+4. **alchemy's release is running** (`release.yml`, run 40018986003),
+   dispatched once `main`'s Rust, ci and CodeQL runs passed on the tree
+   the pull request had tested. Then check npm, the Go proxy, crates.io
+   and the `go/v0.2.15` Release.
 5. **transduce 0.3.0**, once csv and alchemy are published: bump with
    step 2 (it moves Go's requires), then a pull request, then dispatch.
 6. **alchemy-cli 0.1.17**, the same way.
@@ -270,6 +270,13 @@ compatible.
      before writing, which reads a file again whole. Standard input then
      fails with `DUPLICATE_MEMBER`, where the line source wrote the last
      cell. aless 0.4.6 was probed for the old behaviour.
+   - Built against the local transduce, alchemy and parser checkouts
+     (`scratchpad/aless-patched.sh`: cargo `--config` patches into
+     `aless-csv/target-patched`, restoring `Cargo.lock` after), it
+     type-checks clean and the library's 317 tests pass, the new ones
+     among them. agent.rs failed only `the_generated_files_are_current`,
+     since the reference changed; the man page is regenerated with the
+     patched binary.
    - Measure aless `--render csv` on the 26.9 MB file
      (`scratchpad/csv-700k.csv`), main's matrix build against the
      branch's, for the CHANGELOG's "a third longer, half the memory".
