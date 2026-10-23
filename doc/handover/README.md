@@ -285,11 +285,9 @@ dependency is alchemy's shared types.
 
 ## Open
 
-- **tabnas/alchemy#108**, the plan's record of the route, step 12 for
-  CSV and the wave (docs only), from `claude/plan-csv-records` in
-  `~/Projects/tabnas-worktrees/csv-records/alchemy-plan`. Merge when
-  green.
-- **rjrodger/aless#93**, this page.
+- **rjrodger/aless#93**, this page. Nothing else from this session is
+  open: tabnas/alchemy#108 (`7af4c51`) recorded the route, step 12 for
+  CSV and the wave in the plan.
 
 ## Carried over
 
@@ -322,14 +320,15 @@ dependency is alchemy's shared types.
 
 ## Local state, on the maintainer's machine
 
-Every set below but `evaluator-tune`, `fixes` and `handover` holds only
-merged work, and can be removed as ruling 7 had it once alchemy#108
-merges: check each worktree is clean and its `HEAD` is its merged pull
-request's head, then `git worktree remove` from its main checkout.
+Every set below but `csv-native`, `evaluator-tune`, `fixes` and
+`handover` holds only merged work, and can be removed as ruling 7 had
+it, on the maintainer's word: check each worktree is clean and its
+`HEAD` is its merged pull request's head, then `git worktree remove`
+from its main checkout.
 
 - **`~/Projects/tabnas-worktrees/csv-records/`**: the route's
   worktrees (alchemy, csv, alchemy-cli, transduce) and alchemy-plan
-  (#108, open).
+  (#108, merged).
 - **`~/Projects/tabnas-worktrees/release-records/`**: the wave's
   release branches (csv, alchemy, transduce, alchemy-cli, render) and
   `admin-deps`; the rest are symlinks.
@@ -337,8 +336,8 @@ request's head, then `git worktree remove` from its main checkout.
   and #95, on `claude/release-0.4.10` now), with `target-patched`, the
   patched build's target dir, beside it.
 - **`~/Projects/tabnas-worktrees/csv-native/`**: the probe, transduce
-  on `claude/csv-native-probe` with its example uncommitted. The native
-  has landed.
+  on `claude/csv-native-probe` with its example uncommitted (removing
+  it deletes that example). The native has landed.
 - **`~/Projects/tabnas-worktrees/evaluator-tune/`** holds the interning
   experiment: one commit on `claude/tune-rule-record`, never pushed.
 - **`~/Projects/tabnas-worktrees/fixes/`** is not this session's and was
