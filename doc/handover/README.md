@@ -10,9 +10,9 @@ ended partway into CSV's native route.
 aless is the host the plan serves, so its handover is kept here. The
 fleet's earlier page, parser's
 [`doc/handover/README.md`](https://github.com/tabnas/parser/blob/be46d32f76d6c52b641c80167d94267b5c96da05/doc/handover/README.md),
-was last written on 2026-10-09. tabnas/parser#318 removes it on the
-maintainer's instruction. What was still open on it is under "Carried
-over".
+was last written on 2026-10-09. tabnas/parser#318 (`2d64381`) removed
+it on the maintainer's instruction. What was still open on it is under
+"Carried over".
 
 ## The maintainer's rulings
 
@@ -205,30 +205,39 @@ native and the library refuse at the same point.
 Sibling CI clones `main`, so each change lands only after the change it
 needs.
 
-1. **alchemy: begun, uncommitted.** It is on `claude/transduce-records`
-   in `~/Projects/tabnas-worktrees/csv-records/alchemy`.
-   - Done:
-     - The library's sixteen definitions, in `stdlib/transduce.alc`.
-     - Their copies in `rs/`, `go/` and `ts/`, made by
-       `node ts/embed-grammar.js`.
-     - Their Rust signatures in `rs/src/check.rs`.
-   - Still to do:
-     - The TypeScript and Go signatures (`ts/src/check.ts`,
-       `go/check.go`).
-     - The name lists: `rs/src/stdlib/mod.rs`, `ts/test/stdlib.test.ts`
-       (whose count of 44 changes) and `go/stdlib_test.go`.
-     - `docs/language.md`: the prose, and an `alchemy`/`core` pair for
-       each definition.
-     - A `test/spec/pipe.tsv` row for each definition, and rows in
-       `check.tsv`.
-     - Rust: the `RecordsSpec` (`rs/src/shared/`) and the `Routers`
-       method (`rs/src/shared/inject.rs`).
-     - The lowering, in `rs/src/lower.rs`: a `records_spec` and a
-       `native_records` beside `tree_spec` and `native_tree`, matching
-       the outer scan over the inner one, with tests over hand-built
+1. **alchemy: code-complete, pushed, no pull request yet.** The work is on
+   `claude/transduce-records` in
+   `~/Projects/tabnas-worktrees/csv-records/alchemy`: seven commits, the
+   last `1ed5a06`.
+   - The library's sixteen definitions are in `stdlib/transduce.alc`.
+     `node ts/embed-grammar.js` copied them into `rs/`, `go/` and `ts/`.
+   - Their signatures are in all three checkers, and in the three
+     runtimes' name lists (TypeScript's count is now 60).
+   - `docs/language.md` has the prose, and an `alchemy`/`core` pair for
+     each definition. `pipe.tsv` has a row for each definition, and
+     `check.tsv` has the explain report and two refusals.
+   - A header cell that isn't a string names its column as the csv
+     grammar names it: `null`, `true` or `false`, and a number as
+     `scalar-text` writes it.
+   - Rust:
+     - `rs/src/shared/records.rs` holds `RecordsSpec` and its contract
+       pass for pass, the state's measure and refusal, and
+       `records_name`.
+     - `is_json_number`, `shortest_number` and `number_text` moved to
+       `rs/src/shared/number.rs`, so transduce's native writes a number
+       as `scalar-text` does. They are re-exported at their old paths.
+     - `Routers::transduce_records` declines by default.
+     - In `lower.rs`: `records_spec`, `native_records` (the library's two
+       scans over the host's parser events), and the hook in `events()`.
+       It holds the spec's state to `max_metadata_bytes` and is tried
+       before `transduce-tree`.
+     - Three tests: the spec read and refused; the native offered,
+       declined and off; the library's scans by hand over csv-shaped
        passes.
-   - alchemy's `downstream.yml` runs alchemy-cli's gates against the
-     pull request.
+   - Rust's lib and spec tests and clippy pass. TypeScript passes 548
+     of 548, and Go passes.
+   - Next: alchemy's full gate (`ci/rust/run.sh`), then the pull
+     request. Its `downstream.yml` runs alchemy-cli's gates against it.
 2. **transduce:** `TransduceRecords` in Rust, offered by
    `TransduceRouters` and held to the walk over csv's documents. The
    probe's code in
@@ -295,8 +304,7 @@ needs.
   experiment: one commit on `claude/tune-rule-record`, never pushed.
 - **`~/Projects/tabnas-worktrees/fixes/`** is not this session's and was
   left alone.
-- **`~/Projects/tabnas-worktrees/handover/`** holds this page's branch,
-  and parser#318's.
+- **`~/Projects/tabnas-worktrees/handover/`** holds this page's branch.
 - **Every other set was removed** on 2026-10-23, once its pull requests
   had merged (ruling 7).
 
