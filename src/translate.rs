@@ -142,6 +142,8 @@ pub fn transducer(format: Format) -> Option<Alc> {
         Format::Json5 => transducer!("tabnas-json5", tabnas_json5),
         Format::Jsonic => transducer!("tabnas-jsonic", tabnas_jsonic),
         Format::Jsonl => transducer!("tabnas-jsonl", tabnas_jsonl),
+        // TSV's grammar is CSV's, with a tab for its separator.
+        Format::Csv | Format::Tsv => transducer!("tabnas-csv", tabnas_csv),
         Format::Yaml => transducer!("tabnas-yaml", tabnas_yaml),
         Format::Xml => transducer!("tabnas-xml", tabnas_xml),
         Format::Zon => transducer!("tabnas-zon", tabnas_zon),
@@ -545,10 +547,9 @@ mod tests {
         );
         // Why a format's documents are read whole before anything is
         // written, where its manifest says: every format with a part but
-        // those transduce streams as they parse (the JSON family, jsonic,
-        // YAML, XML, ZON and PGN), those read a record at a time
-        // (CSV and JSON Lines). The README, the reference and the skill
-        // name them.
+        // those transduce streams as they parse (the JSON family, JSON
+        // Lines, jsonic, CSV, YAML, XML, ZON and PGN). The README, the
+        // reference and the skill name them.
         let whole: Vec<&str> = parts()
             .iter()
             .filter(|p| p.whole.is_some())
@@ -934,14 +935,14 @@ mod tests {
             let source = source_part(format);
             let target = part(native.name()).unwrap();
             let composition = compose(source, target, &options()).unwrap();
-            let plan = export::plan(format).unwrap();
-            let input = || match plan {
-                export::Plan::Lines => {
+            let input = || {
+                if export::streams_as_read(format) {
                     let reader: Box<dyn BufRead + Send> =
                         Box::new(std::io::Cursor::new(text.as_bytes().to_vec()));
                     Input::Lines(reader)
+                } else {
+                    Input::Text(text)
                 }
-                _ => Input::Text(text),
             };
             let composed = Shared::default();
             let result = run(
@@ -1058,10 +1059,10 @@ mod tests {
         assert!(c.adapters.is_empty());
     }
 
-    /// CSV to YAML streams: CSV at the root is read a record at a time, and
-    /// the render keeps one marker per open container, so ten times the
-    /// rows write ten times the text and leave the retained high-water mark
-    /// where it was.
+    /// CSV to YAML streams: CSV at the root is read a window at a time
+    /// through its part, and the render keeps one marker per open
+    /// container, so ten times the rows write ten times the text and leave
+    /// the retained high-water mark where it was.
     #[test]
     fn ten_times_the_rows_leave_what_the_render_retains_flat() {
         let composition =

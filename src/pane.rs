@@ -17,7 +17,7 @@
 //! What a pane shows is a [`crate::tab::Tab`], so the keys that move
 //! through a tree or scroll a source work in whichever pane has the focus.
 
-use std::io::{self, BufRead, Cursor, Write};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,7 +27,7 @@ use tabnas_alchemy::Output;
 use tabnas_transduce::Metrics;
 
 use crate::alchemy::{Compiled, ProgramArg};
-use crate::export::{self, ExportError, Input, Job, Plan, Renderer, What};
+use crate::export::{self, ExportError, Input, Job, Renderer, What};
 use crate::load::Format;
 use crate::translate;
 
@@ -360,11 +360,11 @@ fn render_within(
     timeout: Option<Duration>,
     max: usize,
 ) -> Result<Rendered, String> {
-    let Some(plan) = export::plan(format) else {
+    if format == Format::Text {
         return Err(format!(
             "{name} is plain text, which has no values to write: open it with -k to name its format"
         ));
-    };
+    }
     // A format's render, as --render writes the document: the translation
     // the parts decide, which one of aless's own renderers may run, or the
     // composition over the program's output.
@@ -434,13 +434,7 @@ fn render_within(
         cut: cut.clone(),
         max,
     });
-    let input = match plan {
-        Plan::Lines => {
-            let reader: Box<dyn BufRead + Send> = Box::new(Cursor::new(source.as_bytes()));
-            Input::Lines(reader)
-        }
-        _ => Input::Text(source),
-    };
+    let input = Input::Text(source);
     let result = match (&composed, through) {
         (Some((_, composition)), _) => {
             translate::run(&job, composition, input, out, Metrics::new())
