@@ -205,7 +205,7 @@ native and the library refuse at the same point.
 Sibling CI clones `main`, so each change lands only after the change it
 needs.
 
-1. **alchemy: tabnas/alchemy#105, open.** Its branch is
+1. **alchemy: tabnas/alchemy#105, merged (`3b90e29`).** Its branch is
    `claude/transduce-records` in
    `~/Projects/tabnas-worktrees/csv-records/alchemy`.
    - It holds the library (sixteen definitions) and their signatures in
@@ -232,10 +232,11 @@ needs.
      (`["comma"]`), which the tag makes `["comma" "empty"]`.
    - `3c25436` reads the cell by `comma` being among the groups. That
      holds in both states: Go's runner against csv's untagged release
-     passes all ten rows. Its re-run is pending.
+     passes all ten rows, and the re-run with the tagged branches was
+     green.
    - Once csv's tags are on `main`, a follow-up switches those rows to
      csv's shipped part, the `transduce-records` spec.
-2. **csv: pushed, no pull request yet.** The branch is
+2. **csv: tabnas/csv#108, open.** The branch is
    `claude/transduce-records` (`5124125`).
    - Both rule sets in Rust, TypeScript and Go tag `elem`'s two
      empty-cell alternates with the group `empty`.
@@ -260,13 +261,14 @@ needs.
    - `docs/reference.md`, `AGENTS.md` and a BENCH section ("Records,
      natively") are pushed (`46f677a`). The local gate is running.
    - It opens after csv's pull request merges.
-4. **alchemy-cli: written, not pushed yet.** `rs/tests/stdlib_test.rs`
+4. **alchemy-cli: pushed (`e079405`), no pull request yet.** `rs/tests/stdlib_test.rs`
    gains two tests. `transduce_records_native_and_interpreted_agree`
    covers four specs over csv's corpus, the CSV fixtures, generated
    records and edge cases. `transduce_records_state_is_bounded_alike`
    covers the bound. `CountingRouters` now counts native records too.
-   They are running locally. Pushing the branch puts them into
-   alchemy#105's downstream run as well.
+   Both pass locally: 848 documents agree, and every bound refuses
+   alike. Its pull request goes last, because its CI clones siblings
+   from `main`.
 5. **The release wave, then aless.**
    - aless reads CSV and TSV through the part.
    - Step 12 then finishes for CSV:
