@@ -390,7 +390,7 @@ whole document has been built.
 aless --render csv data.jsonl                                   # one line, one row
 aless --render csv --path .response.payload.deep.records response.json
 aless --render json big.yaml                                    # the document as JSON, streamed
-aless -k jsonl --render csv < events.log                        # stdin, a record at a time
+aless -k jsonl --render csv < events.log                        # stdin, read as it arrives
 ```
 
 The **rows** are the elements of the root array, or of the array at
@@ -523,9 +523,9 @@ input is read. Every format aless reads can be written as every format
 that has a render and can hold it (eight hold only their own kind of
 tree, below), so it is a translation: CSV's records become a YAML
 sequence of mappings, a JSON document a TOML table, a Markdown table a
-CSV file. The input is read as `--render json` reads it: JSON Lines, CSV
-and TSV a record at a time, `--path` to start below the root, `--timeout`
-over the whole run. A format's lift reads a whole document, so it runs
+CSV file. The input is read as `--render json` reads it: CSV and TSV a
+record at a time and JSON Lines a window at a time, `--path` to start
+below the root, `--timeout` over the whole run. A format's lift reads a whole document, so it runs
 at the root only: below the root, `--path` selects a value of the
 document's tree, rows or a tree by its own shape (a Markdown file's
 table is its rows at the root, and `--path` into the file selects its
@@ -542,7 +542,7 @@ aless --render yaml data.csv                    # the records as YAML
 aless --render toml --path .spec deploy.json    # the value at a path, as TOML
 aless --render markdown --path .rows api.json   # records as a Markdown table
 aless --render csv table.md                     # a Markdown table's rows as CSV
-aless -k jsonl --render zon < events.log        # stdin, a record at a time
+aless -k jsonl --render zon < events.log        # stdin, read as it arrives
 ```
 
 **How a translation is put together** is the design in tabnas/transduce's
@@ -654,7 +654,7 @@ keeps the last) is refused with `DUPLICATE_MEMBER`, and a stream no tree
 has with `STREAMABILITY_UNKNOWN`. Either way aless falls back once to
 the parsed value, as `--json` reads it, when nothing has been written;
 otherwise the refusal is reported with `output: "partial"`. JSON Lines
-from standard input, read a record at a time and never again, keeps the
+from standard input, read as it arrives and never again, keeps the
 refusal, with `output: "none"`.
 
 The output of each render reads back as the same value in a reader of
@@ -712,7 +712,7 @@ aless --alchemy export.alc response.json                  # the table the progra
 aless --alchemy table.alc --render json response.json     # the same rows as JSON records
 aless --alchemy table.alc --render yaml response.json     # the same rows as a YAML sequence
 aless --alchemy-expr 'def export [input] input' data.yaml # the document, as JSON
-aless -k jsonl --alchemy filter.alc < events.log          # stdin, a record at a time
+aless -k jsonl --alchemy filter.alc < events.log          # stdin, read as it arrives
 aless --alchemy export.alc --explain                      # the plan; no run
 ```
 

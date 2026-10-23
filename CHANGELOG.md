@@ -8,6 +8,21 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- JSON Lines is read through tabnas-jsonl's transducer part, a window at
+  a time, where it was read a record at a time. A file or standard input
+  of any size still passes through in a window's memory, `--max-size`
+  still does not apply to it, and the output is the same. It takes about
+  a fifth longer than the record-at-a-time read did. A `--timeout` that
+  stops it is reported as one that stops any format's part is, where it
+  named the line the record being read started on. When a writer to
+  standard input goes quiet and `--timeout` stops the run, the records
+  within the window not yet parsed are not written, where every record
+  received was. CSV and TSV are still read a record at a time.
+
 ## [0.4.9] - 2026-10-22
 
 ### Changed

@@ -1502,12 +1502,26 @@ fn a_pgn_database_streams_a_game_at_a_time() {
     assert_eq!(written.matches("\"Round\":").count(), games);
 }
 
-/// A writer that goes quiet part way, past `--timeout`: the records it
-/// had written whole are on standard output before the `timeout` error,
-/// with `output` partial, on every path (aless#17).
+/// A writer that goes quiet part way, past `--timeout`: the records the
+/// run had written are whole on standard output before the `timeout`
+/// error, with `output` partial, on every path (aless#17). JSON Lines is
+/// read a window at a time, so the records within the window the parse
+/// had not reached when the writer went quiet are not written: the writer
+/// sends far more than a window first, so that some are, and not all.
 #[test]
 fn a_slow_stdin_leaves_whole_records_at_the_timeout() {
+    let sent = 12_000;
+    let mut text = String::new();
+    for i in 0..sent {
+        text.push_str(&format!("{{\"a\":{i},\"b\":\"x{i}\"}}\n"));
+    }
     for (mode, expected) in record_modes() {
+        // What the mode writes, by the shape of its two records.
+        let kind = match expected.as_bytes()[0] {
+            b'"' => "csv",
+            b'[' => "json",
+            _ => "lines",
+        };
         let started = std::time::Instant::now();
         let mut child = Command::new(BIN)
             .args(mode)
@@ -1517,10 +1531,20 @@ fn a_slow_stdin_leaves_whole_records_at_the_timeout() {
             .stderr(Stdio::piped())
             .spawn()
             .expect("aless starts");
-        // Two records, then the writer's end stays open and silent.
+        // Standard output and error are read as aless writes them, so that
+        // a run writing more than a pipe holds never waits on this test.
+        let drain = |mut pipe: Box<dyn Read + Send>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                pipe.read_to_end(&mut bytes).unwrap();
+                bytes
+            })
+        };
+        let stdout = drain(Box::new(child.stdout.take().unwrap()));
+        let stderr = drain(Box::new(child.stderr.take().unwrap()));
+        // The records, then the writer's end stays open and silent.
         let mut held = child.stdin.take().unwrap();
-        held.write_all(b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n")
-            .unwrap();
+        held.write_all(text.as_bytes()).unwrap();
         held.flush().unwrap();
         let status = loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -1533,25 +1557,72 @@ fn a_slow_stdin_leaves_whole_records_at_the_timeout() {
             std::thread::sleep(std::time::Duration::from_millis(50));
         };
         drop(held);
-        let out = child.wait_with_output().unwrap();
+        let out = Output {
+            status,
+            stdout: stdout.join().unwrap(),
+            stderr: stderr.join().unwrap(),
+        };
         assert_eq!(
             status.code(),
             Some(6),
             "{mode:?}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{mode:?}");
         let e = &json(&out.stderr)["error"];
         assert_eq!(e["kind"], json!("timeout"), "{mode:?}");
         assert_eq!(e["seconds"], json!(1.0), "{mode:?}");
         assert_eq!(e["output"], json!("partial"), "{mode:?}");
+        let written = String::from_utf8_lossy(&out.stdout);
+        let records = whole_records(kind, &written);
+        assert!(
+            records > 0 && records < sent,
+            "{mode:?}: {records} of {sent} records written"
+        );
     }
 }
 
-/// The five ways two whole JSON Lines records reach standard output, and
-/// what they are there: the plain renders, a program's table (its
-/// columns inferred from the first row) and JSON events, and a composed
-/// render.
+/// How many records `written` holds, each whole and in the order sent
+/// (`a` counting from 0), as `kind` writes them: `"csv"`, rows under the
+/// header; `"json"`, the elements of an array not yet closed; `"lines"`,
+/// one JSON value a line.
+fn whole_records(kind: &str, written: &str) -> usize {
+    match kind {
+        "csv" => {
+            let rows: Vec<&str> = written
+                .strip_suffix("\r\n")
+                .expect("CSV ends with a whole row")
+                .split("\r\n")
+                .collect();
+            assert_eq!(rows[0], "\"a\",\"b\"");
+            for (i, row) in rows[1..].iter().enumerate() {
+                assert_eq!(*row, format!("\"{i}\",\"x{i}\""));
+            }
+            rows.len() - 1
+        }
+        "json" => {
+            let array: Value = serde_json::from_str(&format!("{written}]"))
+                .unwrap_or_else(|e| panic!("{e}: {:?}", &written[written.len() - 40..]));
+            let items = array.as_array().expect("an array");
+            for (i, item) in items.iter().enumerate() {
+                assert_eq!(item, &json!({"a": i, "b": format!("x{i}")}));
+            }
+            items.len()
+        }
+        _ => {
+            let lines: Vec<&str> = written
+                .strip_suffix('\n')
+                .expect("a whole line last")
+                .split('\n')
+                .collect();
+            for (i, line) in lines.iter().enumerate() {
+                let item: Value = serde_json::from_str(line).expect("a whole record");
+                assert_eq!(item, json!({"a": i, "b": format!("x{i}")}));
+            }
+            lines.len()
+        }
+    }
+}
+
 fn record_modes() -> [(&'static [&'static str], &'static str); 5] {
     const TABLE: &str = "def export [input] (table-from-json \
         (record (entry :columns :infer) (entry :rows (path each-index))) input)";

@@ -861,9 +861,11 @@ fn streamed_source(req: &Request) -> Result<(Source, String, String, Format), Fa
 enum Opened<'a> {
     /// The whole text, read within `--max-size` as a parse reads it.
     Text(String),
-    /// A reader over a line-delimited file, read a record at a time, so
-    /// `--max-size` does not apply to it; with the file's path when it is
-    /// one, which a refused record has read again whole.
+    /// A reader over a line-delimited input, read as the run goes, CSV and
+    /// TSV a record at a time and JSON Lines a window at a time, so
+    /// `--max-size` does not apply to it ([`export::streams_as_read`]); with
+    /// the file's path when it is one, which a refused record has read
+    /// again whole.
     Lines(Box<dyn BufRead + Send + 'a>, Option<PathBuf>),
     /// A file read through its format's transducer part, a window of it at
     /// a time where its grammar declares `lex.window` ([`Input::Path`]),
@@ -910,7 +912,7 @@ fn open_input<'a>(
     let implicit = req.files.is_empty();
     let too_large = |e: &LoadError, size| Failure::load(name, format, e).limited(size, req);
     match (source, plan) {
-        (Source::Stdin, plan) => {
+        (Source::Stdin, _) => {
             let Some(read) = stdin.as_mut() else {
                 return Err(Failure::usage(if implicit {
                     "no input: name a FILE, or pipe a document into aless"
@@ -918,7 +920,7 @@ fn open_input<'a>(
                     "standard input is a terminal: pipe a document into aless, or name a FILE"
                 }));
             };
-            if plan == Plan::Lines {
+            if export::streams_as_read(format) {
                 let mut reader = io::BufReader::new(read);
                 let empty = match reader.fill_buf() {
                     Ok(bytes) => bytes.is_empty(),
@@ -948,7 +950,7 @@ fn open_input<'a>(
                 Ok(Opened::Text(String::from_utf8_lossy(&bytes).into_owned()))
             }
         }
-        (Source::File(p), Plan::Lines) => {
+        (Source::File(p), _) if export::streams_as_read(format) => {
             let file = std::fs::File::open(p).map_err(|e| {
                 let e = LoadError::new(e.to_string()).with_origin(&load::origin_of(p));
                 Failure::load(name, format, &e)
