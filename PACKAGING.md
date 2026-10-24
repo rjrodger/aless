@@ -53,14 +53,10 @@ for the owner submitting it to one. How a release is made is in
 
 ## Testing
 
-- **Two test targets need the network.** `tests/translate_matrix.rs` and
-  `tests/yaml_render.rs` read the grammar repositories' own fixtures from
-  checkouts at the locked versions' tags (`TABNAS_FIXTURES_DIR` and
-  `TABNAS_YAML_DIR`; `scripts/fixtures.sh` clones them). A sandboxed
-  build can run everything else:
+- **No test needs the network.** A sandboxed build runs the whole suite:
 
   ```bash
-  cargo test --locked --lib --bins --test agent --test app_flow --test formats --test render_memory
+  cargo test --locked
   ```
 
 - **The viewer in a terminal.** On Unix,
@@ -138,7 +134,7 @@ build() {
 check() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
-  cargo test --frozen --lib --bins --test agent --test app_flow --test formats --test render_memory
+  cargo test --frozen
 }
 
 package() {

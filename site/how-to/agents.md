@@ -1,6 +1,6 @@
 ---
 title: Give an agent aless
-description: Install the Agent Skill that teaches an AI agent to read, query, check and convert files with aless's command line.
+description: Install the Agent Skill that teaches an AI agent to read, query and check files with aless's command line.
 group: From the command line
 order: 7
 ---
@@ -21,7 +21,7 @@ For another agent, write it into the directory that agent loads skills from. The
 $ aless --generate skill | head -4
 ---
 name: aless
-description: Read, query, validate and export structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, grammars in ABNF, EBNF and GBNF, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, exports the records in one as CSV (streamed, so JSON Lines and CSV of any size), writes any of them as any format that has a render (YAML, TOML, INI, XML, ZON, JSON Lines, a Markdown table, JSON, CSV, an Atom feed, an expression; CSS, .proto, PGN, C and a version from documents of their own kind, and ABNF, EBNF and GBNF from a grammar in any of the three), runs a program in the alchemy streaming language over one (select, project, reshape and render on the way through), and checks that files parse, reporting the parser's exact error position and hint.
+description: Read, query and validate structured files with the aless command-line tool, without its terminal viewer. Formats are JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS/Atom, CSS, Protocol Buffers .proto files, PGN chess games, C source, grammars in ABNF, EBNF and GBNF, arithmetic expressions and semantic versions, plus any line-oriented text format described by an ABNF grammar given on the command line (/etc/hosts, crontabs, passwd, fstab). Use it to outline a large or unfamiliar file, to print the value at a path as JSON, and to find which path and source line a key or value is at. It also maps a line:col from a linter, test or stack trace to the structural path it points into. It converts any of those formats to JSON for jq, and checks that files parse, reporting the parser's exact error position and hint.
 ---
 ```
 
@@ -31,7 +31,7 @@ Write it again after you upgrade aless. The same file is published with this sit
 
 An agent with no skill loaded can still use aless by following five rules, which `aless --help` opens with:
 
-1. Pass an output option (`--json`, `--paths`, `--find`, `--where`, `--check`, `--render` or `--alchemy`), never `--panes`, which opens the viewer.
+1. Pass an output option (`--json`, `--paths`, `--find`, `--where` or `--check`).
 2. Name the file as an argument; standard input is read as JSON unless `-k FORMAT` says otherwise.
 3. Check the exit status before reading standard output: only 0 means it holds the answer (`--check`'s report comes with 1 too).
 4. Quote a path for the shell: `--path '.items[0]'`.

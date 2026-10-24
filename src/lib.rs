@@ -5,22 +5,18 @@
 //! The binary in `main.rs` owns the terminal; everything here is
 //! terminal-free and unit tested.
 
-pub mod alchemy;
 pub mod app;
 pub mod cli;
 pub mod clip;
 pub mod doc;
 pub mod explorer;
-pub mod export;
 pub mod fmt;
 pub mod grammar;
 pub mod headless;
 pub mod highlight;
 pub mod load;
-pub mod pane;
 pub mod prov;
 pub mod render;
 pub mod search;
 pub mod tab;
-pub mod translate;
 pub mod watch;

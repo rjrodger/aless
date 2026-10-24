@@ -8,6 +8,23 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Removed
+
+- The streaming exports and the programs: `--render`, `--alchemy`,
+  `--alchemy-expr`, `--explain`, `--max-output` and `--key`; the output
+  and program panes, with `--panes`, `--stacked`, `C-w`, `:vsplit`,
+  `:split`, `:arrange`, `:pane` and `:only`; and the crates behind them,
+  tabnas-transduce, tabnas-render and tabnas-alchemy. Writing a document
+  as another format, and running an alchemy program over one, is the
+  `alchemy` command's work, in
+  [tabnas/alchemy-cli](https://github.com/tabnas/alchemy-cli): `alchemy
+  translate --from FORMAT --to FORMAT FILE` and `alchemy run PROGRAM
+  FILE`. aless reads, shows and prints JSON. `s` still shows a tab's
+  text, coloured by its grammar, and `:w FILE` still writes its document
+  as JSON.
+
 ## [0.4.10] - 2026-10-23
 
 ### Changed

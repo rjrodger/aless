@@ -73,7 +73,7 @@ $ aless --grammar hosts=hosts.abnf --paths --depth 1 hosts
 
 The grammar file is a document of its own as well: `aless hosts.abnf` opens the spec it compiles to, the options and rules a parser is made from, and `aless --check hosts.abnf` says whether it compiles, with the compiler's message where it does not ([Check that files parse](/how-to/check.html)).
 
-`NAME,NAME2=FILE` gives a grammar two names, `--grammar` repeats for several grammars, and `--grammar-expr NAME=ABNF` takes the grammar's text on the command line instead of from a file. Standard input has no name, so give it `-k NAME`: `crontab -l | aless --grammar crontab=crontab.abnf -k crontab`. A conversion works too, `--render csv` on the hosts file giving a row per entry, though a grammar from the command line parses its input whole before it streams.
+`NAME,NAME2=FILE` gives a grammar two names, `--grammar` repeats for several grammars, and `--grammar-expr NAME=ABNF` takes the grammar's text on the command line instead of from a file. Standard input has no name, so give it `-k NAME`: `crontab -l | aless --grammar crontab=crontab.abnf -k crontab`.
 
 ## Write your own
 

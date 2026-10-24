@@ -85,8 +85,8 @@ pub struct Tab {
     pub gone: bool,
     /// Counts the changes to what the tab holds: each document it takes
     /// ([`Tab::apply`], a reload, `:format`), each failed reload that
-    /// re-reads the source, each re-listing of a directory. What is built
-    /// from the tab (the output pane) is rebuilt when it moves.
+    /// re-reads the source, each re-listing of a directory. What is made
+    /// from the tab's text (its colours) is made again when it moves.
     pub generation: u64,
     pub reload_due: Option<Instant>,
     pub search: Option<Search>,

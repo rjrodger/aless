@@ -32,4 +32,4 @@ A file that is deleted keeps its document on screen, and its tab is marked `✗`
 aless --no-watch big.json
 ```
 
-A large file pauses the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often. [Large inputs, streaming and limits](/explanation/large-inputs.html) says what a parse costs.
+A large file pauses the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often. [Large inputs and limits](/explanation/large-inputs.html) says what a parse costs.

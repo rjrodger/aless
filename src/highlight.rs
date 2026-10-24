@@ -1,5 +1,5 @@
-//! Colour for text: a pane showing its text colours each token as the
-//! text's grammar lexed it, through tabnas-lsp's semantic tokens, the ones
+//! Colour for text: the source view colours each token as the text's
+//! grammar lexed it, through tabnas-lsp's semantic tokens, the ones
 //! its language server sends an editor.
 //!
 //! Colouring parses the whole text and keeps its lex trace, which at its
@@ -7,7 +7,7 @@
 //! release build for 0.9 MB of JSON. So it runs off the viewer's thread:
 //! one worker takes the texts in turn, each on a thread of its own with
 //! the stack a parse needs, under the parse timeout and aless's depth cap,
-//! and only up to [`MAX_BYTES`]. A text no pane shows any more is skipped,
+//! and only up to [`MAX_BYTES`]. A text the view no longer shows is skipped,
 //! or called off. The text shows uncoloured until its colours come in. A grammar the registry
 //! marks as lexing speculatively (its trace holds tokens the parse took
 //! back) is never coloured, and neither is plain text.
@@ -19,7 +19,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use tabnas::Tabnas;
 use tabnas_lsp::{Entry, Registry, Span, TokenType};
 
 use crate::load::{self, CatchGuard, Deadline, Format};
@@ -33,44 +32,6 @@ pub const MAX_BYTES: usize = 512 << 10;
 /// grammar while other texts queue. A parse stopped here colours what it
 /// had lexed.
 pub const MAX_TIME: Duration = Duration::from_secs(10);
-
-/// What a text is lexed by: a format's grammar, or alchemy's for a
-/// program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Grammar {
-    Format(Format),
-    Alchemy,
-}
-
-impl Grammar {
-    /// The registry's entry for this grammar, when it has one: a format's
-    /// language id is its name. A custom grammar's name is the user's, so
-    /// it is never looked up.
-    fn entry(self, registry: &Registry) -> Option<&Entry> {
-        match self {
-            Grammar::Format(f) if !f.is_custom() => registry.entry(f.name()),
-            _ => None,
-        }
-    }
-
-    /// Whether a text lexed by this grammar can be coloured: it has a
-    /// grammar, and `registry` does not mark its lex stream speculative.
-    fn colourable_by(self, registry: &Registry) -> bool {
-        self != Grammar::Format(Format::Text) && self.entry(registry).is_none_or(Entry::is_clean)
-    }
-
-    /// [`Grammar::colourable_by`] the registry tabnas-lsp bundles.
-    pub fn colourable(self) -> bool {
-        self.colourable_by(Registry::bundled())
-    }
-
-    fn parser(self) -> Option<Tabnas> {
-        match self {
-            Grammar::Format(format) => load::make_parser(format).ok().flatten(),
-            Grammar::Alchemy => Some(tabnas_alchemy::grammar::make()),
-        }
-    }
-}
 
 /// The most colourings left running, called off or out of time and still
 /// making their parsers: with that many, a text shown waits in the queue
@@ -126,22 +87,43 @@ impl Painted {
     }
 }
 
-/// Colour `text` as `grammar` lexes it, on this thread: the worker's
-/// work. The parse stops at `timeout` or past aless's depth cap, and the
-/// tokens lexed by then are coloured. A text too long to colour, one
-/// without a grammar, and a grammar that panics colour nothing.
-pub fn paint(grammar: Grammar, text: &str, timeout: Option<Duration>) -> Option<Painted> {
-    paint_unless(grammar, text, timeout, None)
+/// The registry's entry for `format`'s grammar, when it has one: a
+/// format's language id is its name. A custom grammar's name is the user's,
+/// so it is never looked up.
+fn entry(format: Format, registry: &Registry) -> Option<&Entry> {
+    if format.is_custom() {
+        return None;
+    }
+    registry.entry(format.name())
+}
+
+/// Whether a text of `format` can be coloured: it has a grammar, and
+/// `registry` does not mark its lex stream speculative.
+fn colourable_by(format: Format, registry: &Registry) -> bool {
+    format != Format::Text && entry(format, registry).is_none_or(Entry::is_clean)
+}
+
+/// [`colourable_by`] the registry tabnas-lsp bundles.
+pub fn colourable(format: Format) -> bool {
+    colourable_by(format, Registry::bundled())
+}
+
+/// Colour `text` as `format`'s grammar lexes it, on this thread: the
+/// worker's work. The parse stops at `timeout` or past aless's depth cap,
+/// and the tokens lexed by then are coloured. A text too long to colour,
+/// one without a grammar, and a grammar that panics colour nothing.
+pub fn paint(format: Format, text: &str, timeout: Option<Duration>) -> Option<Painted> {
+    paint_unless(format, text, timeout, None)
 }
 
 /// [`paint`], stopped as it would be at its deadline once `stop` is raised.
 fn paint_unless(
-    grammar: Grammar,
+    format: Format,
     text: &str,
     timeout: Option<Duration>,
     stop: Option<Arc<AtomicBool>>,
 ) -> Option<Painted> {
-    if text.len() > MAX_BYTES || !grammar.colourable() {
+    if text.len() > MAX_BYTES || !colourable(format) {
         return None;
     }
     // The time starts before the parser is made, as the loader's does:
@@ -150,7 +132,7 @@ fn paint_unless(
         Some(stop) => Deadline::after(timeout).map(|d| d.or_cancelled(stop)),
         None => Deadline::after(timeout),
     };
-    let mut parser = grammar.parser()?;
+    let mut parser = load::make_parser(format).ok().flatten()?;
     let _stopped = load::guard(&mut parser, deadline, load::MAX_RULE_DEPTH, || {});
     // The loader parses a text without its byte-order mark, and so does
     // this; the runs still count from the text's first byte.
@@ -158,9 +140,7 @@ fn paint_unless(
         Some(body) => (body, '\u{feff}'.len_utf8()),
         None => (text, 0),
     };
-    let overrides = grammar
-        .entry(Registry::bundled())
-        .and_then(Entry::overrides);
+    let overrides = entry(format, Registry::bundled()).and_then(Entry::overrides);
     let _guard = CatchGuard::enter();
     catch_unwind(AssertUnwindSafe(|| {
         let highlight = tabnas_lsp::highlight(parser, body, overrides);
@@ -169,12 +149,13 @@ fn paint_unless(
     .ok()
 }
 
-/// A painting's key: the tab, its generation and the grammar. A tab's
-/// generation moves with every text it takes, so a key names one text.
-pub type Key = (u64, u64, Grammar);
+/// A painting's key: the tab, its generation and the format whose grammar
+/// lexes its text. A tab's generation moves with every text it takes, so a
+/// key names one text.
+pub type Key = (u64, u64, Format);
 
-/// Colours made off the viewer's thread, by one worker for every pane,
-/// which takes the texts in turn. It starts with the first text asked for.
+/// Colours made off the viewer's thread, by one worker, which takes the
+/// texts in turn. It starts with the first text asked for.
 #[derive(Default)]
 pub struct Painter {
     /// Where texts go and colours come back.
@@ -186,7 +167,7 @@ pub struct Painter {
     done: HashMap<u64, (Key, Option<Arc<Painted>>)>,
     /// The painting each tab waits for.
     asked: HashMap<u64, Key>,
-    /// What the panes show, shared with the worker.
+    /// What the view shows, shared with the worker.
     shown: Arc<Mutex<Shown>>,
     /// The colouring threads running, the one waited for and those left
     /// behind, shared with the worker.
@@ -200,12 +181,12 @@ struct Worker {
     done: Receiver<(Key, Made)>,
 }
 
-/// What the panes show, as the painter and its worker share it: the
+/// What the view shows, as the painter and its worker share it: the
 /// worker skips a job whose text is not among `keys` when its turn comes,
 /// and the painter calls off the one `running` once its text leaves them.
 #[derive(Default)]
 struct Shown {
-    /// The texts the panes show now.
+    /// The texts the view shows now.
     keys: HashSet<Key>,
     /// The text the worker is colouring, and the flag that stops it.
     running: Option<(Key, Arc<AtomicBool>)>,
@@ -215,7 +196,7 @@ struct Shown {
 enum Made {
     /// The text's colours: `None` for a text that is not coloured.
     Colours(Option<Painted>),
-    /// Nothing: no pane showed the text when its turn came, or it was
+    /// Nothing: the view did not show the text when its turn came, or it was
     /// called off once none did.
     Skipped,
 }
@@ -257,7 +238,7 @@ impl Painter {
         if self.has(key) {
             return;
         }
-        if text.len() > MAX_BYTES || !key.2.colourable() {
+        if text.len() > MAX_BYTES || !colourable(key.2) {
             self.done.insert(key.0, (key, None));
             return;
         }
@@ -312,7 +293,7 @@ impl Painter {
         any
     }
 
-    /// Name the texts the panes show now, the ones whose colours are worth
+    /// Name the texts the view shows now, the ones whose colours are worth
     /// making. A job for any other is skipped when its turn comes, and the
     /// one being coloured is called off, so a tab left or closed never
     /// holds up the one in view.
@@ -371,8 +352,8 @@ impl Painter {
 }
 
 /// The worker: paint each text asked for, in order, skipping one that a
-/// newer text for the same tab has replaced and one no pane shows any
-/// more, and stopping one whose text leaves the panes while it is
+/// newer text for the same tab has replaced and one the view no longer
+/// shows, and stopping one whose text leaves the view while it is
 /// coloured. It ends when the painter is dropped.
 fn work(
     jobs: Receiver<Job>,
@@ -518,27 +499,22 @@ mod tests {
     #[test]
     fn a_text_is_coloured_by_what_its_grammar_lexed() {
         let text = "{\"a\": 1,\n \"b\": [true, \"x\"]}\n";
-        let p = paint(Grammar::Format(Format::Json), text, None).unwrap();
+        let p = paint(Format::Json, text, None).unwrap();
         let first = kinds(&p, text, 0);
         assert!(first.contains(&("\"a\"".into(), "string")), "{first:?}");
         assert!(first.contains(&("1".into(), "number")), "{first:?}");
         let second = kinds(&p, text, 1);
         assert!(second.contains(&("true".into(), "keyword")), "{second:?}");
         assert!(second.contains(&("\"x\"".into(), "string")), "{second:?}");
-        // A program is lexed by alchemy's grammar.
-        let program = "; a note\ndef export [input] input\n";
-        let p = paint(Grammar::Alchemy, program, None).unwrap();
-        assert_eq!(kinds(&p, program, 0), [("; a note".into(), "comment")]);
     }
 
-    /// TOML's strings, values and quoted keys alike, and alchemy's `:name`
-    /// keywords are coloured (tabnas/lsp#28): the TOML lexer reports a
-    /// string at its end, and the token after it hid it, and alchemy's
-    /// keyword token had no type at all.
+    /// TOML's strings, values and quoted keys alike, are coloured
+    /// (tabnas/lsp#28): the TOML lexer reports a string at its end, and
+    /// the token after it hid it.
     #[test]
-    fn toml_strings_and_alchemy_keywords_are_coloured() {
+    fn toml_strings_and_quoted_keys_are_coloured() {
         let toml = "a = \"x\"\n\"q k\" = 'lit'\nb = [\"y\"]\n";
-        let p = paint(Grammar::Format(Format::Toml), toml, None).unwrap();
+        let p = paint(Format::Toml, toml, None).unwrap();
         assert!(
             kinds(&p, toml, 0).contains(&("\"x\"".into(), "string")),
             "{:?}",
@@ -548,13 +524,6 @@ mod tests {
         assert!(second.contains(&("\"q k\"".into(), "string")), "{second:?}");
         assert!(second.contains(&("'lit'".into(), "string")), "{second:?}");
         assert!(kinds(&p, toml, 2).contains(&("\"y\"".into(), "string")));
-        let program = "def export [input] (match input case :none 1 case _ 2)\n";
-        let p = paint(Grammar::Alchemy, program, None).unwrap();
-        assert!(
-            kinds(&p, program, 0).contains(&(":none".into(), "keyword")),
-            "{:?}",
-            kinds(&p, program, 0)
-        );
     }
 
     #[test]
@@ -562,7 +531,7 @@ mod tests {
         // A byte-order mark is not parsed, but the runs count it; a line
         // ending in CRLF keeps its runs short of the CR.
         let text = "\u{feff}a: 1\r\nb: two\r\n";
-        let p = paint(Grammar::Format(Format::Yaml), text, None).unwrap();
+        let p = paint(Format::Yaml, text, None).unwrap();
         let first = kinds(&p, text, 0);
         assert!(first.contains(&("1".into(), "number")), "{first:?}");
         let second = kinds(&p, text, 1);
@@ -579,8 +548,8 @@ mod tests {
     fn json5_colours_a_continuation_across_crlf() {
         let lf = "{\n  a: 'x\\\n  y',\n  b: [1, \"p\\\nq\"],\n  c: true\n}\n";
         let crlf = lf.replace('\n', "\r\n");
-        let one = paint(Grammar::Format(Format::Json5), lf, None).unwrap();
-        let two = paint(Grammar::Format(Format::Json5), &crlf, None).unwrap();
+        let one = paint(Format::Json5, lf, None).unwrap();
+        let two = paint(Format::Json5, &crlf, None).unwrap();
         for n in 0..crate::load::lines(lf).len() {
             assert_eq!(kinds(&two, &crlf, n), kinds(&one, lf, n), "line {n}");
         }
@@ -604,27 +573,26 @@ mod tests {
             (Format::Semver, "1.2.3-rc.1"),
             (Format::C, "int x = 1;\n"),
         ] {
-            let grammar = Grammar::Format(format);
-            assert!(grammar.entry(Registry::bundled()).is_some(), "{format}");
-            assert!(grammar.colourable(), "{format}");
-            assert!(paint(grammar, text, None).is_some(), "{format}");
+            assert!(entry(format, Registry::bundled()).is_some(), "{format}");
+            assert!(colourable(format), "{format}");
+            assert!(paint(format, text, None).is_some(), "{format}");
         }
         let proto = "syntax = \"proto3\";\n";
-        let p = paint(Grammar::Format(Format::Proto), proto, None).unwrap();
+        let p = paint(Format::Proto, proto, None).unwrap();
         assert!(
             kinds(&p, proto, 0).contains(&("\"proto3\"".into(), "string")),
             "{:?}",
             kinds(&p, proto, 0)
         );
         let pgn = "[Event \"e\"]\n";
-        let p = paint(Grammar::Format(Format::Pgn), pgn, None).unwrap();
+        let p = paint(Format::Pgn, pgn, None).unwrap();
         assert!(
             kinds(&p, pgn, 0).contains(&("\"e\"".into(), "string")),
             "{:?}",
             kinds(&p, pgn, 0)
         );
         let c = "/* n */ int f(void) { return x; }\n";
-        let p = paint(Grammar::Format(Format::C), c, None).unwrap();
+        let p = paint(Format::C, c, None).unwrap();
         for run in [
             ("/* n */", "comment"),
             ("int", "keyword"),
@@ -637,7 +605,7 @@ mod tests {
             );
         }
         let expr = "a: 1+2\n";
-        let p = paint(Grammar::Format(Format::Expr), expr, None).unwrap();
+        let p = paint(Format::Expr, expr, None).unwrap();
         assert!(
             kinds(&p, expr, 0).contains(&("1".into(), "number")),
             "{:?}",
@@ -648,14 +616,14 @@ mod tests {
     #[test]
     fn what_is_never_coloured() {
         let too_long = " ".repeat(MAX_BYTES + 1);
-        assert_eq!(paint(Grammar::Format(Format::Json), &too_long, None), None);
-        assert_eq!(paint(Grammar::Format(Format::Text), "a", None), None);
+        assert_eq!(paint(Format::Json, &too_long, None), None);
+        assert_eq!(paint(Format::Text, "a", None), None);
         // A grammar's compiler lexes it with a parser of its own, which it
         // does not hand over: the registry knows the three notations, and
         // aless has nothing to colour them with.
         for format in [Format::Abnf, Format::Ebnf, Format::Gbnf] {
-            assert!(Grammar::Format(format).entry(Registry::bundled()).is_some());
-            assert_eq!(paint(Grammar::Format(format), "a = \"x\"\n", None), None);
+            assert!(entry(format, Registry::bundled()).is_some());
+            assert_eq!(paint(format, "a = \"x\"\n", None), None);
         }
         let registry = Registry::from_json(
             r#"{"count": 1, "entries": [
@@ -663,27 +631,15 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        assert!(!Grammar::Format(Format::Json).colourable_by(&registry));
-        assert!(
-            Grammar::Format(Format::Yaml).colourable_by(&registry),
-            "not listed"
-        );
-        assert!(Grammar::Alchemy.colourable_by(&registry));
-        assert!(
-            Grammar::Format(Format::Json).colourable(),
-            "the bundled entry is clean"
-        );
+        assert!(!colourable_by(Format::Json, &registry));
+        assert!(colourable_by(Format::Yaml, &registry), "not listed");
+        assert!(colourable(Format::Json), "the bundled entry is clean");
     }
 
     #[test]
     fn a_parse_out_of_time_colours_what_it_lexed() {
         let text = format!("[{}]", vec!["1"; 2000].join(","));
-        let p = paint(
-            Grammar::Format(Format::Json),
-            &text,
-            Some(Duration::from_nanos(1)),
-        )
-        .unwrap();
+        let p = paint(Format::Json, &text, Some(Duration::from_nanos(1))).unwrap();
         assert!(
             p.line(0).len() < 4000,
             "stopped early: {} runs",
@@ -693,32 +649,29 @@ mod tests {
 
     #[test]
     fn the_painter_keeps_the_newest_text_of_each_tab() {
-        let json = Grammar::Format(Format::Json);
+        let json = Format::Json;
         let mut painter = Painter::new(None);
         painter.want([(1, 0, json), (1, 1, json)]);
         painter.ask((1, 0, json), "[1]");
         painter.ask((1, 1, json), "[\"x\"]");
-        painter.ask((2, 0, Grammar::Format(Format::Text)), "plain");
-        assert!(
-            painter.has((2, 0, Grammar::Format(Format::Text))),
-            "settled at once"
-        );
+        painter.ask((2, 0, Format::Text), "plain");
+        assert!(painter.has((2, 0, Format::Text)), "settled at once");
         painter.settle(Duration::from_secs(30));
         assert!(!painter.pending());
         assert!(painter.get((1, 0, json)).is_none(), "replaced");
         let p = painter.get((1, 1, json)).unwrap();
         assert_eq!(p.line(0)[1].kind, TokenType::String);
-        assert!(painter.get((2, 0, Grammar::Format(Format::Text))).is_none());
+        assert!(painter.get((2, 0, Format::Text)).is_none());
         painter.retain(|id| id != 1);
         assert!(painter.get((1, 1, json)).is_none(), "its tab is gone");
     }
 
-    /// A job whose text no pane shows by its turn is skipped, so a tab left
+    /// A job whose text the view does not show by its turn is skipped, so a tab left
     /// or closed never holds up the one in view; shown again, the text is
     /// asked for again and coloured.
     #[test]
-    fn a_text_no_pane_shows_is_skipped() {
-        let json = Grammar::Format(Format::Json);
+    fn a_text_the_view_does_not_show_is_skipped() {
+        let json = Format::Json;
         let (left, shown) = ((1, 0, json), (2, 0, json));
         let mut painter = Painter::new(None);
         painter.want([shown]);
@@ -734,11 +687,11 @@ mod tests {
         assert!(painter.get(left).is_some(), "shown again, it is coloured");
     }
 
-    /// A text that leaves the panes while it is coloured is called off:
+    /// A text that leaves the view while it is coloured is called off:
     /// its parse stops, and it is skipped rather than coloured in part.
     #[test]
     fn a_text_hidden_while_it_is_coloured_is_called_off() {
-        let key = (1, 0, Grammar::Format(Format::Json));
+        let key = (1, 0, Format::Json);
         // Long enough that its parse is still running when it is hidden.
         let text = format!("[{}]", vec!["1"; 200_000].join(","));
         assert!(text.len() <= MAX_BYTES);
@@ -761,7 +714,7 @@ mod tests {
     /// hidden one is skipped at once; once there is room, it is coloured.
     #[test]
     fn a_shown_text_waits_while_too_many_are_left_running() {
-        let json = Grammar::Format(Format::Json);
+        let json = Format::Json;
         let (shown, hidden) = ((1, 0, json), (2, 0, json));
         let mut painter = Painter::new(None);
         painter.running.store(MAX_LEFT, Ordering::SeqCst);

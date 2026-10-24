@@ -26,10 +26,9 @@ const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, Y
     TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
     .proto files, PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions \
     and semantic versions, and any line-oriented format an ABNF grammar describes, as one \
-    tree. In a terminal it shows the tree in a jless-style viewer, with tabs, panes, \
-    search and a watch mode that reloads a changed file and keeps your place. Without one \
-    it prints JSON on standard output for scripts and agents, and writes any of those \
-    formats as any other that has a render and can hold the document.";
+    tree. In a terminal it shows the tree in a jless-style viewer, with tabs, search and \
+    a watch mode that reloads a changed file and keeps your place. Without one it prints \
+    JSON on standard output for scripts and agents.";
 
 /// Where an option belongs, and what giving it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +39,7 @@ pub enum Section {
     /// Read by the output and the viewer alike.
     Both,
     /// Read by the viewer alone: without a screen it is accepted and does
-    /// nothing, but for `--panes`, which opens the viewer.
+    /// nothing.
     Viewer,
     /// Prints something about aless, and exits.
     About,
@@ -55,8 +54,6 @@ pub enum Value {
     File,
     /// A format aless reads.
     Format,
-    /// A format `--render` writes.
-    Render,
     /// One of these words.
     Words(&'static [&'static str]),
 }
@@ -118,7 +115,6 @@ impl Opt {
 pub const SUMMARY_WIDTH: usize = 44;
 
 const MODES: &[&str] = &["data", "line"];
-const PANES: &[&str] = &["out", "program", "out,program"];
 
 /// What `--generate` writes.
 pub const GENERATE: &[&str] = &[
@@ -130,8 +126,8 @@ pub const GENERATE: &[&str] = &[
     "skill",
 ];
 
-/// Every option aless takes, in the order the help lists them. `{renders}`,
-/// `{formats}` and `{version}` in a detail are filled in as it is written.
+/// Every option aless takes, in the order the help lists them. `{formats}`
+/// and `{version}` in a detail are filled in as it is written.
 pub const OPTIONS: &[Opt] = &[
     Opt {
         short: None,
@@ -145,8 +141,7 @@ pub const OPTIONS: &[Opt] = &[
             gives: what aless prints without a screen when no other output option is \
             given. Indented 2 spaces a level (--indent N), or on one line with \
             --compact. Numbers are 64-bit floats, so an integer beyond 2^53 comes out \
-            as the nearest one, and NaN and the infinities as null; --render json keeps \
-            each number as the source spelled it.",
+            as the nearest one, and NaN and the infinities as null.",
     },
     Opt {
         short: None,
@@ -203,78 +198,6 @@ pub const OPTIONS: &[Opt] = &[
     },
     Opt {
         short: None,
-        long: "--render",
-        also: &[],
-        arg: Some(("FORMAT", Value::Render)),
-        section: Section::Output,
-        repeats: false,
-        summary: "the value written as FORMAT, streamed",
-        detail: "The value at the start written as FORMAT, streamed as the input is \
-            read: csv, its records (the elements of the array at the start, a value of \
-            another kind its one record; the lines of JSON Lines; the records of CSV and \
-            TSV) under a header row, every field quoted, CRLF line ends; json, the value \
-            as --json writes it, but with each number spelled as in the source where \
-            that is JSON; or any format whose crate carries a render. FORMAT is one of \
-            {renders}. What FORMAT cannot hold is written by the convention its crate \
-            declares rather than refused (NaN and the infinities as null in json; a \
-            root TOML or INI cannot have as the one member --key names), and what it \
-            does not keep is said in a warning on standard error, on success too. Seven \
-            write only the tree their own documents read as, and have no convention for \
-            another: css, proto, pgn and c take a document of their own format, abnf, ebnf \
-            and gbnf a grammar in any of the three, each read as the grammar spec its \
-            compiler writes, and any other is a usage error before anything is read, \
-            naming the route that writes one, --alchemy FILE --render FORMAT with a \
-            program that makes that tree. A notation's render refuses a spec it cannot \
-            write in its notation (an action, a terminal none of its forms matches) before \
-            writing anything. \
-            semver writes only a document that is a version, and refuses any other \
-            before writing anything. Takes --path, not --at. With --alchemy it names the format the program's table or \
-            JSON events are written as.",
-    },
-    Opt {
-        short: None,
-        long: "--alchemy",
-        also: &[],
-        arg: Some(("FILE", Value::File)),
-        section: Section::Output,
-        repeats: false,
-        summary: "run the alchemy program in FILE",
-        detail: "Run the alchemy program in FILE over the input, and stream what its \
-            export answers: a text as it is, a table as CSV (--render json: JSON \
-            records, an object per row), JSON events as compact JSON (--render csv: a \
-            table of them); --render FORMAT writes a table or JSON events as FORMAT. \
-            The program selects what it reads, so no --path, --at or other output \
-            option goes with it. The input reaches it as --render reads it: JSON \
-            Lines, CSV and TSV a window at a time.",
-    },
-    Opt {
-        short: None,
-        long: "--alchemy-expr",
-        also: &[],
-        arg: Some(("TEXT", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "the same, the program on the command line",
-        detail: "--alchemy, with the program's text on the command line: --alchemy-expr \
-            'def export [input] input' writes the document as JSON.",
-    },
-    Opt {
-        short: None,
-        long: "--explain",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "the program's plan as JSON, and no run",
-        detail: "With --alchemy or --alchemy-expr, print the program's plan report as \
-            one JSON object instead of running it, and read no input: the chain of \
-            calls, the protocols, what is retained and under which limits, the \
-            ordering contract, the renderer (the program's own default, whatever \
-            --render names), and the guarantee with its qualification. Run it first on \
-            a program you did not write.",
-    },
-    Opt {
-        short: None,
         long: "--path",
         also: &[],
         arg: Some(("PATH", Value::Text)),
@@ -282,7 +205,7 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "start at PATH, in jq syntax",
         detail: "Start at PATH instead of the root, in the jq syntax every output \
-            prints (see PATHS). Not with --at, --check or a program.",
+            prints (see PATHS). Not with --at or --check.",
     },
     Opt {
         short: None,
@@ -293,8 +216,7 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "start at the node at a source position",
         detail: "Start at the node at that source position, counted from 1, columns in \
-            characters (see POSITIONS). Not with --path, --check, --render or a \
-            program.",
+            characters (see POSITIONS). Not with --path or --check.",
     },
     Opt {
         short: None,
@@ -315,22 +237,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Output,
         repeats: false,
         summary: "JSON on one line, an error's too",
-        detail: "JSON on one line: the answer of --json, --paths, --find, --where, \
-            --check, --render json and --explain, and an error or a warning on standard \
-            error. A program's own JSON is on one line whatever is given.",
-    },
-    Opt {
-        short: None,
-        long: "--max-output",
-        also: &[],
-        arg: Some(("SIZE", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "cap a program's output (default 1G)",
-        detail: "Stop an --alchemy program that writes more than SIZE (default 1G; 0 \
-            for no limit): a transduce error, RESOURCE_LIMIT_EXCEEDED naming \
-            max_output_bytes, status 5. SIZE is bytes, or a whole number with K, M or G \
-            (1024s).",
+        detail: "JSON on one line: the answer of --json, --paths, --find, --where and \
+            --check, and an error on standard error.",
     },
     Opt {
         short: Some('k'),
@@ -390,21 +298,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Both,
         repeats: false,
         summary: "indentation per level (default 2)",
-        detail: "Indent --json and --render json N spaces a level, and the viewer's \
-            tree (default 2; at most 16).",
-    },
-    Opt {
-        short: None,
-        long: "--key",
-        also: &[],
-        arg: Some(("NAME", Value::Text)),
-        section: Section::Both,
-        repeats: false,
-        summary: "member a root is written under (items)",
-        detail: "The member --render writes a value under when FORMAT's document must \
-            be a table and the value is not an object (toml, ini): an array or a scalar \
-            at the start is written as the one member NAME (default items). The \
-            viewer's output pane takes it too.",
+        detail: "Indent --json N spaces a level, and the viewer's tree (default 2; at \
+            most 16).",
     },
     Opt {
         short: None,
@@ -415,11 +310,9 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "refuse an input over SIZE (default 64M)",
         detail: "Refuse an input larger than SIZE (default 64M; 0 for no limit), and a \
-            --grammar or --alchemy file too, with a too_large error, status 5: a parse \
-            takes about 40 bytes of memory per byte of input. SIZE is bytes, or a whole \
-            number with K, M or G (1024s). JSON Lines, CSV and TSV that --render or \
-            --alchemy streams are read a window at a time, and the limit does not apply \
-            to them.",
+            --grammar file too, with a too_large error, status 5: a parse takes about 40 \
+            bytes of memory per byte of input. SIZE is bytes, or a whole number with K, M \
+            or G (1024s).",
     },
     Opt {
         short: None,
@@ -431,11 +324,10 @@ pub const OPTIONS: &[Opt] = &[
         summary: "stop a parse past SECONDS (default none)",
         detail: "Stop a parse, or a --grammar compile, that runs longer than SECONDS \
             (2.5, 90s, 2m; default none; 0 for no limit), with a timeout error, status \
-            6, that says how far it got. Under --render and --alchemy it covers the \
-            whole run. Without a screen, on standard input, the time runs from the \
-            start, so waiting on the input counts. A parse runs at about a megabyte a \
-            second: a caller with a deadline of its own should pass one a few seconds \
-            shorter.",
+            6, that says how far it got. Without a screen, on standard input, the time \
+            runs from the start, so waiting on the input counts. A parse runs at about a \
+            megabyte a second: a caller with a deadline of its own should pass one a few \
+            seconds shorter.",
     },
     Opt {
         short: None,
@@ -557,32 +449,6 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "do not capture the mouse",
         detail: "Leave the mouse to the terminal rather than capture it.",
-    },
-    Opt {
-        short: None,
-        long: "--panes",
-        also: &[],
-        arg: Some(("PANES", Value::Words(PANES))),
-        section: Section::Viewer,
-        repeats: false,
-        summary: "open the output and program panes",
-        detail: "Open panes beside the input: out, the document as --render or \
-            --alchemy writes it (JSON when neither is given), and program, the program; \
-            out,program opens both. With --panes, --render and --alchemy choose the \
-            output pane's content instead of printing, the other output options are \
-            refused, and so is a run without a terminal (status 2). C-w moves between \
-            the panes, s shows a pane's text or its tree, and :pane out|program|close \
-            opens or closes one.",
-    },
-    Opt {
-        short: None,
-        long: "--stacked",
-        also: &[],
-        arg: None,
-        section: Section::Viewer,
-        repeats: false,
-        summary: "stack the panes",
-        detail: "Stack the panes rather than place them side by side.",
     },
     Opt {
         short: Some('h'),
@@ -716,8 +582,8 @@ const TOPICS: &[Topic] = &[
             Block::Terms(&[
                 (
                     "1.",
-                    "Pass an output option: --json, --paths, --find, --where, --check, \
-                    --render or --alchemy. Never --panes, which opens the viewer.",
+                    "Pass an output option: --json, --paths, --find, --where or \
+                    --check.",
                 ),
                 (
                     "2.",
@@ -756,7 +622,7 @@ const TOPICS: &[Topic] = &[
     },
     Topic {
         title: "VIEWER OPTIONS",
-        note: "ignored without a screen, where --panes is refused",
+        note: "ignored without a screen",
         man: Man::Options("Viewer options"),
         blocks: &[Block::Options(Section::Viewer)],
     },
@@ -801,9 +667,8 @@ const TOPICS: &[Topic] = &[
             first item and .[-1] for its last. Also accepted: a.b[0] and [0] without the \
             leading dot, JSONPath's $.a['b'][0], and JSON Pointer's /a/b/0. There are no \
             wildcards, slices or recursive descent: pipe --json into jq for those. Quote a \
-            path for the shell, whose globbing would take [0]. Under --render, [-1] on an \
-            array is a usage error, since a stream cannot count from the end; on an \
-            object it is the key -1, as everywhere.",
+            path for the shell, whose globbing would take [0]. On an object, [-1] is the \
+            key -1.",
         )],
     },
     Topic {
@@ -883,31 +748,6 @@ const TOPICS: &[Topic] = &[
                     "{ok, files: [{file, format, ok, error}]}, error null for a file that \
                     parses",
                 ),
-                (
-                    "--render csv",
-                    "CSV: a header row, then a record per row, every field quoted, CRLF \
-                    line ends",
-                ),
-                (
-                    "--render json",
-                    "the value, indented as --json is, each number as the source spelled \
-                    it where that is JSON",
-                ),
-                (
-                    "--render FORMAT",
-                    "the document in FORMAT, in its always-quoted profile, so that \
-                    nothing reads back as another kind",
-                ),
-                (
-                    "--alchemy",
-                    "what the program exports: a text as it is, a table as CSV, JSON \
-                    events as compact JSON",
-                ),
-                (
-                    "--explain",
-                    "{entry, output, protocol, chain, retention, renderer, guarantee, \
-                    qualification, ...}",
-                ),
             ]),
             Block::Text(
                 "file is the path as given, or - for standard input; format is what the \
@@ -915,21 +755,6 @@ const TOPICS: &[Topic] = &[
                 entry the listing found, and truncated is true when that is more than \
                 --limit let through: raise --limit (0 for all), or narrow with --path or \
                 --depth.",
-            ),
-            Block::Text(
-                "A --render that succeeds also writes a warning on standard error that says \
-                what the format does not keep: {\"warning\": {\"kind\": \"loss\", \
-                \"message\", \"file\", \"render\", \"loss\": [sentence, ...]}}, with \
-                adapters naming each step that ran between the source and the render \
-                (wrap-object, wrap-array, embed, the inferred table, records), and adapter \
-                the one between a tree and a table, the inferred table or records, their \
-                sentences in loss after the format's own. Where the source's format says \
-                why its documents are read whole before anything is written (TOML, INI, \
-                Markdown, CSS, feeds, .proto, expressions, versions, C and the grammar \
-                notations), \
-                whole is that sentence; a value below the root, a program's output and a \
-                document of any other format have none. Status 0 is success whatever \
-                standard error holds.",
             ),
         ],
     },
@@ -940,11 +765,8 @@ const TOPICS: &[Topic] = &[
         blocks: &[
             Block::Text(
                 "An error is one JSON object on standard error, and standard output is \
-                then empty, with two exceptions: a failed --check still prints its report, \
-                and a --render or --alchemy stream that fails leaves what it had written, \
-                every record whole and none in part (but for a record over 16 MB, and \
-                a render that marks no records, such as --render markdown, which can \
-                stop inside one). A parse error:",
+                then empty, with one exception: a failed --check still prints its report. \
+                A parse error:",
             ),
             Block::Code(
                 r#"{"error": {"kind": "parse", "file": "bad.json", "format": "json",
@@ -967,9 +789,9 @@ const TOPICS: &[Topic] = &[
                 ),
                 (
                     "io",
-                    "an input, a --grammar file or a program file could not be read, or \
-                    the output not written: a parse error's fields, with the code io \
-                    (file null when it was standard output)",
+                    "an input or a --grammar file could not be read, or the output not \
+                    written: a parse error's fields, with the code io (file null when it \
+                    was standard output)",
                 ),
                 (
                     "too_large",
@@ -996,34 +818,12 @@ const TOPICS: &[Topic] = &[
                     --grammar that does not compile adds grammar, and file when it came \
                     from one",
                 ),
-                (
-                    "transduce",
-                    "a --render or --alchemy stream failed: code (INPUT_INVALID, \
-                    RESOURCE_LIMIT_EXCEEDED, OUTPUT_FAILED, DUPLICATE_MEMBER, \
-                    TARGET_VALUE_UNREPRESENTABLE, ...), message, file, format, then path, \
-                    limit ({name, value}), line, col and hint when the failure has them, \
-                    and output: \"partial\" when some of the result had been written, else \
-                    \"none\". One a program raised with a position of its own has file, \
-                    line and col the program's, format null, and input, the document's \
-                    name",
-                ),
-                (
-                    "alchemy",
-                    "the program is wrong: code (DSL_PARSE_ERROR, DSL_TYPE_ERROR, \
-                    STREAM_REUSED, STREAMABILITY_UNKNOWN), message led by a finer code \
-                    (unbalanced, unknown_name, arity, ...), file (the program's path, or \
-                    --alchemy-expr), format null, line and col in the program, output, \
-                    and input (the document's name) once the input was open",
-                ),
             ]),
             Block::Text(
                 "An io, too_large or timeout error about a --grammar file adds grammar, \
-                with file the grammar file and format null. An error met while --render \
-                was writing (transduce, parse, timeout, or the render's own alchemy one) \
-                adds loss, the sentences its warning gives on success, and whole where the \
-                warning has it. --compact puts an \
-                error on one line. The README's \"Scripts and \
-                agents\" section has every case at length.",
+                with file the grammar file and format null. --compact puts an error on \
+                one line. The README's \"Scripts and agents\" section has every case at \
+                length.",
             ),
         ],
     },
@@ -1036,39 +836,32 @@ const TOPICS: &[Topic] = &[
             (
                 "1",
                 "the input did not parse (parse); with --check, an input failed, and the \
-                report says which; with --render or --alchemy, the input or its records \
-                will not do (transduce: INPUT_INVALID, and the other input, protocol and \
-                target codes)",
+                report says which",
             ),
             (
                 "2",
                 "bad usage (usage): an unknown option, a bad path, no input, a directory, \
-                a --grammar or an --alchemy program that does not compile (alchemy), or \
-                the viewer without a terminal",
+                a --grammar that does not compile, or the viewer without a terminal",
             ),
             (
                 "3",
-                "an input, a --grammar file or an --alchemy program file could not be \
-                read, or the output not written (io; transduce OUTPUT_FAILED)",
+                "an input or a --grammar file could not be read, or the output not \
+                written (io)",
             ),
             ("4", "--path or --at names nothing (not_found)"),
             (
                 "5",
-                "an input, a --grammar file or an --alchemy program file is over \
-                --max-size (too_large); with --render or --alchemy, over a limit of the \
-                transducer's, a program's output over --max-output among them (transduce \
-                RESOURCE_LIMIT_EXCEEDED)",
+                "an input or a --grammar file is over --max-size (too_large)",
             ),
             (
                 "6",
                 "a parse, or a --grammar compile, ran past --timeout, or the input was \
-                still being read when it passed; with --render or --alchemy, the whole \
-                run, the program's work included (timeout)",
+                still being read when it passed (timeout)",
             ),
         ])],
     },
     Topic {
-        title: "LARGE INPUTS AND STREAMING",
+        title: "LARGE INPUTS AND LIMITS",
         note: "",
         man: Man::Section,
         blocks: &[
@@ -1081,20 +874,6 @@ const TOPICS: &[Topic] = &[
                 seconds shorter. --path and --depth shrink the output, not the parse. A \
                 reader that stops early (aless --json big.json | head) ends aless quietly, \
                 with status 0.",
-            ),
-            Block::Text(
-                "--render and --alchemy stream instead. JSON Lines, CSV and TSV are read a \
-                window at a time, whatever their size, so --max-size does not apply to \
-                them (a value or a field over 16 MB fails); the JSON family, jsonic, CSV, \
-                TSV, YAML, ZON, \
-                XML, PGN (a game at a time) and most annotated grammars from the \
-                command line write their records as the parse proceeds, and the other \
-                formats after it. A document a grammar refuses to stream part-way is read whole \
-                and written all the same when nothing has been written yet; otherwise the \
-                error says output \"partial\". A stream reads ahead of what it writes, a \
-                window of 64 KB, so when a writer to standard input goes quiet and \
-                --timeout stops the run, the records still in that read-ahead are not \
-                written.",
             ),
             Block::Text(
                 "A document nested deeper than aless reads fails as a parse error with the \
@@ -1113,10 +892,7 @@ const TOPICS: &[Topic] = &[
             ),
             Block::Text(
                 "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
-                as the nearest one, and --json writes NaN and the infinities as null. \
-                --render json keeps a number as the source spelled it where that is JSON, \
-                and writes NaN and the infinities as null too, the loss JSON declares; \
-                --render csv writes them as their names.",
+                as the nearest one, and --json writes NaN and the infinities as null.",
             ),
         ],
     },
@@ -1131,11 +907,7 @@ const TOPICS: &[Topic] = &[
                 tabnas/abnf), and -k NAME reads any input with it. ; @object a b and ; \
                 @array comments on a rule say what it builds; without them the value is \
                 the compiler's parse tree, a {\"rule\", \"src\", \"kids\"} node per rule. \
-                --render and --alchemy write an annotated grammar's records as the parse \
-                makes them, through a transducer aless generates from the annotations; a \
-                grammar whose first rule has no annotation builds the parse tree at its \
-                root and is parsed whole first, as is any grammar aless cannot generate \
-                a transducer for. The input is read as plain text: { } [ ] : , are \
+                The input is read as plain text: { } [ ] : , are \
                 ordinary characters, # starts a comment to the end of the line, and a \
                 word is the token TX (NR, ST and VL bring numbers, quoted strings and \
                 true, false and null back). A grammar that does not compile is a usage \
@@ -1253,11 +1025,6 @@ const TOPICS: &[Topic] = &[
              aless --find '\"image\":' deploy.yaml       every image, with its line\n\
              aless --check $(git ls-files '*.toml')    do they all parse?\n\
              aless -k csv --json < data.csv            stdin is JSON unless -k says\n\
-             aless --render csv --path .items x.json   the records as CSV\n\
-             aless --render json big.yaml              the document as JSON\n\
-             aless --render yaml data.csv              any format as any other\n\
-             aless --alchemy export.alc api.json       a program's output\n\
-             aless --alchemy export.alc --explain      what the program will do\n\
              aless --grammar hosts=hosts.abnf --json /etc/hosts",
         )],
     },
@@ -1281,11 +1048,6 @@ const TOPICS: &[Topic] = &[
                     "the code, its README and the releases: ",
                     env!("CARGO_PKG_REPOSITORY")
                 ),
-            ),
-            (
-                "alchemy",
-                "the language --alchemy runs, in its docs/language.md: \
-                https://github.com/tabnas/alchemy",
             ),
             (
                 "tabnas/abnf",
@@ -1339,12 +1101,9 @@ fn format_names() -> String {
     }
 }
 
-/// `text` with its `{renders}`, `{formats}` and `{version}` filled in.
+/// `text` with its `{formats}` and `{version}` filled in.
 fn fill(text: &str) -> String {
     let mut text = text.to_string();
-    if text.contains("{renders}") {
-        text = text.replace("{renders}", &crate::translate::names());
-    }
     if text.contains("{formats}") {
         text = text.replace("{formats}", &format_names());
     }
@@ -1526,7 +1285,7 @@ pub fn summary() -> String {
 /// The reference `--help` prints, as HTML, for the documentation site:
 /// a section for each topic, in the same order, titled in sentence case
 /// with an `id` a link can name (`exit-status`), and each option with an
-/// `id` of its own (`opt-render` for `--render`), which a mention of the
+/// `id` of its own (`opt-check` for `--check`), which a mention of the
 /// option elsewhere in the reference links to.
 pub fn reference_html() -> String {
     let mut out = String::new();
@@ -1581,7 +1340,7 @@ pub fn reference_html() -> String {
     out
 }
 
-/// The `id` of an option's entry in [`reference_html`]: `opt-render`.
+/// The `id` of an option's entry in [`reference_html`]: `opt-check`.
 pub fn option_id(opt: &Opt) -> String {
     format!("opt-{}", opt.long.trim_start_matches('-'))
 }
@@ -1908,7 +1667,6 @@ fn value_words(value: Value) -> Option<Vec<&'static str>> {
     match value {
         Value::Words(words) => Some(words.to_vec()),
         Value::Format => Some(Format::ALL.iter().map(|f| f.name()).collect()),
-        Value::Render => Some(crate::translate::render_names()),
         Value::Text | Value::File => None,
     }
 }
@@ -2167,7 +1925,7 @@ mod tests {
         assert!(lookup("--nope").is_none());
         assert!(lookup("-x").is_none());
         assert!(lookup("k").is_none());
-        assert!(asks_for_output("--json") && asks_for_output("--max-output"));
+        assert!(asks_for_output("--json") && asks_for_output("--check"));
         assert!(!asks_for_output("--depth") && !asks_for_output("-k"));
     }
 
@@ -2220,13 +1978,13 @@ mod tests {
             );
             assert!(summary.contains(opt.summary), "-h: {}", opt.summary);
         }
-        for placeholder in ["{renders}", "{formats}", "{version}"] {
+        for placeholder in ["{formats}", "{version}"] {
             assert!(!reference.contains(placeholder), "{placeholder}");
         }
     }
 
     /// The reference names every format aless reads, with every extension
-    /// that implies it, and every format --render writes.
+    /// that implies it.
     #[test]
     fn the_help_names_the_formats() {
         let reference = reference();
@@ -2244,7 +2002,6 @@ mod tests {
             }
         }
         let flat = reference.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(flat.contains(&crate::translate::names()), "{flat}");
         assert!(flat.contains(&format_names()), "{flat}");
     }
 
@@ -2358,7 +2115,7 @@ mod tests {
             assert!(html.contains(&id), "{}", opt.long);
         }
         assert!(html.contains("<a href=\"#opt-kind\"><code>-k</code></a>"));
-        assert!(!html.contains("{renders}") && !html.contains("{version}"));
+        assert!(!html.contains("{version}"));
         assert_eq!(
             html_text("(--kind=yaml)."),
             "(<a href=\"#opt-kind\"><code>--kind=yaml</code></a>)."

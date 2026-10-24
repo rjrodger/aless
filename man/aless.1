@@ -18,10 +18,8 @@ XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers\(aq .proto files,
 PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions and
 semantic versions, and any line\-oriented format an ABNF grammar describes, as
 one tree. In a terminal it shows the tree in a jless\-style viewer, with tabs,
-panes, search and a watch mode that reloads a changed file and keeps your
-place. Without one it prints JSON on standard output for scripts and agents,
-and writes any of those formats as any other that has a render and can hold the
-document.
+search and a watch mode that reloads a changed file and keeps your place.
+Without one it prints JSON on standard output for scripts and agents.
 .SS "Without a screen"
 aless prints instead of starting the viewer when an option listed under OUTPUT
 OPTIONS is given, when standard output is not a terminal (a pipe, a file, an
@@ -35,8 +33,7 @@ and status 2.
 For an agent, five rules:
 .TP 7
 \fB1.\fR
-Pass an output option: \-\-json, \-\-paths, \-\-find, \-\-where, \-\-check,
-\-\-render or \-\-alchemy. Never \-\-panes, which opens the viewer.
+Pass an output option: \-\-json, \-\-paths, \-\-find, \-\-where or \-\-check.
 .TP 7
 \fB2.\fR
 Name the file as an argument. Standard input is read as JSON unless \-k FORMAT
@@ -63,8 +60,7 @@ The document as JSON, or the value at the start that \-\-path or \-\-at gives:
 what aless prints without a screen when no other output option is given.
 Indented 2 spaces a level (\-\-indent N), or on one line with \-\-compact.
 Numbers are 64\-bit floats, so an integer beyond 2\(ha53 comes out as the
-nearest one, and NaN and the infinities as null; \-\-render json keeps each
-number as the source spelled it.
+nearest one, and NaN and the infinities as null.
 .TP 7
 \fB\-\-paths\fR
 An entry for the start and for each node below it, in document order, in a
@@ -91,72 +87,21 @@ the error object a run on that file alone prints. The one output option that
 reads several inputs. Exit status 1 when any input fails, with the report still
 on standard output. Takes no \-\-path or \-\-at.
 .TP 7
-\fB\-\-render\fR \fIFORMAT\fR
-The value at the start written as FORMAT, streamed as the input is read: csv,
-its records (the elements of the array at the start, a value of another kind
-its one record; the lines of JSON Lines; the records of CSV and TSV) under a
-header row, every field quoted, CRLF line ends; json, the value as \-\-json
-writes it, but with each number spelled as in the source where that is JSON; or
-any format whose crate carries a render. FORMAT is one of abnf, c, css, csv,
-ebnf, expr, feed, gbnf, ini, json, json5, jsonc, jsonic, jsonl, markdown, pgn,
-proto, semver, toml, xml, yaml or zon. What FORMAT cannot hold is written by
-the convention its crate declares rather than refused (NaN and the infinities
-as null in json; a root TOML or INI cannot have as the one member \-\-key
-names), and what it does not keep is said in a warning on standard error, on
-success too. Seven write only the tree their own documents read as, and have no
-convention for another: css, proto, pgn and c take a document of their own
-format, abnf, ebnf and gbnf a grammar in any of the three, each read as the
-grammar spec its compiler writes, and any other is a usage error before
-anything is read, naming the route that writes one, \-\-alchemy FILE \-\-render
-FORMAT with a program that makes that tree. A notation\(aqs render refuses a
-spec it cannot write in its notation (an action, a terminal none of its forms
-matches) before writing anything. semver writes only a document that is a
-version, and refuses any other before writing anything. Takes \-\-path, not
-\-\-at. With \-\-alchemy it names the format the program\(aqs table or JSON
-events are written as.
-.TP 7
-\fB\-\-alchemy\fR \fIFILE\fR
-Run the alchemy program in FILE over the input, and stream what its export
-answers: a text as it is, a table as CSV (\-\-render json: JSON records, an
-object per row), JSON events as compact JSON (\-\-render csv: a table of them);
-\-\-render FORMAT writes a table or JSON events as FORMAT. The program selects
-what it reads, so no \-\-path, \-\-at or other output option goes with it. The
-input reaches it as \-\-render reads it: JSON Lines, CSV and TSV a window at a
-time.
-.TP 7
-\fB\-\-alchemy\-expr\fR \fITEXT\fR
-\-\-alchemy, with the program\(aqs text on the command line: \-\-alchemy\-expr
-\(aqdef export [input] input\(aq writes the document as JSON.
-.TP 7
-\fB\-\-explain\fR
-With \-\-alchemy or \-\-alchemy\-expr, print the program\(aqs plan report as
-one JSON object instead of running it, and read no input: the chain of calls,
-the protocols, what is retained and under which limits, the ordering contract,
-the renderer (the program\(aqs own default, whatever \-\-render names), and the
-guarantee with its qualification. Run it first on a program you did not write.
-.TP 7
 \fB\-\-path\fR \fIPATH\fR
 Start at PATH instead of the root, in the jq syntax every output prints (see
-PATHS). Not with \-\-at, \-\-check or a program.
+PATHS). Not with \-\-at or \-\-check.
 .TP 7
 \fB\-\-at\fR \fILINE[:COL]\fR
 Start at the node at that source position, counted from 1, columns in
-characters (see POSITIONS). Not with \-\-path, \-\-check, \-\-render or a
-program.
+characters (see POSITIONS). Not with \-\-path or \-\-check.
 .TP 7
 \fB\-\-limit\fR \fIN\fR
 \-\-paths and \-\-find list at most N entries (default 200; 0 for all); total
 and truncated say what was left out.
 .TP 7
 \fB\-\-compact\fR
-JSON on one line: the answer of \-\-json, \-\-paths, \-\-find, \-\-where,
-\-\-check, \-\-render json and \-\-explain, and an error or a warning on
-standard error. A program\(aqs own JSON is on one line whatever is given.
-.TP 7
-\fB\-\-max\-output\fR \fISIZE\fR
-Stop an \-\-alchemy program that writes more than SIZE (default 1G; 0 for no
-limit): a transduce error, RESOURCE_LIMIT_EXCEEDED naming max_output_bytes,
-status 5. SIZE is bytes, or a whole number with K, M or G (1024s).
+JSON on one line: the answer of \-\-json, \-\-paths, \-\-find, \-\-where and
+\-\-check, and an error on standard error.
 .SS "Options for both the output and the viewer"
 .TP 7
 \fB\-k\fR, \fB\-\-kind\fR, \fB\-\-format\fR \fIFORMAT\fR
@@ -184,30 +129,22 @@ level). The viewer folds the containers deeper than N levels when it opens a
 file.
 .TP 7
 \fB\-\-indent\fR \fIN\fR
-Indent \-\-json and \-\-render json N spaces a level, and the viewer\(aqs tree
-(default 2; at most 16).
-.TP 7
-\fB\-\-key\fR \fINAME\fR
-The member \-\-render writes a value under when FORMAT\(aqs document must be a
-table and the value is not an object (toml, ini): an array or a scalar at the
-start is written as the one member NAME (default items). The viewer\(aqs output
-pane takes it too.
+Indent \-\-json N spaces a level, and the viewer\(aqs tree (default 2; at most
+16).
 .TP 7
 \fB\-\-max\-size\fR \fISIZE\fR
 Refuse an input larger than SIZE (default 64M; 0 for no limit), and a
-\-\-grammar or \-\-alchemy file too, with a too_large error, status 5: a parse
-takes about 40 bytes of memory per byte of input. SIZE is bytes, or a whole
-number with K, M or G (1024s). JSON Lines, CSV and TSV that \-\-render or
-\-\-alchemy streams are read a window at a time, and the limit does not apply
-to them.
+\-\-grammar file too, with a too_large error, status 5: a parse takes about 40
+bytes of memory per byte of input. SIZE is bytes, or a whole number with K, M
+or G (1024s).
 .TP 7
 \fB\-\-timeout\fR \fISECONDS\fR
 Stop a parse, or a \-\-grammar compile, that runs longer than SECONDS (2.5,
 90s, 2m; default none; 0 for no limit), with a timeout error, status 6, that
-says how far it got. Under \-\-render and \-\-alchemy it covers the whole run.
-Without a screen, on standard input, the time runs from the start, so waiting
-on the input counts. A parse runs at about a megabyte a second: a caller with a
-deadline of its own should pass one a few seconds shorter.
+says how far it got. Without a screen, on standard input, the time runs from
+the start, so waiting on the input counts. A parse runs at about a megabyte a
+second: a caller with a deadline of its own should pass one a few seconds
+shorter.
 .SS "Viewer options"
 .TP 7
 \fB\-\-no\-watch\fR
@@ -246,18 +183,6 @@ Draw without colours, as when NO_COLOR is set.
 .TP 7
 \fB\-\-no\-mouse\fR
 Leave the mouse to the terminal rather than capture it.
-.TP 7
-\fB\-\-panes\fR \fIPANES\fR
-Open panes beside the input: out, the document as \-\-render or \-\-alchemy
-writes it (JSON when neither is given), and program, the program; out,program
-opens both. With \-\-panes, \-\-render and \-\-alchemy choose the output
-pane\(aqs content instead of printing, the other output options are refused,
-and so is a run without a terminal (status 2). C\-w moves between the panes, s
-shows a pane\(aqs text or its tree, and :pane out|program|close opens or closes
-one.
-.TP 7
-\fB\-\-stacked\fR
-Stack the panes rather than place them side by side.
 .SS "Other options"
 .TP 7
 \fB\-h\fR, \fB\-\-help\fR
@@ -364,9 +289,8 @@ straight back in: ., .a.b[0], ."odd key", .["a.b"], .[0] for a root array\(aqs
 first item and .[\-1] for its last. Also accepted: a.b[0] and [0] without the
 leading dot, JSONPath\(aqs $.a[\(aqb\(aq][0], and JSON Pointer\(aqs /a/b/0.
 There are no wildcards, slices or recursive descent: pipe \-\-json into jq for
-those. Quote a path for the shell, whose globbing would take [0]. Under
-\-\-render, [\-1] on an array is a usage error, since a stream cannot count
-from the end; on an object it is the key \-1, as everywhere.
+those. Quote a path for the shell, whose globbing would take [0]. On an object,
+[\-1] is the key \-1.
 .SH "POSITIONS"
 \-\-at takes LINE or LINE:COL, counted from 1, columns in characters, as an
 entry\(aqs line and col are. Inside the text, \-\-at answers the node starting
@@ -410,65 +334,31 @@ a scalar\(aqs value. A string over 200 characters is cut to 200, with
 "\-Infinity"
 .PP
 What each option prints on standard output when it succeeds:
-.TP 17
+.TP 9
 \fB\-\-json\fR
 the value itself, indented 2 spaces a level (\-\-indent N), or on one line
 (\-\-compact)
-.TP 17
+.TP 9
 \fB\-\-paths\fR
 {file, format, path, entries: [entry, ...], total, limit, truncated}
-.TP 17
+.TP 9
 \fB\-\-find\fR
 {file, format, path, pattern, matches: [entry, ...], total, limit, truncated}
-.TP 17
+.TP 9
 \fB\-\-where\fR
 {file, format, ...entry}: the entry, with file and format first
-.TP 17
+.TP 9
 \fB\-\-check\fR
 {ok, files: [{file, format, ok, error}]}, error null for a file that parses
-.TP 17
-\fB\-\-render csv\fR
-CSV: a header row, then a record per row, every field quoted, CRLF line ends
-.TP 17
-\fB\-\-render json\fR
-the value, indented as \-\-json is, each number as the source spelled it where
-that is JSON
-.TP 17
-\fB\-\-render FORMAT\fR
-the document in FORMAT, in its always\-quoted profile, so that nothing reads
-back as another kind
-.TP 17
-\fB\-\-alchemy\fR
-what the program exports: a text as it is, a table as CSV, JSON events as
-compact JSON
-.TP 17
-\fB\-\-explain\fR
-{entry, output, protocol, chain, retention, renderer, guarantee, qualification,
-\&...}
 .PP
 file is the path as given, or \- for standard input; format is what the input
 was read as; path is where the listing starts. total counts every entry the
 listing found, and truncated is true when that is more than \-\-limit let
 through: raise \-\-limit (0 for all), or narrow with \-\-path or \-\-depth.
-.PP
-A \-\-render that succeeds also writes a warning on standard error that says
-what the format does not keep: {"warning": {"kind": "loss", "message", "file",
-"render", "loss": [sentence, ...]}}, with adapters naming each step that ran
-between the source and the render (wrap\-object, wrap\-array, embed, the
-inferred table, records), and adapter the one between a tree and a table, the
-inferred table or records, their sentences in loss after the format\(aqs own.
-Where the source\(aqs format says why its documents are read whole before
-anything is written (TOML, INI, Markdown, CSS, feeds, .proto, expressions,
-versions, C and the grammar notations), whole is that sentence; a value below
-the root, a program\(aqs output and a document of any other format have none.
-Status 0 is success whatever standard error holds.
 .SH "ERRORS"
 An error is one JSON object on standard error, and standard output is then
-empty, with two exceptions: a failed \-\-check still prints its report, and a
-\-\-render or \-\-alchemy stream that fails leaves what it had written, every
-record whole and none in part (but for a record over 16 MB, and a render that
-marks no records, such as \-\-render markdown, which can stop inside one). A
-parse error:
+empty, with one exception: a failed \-\-check still prints its report. A parse
+error:
 .PP
 .RS 2
 .nf
@@ -490,9 +380,9 @@ line the error is on) and report (the whole report the viewer shows,
 uncoloured)
 .TP 11
 \fBio\fR
-an input, a \-\-grammar file or a program file could not be read, or the output
-not written: a parse error\(aqs fields, with the code io (file null when it was
-standard output)
+an input or a \-\-grammar file could not be read, or the output not written: a
+parse error\(aqs fields, with the code io (file null when it was standard
+output)
 .TP 11
 \fBtoo_large\fR
 over \-\-max\-size: an io error\(aqs fields, plus size (null for standard
@@ -513,29 +403,10 @@ keys when it is an object)
 \fBusage\fR
 the command is wrong: message, and nothing more, but that a \-\-grammar that
 does not compile adds grammar, and file when it came from one
-.TP 11
-\fBtransduce\fR
-a \-\-render or \-\-alchemy stream failed: code (INPUT_INVALID,
-RESOURCE_LIMIT_EXCEEDED, OUTPUT_FAILED, DUPLICATE_MEMBER,
-TARGET_VALUE_UNREPRESENTABLE, ...), message, file, format, then path, limit
-({name, value}), line, col and hint when the failure has them, and output:
-"partial" when some of the result had been written, else "none". One a program
-raised with a position of its own has file, line and col the program\(aqs,
-format null, and input, the document\(aqs name
-.TP 11
-\fBalchemy\fR
-the program is wrong: code (DSL_PARSE_ERROR, DSL_TYPE_ERROR, STREAM_REUSED,
-STREAMABILITY_UNKNOWN), message led by a finer code (unbalanced, unknown_name,
-arity, ...), file (the program\(aqs path, or \-\-alchemy\-expr), format null,
-line and col in the program, output, and input (the document\(aqs name) once
-the input was open
 .PP
 An io, too_large or timeout error about a \-\-grammar file adds grammar, with
-file the grammar file and format null. An error met while \-\-render was
-writing (transduce, parse, timeout, or the render\(aqs own alchemy one) adds
-loss, the sentences its warning gives on success, and whole where the warning
-has it. \-\-compact puts an error on one line. The README\(aqs "Scripts and
-agents" section has every case at length.
+file the grammar file and format null. \-\-compact puts an error on one line.
+The README\(aqs "Scripts and agents" section has every case at length.
 .SH "EXIT STATUS"
 .TP 7
 \fB0\fR
@@ -543,33 +414,26 @@ success: standard output holds the answer
 .TP 7
 \fB1\fR
 the input did not parse (parse); with \-\-check, an input failed, and the
-report says which; with \-\-render or \-\-alchemy, the input or its records
-will not do (transduce: INPUT_INVALID, and the other input, protocol and target
-codes)
+report says which
 .TP 7
 \fB2\fR
 bad usage (usage): an unknown option, a bad path, no input, a directory, a
-\-\-grammar or an \-\-alchemy program that does not compile (alchemy), or the
-viewer without a terminal
+\-\-grammar that does not compile, or the viewer without a terminal
 .TP 7
 \fB3\fR
-an input, a \-\-grammar file or an \-\-alchemy program file could not be read,
-or the output not written (io; transduce OUTPUT_FAILED)
+an input or a \-\-grammar file could not be read, or the output not written
+(io)
 .TP 7
 \fB4\fR
 \-\-path or \-\-at names nothing (not_found)
 .TP 7
 \fB5\fR
-an input, a \-\-grammar file or an \-\-alchemy program file is over
-\-\-max\-size (too_large); with \-\-render or \-\-alchemy, over a limit of the
-transducer\(aqs, a program\(aqs output over \-\-max\-output among them
-(transduce RESOURCE_LIMIT_EXCEEDED)
+an input or a \-\-grammar file is over \-\-max\-size (too_large)
 .TP 7
 \fB6\fR
 a parse, or a \-\-grammar compile, ran past \-\-timeout, or the input was still
-being read when it passed; with \-\-render or \-\-alchemy, the whole run, the
-program\(aqs work included (timeout)
-.SH "LARGE INPUTS AND STREAMING"
+being read when it passed (timeout)
+.SH "LARGE INPUTS AND LIMITS"
 An input is read whole and parsed whole before anything is printed, at about a
 megabyte a second and 40 bytes of memory per byte of input. \-\-max\-size
 (default 64M) refuses a larger input before it is read, and \-\-timeout stops a
@@ -577,17 +441,6 @@ parse that runs too long with an error that says how far it got: a caller with
 a deadline of its own should pass a \-\-timeout a few seconds shorter. \-\-path
 and \-\-depth shrink the output, not the parse. A reader that stops early
 (aless \-\-json big.json | head) ends aless quietly, with status 0.
-.PP
-\-\-render and \-\-alchemy stream instead. JSON Lines, CSV and TSV are read a
-window at a time, whatever their size, so \-\-max\-size does not apply to them
-(a value or a field over 16 MB fails); the JSON family, jsonic, CSV, TSV, YAML,
-ZON, XML, PGN (a game at a time) and most annotated grammars from the command
-line write their records as the parse proceeds, and the other formats after it.
-A document a grammar refuses to stream part\-way is read whole and written all
-the same when nothing has been written yet; otherwise the error says output
-"partial". A stream reads ahead of what it writes, a window of 64 KB, so when a
-writer to standard input goes quiet and \-\-timeout stops the run, the records
-still in that read\-ahead are not written.
 .PP
 A document nested deeper than aless reads fails as a parse error with the code
 too_deep: past about 1,000 levels, or sooner where the grammar has a limit of
@@ -603,23 +456,16 @@ groups, and elements nested 128 deep).
 .PP
 Numbers are 64\-bit floats: \-\-json and entries give an integer beyond 2\(ha53
 as the nearest one, and \-\-json writes NaN and the infinities as null.
-\-\-render json keeps a number as the source spelled it where that is JSON, and
-writes NaN and the infinities as null too, the loss JSON declares; \-\-render
-csv writes them as their names.
 .SH "CUSTOM GRAMMARS"
 \-\-grammar NAME=FILE reads the files whose extension or whole name is NAME, in
 any case, with the ABNF grammar in FILE (RFC 5234, compiled by tabnas/abnf),
 and \-k NAME reads any input with it. ; @object a b and ; @array comments on a
 rule say what it builds; without them the value is the compiler\(aqs parse
-tree, a {"rule", "src", "kids"} node per rule. \-\-render and \-\-alchemy write
-an annotated grammar\(aqs records as the parse makes them, through a transducer
-aless generates from the annotations; a grammar whose first rule has no
-annotation builds the parse tree at its root and is parsed whole first, as is
-any grammar aless cannot generate a transducer for. The input is read as plain
-text: { } [ ] : , are ordinary characters, # starts a comment to the end of the
-line, and a word is the token TX (NR, ST and VL bring numbers, quoted strings
-and true, false and null back). A grammar that does not compile is a usage
-error before any input is read, and so is a repetition count over 1,024, or
+tree, a {"rule", "src", "kids"} node per rule. The input is read as plain text:
+{ } [ ] : , are ordinary characters, # starts a comment to the end of the line,
+and a word is the token TX (NR, ST and VL bring numbers, quoted strings and
+true, false and null back). A grammar that does not compile is a usage error
+before any input is read, and so is a repetition count over 1,024, or
 repetitions that would have the compiler write more than 1,024 rules. An input
 the grammar does not accept is a parse error, with format the grammar\(aqs
 name.
@@ -741,11 +587,6 @@ aless \-\-where \-\-path .a.b config.yaml     the line a path is on
 aless \-\-find \(aq"image":\(aq deploy.yaml       every image, with its line
 aless \-\-check $(git ls\-files \(aq*.toml\(aq)    do they all parse?
 aless \-k csv \-\-json < data.csv            stdin is JSON unless \-k says
-aless \-\-render csv \-\-path .items x.json   the records as CSV
-aless \-\-render json big.yaml              the document as JSON
-aless \-\-render yaml data.csv              any format as any other
-aless \-\-alchemy export.alc api.json       a program\(aqs output
-aless \-\-alchemy export.alc \-\-explain      what the program will do
 aless \-\-grammar hosts=hosts.abnf \-\-json /etc/hosts
 .fi
 .SH "SEE ALSO"
@@ -759,10 +600,6 @@ aless works: https://aless.tabnas.dev
 .TP 18
 \fBthe source\fR
 the code, its README and the releases: https://github.com/rjrodger/aless
-.TP 18
-\fBalchemy\fR
-the language \-\-alchemy runs, in its docs/language.md:
-https://github.com/tabnas/alchemy
 .TP 18
 \fBtabnas/abnf\fR
 the ABNF compiler \-\-grammar uses, and its annotations:

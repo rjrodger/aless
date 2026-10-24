@@ -41,7 +41,7 @@ builds is the document: with `; @object` / `; @array` annotations a JSON
 value, without them the `{rule, src, kids}` parse tree (note that `src`
 there is the matched tokens run together, without the spaces between
 them). Everything else in aless (`--json`, `--paths`, `--find`,
-`--where`, `--render`, the viewer, watch mode) works on that value as on
+`--where`, the viewer, watch mode) works on that value as on
 any other format.
 
 ## Writing a line-oriented grammar

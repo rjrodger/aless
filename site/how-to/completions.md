@@ -26,7 +26,7 @@ In PowerShell, add them to your profile once:
 aless --generate complete-powershell | Add-Content $PROFILE
 ```
 
-The completions know every option and the values each one takes: the formats `--kind` reads and `--render` writes, the modes, and a file where an option wants one.
+The completions know every option and the values each one takes: the formats `--kind` reads, the modes, and a file where an option wants one.
 
 ## Or save them where the shell looks
 
