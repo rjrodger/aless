@@ -32,13 +32,11 @@ Some of those shapes are verbose, XML's and Markdown's above all, and the viewer
 
 Everything above the parser is written once. There is one key map, one path syntax (jq's), one search, one error object, one set of exit statuses and one way of reporting where a value came from, for every format, including formats that did not exist when the code was written. A grammar you write on the command line gets the viewer, the outputs and the source positions without aless knowing anything about it.
 
-Conversion falls out of the same design. A document read from any format is a value of the one model, and a format's writer takes a value of that model, so every format aless reads can be written as every format it writes. The writers are told what they cannot keep, and say so ([Convert a file to another format](/how-to/convert.html)).
-
 ## What the model gives up
 
 A model every format fits in holds only what they have in common. Comments, YAML's anchors and tags, and the spelling of a number are not part of it.
 
-Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. The viewer shows the value, not the spelling, which is one of the ways aless differs from jless; the source view (`s`) shows the spelling, and `--render json` keeps it where the source's spelling is JSON.
+Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. The viewer shows the value, not the spelling, which is one of the ways aless differs from jless; the source view (`s`) shows the spelling.
 
 ## Why one engine
 

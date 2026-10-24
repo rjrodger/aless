@@ -11,9 +11,7 @@
 //! `; @array` annotations a JSON value of strings, without them the
 //! compiler's `{rule, src, kids}` tree. Either is a value the document
 //! model takes as it takes any grammar's, so the viewer and every headless
-//! operation work on it unchanged. An annotated grammar's documents also
-//! stream: its [`Transducer`] is the part the annotations generate, which
-//! makes their events of the parser's rule passes as the parse goes.
+//! operation work on it unchanged.
 //!
 //! The registry is filled from the command line before any load, and
 //! looked up by name from then on. It only grows: a name registered twice
@@ -28,10 +26,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use tabnas::Tabnas;
-use tabnas_abnf::{AbnfConvertOptions, Element, GrammarSpec, Kind, TransducePart};
-use tabnas_alchemy::{Input, Program};
+use tabnas_abnf::{AbnfConvertOptions, Element, GrammarSpec, Kind};
 
-use crate::alchemy;
 use crate::load::{self, Limits, LoadError};
 
 /// The index of a custom grammar in the registry: what `Format::Custom`
@@ -210,7 +206,6 @@ pub(crate) fn plain_text_options(spec: &mut GrammarSpec) {
 /// a grammar file checks without registering it.
 pub struct Compiled {
     spec: GrammarSpec,
-    transducer: Transducer,
 }
 
 impl fmt::Debug for Compiled {
@@ -225,71 +220,6 @@ impl Compiled {
         let mut parser = Tabnas::new();
         self.spec.install(&mut parser).map_err(|e| e.to_string())?;
         Ok(parser)
-    }
-
-    /// How the grammar's documents reach a stream.
-    pub fn transducer(&self) -> &Transducer {
-        &self.transducer
-    }
-}
-
-/// How the documents of a grammar reach `--render` and `--alchemy`: through
-/// the transducer part tabnas-bnf's generator writes from the grammar's
-/// value annotations, compiled once with the grammar into an alchemy
-/// program over the parser's rule passes, or read whole. The part is
-/// alchemy's `transduce-tree`, with a spec read off the value actions the
-/// annotations attach (a rule that begins an object or an array, the
-/// member a constant names, the member that holds the text a rule
-/// matched), so the events leave as the parse makes them. A grammar whose
-/// start rule has no annotation builds the compiler's `{rule, src, kids}`
-/// tree, whose root holds the whole document's text before its children,
-/// so no stream could write it before the document has ended: such a
-/// grammar's documents are read whole, and so is one whose annotations the
-/// generator has no part for, with its reason.
-pub enum Transducer {
-    Part(Program),
-    Whole(String),
-}
-
-impl Transducer {
-    /// The name the part's definition is given: `grammar-transduce`. The
-    /// grammar's own name may be any text, and the part is compiled alone.
-    const NAME: &'static str = "grammar";
-
-    /// The part for `spec`, or why its documents are read whole.
-    fn of(spec: &GrammarSpec) -> Transducer {
-        match tabnas_abnf::transduce_alc(spec, Self::NAME) {
-            TransducePart::Part { entry, source } => {
-                let file = format!("{entry}.alc");
-                let main = format!("def export [input] ({entry} input)");
-                let sources = [
-                    tabnas_alchemy::Source::new(&file, &source),
-                    tabnas_alchemy::Source::new("--grammar", &main),
-                ];
-                match tabnas_alchemy::compile_sources_with(
-                    &sources,
-                    Input::ParserEvents,
-                    alchemy::routers(),
-                    alchemy::renderers(),
-                ) {
-                    Ok(program) => Transducer::Part(program),
-                    // The generator's defect, not the grammar's: the
-                    // documents are read whole, which is always right.
-                    Err(fail) => Transducer::Whole(format!(
-                        "the part its annotations make does not compile: {fail}"
-                    )),
-                }
-            }
-            TransducePart::Whole(reason) => Transducer::Whole(reason),
-        }
-    }
-
-    /// The part, when the grammar has one.
-    pub fn part(&self) -> Option<&Program> {
-        match self {
-            Transducer::Part(program) => Some(program),
-            Transducer::Whole(_) => None,
-        }
     }
 }
 
@@ -331,9 +261,9 @@ const COMPILER_ELEMENT_DEPTH: usize = 128;
 /// default (the grammar's first production) and `word_keywords` on, so a
 /// quoted keyword (`"nameserver"`) matches whole words and not the front
 /// of a longer one; then the engine options of [`plain_text_options`]; the
-/// result installed once on a fresh engine to be sure it takes; and its
-/// [`Transducer`]. The error is the compiler's own message, or the
-/// engine's, on one line and without its colour codes.
+/// result installed once on a fresh engine to be sure it takes. The error
+/// is the compiler's own message, or the engine's, on one line and without
+/// its colour codes.
 pub fn compile(source: &str) -> Result<Compiled, String> {
     let options = AbnfConvertOptions {
         word_keywords: true,
@@ -346,8 +276,7 @@ pub fn compile(source: &str) -> Result<Compiled, String> {
     plain_text_options(&mut spec);
     spec.install(&mut Tabnas::new())
         .map_err(|e| one_line(&e.to_string()))?;
-    let transducer = Transducer::of(&spec);
-    Ok(Compiled { spec, transducer })
+    Ok(Compiled { spec })
 }
 
 /// A compiler's message as a report carries it: the engine colours its

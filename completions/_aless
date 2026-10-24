@@ -10,15 +10,10 @@ _aless() {
     '--find=[the entries whose "key"\: value text matches]:REGEX: ' \
     '--where[the start'\''s entry\: its path and position]' \
     '--check[parse each FILE and report on each]' \
-    '--render=[the value written as FORMAT, streamed]:FORMAT:(abnf c css csv ebnf expr feed gbnf ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon)' \
-    '--alchemy=[run the alchemy program in FILE]:FILE:_files' \
-    '--alchemy-expr=[the same, the program on the command line]:TEXT: ' \
-    '--explain[the program'\''s plan as JSON, and no run]' \
     '--path=[start at PATH, in jq syntax]:PATH: ' \
     '--at=[start at the node at a source position]:LINE[\:COL]: ' \
     '--limit=[at most N entries (default 200; 0 for all)]:N: ' \
     '--compact[JSON on one line, an error'\''s too]' \
-    '--max-output=[cap a program'\''s output (default 1G)]:SIZE: ' \
     '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
     '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
     '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
@@ -26,7 +21,6 @@ _aless() {
     '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
     '--depth=[list N levels down; the viewer folds deeper]:N: ' \
     '--indent=[indentation per level (default 2)]:N: ' \
-    '--key=[member a root is written under (items)]:NAME: ' \
     '--max-size=[refuse an input over SIZE (default 64M)]:SIZE: ' \
     '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
     '--no-watch[do not reload files when they change]' \
@@ -47,8 +41,6 @@ _aless() {
     '(--no-color --no-colour)--no-color[no colours (as NO_COLOR does)]' \
     '(--no-color --no-colour)--no-colour[no colours (as NO_COLOR does)]' \
     '--no-mouse[do not capture the mouse]' \
-    '--panes=[open the output and program panes]:PANES:(out program out,program)' \
-    '--stacked[stack the panes]' \
     '(--help -h)--help[the options (-h), or the whole reference]' \
     '(--help -h)-h[the options (-h), or the whole reference]' \
     '(--version -V)--version[the version]' \

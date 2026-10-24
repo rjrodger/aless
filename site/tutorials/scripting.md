@@ -109,27 +109,6 @@ $ aless --json --path '.components.schemas.Book' bookshelf-openapi.yaml
 
 The file is YAML and the answer is JSON. aless reads every format it knows into one kind of tree, and prints that tree as JSON whatever it was read from.
 
-## Write it as another format
-
-The same tree can be written as any format aless writes. `--render` does it, and streams the result as it reads. The `info` block as TOML:
-
-```console
-$ aless --render toml --path .info bookshelf-openapi.yaml 2>/dev/null
-"title" = "Bookshelf demo API"
-"version" = "1.0.0"
-"description" = "A small API for keeping books on shelves, written for aless to open. Every path, schema and response here is an example."
-"license" = { "name" = "MIT" }
-```
-
-Every key is quoted and the table is inline, so that nothing reads back as another kind of value. A conversion also writes a note on standard error saying what the format does not keep (TOML has no comments and no null), which `2>/dev/null` hides here; [Convert a file to another format](/how-to/convert.html) reads one. The tags as CSV, a row per tag:
-
-```console
-$ aless --render csv --path .tags bookshelf-openapi.yaml 2>/dev/null
-"name","description"
-"shelf","Shelves, and the books on them"
-"author","The people who wrote the books"
-```
-
 ## Find a node
 
 `--find` searches each node's `"key": value` text with a regular expression, as the viewer's `/` does. Find the operations, and keep the first three:
@@ -197,4 +176,4 @@ The error is a JSON object on standard error, and standard output is empty. The 
 
 ## Next
 
-That is the whole loop: outline, narrow, read or convert, and read the errors. [Get values out of a file in a script](/how-to/extract.html) has more recipes, [Convert a file to another format](/how-to/convert.html) every format a conversion can write, and the [command line reference](/reference/command-line.html#output) every output's fields. To hand all of this to an agent, see [Give an agent aless](/how-to/agents.html).
+That is the whole loop: outline, narrow, read, and read the errors. [Get values out of a file in a script](/how-to/extract.html) has more recipes, and the [command line reference](/reference/command-line.html#output) every output's fields. To hand all of this to an agent, see [Give an agent aless](/how-to/agents.html).

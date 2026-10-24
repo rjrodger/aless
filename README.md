@@ -120,8 +120,6 @@ aless --kind jsonic notes.txt        # force a format
 aless --grammar hosts=hosts.abnf /etc/hosts   # a format of your own, from an ABNF grammar
 aless --no-watch big.json            # do not reload on change
 aless --mode line --line-numbers x.json
-aless --panes out --render yaml data.csv     # the document beside its YAML
-aless --panes out,program --alchemy export.alc api.json   # a program's output, and the program
 aless                                # explore the current directory; Enter opens a file
 aless examples/bookshelf-openapi.yaml   # an OpenAPI spec to try (see examples/)
 ```
@@ -140,8 +138,6 @@ aless examples/bookshelf-openapi.yaml   # an OpenAPI spec to try (see examples/)
 | `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color` (or `--no-colour`), `--no-mouse` | plain output; no mouse capture |
-| `--panes out[,program]` | open panes beside the input: `out`, the document as `--render` or `--alchemy` writes it, and `program`, the program ([Panes](#panes)) |
-| `--stacked` | stack the panes rather than place them side by side |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
 | `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none, `0` for no limit); on standard input, without a screen, it runs from the start, so waiting on the input counts |
 | `-h` / `--help` | a summary of the options / the whole reference: every option, what each output prints, the errors and exit statuses, paths, positions, formats and limits |
@@ -160,11 +156,7 @@ tool call), or set `TERM=dumb`, and it prints JSON instead of starting
 the viewer. It
 never waits for keys: when the viewer cannot start, aless says so at
 once, before reading any input, with a `usage` error, and exits with
-status 2. `--panes` is the
-one exception to the first rule: it opens the viewer, and `--render`,
-`--alchemy` and `--alchemy-expr` given with it choose what its output
-pane shows ([Panes](#panes)), so without a terminal it refuses with
-status 2 too.
+status 2.
 
 ```bash
 aless config.yaml | jq .spec                       # any format in, JSON out
@@ -174,9 +166,6 @@ aless --find '"image":' deploy.yaml                # nodes whose text matches
 aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 is in
 aless --where --path .spec.replicas deploy.yaml    # the line a path is on
 aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
-aless --render csv --path .items orders.json       # the records as CSV, streamed
-aless --render yaml data.csv                       # any format written as any other, streamed
-aless --alchemy export.alc response.json           # a program over the document, streamed
 ```
 
 | Option | Effect |
@@ -186,21 +175,16 @@ aless --alchemy export.alc response.json           # a program over the document
 | `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
 | `--where` | the start's entry |
 | `--check` | parse every input and report on each |
-| `--render FORMAT` | the value at the start written as FORMAT, streamed as the input is read: `csv` (its records), `json`, or any format whose crate carries a render, `ini`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `toml`, `xml`, `yaml` and `zon` today ([Exporting](#exporting), [Writing any format](#writing-any-format)) |
-| `--alchemy FILE`, `--alchemy-expr TEXT` | run an alchemy program over the input and stream what it exports; `--render` names the format a table or JSON events are written as ([Programs](#programs)) |
-| `--explain` | with `--alchemy`: the program's plan report as JSON, and no run |
 | `--path PATH` | start at PATH instead of the root |
 | `--at LINE[:COL]` | start at the node at that source position |
 | `--depth N` | `--paths` and `--find` go at most N levels below the start |
 | `--limit N` | at most N entries (default 200, 0 for all) |
 | `--compact` | JSON on one line, an error's too |
-| `--indent N` | `--json` and `--render json` indented N spaces a level (default 2) |
-| `--key NAME` | the member `--render` writes a value under when the format's document must be a table and the value is not an object (`toml`, `ini`; default `items`) |
+| `--indent N` | `--json` indented N spaces a level (default 2) |
 | `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise; `--format` is another name for it |
 | `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
 | `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none; `0` for no limit); on standard input the time runs from the start, so waiting on the input counts |
-| `--max-output SIZE` | stop an `--alchemy` program that writes more than SIZE (default `1G`; `0` for no limit) |
 | `TERM=dumb` | in the environment, not an option: JSON output, as when standard output is not a terminal, since such a terminal cannot draw the viewer |
 
 **Paths** are jq's syntax, which every output prints, so a path can go
@@ -271,13 +255,8 @@ print (below): a parse error's fields for a file that does not parse,
 `kind` and `message` alone for a directory.
 
 **Errors** are JSON on standard error. Standard output then stays empty,
-with two exceptions: a failed `--check` still prints its report there,
-with status 1, and a `--render` or `--alchemy` stream that fails leaves
-there what it had written: every record it had written whole, and no
-part of one, but for a record over 16 MB and a render that marks no
-records (`--render markdown`), which can stop inside one
-([Exporting](#exporting)).
-A parse error:
+with one exception: a failed `--check` still prints its report there,
+with status 1. A parse error:
 
 ```
 $ aless bad.json
@@ -300,12 +279,12 @@ $ aless bad.json
 | Exit | Meaning | Error `kind` |
 |---|---|---|
 | 0 | success: standard output holds the answer | |
-| 1 | the input did not parse; with `--check`, some input failed and the report says which; with `--render` or `--alchemy`, the input or its records will not do (`INPUT_INVALID` and the other input, protocol and target codes) | `parse`, `transduce` |
-| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` or an `--alchemy` program that does not compile, or the viewer without a terminal | `usage`, `alchemy` |
-| 3 | an input, a `--grammar` file or an `--alchemy` program file could not be read, or the output could not be written (`OUTPUT_FAILED`) | `io`, `transduce` |
+| 1 | the input did not parse; with `--check`, some input failed and the report says which | `parse` |
+| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` that does not compile, or the viewer without a terminal | `usage` |
+| 3 | an input or a `--grammar` file could not be read, or the output could not be written | `io` |
 | 4 | `--path` or `--at` names nothing | `not_found` |
-| 5 | an input, a `--grammar` file or an `--alchemy` program file is larger than `--max-size`; with `--render` or `--alchemy`, over a limit of the transducer's (`RESOURCE_LIMIT_EXCEEDED`), a program's output over `--max-output` among them | `too_large`, `transduce` |
-| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout`, or the input was still being read when it passed; with `--render` or `--alchemy`, the whole run | `timeout` |
+| 5 | an input or a `--grammar` file is larger than `--max-size` | `too_large` |
+| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout`, or the input was still being read when it passed | `timeout` |
 
 A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
 code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
@@ -323,11 +302,7 @@ its `hint` names the `--max-size` that would read it. A `timeout` error
 has the fields of a `parse` one, its `line` and `col` showing how far the
 parse got, plus the time limit in `seconds`; a parse that finished, but
 late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. A read of JSON Lines, CSV or TSV a record at a
-time (`--render`, `--alchemy`) names the line the record it was reading
-starts on, with `col` `null`, since the deadline lands between two of
-the engine's steps, where it has no position of its own; the report then
-names the line alone (`file:N`). On standard input the time runs from
+saying how long it took. On standard input the time runs from
 the start of the run, so waiting on it counts: an input still being read
 when it passes (a writer that is slow, or sends nothing, or never closes
 its end) fails as `timeout` too, with `line` and `col` `null` and a
@@ -374,445 +349,11 @@ and a reader that stops early (`aless --json big.json | head`) ends
 aless without an error, with status 0, though the parse has already been
 paid for.
 To take part of a large document, `--path` and `--depth` keep the output
-small; the input is still parsed in full. `--render` and `--alchemy` are
-the exceptions: they stream, as the next sections say.
-
-### Exporting
-
-`--render csv` writes a document's records as CSV, and `--render json`
-writes the document as JSON text, both **streamed**: each record is
-written as it is read, through the [tabnas
-transducer](https://github.com/tabnas/transduce) and its
-[renderers](https://github.com/tabnas/render), rather than after the
-whole document has been built.
-
-```bash
-aless --render csv data.jsonl                                   # one line, one row
-aless --render csv --path .response.payload.deep.records response.json
-aless --render json big.yaml                                    # the document as JSON, streamed
-aless -k jsonl --render csv < events.log                        # stdin, read as it arrives
-```
-
-The **rows** are the elements of the root array, or of the array at
-`--path`; for JSON Lines the lines, for CSV and TSV the records. The
-**columns** are the members of the first row, in its order (a later row's
-extra members are dropped; one it lacks is an empty field). Rows that are
-all scalars make one column, `value`; a row that is neither an object nor
-a scalar, or of the other kind than the first, fails the export with its
-path. A root that is not an array fails with a message that says to give
-`--path` to one. The CSV is the standard profile: every field quoted with
-`"` doubled, records ending in CRLF, a header row, `null` and a missing
-member both written as the empty string (so the two cannot be told apart:
-this default export is lossy there, as the profile is), a nested container
-written as compact JSON text in its cell, and a number as the source
-spelled it where the source provides its lexeme (the JSON family, YAML,
-ZON and JSON Lines). A value that is not an array is exported as its
-one row, and a row of another kind than the first (an array, whose
-positions are its cells, or a scalar, one cell named `value`) has a field
-only where the first row's columns find one. An empty array, and rows of
-no members, export as nothing. NaN and the infinities are written as
-their names. What the CSV does not keep is declared on standard error on
-a write that succeeds, as every format's render declares it ([Writing
-any format](#writing-any-format)), JSON's included. `--render json`
-takes `--compact` and `--indent` as `--json` does, and writes the value
-`--json` writes, but for one thing: a number keeps the spelling it has in
-the source wherever that spelling is JSON, so `1.0` stays `1.0`, where
-`--json` writes `1`, and an integer beyond 2^53 keeps every digit, where
-`--json` writes the nearest 64-bit float. NaN and the infinities, which
-JSON cannot hold, both write as `null`, the convention JSON declares in
-its loss note. Two things a stream
-cannot do, since the input is read once, front to back: `--at` is not
-accepted, and `[-1]` on an array (counting from the end) is a usage error,
-though on an object it is the key `-1`, as everywhere. A document that
-repeats a key on the exported path after the first was taken (`{"rows":
-[…], "rows": […]}`) fails with `DUPLICATE_MEMBER` rather than export a
-different value from the one `--json`, which keeps the last, would give.
-
-```
-$ aless --render csv --path .response.payload.deep.records response.json
-"id","person","account"
-"123","{""name"":""Alice""}","{""balance"":50.25}"
-"456","{""name"":""Bob""}","{""balance"":72}"
-```
-
-**Errors** keep their shape. A failure of the transducer's is
-`"kind": "transduce"`, with the transducer's `code` (`INPUT_INVALID`,
-`RESOURCE_LIMIT_EXCEEDED`, `OUTPUT_FAILED`, …), its `message`, the
-`file` and `format`, then `path`, `limit` (`{name, value}`), `line` and
-`col` when the failure has them, and `output`: `"partial"` when some of
-the result had been written before the failure, else `"none"`. A stream
-cannot take bytes back, so what was written stays, and it ends at the end
-of a record: a CSV row, a value directly inside the root JSON array or
-object, a line of JSON Lines, and for another format's render the record
-its package marks (a value inside the root in YAML, JSON5 and ZON, a root
-member's line in TOML, a line in INI, a child of the root element in XML,
-a rule in CSS, a game in PGN). Every record whole when the failure came
-is on standard output before the error is reported, none held back in a
-buffer; a record half written is dropped, not written in part. A record
-longer than 16 MB is not held back whole: it is written as it comes, and
-a failure can cut it. A program's own text is written a record at a
-time where the program marks them, each item `concat-map` writes and
-each `:record-end` among a `join`'s items, and a `json` or `csv` render
-in the program a record at a time; a render that marks no records
-(Markdown, feeds, expressions, versions, C, `.proto` and the grammar
-notations) writes as it goes, and may stop inside one. The status follows
-the code, as the table above says. aless's own limits report as they do for a parse, plus that
-`output` field: nesting past its cap is a `parse` error with the code
-`too_deep`, a run past `--timeout` a `timeout` error (the deadline covers
-the whole run, the writing of a parsed value included), and a grammar
-that panicked a `parse` error with the code `grammar`. A `--path` that
-names nothing is `not_found`, its `nearest` entry without a source
-position.
-
-```
-$ aless --render csv broken.json
-{
-  "error": {
-    "kind": "transduce",
-    "file": "broken.json",
-    "format": "json",
-    "code": "INPUT_INVALID",
-    "message": "unexpected: unexpected character(s): }",
-    "line": 2,
-    "col": 8,
-    "output": "none",
-    "loss": ["A null and a missing cell are both written as the empty field, so the two cannot be told apart, or from an empty string, when read back.","A nested array or object in a cell is written as its compact JSON text.","Every field is written quoted.","Records end in CRLF.","Every value is written as text, so a number or a boolean reads back as a string.","The rows are the elements of the array at the start: an object row's members are its cells, and a scalar row is one cell named value.","The columns are the first row's members: a member a later row adds is not written, a member it lacks is written empty, and a member repeated in a row keeps its last value."]
-  }
-}
-```
-
-**Streaming, and what is read whole.** JSON Lines, CSV and TSV are read from the file
-a window at a time, at the root and below it
-(`--path .[3]` takes the fourth record as it passes, and the rest of the
-file is read to its end the same way, to validate it), so the file is
-never in memory whole and `--max-size` does not apply to it; the
-transducer's own limits do (a value or a field over `max_scalar_bytes`,
-16 MB, fails). Every other format is parsed whole by
-the tabnas engine, within `--max-size`, and the note above about memory
-per input byte stands. What differs is when the output starts: for the
-JSON family, jsonic, YAML, ZON, XML, PGN (a game at a time) and most
-annotated grammars from the command line ([Custom
-grammars](#custom-grammars) says which) the records are streamed out as
-the parse proceeds, and the records already written are not kept behind
-them (except in a grammar from the command line, whose transducer reads
-the parse's steps rather than its value); for the rest they are
-streamed out after the parse, from the value it built. JSON, JSONC,
-JSON5, jsonic, JSON Lines, CSV, TSV (through CSV's), YAML, ZON, XML and
-PGN are streamed through the transducers their packages ship, which
-make the records of the parse's steps as it takes them. Where one of
-those grammars refuses to
-stream a particular document part-way (a jsonic implicit list whose
-first element is a container; a YAML stream of several documents, a
-`<<` merge key or an alias to a mapping or a sequence; a repeated member
-the grammar merges), aless falls back once to parsing it
-whole and streaming its value, provided nothing has been written yet;
-otherwise the refusal is reported with `output: "partial"`. A JSON Lines
-record that repeats a member, and a CSV or TSV record whose header names
-a column twice, are refused so too where the output cannot keep the
-last of the two, their streams holding both: before anything was
-written, a file is read again whole, within `--max-size`, and its value
-written; standard input, which cannot be read again, keeps the refusal.
-A table keeps the last, as `--json` does, so `--render csv` writes
-them. `--timeout`
-stops either kind at the deadline, with `output` saying whether records
-had already been written.
-
-### Writing any format
-
-`--render FORMAT` writes the value at the start as that format, through
-the render the format's crate carries: a library in the
-[alchemy](https://github.com/tabnas/alchemy) language, which aless links
-with a one-line program and runs as it runs `--alchemy`, streamed as the
-input is read. Every format aless reads can be written as every format
-that has a render and can hold it (eight hold only their own kind of
-tree, below), so it is a translation: CSV's records become a YAML
-sequence of mappings, a JSON document a TOML table, a Markdown table a
-CSV file. The input is read as `--render json` reads it: JSON Lines,
-CSV and TSV a window at a time, `--path` to start
-below the root, `--timeout` over the whole run. A format's lift reads a whole document, so it runs
-at the root only: below the root, `--path` selects a value of the
-document's tree, rows or a tree by its own shape (a Markdown file's
-table is its rows at the root, and `--path` into the file selects its
-nodes). The formats with a render today are `abnf`, `c`, `css`, `csv`,
-`ebnf`, `expr`, `feed` (Atom), `gbnf`, `ini`, `json`, `json5`, `jsonc`,
-`jsonic`, `jsonl`, `markdown`, `pgn`, `proto`, `semver`, `toml`, `xml`,
-`yaml` and `zon`;
-`--render` with any other name is a usage error that lists them, and one
-that names a format by an extension (`--render rss`) names the format's
-render (`--render feed`).
-
-```bash
-aless --render yaml data.csv                    # the records as YAML
-aless --render toml --path .spec deploy.json    # the value at a path, as TOML
-aless --render markdown --path .rows api.json   # records as a Markdown table
-aless --render csv table.md                     # a Markdown table's rows as CSV
-aless -k jsonl --render zon < events.log        # stdin, read as it arrives
-```
-
-**How a translation is put together** is the design in tabnas/transduce's
-[`docs/translation.md`](https://github.com/tabnas/transduce/blob/main/docs/translation.md)
-(admin ADR-27), and the parts come from each format's own repository. A
-format's manifest, `tabnas.plugin.json`, says what it reads as (a tree,
-every format's events; or records first, through a lift, for a Markdown
-table), what its render writes from (a tree, or records), the root that
-render needs (an object for TOML and INI, an array for JSON Lines and the
-record formats), the schema its events carry when they are not a plain
-tree (XML's element tree, a feed, an expression, a version, CSS's syntax
-tree, a `.proto` file's descriptor, a PGN database, C's syntax tree, a
-grammar spec), with an embed from
-a plain tree where the format has one, and what a written document does
-not keep. alchemy's `translate` composes the
-program from them, and aless runs it: the source's lift, where the target
-writes from records and the source reads as records first; for a target
-that writes from a tree, the embed into its schema or the root adapter
-its render needs (`wrap-object`, the root as the one member `--key`
-names, `items` by default, or `wrap-array`); for one that writes from
-records, a tree's rows through the inferred table, the root an array;
-then the render. CSV to YAML runs YAML's render over CSV's events as
-they are; a program's table reaches a render that writes from a tree
-through `records` (one object per row, keyed by the column labels).
-JSON's and CSV's renders are alchemy's own, which aless runs on its own
-renderers where they write the same bytes: JSON over a source's events,
-keeping `--compact` and `--indent`, and CSV over a tree's rows.
-
-The output is in each format's always-quoted profile where the format
-has quoting, as the CSV export is: YAML's strings and keys double-quoted,
-TOML's keys quoted and its tables inline, ZON's field names in the
-`.@"name"` form, so that nothing reads back as another kind. A number is
-written as the source spelled it where the source provides its lexeme,
-and by its value otherwise. What a format cannot carry is written by the
-convention its manifest declares, never refused: a null in TOML is left
-out, a root TOML or INI cannot have is the one member `--key` names, a
-root JSON Lines or a record format cannot have is the one element of an
-array, a Markdown document with no table is the empty table, and any
-document is XML's element tree through its embedding, each value's kind
-in a `type` attribute, an Atom feed through the feed's (each value an
-entry, read back from its categories), or an expression as it is.
-
-Eight formats have no convention for another tree, and refuse one before
-anything is written. CSS, `.proto`, PGN and C write only the tree their
-own documents read as (a stylesheet's syntax tree, a FileDescriptorProto,
-a database of games, a C syntax tree), and ABNF, EBNF and GBNF the
-grammar spec a grammar in any of the three reads as, so a grammar is
-written in another notation: from any other source, `--render css`,
-`proto`, `pgn`, `c`, `abnf`, `ebnf` or `gbnf` is a `usage` error, exit 2,
-that names the route that can write one, a program that makes that tree
-(`--alchemy FILE --render proto`).
-`--render semver` writes only a tree that is a version, an object of
-`major`, `minor` and `patch`: any other fails with
-`TARGET_VALUE_UNREPRESENTABLE`, exit 1, `output: "none"`, placed in the
-version's embedding as a render's own failures are, with the input named
-beside it. A notation's render fails the same way, placed in its own
-file, on a spec its notation cannot say: an action, or a terminal none of
-its forms matches, as GBNF has none for the engine's own string token
-that `ST` names in an EBNF or ABNF grammar.
-
-```
-$ aless --render yaml tests/fixtures/sample.csv
-- "name": "ada"
-  "age": "36"
-  "city": "london"
-- "name": "lin"
-  "age": "28"
-  "city": "helsinki"
-```
-
-**What a write does not keep** is declared rather than hidden. On a write
-that succeeds, standard output holds the document alone and standard
-error a JSON warning with the render's loss declaration, and each
-adapter's sentences after it when one ran: every adapter in `adapters`,
-in order, and the one between a tree and a table (the inferred table or
-`records`) as `adapter`. A write whose render and adapters declare no
-loss writes nothing there. An error met while it was writing (a
-`transduce`, `parse` or `timeout` error, or the render's own `alchemy`
-one) carries the same sentences as `loss`, whether the render is one of
-aless's own (`json`, `csv`) or one run as a program; a `usage` or `not_found` error carries none, and nor
-does one met before the writing began, such as an input that cannot be
-read. The sentences come from the format's manifest:
-
-```
-{"warning": {"kind": "loss", "message": "the document was written as yaml, which does not keep everything a document can hold", "file": "tests/fixtures/sample.csv", "render": "yaml", "loss": ["Comments are not kept.", "Anchors and aliases are not kept: an alias is written as a copy of the value it names.", "Tags are not kept.", "Styles are not kept: every string and key is written double-quoted, and every collection in block style.", "A stream of several documents is written as one document, a sequence of them."]}}
-```
-
-Where a source's format says why its documents are read whole before
-anything is written, the warning says it too, as `whole`, in the
-format's own sentence: TOML's (a later header can add to a table),
-INI's (a later header can name a section again), Markdown's (a link
-can name a definition that comes later), and those of CSS, feeds,
-`.proto`, expressions, versions, C and the three grammar notations,
-each a reason the document's tree is complete only at its end. An error
-that carries `loss` carries it as well. A value below the root (`--path`) is written
-as a plain tree, whatever its document, and has none; nor has a
-program's output, or a document of a format that says nothing of the
-kind:
-
-```
-{"warning": {"kind": "loss", "message": "the document was written as json, which does not keep everything a document can hold", "file": "tests/fixtures/sample.toml", "render": "json", "loss": ["JSON has no spelling for Infinity or NaN, so a number that is not finite is written as null."], "whole": "A table may be added to after the tables that follow it, by a later header, dotted key or array of tables, so a document's tree is complete only at its end: it is read whole before anything is written."}}
-```
-
-**A tree, each key once.** A render that writes from a tree takes a
-tree's events, each key once per object, and writes what it is given, so
-the stream is checked on its way in (the transducer's `TreeContract`). A
-member the parse streams twice (JSON's `{"a":1,"a":2}`, whose value
-keeps the last) is refused with `DUPLICATE_MEMBER`, and a stream no tree
-has with `STREAMABILITY_UNKNOWN`. Either way aless falls back once to
-the parsed value, as `--json` reads it, when nothing has been written;
-otherwise the refusal is reported with `output: "partial"`. JSON Lines
-from standard input, read as it arrives and never again, keeps the
-refusal, with `output: "none"`.
-
-The output of each render reads back as the same value in a reader of
-its format; where a format's own reader misreads a shape its render
-writes, the format's repository records it. The round trip over
-tabnas-yaml's fixtures, `tests/yaml_render.rs`, keeps the inputs such a
-defect affects in a checked ledger, empty since the reader fixed the two
-the pilot found ([tabnas/yaml#86](https://github.com/tabnas/yaml/issues/86),
-[tabnas/yaml#88](https://github.com/tabnas/yaml/issues/88)): every input
-of its fixtures and of the YAML Test Suite comes back as the same value.
-
-`--render` on its own is the default export. Programs that select,
-project and reshape on the way through are the next section's, and a
-program's output takes any of these formats too.
-
-### Programs
-
-`--alchemy FILE` runs a program in the
-[alchemy](https://github.com/tabnas/alchemy) language over the input and
-streams what it exports; `--alchemy-expr TEXT` takes the program on the
-command line. A program's `export` receives the document as a stream of
-JSON events and answers a text, a table or JSON events: aless writes a
-text as it is, renders a table as CSV (`--render json` for JSON records,
-one object per row keyed by the column labels) and JSON events as JSON
-(`--render csv` for a table of them), and `--render` with any format
-that has a render writes the program's output as that format, its output
-shape standing where the source's would ([Writing any
-format](#writing-any-format)): a table reaches YAML as a sequence of
-mappings, JSON events reach a Markdown table through the inferred table
-as a source's events do (the root made an array, and rows of every
-kind), and the loss warning names the adapters that stood between as it
-does for a source, `records` for a table written as JSON among them.
-The JSON a program renders is compact, one document on one line. The program does the selecting, so
-`--path` and `--at` are not accepted, and neither is any other output
-option; `--render` given for a program that renders its own text is a
-usage error, with `--explain` as without it, since `--render` is checked
-against the program before anything else. `--explain` prints the
-program's plan report as one JSON object instead of running it (the chain
-of calls, the protocols, what is retained and under which limits, the
-ordering contract, the renderer, the guarantee and its qualification;
-`--compact` puts it on one line), and reads no input; the report is the
-program's, so its `renderer` is the program's own default, whatever
-`--render` names. The
-[language reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md)
-has the language; the worked example of the transducer's design, a table
-bound by the document's own metadata and rendered by the program itself
-as CSV, is
-[`tests/fixtures/programs/export.alc`](tests/fixtures/programs/export.alc),
-and [`table.alc`](tests/fixtures/programs/table.alc) beside it binds the
-same table and leaves the rendering to aless, so it is the one that takes
-`--render`.
-
-```bash
-aless --alchemy export.alc response.json                  # the table the program renders, as CSV
-aless --alchemy table.alc --render json response.json     # the same rows as JSON records
-aless --alchemy table.alc --render yaml response.json     # the same rows as a YAML sequence
-aless --alchemy-expr 'def export [input] input' data.yaml # the document, as JSON
-aless -k jsonl --alchemy filter.alc < events.log          # stdin, read as it arrives
-aless --alchemy export.alc --explain                      # the plan; no run
-```
-
-```
-$ aless --alchemy tests/fixtures/programs/export.alc tests/fixtures/records.json
-"Identifier","Full name","Balance"
-"123","Alice","50.25"
-"456","Bob","72"
-```
-
-The input reaches the program the way an export reaches its renderer
-([Streaming, and what is read whole](#exporting)): JSON Lines, CSV and TSV a record at
-a time, a format whose package ships a transducer through it as the
-parse proceeds, with the parse pruned behind it, and every other
-grammar's value after its parse; the same fallback when a grammar refuses to
-stream, the same `--timeout` and depth caps, and the transducer's default
-limits, which a failure names. What the run holds is what the program
-retains (`--explain` says what, and under which limit), so a table over a
-JSON Lines file of any size runs in bounded memory.
-
-**Errors.** A program that does not compile (it does not parse, does not
-type check, uses a stream twice, or cannot be shown to stream:
-`DSL_PARSE_ERROR`, `DSL_TYPE_ERROR`, `STREAM_REUSED`,
-`STREAMABILITY_UNKNOWN`) is the command's mistake, `"kind": "alchemy"`
-with status 2: the language's `code`, its `message` (the finer code leads
-it: `unbalanced`, `unknown_name`, `arity`, `protocol_mismatch`, …), `file`
-(the program's path, or `--alchemy-expr`), `format` `null`, `line` and
-`col` in the program when the failure has them, and `output`. A
-transducer limit met while the plan is built (`RESOURCE_LIMIT_EXCEEDED`
-naming `max_plan_steps`: a program of forty nested doublings asks for
-2^40 values before it reads anything) is the program's too, as a
-`transduce` error with status 5, `file` the program's, `format` `null`
-and no `input`, since none was opened. A program file that cannot be
-read is an `io` error and one over `--max-size` a `too_large` error,
-`file` the program's and `format` `null`.
-
-Once the input is open, where a failure came from decides whose it is.
-A failure from the program's sink is the program's when its code is the
-language's (a `match` no case takes, a `--render` that does not fit what
-it exports, the evaluator's `recursion` on an item): `"kind": "alchemy"`,
-status 2, the shape above plus `input`, the document's name. It is the
-program's too when it has a position, whatever its code (`fail` refusing
-a record, a function refusing a value): the events a program reads carry
-no positions, so a position on such a failure is in the program, and it
-keeps the transducer's code, kind and status (`INPUT_INVALID` as
-`transduce`, status 1) placed the same way, `file`, `line` and `col` the
-program's, `format` `null` and `input` the document's name. A failure
-from the program's sink with neither, a renderer's over the rows the
-program built (`MISSING_VALUE` for a row without a value for a bound
-column, `TARGET_VALUE_UNREPRESENTABLE` for a table with no columns), is
-reported as the input's, and so is every failure of the source's,
-whatever its code: a grammar's refusal to stream part-way once output
-has left (`STREAMABILITY_UNKNOWN` from the input's side, as
-[above](#exporting)) is `transduce` with `output: "partial"`, not the
-program's. The input's failures report as an export's do: the
-transducer's codes as `transduce` (`INPUT_ORDER_VIOLATION` when a row
-arrives before the metadata the program binds its columns to,
-`RESOURCE_LIMIT_EXCEEDED` naming the `limit`, `PROTOCOL_ORDER_ERROR`, …),
-with `output` saying whether anything had been written, and aless's own
-limits as `parse`/`too_deep` and `timeout`, with `output` too. The
-deadline covers the parse and the program together, so a program slow on
-one item stops at it, and its `timeout` says the run ran too long, not
-the parse: one raised while the program was working on an item names
-the document and carries no position (`line` and `col` `null`, the
-report naming the file alone), while one raised in the parse carries how
-far the parse got, as under `--render`. What a program writes is bounded
-too, since a small input can drive one to write without end: past
-`--max-output` (default `1G`, `0` for no limit) it stops with
-`RESOURCE_LIMIT_EXCEEDED` naming `max_output_bytes`, status 5, and a
-`hint` naming the option.
-
-```
-$ aless --alchemy-expr 'def export [input] (nope input)' data.json
-{
-  "error": {
-    "kind": "alchemy",
-    "file": "--alchemy-expr",
-    "format": null,
-    "code": "DSL_TYPE_ERROR",
-    "message": "unknown_name: nope is not defined",
-    "line": 1,
-    "col": 21,
-    "output": "none"
-  }
-}
-```
-
-These shapes are a contract: fields may be added, but none is renamed,
-removed or given a new meaning. [`skills/aless/SKILL.md`](skills/aless/SKILL.md)
-is an Agent Skill that teaches an agent all of this. `aless --generate
-skill` prints it from the binary, so an agent can be given it wherever
-aless is installed (`mkdir -p ~/.claude/skills/aless && aless --generate
-skill > ~/.claude/skills/aless/SKILL.md` for Claude Code, or the
-directory your agent loads skills from). `aless --help` is the same
-reference in the terminal, and opens with this interface; `aless -h` is
-a summary of the options.
+small; the input is still parsed in full. Writing a document as another
+format, and running a program over one, is the `alchemy` command's work
+([tabnas/alchemy-cli](https://github.com/tabnas/alchemy-cli)): `alchemy
+translate --from yaml --to toml deploy.yaml`, `alchemy run export.alc
+response.json`. aless reads, shows and prints JSON.
 
 ## Formats
 
@@ -863,9 +404,8 @@ structure. A grammar in ABNF, EBNF or GBNF shows the grammar spec its
 compiler writes, the tree a tabnas parser is made from: its `options`
 (the fixed tokens it lexes, its start rule) and its `rule`s, each its
 `open` and `close` alternates, with the helper rules and tokens the
-compiler adds. The three notations compile to one kind of spec, so a
-grammar in one is written in another by `--render`, and the compiler
-keeps no places, so no node of a spec has a position. To read a file
+compiler adds. The three notations compile to one kind of spec, and the
+compiler keeps no places, so no node of a spec has a position. To read a file
 with a grammar, rather than read the grammar, name it with `--grammar`.
 Any other text format can be given a grammar of its own, named on the
 command line: the next section.
@@ -902,16 +442,8 @@ explains it) the value is JSON of strings: one member per part of the
 rule that produces a value, nested where that part's own rule is
 annotated. Without annotations it is the compiler's parse tree, a
 `{"rule": …, "src": …, "kids": […]}` node per rule. Either way the
-viewer, `--json`, `--paths`, `--find`, `--where`, `--check` and
-`--render` work on it as on any format. `--render` writes the records
-of an annotated grammar as the parse makes them, through a transducer
-that aless generates from the annotations. A grammar whose first rule
-has no annotation, as in a grammar without any, builds the compiler's
-parse tree at its root, and that tree has the whole document's text
-before its children, so the grammar's documents are parsed whole before
-anything is written; so are those of any other grammar aless cannot
-generate a transducer for.
-An empty file is `null`; one holding only
+viewer, `--json`, `--paths`, `--find`, `--where` and `--check` work on
+it as on any format. An empty file is `null`; one holding only
 comments and blank lines is whatever the grammar builds from nothing,
 `[]` for the grammars below.
 
@@ -942,10 +474,6 @@ $ head -5 tests/fixtures/grammars/hosts | aless --grammar hosts=tests/fixtures/g
 [{"address":"127.0.0.1","names":["localhost"]},{"address":"127.0.1.1","names":["workstation.example.com","workstation"]}]
 $ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --where --at 5:17 --compact tests/fixtures/grammars/hosts
 {"file":"tests/fixtures/grammars/hosts","format":"hosts","path":".[1].names[0]","kind":"string","line":5,"col":17,"value":"workstation.example.com"}
-$ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --render csv tests/fixtures/grammars/hosts | head -3
-"address","names"
-"127.0.0.1","[""localhost""]"
-"127.0.1.1","[""workstation.example.com"",""workstation""]"
 ```
 
 (`tests/agent.rs` runs those commands and holds their output to this.)
@@ -1071,14 +599,26 @@ Extensions on keys jless leaves free:
 |---|---|
 | `Tab` `Shift-Tab` | next / previous tab |
 | `W` | toggle watching on the tab |
-| `r` | reload the tab now; in the program pane, the program ([Panes](#panes)) |
-| `s` | show the focused pane's text: the raw source, scrolled to the focused node's line and coloured by its grammar (`s` or `Esc` returns) |
-| `C-w` | move the focus to the next pane ([Panes](#panes)) |
+| `r` | reload the tab now |
+| `s` | show the raw source, scrolled to the focused node's line and coloured by its grammar (`s` or `Esc` returns; `:` and `r` work there) |
 | `!` | show the tab's parse error report in full (`h` `l` pan a long line) |
 | `C-z` | suspend (Unix) |
 
-Mouse: the wheel scrolls, a click focuses the pane under it and a row
-(`--no-mouse` to leave the mouse to the terminal).
+Mouse: the wheel scrolls, and a click focuses a row (`--no-mouse` to
+leave the mouse to the terminal).
+
+The source view is coloured by what the tab's grammar lexed, with the
+semantic tokens tabnas-lsp's language server sends an editor: strings
+green, numbers magenta, keywords yellow, keys and names blue, comments
+grey. The colours are made off the viewer's thread, and the text shows
+plain until they come in. Text over 512 KiB stays plain, since colouring
+parses the whole text and holds a few hundred times its size while it
+does; so does plain text, a grammar in ABNF, EBNF or GBNF, which its
+compiler lexes with a parser of its own, and a grammar the language
+server's registry marks as lexing speculatively. Colouring one text stops
+after ten seconds, or the parse timeout when that is shorter, and colours
+what it had lexed. Without colour (`--no-color`, `NO_COLOR`) no text is
+lexed for it.
 
 ### Commands
 
@@ -1087,61 +627,7 @@ Mouse: the wheel scrolls, a click focuses the pane under it and a row
 `:format FORMAT` · `:mode data|line` · `:depth N` · `:expand` / `:collapse` ·
 `:N` / `:line N` · `:source` · `:error` · `:w[!] FILE` (writes the document as JSON) ·
 `:set number|nonumber|number!|relativenumber|norelativenumber|relativenumber!|so=N|indent=N|watch|nowatch|ascii` ·
-`:vsplit` / `:split` · `:arrange` · `:pane out|program|close` · `:only` ·
 `:help`.
-
-## Panes
-
-`--panes out` opens a second pane beside the document: the **output**,
-what `--render` or `--alchemy` would write for it, computed in memory and
-read back in its own format, so its tree sits beside the input's and `s`
-shows its text. With a program, `--panes out,program` adds a third pane,
-the **program**: its text, and with `s` its plan report (`--explain`'s
-JSON) as a tree.
-
-```bash
-aless --panes out --render yaml data.csv                  # CSV beside its YAML
-aless --panes out,program --alchemy export.alc api.json   # the program between them
-aless --panes out --stacked orders.json                   # its JSON, one above the other
-```
-
-- **What the output is.** With `--panes`, `--render`, `--alchemy` and
-  `--alchemy-expr` choose the output pane's content instead of printing
-  it; without any of them it is JSON. The other options for output
-  without a screen are refused with `--panes`, and so is a run without a
-  terminal.
-- **Keys.** `C-w` moves the focus to the next pane, and every key that
-  moves, folds, searches or copies works on the focused pane. `s`
-  switches the focused pane between its tree and its text. In the text,
-  the scrolling keys scroll, `:` and `r` work as ever, and any other key
-  shows the tree again. `q` closes an output or program pane; in the
-  input pane it closes the tab, as ever. The focused pane's title is
-  bold, and the status bar describes it.
-- **Commands.** `:vsplit` and `:split` arrange the panes side by side or
-  stacked, opening the output beside the input when it is alone.
-  `:arrange` switches between the two, `:pane out|program|close` opens or
-  closes one, and `:only` keeps the input pane alone.
-- **Following the input.** The output is written again when the active
-  tab changes, reloads or is parsed as another format, and when the
-  program's file changes, which is watched as a tab's file is. `r` in the
-  program pane reads the program again, watched or not. The output keeps
-  its place across the rebuild, as a reload does.
-- **Colour.** A pane's text is coloured by what its grammar lexed, with
-  the semantic tokens tabnas-lsp's language server sends an editor:
-  strings green, numbers magenta, keywords yellow, keys and names blue,
-  comments grey. The input and the output are lexed by their format's
-  grammar, the program by alchemy's. The colours are made off the
-  viewer's thread, and the text shows plain until they come in. Text
-  over 512 KiB stays plain, since colouring parses the whole text and
-  holds a few hundred times its size while it does; so does plain text,
-  a grammar in ABNF, EBNF or GBNF, which its compiler lexes with a parser
-  of its own, and a grammar the language server's registry marks as
-  lexing speculatively. Colouring one text stops after ten seconds, or the
-  parse timeout when that is shorter, and colours what it had lexed.
-  Without colour (`--no-color`, `NO_COLOR`) no text is lexed for it.
-- **Limits.** The output pane keeps up to 16 MB of output; past that the
-  text is cut and shown as text, not read back. The run happens in the
-  viewer, which waits for it as long as the command would take.
 
 ## File explorer
 
@@ -1389,39 +875,20 @@ there. `C-z` suspend is Unix-only.
 
 The engine (`tabnas`, the `tabnas-parser` package) and the grammar
 crates come from crates.io, each a version requirement in `Cargo.toml`
-pinned by `Cargo.lock`.
-
-Two tests reach past the published crates. `tests/translate_matrix.rs`
-writes every document of every format's own fixture corpus into every
-format `--render` writes, through aless's own routes, and reads it back
-under the target's declared conventions, or holds it to the target's
-declared refusal (a schema-only target's of a document of another tree,
-a version's of a tree that is not one, a notation's of a spec it cannot
-write), and a grammar a notation's render wrote to compiling back with
-that notation's compiler; `tests/yaml_render.rs` reads
-tabnas-yaml's `test/spec` and its vendored YAML Test Suite. The crates do
-not ship those fixtures, so both take them from checkouts of the grammar
-repositories at the tags of the versions `Cargo.lock` pins, named by
-`TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`; `scripts/fixtures.sh` clones
-them and prints the lines that set both, and the tests fail without
-them, or with a checkout of another version.
-
-`tabnas-transduce` and `tabnas-render`, behind `--render`, come the same
-way, as do `tabnas-abnf`, `tabnas-ebnf`, `tabnas-gbnf` and the
-`tabnas-bnf` they share, the grammar notations' compilers (ABNF's also
-behind `--grammar`), and `tabnas-lsp`, whose semantic tokens colour a
-pane's text. The other dependencies: crossterm (terminal), ratatui
-(drawing), notify (file watching), regex (search), unicode-width
-(layout), serde_json (JSON output), arboard (clipboard, optional).
+pinned by `Cargo.lock`. `tabnas-abnf`, `tabnas-ebnf`, `tabnas-gbnf` and
+the `tabnas-bnf` they share, the grammar notations' compilers (ABNF's
+also behind `--grammar`), and `tabnas-lsp`, whose semantic tokens colour
+the source view, come the same way. The other dependencies: crossterm
+(terminal), ratatui (drawing), notify (file watching), regex (search),
+unicode-width (layout), serde_json (JSON output), arboard (clipboard,
+optional).
 
 ## Development
 
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-eval "$(scripts/fixtures.sh)"         # the grammar repositories' fixtures, which the matrix and tests/yaml_render.rs read
-cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface
-cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture   # every format's fixtures into every format
+cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface, the site
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 cargo package --locked                # the crate builds from exactly the files it publishes
 scripts/generate.sh                   # man/ and completions/, after an option or the help changes
@@ -1445,9 +912,6 @@ the library is terminal-free and unit tested:
 |---|---|
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
 | `explorer` | directory trees as documents, listed lazily |
-| `export` | `--render`: records as CSV or the document as JSON, streamed through the tabnas transducer and renderers; the source plumbing `--alchemy` runs on |
-| `alchemy` | `--alchemy`: a program in the alchemy language compiled, explained, and run over the input through `export`'s plumbing |
-| `translate` | `--render yaml`: the formats written by their own render, read from their crates' manifests, each linked with a one-line program and run as a program runs |
 | `fmt` | text of keys and values, previews, JSON output, path formats |
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
 | `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
@@ -1456,9 +920,8 @@ the library is terminal-free and unit tested:
 | `prov` | source positions by aligning the token stream with the tree |
 | `search` | jless-style search patterns |
 | `tab` | one open document: focus, scroll, mode, search, navigation, reload re-anchoring |
-| `pane` | the panes: their roles and modes, their layout side by side or stacked, and the output written in memory |
-| `app` | tabs, panes, modes, the key map, the command line, watch scheduling, yank |
-| `highlight` | colour for a pane's text: tabnas-lsp's semantic tokens, made by a worker off the viewer's thread |
+| `app` | tabs, modes, the source view, the key map, the command line, watch scheduling, yank |
+| `highlight` | colour for the source view: tabnas-lsp's semantic tokens, made by a worker off the viewer's thread |
 | `render` | the screen as ratatui widgets, every width measured as the terminal places text |
 | `watch` | the notify file watcher |
 | `clip` | clipboard and OSC 52 |

@@ -274,12 +274,6 @@ pub struct LoadError {
 /// input, so this is some 2.7 GB, and under a minute of parsing.
 pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
 
-/// The most a program may write unless `--max-output` says otherwise: the
-/// transducer's `max_output_bytes`, set for every program aless runs, as a
-/// host that runs programs it did not write should (a program can write
-/// without end from a small input).
-pub const DEFAULT_MAX_OUTPUT: u64 = 1 << 30;
-
 /// Roughly how many bytes of memory a parse takes per byte of input,
 /// measured on JSON records in a release build: 12 MB peaked at 0.42 GB,
 /// 60 MB at 2.1 GB. With the engine's whole rule history kept, before
@@ -377,7 +371,7 @@ fn seconds(t: Duration) -> String {
 }
 
 /// The message and hint of a `timeout` for an input still being read at
-/// the deadline, as the loader and the exporter both word it.
+/// the deadline.
 pub(crate) fn input_timed_out_words(limit: Duration) -> (String, String) {
     let limit = seconds(limit);
     (
@@ -447,13 +441,12 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 /// `--timeout`: a writer that never writes, or never closes its end, would
 /// otherwise hold a run in a read for ever, where no deadline is looked
 /// at. The thread starts with the first read, so a run that never reads
-/// standard input (`--explain`, a named file) leaves it to whoever else
+/// standard input (a named file) leaves it to whoever else
 /// holds it. It hands over what each read returns through a channel a few
 /// chunks deep, so it reads no further ahead of the run than that; at the
 /// deadline a read fails as [`io::ErrorKind::TimedOut`], which
-/// [`read_within`] reports as `timeout` and a streamed run as the run's
-/// (see `export`). The thread is left to the process's end when it is
-/// still waiting: nothing can call a read off.
+/// [`read_within`] reports as `timeout`. The thread is left to the
+/// process's end when it is still waiting: nothing can call a read off.
 pub struct DeadlineReader {
     /// The input, until the first read starts the thread that reads it.
     input: Option<Box<dyn Read + Send>>,
@@ -661,8 +654,8 @@ pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
 /// Unbounded, the engine's default, every rule replaced or pushed stays
 /// reachable from the current one until its container closes, so a
 /// parse's memory grows with the document's length, not its nesting:
-/// `--render` over 23 MB of JSON records peaked at 1.6 GB, where three
-/// steps take 0.3 GB, and the run is faster. The deepest walk any grammar of
+/// a parse of 23 MB of JSON records peaked at 1.6 GB, where three steps
+/// take 0.3 GB, and the parse is faster. The deepest walk any grammar of
 /// the fleet reads is three hops (tabnas/parser
 /// `doc/rule-history-bound.md`), and the parsed value is the same under
 /// every bound; what a bound changes is only what a grammar can reach.
@@ -673,12 +666,10 @@ pub const RULE_HISTORY: usize = 3;
 /// 1 MB). The rule stack itself is the engine's, on the heap.
 pub(crate) const PARSE_STACK: usize = 64 << 20;
 
-/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], time
-/// past the timeout, or a value nested past [`MAX_VALUE_DEPTH`] once the
-/// parse was done.
+/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or
+/// time past the timeout.
 pub(crate) const STOP_DEPTH: u8 = 1;
 pub(crate) const STOP_TIME: u8 = 2;
-pub(crate) const STOP_VALUE_DEPTH: u8 = 3;
 
 /// When a parse must be done by.
 #[derive(Clone)]
@@ -691,7 +682,7 @@ pub(crate) struct Deadline {
     /// clock. `None` when no thread waits, and the parse reads the clock.
     alarm: Option<Arc<AtomicBool>>,
     /// Raised by whoever called the parse off, whatever the time: the
-    /// painter, when no pane shows the text any more.
+    /// painter, when the view no longer shows the text.
     cancel: Option<Arc<AtomicBool>>,
 }
 
@@ -744,8 +735,7 @@ impl Deadline {
 /// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
 /// [`STOP_TIME`], else 0), and the source position the parse had reached,
 /// so a report can show how far it got when the engine's own error does
-/// not survive (the transducer's `ABORTED` carries no position), or does
-/// not know (see [`Stop::place`]).
+/// not survive, or does not know (see [`Stop::place`]).
 #[derive(Debug)]
 pub(crate) struct Stop {
     why: AtomicU8,
@@ -797,14 +787,7 @@ impl Stop {
         }
     }
 
-    /// Record `why` with no position: the parse was done when aless
-    /// refused its value.
-    pub(crate) fn mark(&self, why: u8) {
-        self.why.store(why, Ordering::Relaxed);
-    }
-
-    /// [`STOP_DEPTH`], [`STOP_TIME`], [`STOP_VALUE_DEPTH`], or 0 when aless
-    /// did not stop it.
+    /// [`STOP_DEPTH`], [`STOP_TIME`], or 0 when aless did not stop it.
     pub(crate) fn why(&self) -> u8 {
         self.why.load(Ordering::Relaxed)
     }
@@ -929,13 +912,6 @@ impl LoadError {
     /// worded for a file no parse of which is coming.
     pub(crate) fn grammar_too_large(size: Option<u64>, limit: u64) -> LoadError {
         LoadError::file_too_large("the grammar file", "A grammar file", size, limit)
-    }
-
-    /// An `--alchemy` program file over the size limit: as
-    /// [`too_large`](Self::too_large), worded for the program, which no
-    /// parse of the input's kind is coming for.
-    pub(crate) fn program_too_large(size: Option<u64>, limit: u64) -> LoadError {
-        LoadError::file_too_large("program", "A program file", size, limit)
     }
 
     /// A file of the command line's own (`what`, as the message names it;
@@ -1521,14 +1497,6 @@ pub(crate) fn parse_text(src: &str, format: Format) -> &str {
             .unwrap_or(text),
         _ => text,
     }
-}
-
-/// Whether `format`'s text is prepared past its byte-order mark before its
-/// grammar parses it: a version's line break ([`parse_text`]) and proto's
-/// braces ([`check_text`]). Such a text is read whole, never through a
-/// reader ([`open_windowed`]).
-pub(crate) fn prepares_text(format: Format) -> bool {
-    matches!(format, Format::Semver | Format::Proto)
 }
 
 /// What a format's crate checks of a text before its grammar parses it:
@@ -2277,8 +2245,8 @@ pub(crate) fn parse_until(
 /// from `started` when given, else from now. This thread
 /// only waits, so it keeps the time: once the deadline passes it raises
 /// the alarm the deadline's [`Deadline::passed`] reads, and calls
-/// `on_alarm`, for a parse that has a stop flag of its own to set (the
-/// transducer's). When no thread can be had, `work` runs on this one with
+/// `on_alarm`, for a parse that has a stop flag of its own to set. When no
+/// thread can be had, `work` runs on this one with
 /// a deadline that reads the clock, and `on_alarm` is never called.
 pub(crate) fn on_parse_thread<T: Send>(
     timeout: Option<Duration>,
@@ -2511,9 +2479,7 @@ fn parse_guarded(
 /// setting this one leaves it in place; a budget the grammar keeps itself
 /// still runs, at its own interval. Returns a record of why aless stopped
 /// the parse, if it did, and where. `notify` is called as the parse is
-/// stopped, for a caller with a flag of its own to raise: the transducer
-/// reports a parse its abort flag stopped as `ABORTED`, and anything else
-/// the engine cancelled as the input's fault.
+/// stopped, for a caller with a flag of its own to raise.
 pub(crate) fn guard(
     parser: &mut Tabnas,
     deadline: Option<Deadline>,
@@ -2561,9 +2527,8 @@ pub(crate) enum Deep {
     Repeated,
 }
 
-/// The message and hint of a `too_deep` error, as the loader and the
-/// exporter both word it. The message starts with the code, as the
-/// engine's own do.
+/// The message and hint of a `too_deep` error. The message starts with the
+/// code, as the engine's own do.
 pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
     match why {
         Deep::Rules(cap) if format.is_custom() => (
@@ -2772,155 +2737,6 @@ pub fn load_path_within(
     let source = read_path_within(path, limits.max_size)?;
     let format = format.unwrap_or_else(|| Format::detect(path));
     load_str_within(source, format, limits).map_err(|e| e.with_origin(&origin_of(path)))
-}
-
-/// A file for a parse that reads it a window at a time
-/// (`Tabnas::parse_reader`, tabnas/parser's admin ADR-30), opened as
-/// [`read_path_within`] opens one: a file known to be over `max_size` is
-/// refused before any of it is read, and the error names the file as a
-/// report does ([`origin_of`]). It reads as [`read_path_within`] reads it,
-/// and [`parser_text`] then takes it: no more than `max_size` bytes, bytes
-/// that are not UTF-8 replaced, and without its byte-order mark, so a parse
-/// of it reads what a parse of its text read whole does.
-pub fn open_windowed(
-    path: &Path,
-    max_size: Option<u64>,
-) -> Result<Box<dyn Read + Send>, LoadError> {
-    let origin = origin_of(path);
-    let file = std::fs::File::open(path)
-        .map_err(|e| LoadError::new(e.to_string()).with_origin(&origin))?;
-    if let (Some(max), Ok(meta)) = (max_size, file.metadata()) {
-        if meta.is_file() && meta.len() > max {
-            return Err(LoadError::too_large(Some(meta.len()), max).with_origin(&origin));
-        }
-    }
-    Ok(Box::new(AsWhole::new(file, max_size)))
-}
-
-/// A reader of a line-delimited input, for a parse that reads it a window
-/// at a time, as [`open_windowed`] hands a file over: it reads as a text
-/// read whole does, without its byte-order mark and with bytes that are
-/// not UTF-8 replaced, and no more than `max_size` bytes of it.
-pub fn windowed<'a>(
-    reader: impl Read + Send + 'a,
-    max_size: Option<u64>,
-) -> Box<dyn Read + Send + 'a> {
-    Box::new(AsWhole::new(reader, max_size))
-}
-
-/// A reader that reads as [`read_path_within`] and [`parser_text`] read a
-/// text whole ([`open_windowed`]): it refuses its source past `max` bytes,
-/// skips a byte-order mark at its start, and replaces each sequence of
-/// bytes that is not UTF-8 with U+FFFD, as `String::from_utf8_lossy` does,
-/// holding a character a read split until its last byte.
-struct AsWhole<R> {
-    inner: R,
-    /// Bytes the source may still give before it is over the limit.
-    left: Option<u64>,
-    max: Option<u64>,
-    /// The buffer a read fills, kept from one read to the next.
-    chunk: Vec<u8>,
-    /// Bytes read and not yet decoded: a character a read split.
-    raw: Vec<u8>,
-    /// Decoded bytes not yet handed on, from `out_at`.
-    out: Vec<u8>,
-    out_at: usize,
-    /// The byte-order mark is still to be looked for.
-    start: bool,
-    /// The source has given its last byte.
-    done: bool,
-}
-
-impl<R> AsWhole<R> {
-    fn new(inner: R, max: Option<u64>) -> Self {
-        AsWhole {
-            inner,
-            left: max,
-            max,
-            chunk: vec![0u8; 64 * 1024],
-            raw: Vec::new(),
-            out: Vec::new(),
-            out_at: 0,
-            start: true,
-            done: false,
-        }
-    }
-}
-
-impl<R: Read> Read for AsWhole<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        loop {
-            if self.out_at < self.out.len() {
-                let n = buf.len().min(self.out.len() - self.out_at);
-                buf[..n].copy_from_slice(&self.out[self.out_at..self.out_at + n]);
-                self.out_at += n;
-                return Ok(n);
-            }
-            if self.done && self.raw.is_empty() {
-                return Ok(0);
-            }
-            self.out.clear();
-            self.out_at = 0;
-            if !self.done {
-                let n = match self.inner.read(&mut self.chunk) {
-                    Ok(n) => n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => return Err(e),
-                };
-                if n == 0 {
-                    self.done = true;
-                }
-                if let (Some(left), Some(max)) = (&mut self.left, self.max) {
-                    if n as u64 > *left {
-                        return Err(io::Error::other(
-                            LoadError::too_large(None, max).to_string(),
-                        ));
-                    }
-                    *left -= n as u64;
-                }
-                self.raw.extend_from_slice(&self.chunk[..n]);
-            }
-            if self.start {
-                // Three bytes decide a byte-order mark.
-                if self.raw.len() < 3 && !self.done {
-                    continue;
-                }
-                if self.raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                    self.raw.drain(..3);
-                }
-                self.start = false;
-            }
-            loop {
-                match std::str::from_utf8(&self.raw) {
-                    Ok(_) => {
-                        self.out.extend_from_slice(&self.raw);
-                        self.raw.clear();
-                        break;
-                    }
-                    Err(e) => {
-                        let valid = e.valid_up_to();
-                        self.out.extend_from_slice(&self.raw[..valid]);
-                        match e.error_len() {
-                            Some(bad) => {
-                                self.out.extend_from_slice("\u{fffd}".as_bytes());
-                                self.raw.drain(..valid + bad);
-                            }
-                            // A character the read split, or the source
-                            // ends inside: held, or replaced at the end.
-                            None => {
-                                self.raw.drain(..valid);
-                                if self.done {
-                                    self.out.extend_from_slice("\u{fffd}".as_bytes());
-                                    self.raw.clear();
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 /// Read a file's text, holding no more than `max_size` bytes of it: a file
@@ -3391,8 +3207,7 @@ mod tests {
 
     /// A parse the deadline stops between two steps is reported where it
     /// had got to, the last token it read, not at line 1, column 1; and the
-    /// guard's record, which the exporter reports from (the transducer's
-    /// `ABORTED` carries no position), is the same place (aless#15).
+    /// guard's record is the same place (aless#15).
     #[test]
     fn a_timeout_between_steps_is_placed_at_the_last_token_read() {
         let src = records(300);
@@ -3491,7 +3306,7 @@ mod tests {
     }
 
     /// The input is not touched until the run reads it: a run that never
-    /// does (`--explain`, a named file) leaves it to whoever else has it.
+    /// does (a named file) leaves it to whoever else has it.
     #[test]
     fn a_deadline_reader_reads_nothing_before_it_is_read() {
         struct Watched(Arc<AtomicBool>);

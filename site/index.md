@@ -1,11 +1,11 @@
 ---
-title: a terminal viewer and a format converter, for people, scripts and agents
-description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and without a terminal prints JSON, writes any of those formats as any other, and runs programs over them, for scripts and agents.
+title: a terminal viewer and a query tool, for people, scripts and agents
+description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and without a terminal prints JSON for scripts and agents.
 ---
 <section class="intro">
 <img class="logo logo-light" src="/logo.svg" alt="aless" width="1490" height="430"><img class="logo logo-dark" src="/logo-dark.svg" alt="aless" width="1490" height="430">
-<h1>Every format as one tree: a viewer in a terminal, and a converter and query tool for scripts and agents</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree. In a terminal it is a viewer with jless's keys, with tabs and a watch mode that keeps your place. In a shell script, a pipe or an agent's tool call it prints JSON, writes any of those formats as any other, and runs programs over them.</p>
+<h1>Every format as one tree: a viewer in a terminal, and a query tool for scripts and agents</h1>
+<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree. In a terminal it is a viewer with jless's keys, with tabs and a watch mode that keeps your place. In a shell script, a pipe or an agent's tool call it prints JSON.</p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
 
@@ -13,7 +13,7 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as o
 <div class="face">
 <p class="kind">In a terminal</p>
 <h2>A viewer for files of any of those formats</h2>
-<p>Open a file and it is a tree. Fold it, move through it with the keys of jless, search it with a regular expression, and copy a value or its path. Several files open in tabs, a directory opens as an explorer, and a conversion can sit in a pane beside the document. aless watches every file it shows: when one changes on disk it reloads it and keeps your place.</p>
+<p>Open a file and it is a tree. Fold it, move through it with the keys of jless, search it with a regular expression, and copy a value or its path. Several files open in tabs, and a directory opens as an explorer. aless watches every file it shows: when one changes on disk it reloads it and keeps your place.</p>
 
 ```screen
 ▽ {
@@ -34,19 +34,22 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as o
 </div>
 <div class="face">
 <p class="kind">In a script, a pipe or an agent's tool call</p>
-<h2>A query tool and a converter for scripts and agents</h2>
-<p>Without a terminal, aless draws nothing and never waits for a key. It prints an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, or a report on whether files parse, as JSON on standard output. It writes any format it reads as any format it can write, a record at a time where the format's reader allows, and standard output is then that format's text. It runs programs that choose and reshape values on the way through. A query answers with one JSON value and a conversion with one document, every error is one JSON object on standard error, and the exit status says which.</p>
+<h2>A query tool for scripts and agents</h2>
+<p>Without a terminal, aless draws nothing and never waits for a key. It prints an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, or a report on whether files parse, as JSON on standard output. A query answers with one JSON value, every error is one JSON object on standard error, and the exit status says which.</p>
 
 ```console
 $ aless --json --path '.info.title' bookshelf-openapi.yaml
 "Bookshelf demo API"
-$ aless --render yaml --path '.[0]' books.json 2>/dev/null
-"title": "A Book of Examples"
-"author": "A. N. Author"
-"year": 1999
-"tags":
-  - "examples"
-  - "reference"
+$ aless --where --at 4:3 bookshelf-openapi.yaml
+{
+  "file": "bookshelf-openapi.yaml",
+  "format": "yaml",
+  "path": ".info.version",
+  "kind": "string",
+  "line": 4,
+  "col": 3,
+  "value": "1.0.0"
+}
 ```
 
 <p class="more"><a href="/tutorials/scripting.html">Ask a file questions from a script</a>, the second tutorial.</p>
@@ -75,15 +78,11 @@ On Windows, in PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/rjrodger/aless/releases/latest/download/aless-installer.ps1 | iex"
 ```
 
-## What it reads and writes
+## What it reads
 
 Every format is read into the same tree, so the viewer, the paths, the search and the outputs are the same for all of them. A format aless has no parser for can be read with a grammar of your own, written in ABNF ([Read a format aless does not know](/how-to/grammar.html)).
 
 <p class="chips"><span class="chips-label">Reads</span> <span class="chip">json</span> <span class="chip">jsonl</span> <span class="chip">jsonic</span> <span class="chip">jsonc</span> <span class="chip">json5</span> <span class="chip">yaml</span> <span class="chip">toml</span> <span class="chip">ini</span> <span class="chip">csv</span> <span class="chip">tsv</span> <span class="chip">xml</span> <span class="chip">zon</span> <span class="chip">markdown</span> <span class="chip">rss</span> <span class="chip">atom</span> <span class="chip">css</span> <span class="chip">proto</span> <span class="chip">pgn</span> <span class="chip">c</span> <span class="chip">abnf</span> <span class="chip">ebnf</span> <span class="chip">gbnf</span> <span class="chip">expr</span> <span class="chip">semver</span> <span class="chip">text</span> <a class="chip" href="/how-to/grammar.html">any ABNF grammar</a></p>
-<p class="chips"><span class="chips-label">Writes</span> <span class="chip">json</span> <span class="chip">jsonl</span> <span class="chip">jsonic</span> <span class="chip">jsonc</span> <span class="chip">json5</span> <span class="chip">yaml</span> <span class="chip">toml</span> <span class="chip">ini</span> <span class="chip">csv</span> <span class="chip">xml</span> <span class="chip">zon</span> <span class="chip">markdown</span> <span class="chip">feed</span> <span class="chip">expr</span> <a class="chip" href="/how-to/convert.html#formats-that-hold-only-their-own-kind">css, proto, pgn, c and semver from their own kind, and abnf, ebnf and gbnf from a grammar in any of the three</a></p>
-
-[Convert a file to another format](/how-to/convert.html) shows a conversion and what each format declares it cannot keep.
-
 ## The documentation
 
 <div class="cards">
@@ -93,7 +92,7 @@ Every format is read into the same tree, so the viewer, the paths, the search an
 </div>
 <div class="card">
 <h3><a href="/how-to/index.html">How-to guides</a></h3>
-<p>One task each, in the viewer and from the command line: <a href="/how-to/search.html">search a document</a>, <a href="/how-to/watch.html">follow a file as it changes</a>, <a href="/how-to/extract.html">get a value out in a script</a>, <a href="/how-to/convert.html">convert a file</a>, <a href="/how-to/check.html">check that files parse</a>, <a href="/how-to/agents.html">give an agent aless</a>.</p>
+<p>One task each, in the viewer and from the command line: <a href="/how-to/search.html">search a document</a>, <a href="/how-to/watch.html">follow a file as it changes</a>, <a href="/how-to/extract.html">get a value out in a script</a>, <a href="/how-to/check.html">check that files parse</a>, <a href="/how-to/agents.html">give an agent aless</a>.</p>
 </div>
 <div class="card">
 <h3><a href="/reference/index.html">Reference</a></h3>

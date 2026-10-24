@@ -13,8 +13,7 @@ aless is an independent implementation, not a fork. Its tree, its rendering and 
 - Tabs, one per file, and a file explorer.
 - Watching: a changed file is reloaded with your place kept.
 - A source view, and the line and column of every node.
-- Panes that show a conversion or a program's output beside the document.
-- A second face: the command line for scripts and agents, which prints JSON instead of opening the viewer, converts any format it reads to any it writes, and runs programs over a document.
+- A second face: the command line for scripts and agents, which prints JSON instead of opening the viewer.
 
 Each extension to the viewer is on a key jless leaves free, so none of jless's keys means something else in aless.
 

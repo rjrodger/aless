@@ -5,10 +5,6 @@ _aless() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     COMPREPLY=()
     case "$prev" in
-        --render)
-            COMPREPLY=($(compgen -W "abnf c css csv ebnf expr feed gbnf ini json json5 jsonc jsonic jsonl markdown pgn proto semver toml xml yaml zon" -- "$cur"))
-            return 0
-            ;;
         --kind|--format|-k)
             COMPREPLY=($(compgen -W "json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text" -- "$cur"))
             return 0
@@ -17,20 +13,16 @@ _aless() {
             COMPREPLY=($(compgen -W "data line" -- "$cur"))
             return 0
             ;;
-        --panes)
-            COMPREPLY=($(compgen -W "out program out,program" -- "$cur"))
-            return 0
-            ;;
         --generate)
             COMPREPLY=($(compgen -W "man complete-bash complete-zsh complete-fish complete-powershell skill" -- "$cur"))
             return 0
             ;;
-        --find|--alchemy|--alchemy-expr|--path|--at|--limit|--max-output|--grammar|--grammar-expr|--depth|--indent|--key|--max-size|--timeout|--scrolloff)
+        --find|--path|--at|--limit|--grammar|--grammar-expr|--depth|--indent|--max-size|--timeout|--scrolloff)
             return 0
             ;;
     esac
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--json --paths --find --where --check --render --alchemy --alchemy-expr --explain --path --at --limit --compact --max-output --kind --format -k --grammar --grammar-expr --depth --indent --key --max-size --timeout --no-watch --watch --mode -m --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --panes --stacked --help -h --version -V --generate" -- "$cur"))
+        COMPREPLY=($(compgen -W "--json --paths --find --where --check --path --at --limit --compact --kind --format -k --grammar --grammar-expr --depth --indent --max-size --timeout --no-watch --watch --mode -m --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
     fi
     return 0
 }

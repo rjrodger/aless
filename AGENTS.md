@@ -16,9 +16,7 @@ from jless. This file is the guide for any agent working here;
   ```bash
   cargo fmt --all --check
   cargo clippy --all-targets --locked -- -D warnings
-  eval "$(scripts/fixtures.sh)"                     # the grammar repositories' fixtures, for the matrix and tests/yaml_render.rs
   cargo test --locked
-  cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture   # linux: every format's fixtures into every format, a line per 25 documents
   python3 scripts/pty-smoke.py target/debug/aless   # unix: drives the real binary in a pty, and checks it refuses without one
   cargo package --locked                            # linux: the crate builds from exactly the files it publishes
   ```
@@ -29,8 +27,8 @@ from jless. This file is the guide for any agent working here;
 - **Dependencies come from crates.io, pinned by `Cargo.lock`.** The
   engine's package is `tabnas-parser` (its library keeps the name
   `tabnas`), so its line reads
-  `tabnas = { package = "tabnas-parser", version = … }`; every grammar,
-  transduce, render, alchemy and lsp is a plain version requirement.
+  `tabnas = { package = "tabnas-parser", version = … }`; every grammar
+  and lsp is a plain version requirement.
   `cargo update -p tabnas-parser` (or any of them) moves a pin to the
   newest release the requirement allows. Do not vendor or copy tabnas
   code into this repository.
@@ -52,29 +50,19 @@ from jless. This file is the guide for any agent working here;
   - The published crate carries only what `Cargo.toml`'s `include` names:
     - `src/` and the licence files;
     - every file the README links to: the docs, `skills/`, and the
-      example grammars and programs under `tests/fixtures/`.
+      example grammars under `tests/fixtures/`.
 
     So a file the build reads must be under `src/`, or on the list (the
     skill and the changelog, which `--generate skill` and the man page
     read), and a new file the README links to joins the list. CI's
     `cargo package` checks the build.
-- **Two tests read the grammar repositories' own fixtures**, which the
-  published crates do not ship: `tests/translate_matrix.rs` (every
-  document of every format's corpus written into every format and read
-  back under the target's declared conventions: aless's fixtures and
-  JSONTestSuite's in the default run, every repository's `test/spec/*.tsv`
-  in the ignored run CI makes in the `matrix` profile) and
-  `tests/yaml_render.rs` (tabnas/yaml's spec and the vendored YAML Test
-  Suite). They come from checkouts of the twenty grammar repositories
-  with translation parts and a `test/spec` corpus (PGN's is tabnas/chess;
-  tabnas/ebnf's and tabnas/gbnf's tags carry none, and aless's own
-  fixtures stand for them) at the tags of the versions `Cargo.lock`
-  pins:
-  `scripts/fixtures.sh` clones them under `target/fixtures/` and prints
-  the export lines, `TABNAS_FIXTURES_DIR` and `TABNAS_YAML_DIR`, and CI
-  runs it before the tests. The tests fail when the variables are unset,
-  and when a checkout's version is not the locked one, so the fixtures
-  move with the pins.
+- **aless reads, shows and prints JSON; it writes no other format and
+  runs no programs.** Translating a document into another format and
+  running an alchemy program over one are the `alchemy` command's work,
+  in [tabnas/alchemy-cli](https://github.com/tabnas/alchemy-cli), the
+  composition root of alchemy, transduce and render; aless depends on
+  none of the three. A streaming export, a renderer or a program runner
+  does not belong here: add it to alchemy-cli, in its three runtimes.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,
@@ -126,30 +114,15 @@ from jless. This file is the guide for any agent working here;
   once at startup by tabnas-abnf, on a thread of their own within
   `--timeout` and under the repetition caps, with the plain-text lexing
   options, into the registry `Format::Custom` indexes), `headless` (the
-  agent interface: paths, listings, search, positions, checks, programs,
-  JSON errors), `cli` (every option, in the one table the parser reads;
-  the reference `--help` prints, the summary `-h` prints, the man page
-  and the shells' completions), `export` (`--render csv` and `json`: the
-  input streamed through the tabnas transducer as its format allows, the
-  parse's events through the format's part as it proceeds (JSON Lines,
-  CSV and TSV from a reader, a window at a time), or the parsed value
-  walked, into aless's own renderers; the fallback when a
-  grammar refuses to stream, whole records only on a failure, each
-  failure sorted by what it means; the source plumbing `alchemy` and
-  `translate` run on),
-  `alchemy` (programs in the alchemy language: compiled, explained, and
-  run over the input through `export`'s plumbing), `translate` (`--render
-  FORMAT` for any format whose crate carries a render: the registry
-  read from the crates' manifests, the composition `render ∘ adapt ∘
-  lift` the shapes decide, a program's output into a render, each
-  linked with a one-line main and run as a program runs), `explorer` (directory
-  trees as documents, listed lazily), `prov`
-  (source positions by token alignment), `search`, `tab` (view state,
-  navigation, reload re-anchoring), `app` (modes, key map, commands,
-  tabs, panes, watch scheduling), `pane` (the panes: roles, modes,
-  layout, the output written in memory), `highlight` (colour for a
-  pane's text through tabnas-lsp, made off the viewer's thread),
-  `render` (the screen as ratatui widgets),
+  agent interface: paths, listings, search, positions, checks, JSON
+  errors), `cli` (every option, in the one table the parser reads; the
+  reference `--help` prints, the summary `-h` prints, the man page and
+  the shells' completions), `explorer` (directory trees as documents,
+  listed lazily), `prov` (source positions by token alignment), `search`,
+  `tab` (view state, navigation, reload re-anchoring), `app` (modes, the
+  source view, key map, commands, tabs, watch scheduling), `highlight`
+  (colour for the source view through tabnas-lsp, made off the viewer's
+  thread), `render` (the screen as ratatui widgets),
   `watch` (notify wrapper), `clip` (clipboard and OSC 52).
 - **Behaviour is jless's unless the README says otherwise.** Keep the
   key map compatible: new bindings go on keys jless leaves free. A change
@@ -184,7 +157,7 @@ from jless. This file is the guide for any agent working here;
     the command line", the two faces of aless), `group`, the heading it
     is under; the layout writes the `h1`, so the Markdown starts at `##`;
   - links between pages are from the site's root
-    (`/how-to/convert.html`), and the build makes them relative;
+    (`/how-to/extract.html`), and the build makes them relative;
   - output is pasted from a real run, in a `console` block with `$ `
     before each command; a capture of the viewer is a `screen` block, 80
     columns (60 on the home page, where two sit side by side), taken in

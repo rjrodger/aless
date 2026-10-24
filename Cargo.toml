@@ -13,10 +13,8 @@ keywords = ["json", "yaml", "toml", "viewer", "tui"]
 categories = ["command-line-utilities"]
 # What the published crate carries: the sources, the licence files, and
 # every file the README links to (the docs, the agent skill, the man page
-# and the completions, the example grammars and programs). The tests stay
-# in the repository: two of them read checkouts of the grammar
-# repositories (TABNAS_FIXTURES_DIR, TABNAS_YAML_DIR), which a crate cannot
-# ship.
+# and the completions, the example grammars). The tests stay in the
+# repository.
 include = [
     "/src",
     "/LICENSE",
@@ -29,7 +27,6 @@ include = [
     "/man",
     "/completions",
     "/tests/fixtures/grammars",
-    "/tests/fixtures/programs",
 ]
 
 [features]
@@ -50,11 +47,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
 # The tabnas engine and grammars, from crates.io. The engine's package is
-# tabnas-parser; its library keeps the name `tabnas`. tests/translate_matrix.rs
-# and tests/yaml_render.rs read the grammar repositories' own fixtures,
-# which the published crates do not ship, from checkouts at the locked
-# versions' tags: TABNAS_FIXTURES_DIR and TABNAS_YAML_DIR name them, and
-# scripts/fixtures.sh clones them.
+# tabnas-parser; its library keeps the name `tabnas`.
 tabnas = { package = "tabnas-parser", version = "0.12.15" }
 tabnas-json = "0.5.19"
 tabnas-jsonl = "0.1.19"
@@ -76,22 +69,14 @@ tabnas-css = "0.5.16"
 tabnas-chess = "0.1.17"
 tabnas-c = "0.5.15"
 # The grammar notations, each read as the grammar spec its compiler writes
-# (the schema grammar-spec the three share) and written by its render.
-# The ABNF compiler is also behind --grammar and --grammar-expr: a custom
-# grammar's text becomes a GrammarSpec at startup. Each emits through
-# tabnas-bnf, the compiler the BNF-family front-ends share.
+# (the schema grammar-spec the three share). The ABNF compiler is also
+# behind --grammar and --grammar-expr: a custom grammar's text becomes a
+# GrammarSpec at startup. Each emits through tabnas-bnf, the compiler the
+# BNF-family front-ends share.
 tabnas-abnf = "0.4.25"
 tabnas-ebnf = "0.1.19"
 tabnas-gbnf = "0.1.20"
-# The streaming transducer and its renderers, behind `--render`.
-tabnas-transduce = "0.3.0"
-tabnas-render = "0.2.5"
-# The alchemy language, behind `--alchemy`: a program compiled onto the
-# transducer's routers and the renderers, which aless passes in, and run
-# over any document the grammars read. The two crates above take their
-# shared types from it; it depends on neither.
-tabnas-alchemy = "0.2.15"
-# Colour for a pane's text: the semantic tokens tabnas-lsp's language
+# Colour for the source view: the semantic tokens tabnas-lsp's language
 # server sends an editor, taken from the same lex a grammar makes. No
 # feature is on: aless supplies the parsers, and needs neither the
 # bundled grammars (`fleet`) nor the grammar-text loaders (`dialects`).
@@ -122,12 +107,3 @@ strip = true
 # the release profile above, unchanged.
 [profile.dist]
 inherits = "release"
-
-# The translation matrix over every format's fixtures
-# (tests/translate_matrix.rs, run with --ignored): optimised as the release
-# build is, without the link-time work a test binary does not repay.
-[profile.matrix]
-inherits = "release"
-lto = false
-codegen-units = 16
-strip = false

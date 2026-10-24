@@ -102,8 +102,6 @@ const SECTIONS: [Section; 4] = [
 const FIXTURES: &[&str] = &[
     "tests/fixtures/grammars/hosts.abnf",
     "tests/fixtures/grammars/hosts",
-    "tests/fixtures/programs/export.alc",
-    "tests/fixtures/programs/table.alc",
     "tests/fixtures/records.json",
 ];
 
@@ -112,7 +110,7 @@ const REFERENCE: usize = 2;
 
 /// A page of the site.
 struct Page {
-    /// Where it is published: `how-to/convert.html`.
+    /// Where it is published: `how-to/extract.html`.
     path: String,
     title: String,
     /// One sentence: the page's meta description, and its line in lists.
@@ -796,8 +794,8 @@ fn pager(page: &Page, pages: &[Page]) -> String {
     format!("<nav class=\"pager\" aria-label=\"Previous and next\">\n{prev}\n{next}\n</nav>\n")
 }
 
-/// Links from the site's root (`/how-to/convert.html`) made relative to a
-/// page `root` above it (`../how-to/convert.html`), so that the site reads
+/// Links from the site's root (`/how-to/extract.html`) made relative to a
+/// page `root` above it (`../how-to/extract.html`), so that the site reads
 /// the same from a directory on disk as from its domain.
 fn relative(html: &str, root: &str) -> String {
     let link = Regex::new(r#"(href|src)="/([^"/][^"]*)?""#).unwrap();

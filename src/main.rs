@@ -22,13 +22,11 @@ use crossterm::{execute, queue};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use aless::alchemy::ProgramArg;
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
 use aless::cli;
 use aless::grammar::{self, Definition};
 use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
-use aless::pane::{Role, Through};
 use aless::render;
 use aless::watch::FileWatcher;
 
@@ -53,27 +51,15 @@ struct Args {
     mouse: bool,
     /// The operation a headless option asked for.
     op: Option<Op>,
-    /// `--alchemy` or `--alchemy-expr`: combined with `op` once every
-    /// option is read, since `--render` may name its renderer.
-    program: Option<ProgramArg>,
-    /// `--explain`.
-    explain: bool,
     start: Start,
     limit: Option<usize>,
     compact: bool,
     /// An option that only means something without a screen was given.
     headless: bool,
-    /// Those options, as given: `--panes` takes `--render` and the
-    /// program for its output pane and refuses the rest.
-    headless_given: Vec<String>,
-    /// `--panes` was given, so the viewer opens, whichever panes it names.
-    panes: bool,
     /// The largest input to read, in bytes; `None` for no limit.
     max_size: Option<u64>,
     /// The longest a parse may run; `None` for no limit.
     timeout: Option<std::time::Duration>,
-    /// The most a program may write, in bytes; `None` for no limit.
-    max_output: Option<u64>,
 }
 
 /// Read the command line, `argv` without the program's name. Every option
@@ -89,17 +75,12 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
         opts: Options::default(),
         mouse: true,
         op: None,
-        program: None,
-        explain: false,
         start: Start::Root,
         limit: None,
         compact: false,
         headless: false,
-        headless_given: Vec::new(),
-        panes: false,
         max_size: aless::load::Limits::DEFAULT.max_size,
         timeout: aless::load::Limits::DEFAULT.timeout,
-        max_output: Some(aless::load::DEFAULT_MAX_OUTPUT),
     };
     let mut it = argv.into_iter();
     let mut only_files = false;
@@ -137,7 +118,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
         };
         if cli::asks_for_output(&name) {
             args.headless = true;
-            args.headless_given.push(name.clone());
         }
         let mut op = None;
         match name.as_str() {
@@ -161,23 +141,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             "--find" => op = Some(Op::Find(value()?)),
             "--where" => op = Some(Op::Where),
             "--check" => op = Some(Op::Check),
-            "--render" => {
-                let v = value()?;
-                let renderer = aless::export::Renderer::from_name(&v)
-                    .ok_or_else(|| aless::translate::refusal(&v))?;
-                op = Some(Op::Render(renderer));
-            }
-            "--alchemy" => {
-                // Raw, as --grammar reads its FILE: a path's bytes need not
-                // be UTF-8.
-                let v = match inline.take() {
-                    Some(_) => grammar::after_eq(&arg),
-                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
-                };
-                set_program(&mut args, &name, ProgramArg::File(PathBuf::from(v)))?;
-            }
-            "--alchemy-expr" => set_program(&mut args, &name, ProgramArg::Expr(value()?))?,
-            "--explain" => args.explain = true,
             "--path" => {
                 let v = value()?;
                 if matches!(args.start, Start::At(..)) {
@@ -195,9 +158,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             "--limit" => args.limit = Some(number(value()?)?),
             "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
             "--timeout" => args.timeout = aless::load::parse_timeout(&value()?)?,
-            "--max-output" => {
-                args.max_output = aless::load::parse_size_for("--max-output", &value()?)?
-            }
             "--compact" => args.compact = true,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
@@ -211,39 +171,10 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             "-R" | "--no-relative-line-numbers" => args.opts.relative = false,
             "--scrolloff" => args.opts.scrolloff = number(value()?)?,
             "--indent" => args.opts.indent = number(value()?)?.min(16),
-            "--key" => args.opts.key = value()?,
             "--hidden" => args.opts.show_hidden = true,
             "--ascii" => args.opts.ascii = true,
             "--no-color" | "--no-colour" => args.opts.color = false,
             "--no-mouse" => args.mouse = false,
-            "--panes" => {
-                args.panes = true;
-                let spec = value()?;
-                if spec.split(',').all(|p| p.trim().is_empty()) {
-                    return Err(
-                        "--panes names the panes to open beside the input: out, program, or \
-                         out,program"
-                            .into(),
-                    );
-                }
-                for part in spec.split(',').filter(|p| !p.trim().is_empty()) {
-                    match Role::from_name(part) {
-                        // The input pane is always there.
-                        Some(Role::Input) => {}
-                        Some(role) if !args.opts.panes.contains(&role) => {
-                            args.opts.panes.push(role)
-                        }
-                        Some(_) => {}
-                        None => {
-                            return Err(format!(
-                                "--panes names out and program, not {}",
-                                part.trim()
-                            ))
-                        }
-                    }
-                }
-            }
-            "--stacked" => args.opts.stacked = true,
             other => return Err(format!("unknown option: {other} (see aless --help)")),
         }
         if let Some(v) = inline {
@@ -253,7 +184,7 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             match &args.op {
                 Some(prev) if prev.flag() != op.flag() => {
                     return Err(format!(
-                        "{} and {} both say what to print: give one of --json, --paths, --find, --where, --check, --render",
+                        "{} and {} both say what to print: give one of --json, --paths, --find, --where, --check",
                         prev.flag(),
                         op.flag()
                     ));
@@ -262,102 +193,13 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             }
         }
     }
-    // With --panes the viewer opens, and --render and the program say what
-    // the output pane shows rather than what to print.
-    if args.panes {
-        let taken = ["--render", "--alchemy", "--alchemy-expr"];
-        if let Some(other) = args
-            .headless_given
-            .iter()
-            .find(|o| !taken.contains(&o.as_str()))
-        {
-            return Err(format!(
-                "--panes opens the viewer, and {other} is for output without one: give one"
-            ));
-        }
-        let render = match args.op.take() {
-            None => None,
-            Some(Op::Render(renderer)) => Some(renderer),
-            Some(other) => {
-                return Err(format!(
-                    "--panes opens the viewer, and {} prints without one: give one",
-                    other.flag()
-                ))
-            }
-        };
-        args.opts.through = match (args.program.take(), render) {
-            (Some(arg), render) => Through::Program { arg, render },
-            (None, Some(renderer)) => Through::Render(renderer),
-            (None, None) => Through::default(),
-        };
-        if args.opts.panes.contains(&Role::Program)
-            && !matches!(args.opts.through, Through::Program { .. })
-        {
-            return Err(
-                "--panes program shows a program: give it with --alchemy FILE or \
-                 --alchemy-expr TEXT"
-                    .into(),
-            );
-        }
-        args.headless = false;
-    }
-    // A program is what to print, with --render naming its renderer.
-    if let Some(program) = args.program.take() {
-        let render = match args.op.take() {
-            None => None,
-            Some(Op::Render(renderer)) => Some(renderer),
-            Some(other) => {
-                return Err(format!(
-                    "--alchemy and {} both say what to print: the program does the selecting; \
-                     give one",
-                    other.flag()
-                ))
-            }
-        };
-        if args.start != Start::Root {
-            return Err(
-                "--alchemy takes no --path or --at: the program selects what it reads".into(),
-            );
-        }
-        args.op = Some(Op::Alchemy {
-            program,
-            render,
-            explain: args.explain,
-        });
-    } else if args.explain {
-        return Err(
-            "--explain reports a program's plan: give the program with --alchemy FILE or \
-             --alchemy-expr TEXT"
-                .into(),
-        );
-    }
     if args.op == Some(Op::Check) && args.start != Start::Root {
         return Err("--check parses whole files: it takes no --path or --at".into());
-    }
-    if matches!(args.op, Some(Op::Render(_))) && matches!(args.start, Start::At(..)) {
-        return Err(headless::RENDER_TAKES_NO_AT.into());
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
     }
     Ok(Parsed::Run(Box::new(args)))
-}
-
-/// Record the program `--alchemy` or `--alchemy-expr` (`name`) names,
-/// once: the option given twice, and the two together, are each refused
-/// by a message that names what was given.
-fn set_program(args: &mut Args, name: &str, program: ProgramArg) -> Result<(), String> {
-    match &args.program {
-        None => {}
-        Some(prev) if prev.path().is_some() == program.path().is_some() => {
-            return Err(format!("{name} was given twice: give one program"));
-        }
-        Some(_) => {
-            return Err("--alchemy and --alchemy-expr both name the program: give one".into());
-        }
-    }
-    args.program = Some(program);
-    Ok(())
 }
 
 fn parse_mode(v: &str) -> Result<bool, String> {
@@ -414,14 +256,6 @@ fn main() {
         }
     };
     let headless = headless_wanted(args.headless);
-    if headless && args.panes {
-        refuse_usage(
-            "--panes opens the viewer, which needs a terminal: without one, give --render or \
-             --alchemy without --panes",
-            true,
-            args.compact,
-        );
-    }
     // Before any input is read, grammar files included: input that never
     // ends (a pipe left open, a FIFO) would otherwise keep a viewer that
     // cannot start waiting.
@@ -534,8 +368,8 @@ fn refuse_viewer(e: &io::Error) -> ! {
     refuse_usage(
         &format!(
             "cannot start the viewer, which needs a terminal to draw on and read keys from: {e}. \
-             To read a file without a screen, use --json, --paths, --find, --where, --check or \
-             --render (see aless --help); aless FILE > out.json writes the document as JSON"
+             To read a file without a screen, use --json, --paths, --find, --where or --check \
+             (see aless --help); aless FILE > out.json writes the document as JSON"
         ),
         true,
         false,
@@ -613,10 +447,8 @@ fn print_headless(args: Args) -> i32 {
     req.limit = args.limit.unwrap_or(headless::DEFAULT_LIMIT);
     req.compact = args.compact;
     req.indent = args.opts.indent;
-    req.key = args.opts.key.clone();
     req.max_size = args.max_size;
     req.timeout = args.timeout;
-    req.max_output = args.max_output;
     // The deadline runs from here, and covers reading the input: standard
     // input is read on a thread of its own, so that a writer that sends
     // nothing, or never closes it, cannot hold the run past --timeout.
@@ -635,24 +467,16 @@ fn print_headless(args: Args) -> i32 {
     } else {
         Some(&mut input)
     };
-    // A streamed result (`--render`) is written as it is produced, through
-    // the renderer's own buffer; the other results come back whole.
-    let out = headless::run_to(&req, stdin, Box::new(io::stdout()));
-    // A stream that failed on its way out has said so in detail, and left
-    // nothing to print: standard output is then not touched again, so that
-    // a flush failing once more cannot replace that report with a plainer
-    // one. (A failed --check still has its report to print.) A reader that
-    // stops early (`| head`) is not an error.
-    if !out.stdout.is_empty() || out.status == headless::status::OK {
-        let mut stdout = io::stdout().lock();
-        let written = stdout
-            .write_all(out.stdout.as_bytes())
-            .and_then(|()| stdout.flush());
-        if let Err(e) = written {
-            if e.kind() != io::ErrorKind::BrokenPipe {
-                let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
-                return headless::status::IO;
-            }
+    let out = headless::run(&req, stdin);
+    // A reader that stops early (`| head`) is not an error.
+    let mut stdout = io::stdout().lock();
+    let written = stdout
+        .write_all(out.stdout.as_bytes())
+        .and_then(|()| stdout.flush());
+    if let Err(e) = written {
+        if e.kind() != io::ErrorKind::BrokenPipe {
+            let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
+            return headless::status::IO;
         }
     }
     let _ = io::stderr().write_all(out.stderr.as_bytes());
@@ -868,15 +692,13 @@ mod tests {
     fn sample(long: &str, value: Value) -> &'static str {
         match (long, value) {
             (_, Value::Words(words)) => words[0],
-            (_, Value::Format | Value::Render) => "json",
+            (_, Value::Format) => "json",
             ("--grammar", _) => "g=g.abnf",
             ("--grammar-expr", _) => "g=doc = TX",
-            ("--alchemy-expr", _) => "def export [input] input",
             ("--path", _) => ".a",
             ("--at", _) => "1:1",
             ("--find", _) => "x",
-            ("--max-size" | "--max-output", _) => "1M",
-            ("--alchemy", _) => "x.alc",
+            ("--max-size", _) => "1M",
             _ => "1",
         }
     }
@@ -890,10 +712,6 @@ mod tests {
                 let mut argv = vec![name.as_str()];
                 if let Some((_, value)) = opt.arg {
                     argv.push(sample(opt.long, value));
-                }
-                // --explain needs a program to explain.
-                if opt.long == "--explain" {
-                    argv.extend(["--alchemy-expr", "def export [input] input"]);
                 }
                 if let Err(e) = parse(&argv) {
                     panic!("{argv:?}: {e}");
