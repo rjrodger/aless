@@ -255,9 +255,9 @@ For those, pipe `--json` into jq.
   instead of being killed without a word. There is no limit by default,
   and `--timeout 0` asks for none.
 - To write a document as another format, or to run a program over one,
-  use the `alchemy` command (tabnas/alchemy-cli): `alchemy translate
-  --from FORMAT --to FORMAT FILE`, `alchemy run PROGRAM FILE`. aless
-  reads, and prints JSON.
+  use the `dmog` command (tabnas/dmog): `dmog translate --from FORMAT
+  --to FORMAT FILE`, `dmog run PROGRAM FILE`. aless reads, and prints
+  JSON.
 - `aless --help` is the full reference: every option, what each output
   prints, every error kind with its fields, the exit statuses, paths,
   positions, formats and limits. It opens with this interface; `aless -h`

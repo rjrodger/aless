@@ -8,6 +8,16 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- The command the README and the skill point to for writing a document as
+  another format, and for running a program over one, is `dmog` (data
+  mogrify), in [tabnas/dmog](https://github.com/tabnas/dmog): the
+  `alchemy` command of tabnas/alchemy-cli, renamed. aless itself is
+  unchanged.
+
 ## [0.5.0] - 2026-10-24
 
 ### Removed
