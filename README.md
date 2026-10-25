@@ -350,9 +350,9 @@ aless without an error, with status 0, though the parse has already been
 paid for.
 To take part of a large document, `--path` and `--depth` keep the output
 small; the input is still parsed in full. Writing a document as another
-format, and running a program over one, is the `alchemy` command's work
-([tabnas/alchemy-cli](https://github.com/tabnas/alchemy-cli)): `alchemy
-translate --from yaml --to toml deploy.yaml`, `alchemy run export.alc
+format, and running a program over one, is the `dmog` command's work
+([tabnas/dmog](https://github.com/tabnas/dmog), data mogrify): `dmog
+translate --from yaml --to toml deploy.yaml`, `dmog run export.alc
 response.json`. aless reads, shows and prints JSON.
 
 ## Formats

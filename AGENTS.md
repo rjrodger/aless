@@ -58,11 +58,11 @@ from jless. This file is the guide for any agent working here;
     `cargo package` checks the build.
 - **aless reads, shows and prints JSON; it writes no other format and
   runs no programs.** Translating a document into another format and
-  running an alchemy program over one are the `alchemy` command's work,
-  in [tabnas/alchemy-cli](https://github.com/tabnas/alchemy-cli), the
+  running an alchemy program over one are the `dmog` command's work,
+  in [tabnas/dmog](https://github.com/tabnas/dmog) (data mogrify), the
   composition root of alchemy, transduce and render; aless depends on
   none of the three. A streaming export, a renderer or a program runner
-  does not belong here: add it to alchemy-cli, in its three runtimes.
+  does not belong here: add it to dmog, in its three runtimes.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,
