@@ -4,11 +4,6 @@
 //! (`--generate`) all come from the table and the topics here, and the
 //! binary's parser refuses any option the table does not list, so none of
 //! them can name an option aless does not take, or leave one out.
-//!
-//! The reference is one of the four places that document the interface
-//! for scripts and agents, with the README's "Scripts and agents" section,
-//! the skill (`skills/aless/SKILL.md`) and the tests in `src/headless.rs`
-//! and `tests/agent.rs`: they must agree.
 
 use crate::load::Format;
 
@@ -18,28 +13,23 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// What aless is, in a sentence: the help's first line, and the man
 /// page's NAME.
 pub const TAGLINE: &str = "JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one \
-    tree: a jless-style viewer in a terminal, and JSON on standard output for scripts \
-    and agents";
+    tree, in a jless-style terminal viewer";
 
 /// What aless does, in a paragraph: the man page's DESCRIPTION.
 const DESCRIPTION: &str = "aless reads JSON, JSON Lines, JSON5, JSONC, jsonic, YAML, \
     TOML, INI, CSV, TSV, XML, ZON, Markdown, RSS or Atom feeds, CSS, Protocol Buffers' \
     .proto files, PGN chess games, C source, grammars in ABNF, EBNF or GBNF, expressions \
     and semantic versions, and any line-oriented format an ABNF grammar describes, as one \
-    tree. In a terminal it shows the tree in a jless-style viewer, with tabs, search and \
-    a watch mode that reloads a changed file and keeps your place. Without one it prints \
-    JSON on standard output for scripts and agents.";
+    tree, and shows it in a jless-style viewer in the terminal, with tabs, search, a \
+    source view and a watch mode that reloads a changed file and keeps your place.";
 
-/// Where an option belongs, and what giving it does.
+/// Where an option belongs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
-    /// Asks for output without a screen: giving one prints instead of
-    /// starting the viewer.
-    Output,
-    /// Read by the output and the viewer alike.
-    Both,
-    /// Read by the viewer alone: without a screen it is accepted and does
-    /// nothing.
+    /// What is read, and how: the inputs' formats, the grammars, the
+    /// limits.
+    Input,
+    /// How the viewer shows it.
     Viewer,
     /// Prints something about aless, and exits.
     About,
@@ -123,129 +113,17 @@ pub const GENERATE: &[&str] = &[
     "complete-zsh",
     "complete-fish",
     "complete-powershell",
-    "skill",
 ];
 
 /// Every option aless takes, in the order the help lists them. `{formats}`
 /// and `{version}` in a detail are filled in as it is written.
 pub const OPTIONS: &[Opt] = &[
     Opt {
-        short: None,
-        long: "--json",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "the document as JSON (the default)",
-        detail: "The document as JSON, or the value at the start that --path or --at \
-            gives: what aless prints without a screen when no other output option is \
-            given. Indented 2 spaces a level (--indent N), or on one line with \
-            --compact. Numbers are 64-bit floats, so an integer beyond 2^53 comes out \
-            as the nearest one, and NaN and the infinities as null.",
-    },
-    Opt {
-        short: None,
-        long: "--paths",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "an entry for the start and each node below",
-        detail: "An entry for the start and for each node below it, in document order, \
-            in a listing: {file, format, path, entries, total, limit, truncated} (see \
-            OUTPUT). --depth N goes N levels below the start, and --limit N lists N \
-            entries at most.",
-    },
-    Opt {
-        short: None,
-        long: "--find",
-        also: &[],
-        arg: Some(("REGEX", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "the entries whose \"key\": value text matches",
-        detail: "The entries of the nodes, the start and those below it, whose \"key\": \
-            value text matches REGEX, in a listing with pattern and matches (see \
-            OUTPUT). It is the viewer's search: case is ignored unless REGEX has a \
-            capital letter or ends in /s, and [ ] { } match themselves unless escaped. \
-            --depth and --limit apply as they do to --paths.",
-    },
-    Opt {
-        short: None,
-        long: "--where",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "the start's entry: its path and position",
-        detail: "The start's entry, with file and format: with --at, the path a source \
-            position is in; with --path, the line and column a path starts at; with \
-            neither, the root's.",
-    },
-    Opt {
-        short: None,
-        long: "--check",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "parse each FILE and report on each",
-        detail: "Parse every FILE, or standard input when none is named, and report on \
-            each: {ok, files: [{file, format, ok, error}]}, where a failing file's error \
-            is the error object a run on that file alone prints. The one output option \
-            that reads several inputs. Exit status 1 when any input fails, with the \
-            report still on standard output. Takes no --path or --at.",
-    },
-    Opt {
-        short: None,
-        long: "--path",
-        also: &[],
-        arg: Some(("PATH", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "start at PATH, in jq syntax",
-        detail: "Start at PATH instead of the root, in the jq syntax every output \
-            prints (see PATHS). Not with --at or --check.",
-    },
-    Opt {
-        short: None,
-        long: "--at",
-        also: &[],
-        arg: Some(("LINE[:COL]", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "start at the node at a source position",
-        detail: "Start at the node at that source position, counted from 1, columns in \
-            characters (see POSITIONS). Not with --path or --check.",
-    },
-    Opt {
-        short: None,
-        long: "--limit",
-        also: &[],
-        arg: Some(("N", Value::Text)),
-        section: Section::Output,
-        repeats: false,
-        summary: "at most N entries (default 200; 0 for all)",
-        detail: "--paths and --find list at most N entries (default 200; 0 for all); \
-            total and truncated say what was left out.",
-    },
-    Opt {
-        short: None,
-        long: "--compact",
-        also: &[],
-        arg: None,
-        section: Section::Output,
-        repeats: false,
-        summary: "JSON on one line, an error's too",
-        detail: "JSON on one line: the answer of --json, --paths, --find, --where and \
-            --check, and an error on standard error.",
-    },
-    Opt {
         short: Some('k'),
         long: "--kind",
         also: &["--format"],
         arg: Some(("FORMAT", Value::Format)),
-        section: Section::Both,
+        section: Section::Input,
         repeats: false,
         summary: "parse every input as FORMAT",
         detail: "Parse every input as FORMAT instead of by its extension: a format's \
@@ -258,21 +136,22 @@ pub const OPTIONS: &[Opt] = &[
         long: "--grammar",
         also: &[],
         arg: Some(("NAME=FILE", Value::File)),
-        section: Section::Both,
+        section: Section::Input,
         repeats: true,
         summary: "a format of your own, from an ABNF grammar",
         detail: "Read a file whose extension or whole name is NAME, in any case \
             (x.hosts, /etc/hosts), with the ABNF grammar in FILE, which is read within \
             --max-size and compiled within --timeout before any input is read. NAME is \
-            then a format, as -k takes it and every output reports it; NAME,NAME2=FILE \
-            gives it two names, and the option repeats. See CUSTOM GRAMMARS.",
+            then a format, as -k and :format take it and the status bar shows it; \
+            NAME,NAME2=FILE gives it two names, and the option repeats. See CUSTOM \
+            GRAMMARS.",
     },
     Opt {
         short: None,
         long: "--grammar-expr",
         also: &[],
         arg: Some(("NAME=ABNF", Value::Text)),
-        section: Section::Both,
+        section: Section::Input,
         repeats: true,
         summary: "the same, the grammar on the command line",
         detail: "--grammar, with the grammar's text on the command line: everything \
@@ -280,54 +159,30 @@ pub const OPTIONS: &[Opt] = &[
     },
     Opt {
         short: None,
-        long: "--depth",
-        also: &[],
-        arg: Some(("N", Value::Text)),
-        section: Section::Both,
-        repeats: false,
-        summary: "list N levels down; the viewer folds deeper",
-        detail: "--paths and --find go at most N levels below the start (default: \
-            every level). The viewer folds the containers deeper than N levels when it \
-            opens a file.",
-    },
-    Opt {
-        short: None,
-        long: "--indent",
-        also: &[],
-        arg: Some(("N", Value::Text)),
-        section: Section::Both,
-        repeats: false,
-        summary: "indentation per level (default 2)",
-        detail: "Indent --json N spaces a level, and the viewer's tree (default 2; at \
-            most 16).",
-    },
-    Opt {
-        short: None,
         long: "--max-size",
         also: &[],
         arg: Some(("SIZE", Value::Text)),
-        section: Section::Both,
+        section: Section::Input,
         repeats: false,
         summary: "refuse an input over SIZE (default 64M)",
         detail: "Refuse an input larger than SIZE (default 64M; 0 for no limit), and a \
-            --grammar file too, with a too_large error, status 5: a parse takes about 40 \
-            bytes of memory per byte of input. SIZE is bytes, or a whole number with K, M \
-            or G (1024s).",
+            --grammar file too: a parse takes about 40 bytes of memory per byte of \
+            input. A file over the limit opens as a tab that says so, and names the size \
+            that would read it; a grammar file over it is a usage error. SIZE is bytes, \
+            or a whole number with K, M or G (1024s).",
     },
     Opt {
         short: None,
         long: "--timeout",
         also: &[],
         arg: Some(("SECONDS", Value::Text)),
-        section: Section::Both,
+        section: Section::Input,
         repeats: false,
         summary: "stop a parse past SECONDS (default none)",
         detail: "Stop a parse, or a --grammar compile, that runs longer than SECONDS \
-            (2.5, 90s, 2m; default none; 0 for no limit), with a timeout error, status \
-            6, that says how far it got. Without a screen, on standard input, the time \
-            runs from the start, so waiting on the input counts. A parse runs at about a \
-            megabyte a second: a caller with a deadline of its own should pass one a few \
-            seconds shorter.",
+            (2.5, 90s, 2m; default none; 0 for no limit). A parse stopped opens as a tab \
+            that says how far it got; a compile stopped is a usage error. A parse runs \
+            at about a megabyte a second. See LARGE INPUTS AND LIMITS.",
     },
     Opt {
         short: None,
@@ -359,6 +214,28 @@ pub const OPTIONS: &[Opt] = &[
         summary: "start in data (default) or line mode",
         detail: "Start in data mode (the default), the streamlined tree, or in line \
             mode, every line of a pretty-printed rendering; m switches between them.",
+    },
+    Opt {
+        short: None,
+        long: "--depth",
+        also: &[],
+        arg: Some(("N", Value::Text)),
+        section: Section::Viewer,
+        repeats: false,
+        summary: "fold containers deeper than N levels",
+        detail: "Fold the containers deeper than N levels when a file opens (default: \
+            every container open); :depth N does the same inside aless.",
+    },
+    Opt {
+        short: None,
+        long: "--indent",
+        also: &[],
+        arg: Some(("N", Value::Text)),
+        section: Section::Viewer,
+        repeats: false,
+        summary: "indentation per level (default 2)",
+        detail: "Indent the tree N spaces a level (default 2; at most 16); < and > \
+            change it inside aless.",
     },
     Opt {
         short: Some('n'),
@@ -477,11 +354,10 @@ pub const OPTIONS: &[Opt] = &[
         arg: Some(("WHAT", Value::Words(GENERATE))),
         section: Section::About,
         repeats: false,
-        summary: "a man page, shell completions or the skill",
-        detail: "Print a file made from this reference: man, the man page (aless.1); \
+        summary: "a man page or a shell's completions",
+        detail: "Print a file made from this reference: man, the man page (aless.1); or \
             complete-bash, complete-zsh, complete-fish or complete-powershell, that \
-            shell's completions; or skill, the Agent Skill (SKILL.md) that teaches an \
-            agent to drive aless. See FILES.",
+            shell's completions. See FILES.",
     },
 ];
 
@@ -498,11 +374,6 @@ pub fn lookup(name: &str) -> Option<&'static Opt> {
     OPTIONS.iter().find(|o| {
         o.long == name || o.also.contains(&name) || (letter.is_some() && o.short == letter)
     })
-}
-
-/// Whether giving `name` asks for output rather than the viewer.
-pub fn asks_for_output(name: &str) -> bool {
-    lookup(name).is_some_and(|o| o.section == Section::Output)
 }
 
 /// A piece of a topic.
@@ -550,11 +421,8 @@ const TOPICS: &[Topic] = &[
         man: Man::Synopsis,
         blocks: &[
             Block::Terms(&[
-                ("aless [OPTIONS] [FILE]...", "the viewer, in a terminal"),
-                (
-                    "aless --paths --depth 1 FILE",
-                    "JSON on standard output, anywhere",
-                ),
+                ("aless [OPTIONS] [FILE]...", "each FILE in a tab of its own"),
+                ("aless [OPTIONS] DIRECTORY", "the file explorer"),
                 (
                     "<command> | aless [OPTIONS]",
                     "standard input, read as JSON unless -k says",
@@ -564,65 +432,40 @@ const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
-        title: "WITHOUT A SCREEN",
-        note: "scripts, agents, pipes",
-        man: Man::Description("Without a screen"),
+        title: "THE VIEWER",
+        note: "",
+        man: Man::Description("The viewer"),
         blocks: &[
             Block::Text(
-                "aless prints instead of starting the viewer when an option listed under \
-                OUTPUT OPTIONS is given, when standard output is not a terminal (a pipe, a \
-                file, an agent's tool call), or when TERM=dumb, and it never waits for \
-                keys. A run reads one input (--check reads several), prints one answer on \
-                standard output and exits 0, or prints {\"error\": {...}} on standard error \
-                and exits non-zero: see OUTPUT, ERRORS and EXIT STATUS. When the viewer \
-                cannot start for want of a terminal, aless says so at once, before reading \
-                any input, with a usage error and status 2.",
+                "aless is a viewer: it draws on a terminal and reads keys from it, and does \
+                nothing else. Each FILE opens in a tab of its own, watched and reloaded \
+                when it changes, keeping your place; a directory opens in the file \
+                explorer, where Enter opens a file; and without a FILE, aless reads \
+                standard input when it is not a terminal, and otherwise explores the \
+                current directory. A file that does not parse opens as a tab showing the \
+                parser's report, with the line and column it stopped at, and the tab \
+                reloads when the file is fixed.",
             ),
-            Block::Text("For an agent, five rules:"),
-            Block::Terms(&[
-                (
-                    "1.",
-                    "Pass an output option: --json, --paths, --find, --where or \
-                    --check.",
-                ),
-                (
-                    "2.",
-                    "Name the file as an argument. Standard input is read as JSON unless \
-                    -k FORMAT says otherwise.",
-                ),
-                (
-                    "3.",
-                    "Check the exit status before reading standard output: only 0 means \
-                    it holds the answer (--check's report comes with 1 too).",
-                ),
-                ("4.", "Quote a path for the shell: --path '.items[0]'."),
-                (
-                    "5.",
-                    "Start small on a big or unknown file: --paths --depth 1, then --path \
-                    into it.",
-                ),
-            ]),
             Block::Text(
-                "aless --generate skill prints an Agent Skill that teaches an agent all of \
-                this.",
+                "Without a terminal to draw on and read keys from (standard output a pipe \
+                or a file, no terminal to open, or TERM=dumb) aless refuses to start, at \
+                once and before reading any input, with a line on standard error and the \
+                status 2. Nothing but -h, --help, -V and --generate writes to standard \
+                output. To read one of these formats in a script, or write a document as \
+                another format, use dmog (https://github.com/tabnas/dmog), which \
+                translates any format aless reads into any other.",
             ),
         ],
     },
     Topic {
-        title: "OUTPUT OPTIONS",
-        note: "any of them prints instead of starting the viewer",
-        man: Man::Options("Output options"),
-        blocks: &[Block::Options(Section::Output)],
-    },
-    Topic {
-        title: "OPTIONS FOR BOTH",
-        note: "the output and the viewer",
-        man: Man::Options("Options for both the output and the viewer"),
-        blocks: &[Block::Options(Section::Both)],
+        title: "INPUT OPTIONS",
+        note: "what is read, and how",
+        man: Man::Options("Input options"),
+        blocks: &[Block::Options(Section::Input)],
     },
     Topic {
         title: "VIEWER OPTIONS",
-        note: "ignored without a screen",
+        note: "how it is shown",
         man: Man::Options("Viewer options"),
         blocks: &[Block::Options(Section::Viewer)],
     },
@@ -639,261 +482,54 @@ const TOPICS: &[Topic] = &[
         blocks: &[
             Block::Text(
                 "FILE is a path, or - for standard input. Without a FILE, aless reads \
-                standard input when it is not a terminal; otherwise output fails with a \
-                usage error, and the viewer explores the current directory. Every output \
-                option but --check reads one input: run aless once per file, or --check \
-                several. A directory is a usage error without a screen, and opens the file \
-                explorer in the viewer. Options end at --, after which every argument is a \
-                FILE, and a long option's value may follow it or be attached to it \
-                (--kind=yaml).",
+                standard input when it is not a terminal, and otherwise explores the \
+                current directory; a directory named opens in the file explorer. Options \
+                end at --, after which every argument is a FILE, and a long option's \
+                value may follow it or be attached to it (--kind=yaml).",
             ),
             Block::Text(
                 "The format comes from a file's extension, or from its whole name for a \
-                --grammar NAME (/etc/hosts), and -k FORMAT overrides it for every input. A \
-                file whose extension no format claims is read as plain text, an array of \
-                its lines. Map keys keep their source order. The formats, with the \
-                extensions that imply each:",
+                --grammar NAME (/etc/hosts), and -k FORMAT overrides it for every input; \
+                inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH \
+                FORMAT opens a file as one. A file whose extension no format claims is \
+                read as plain text, an array of its lines. Map keys keep their source \
+                order. The formats, with the extensions that imply each:",
             ),
             Block::Formats,
         ],
     },
     Topic {
-        title: "PATHS",
-        note: "",
-        man: Man::Section,
-        blocks: &[Block::Text(
-            "--path takes jq's syntax, which every output prints, so a path can go \
-            straight back in: ., .a.b[0], .\"odd key\", .[\"a.b\"], .[0] for a root array's \
-            first item and .[-1] for its last. Also accepted: a.b[0] and [0] without the \
-            leading dot, JSONPath's $.a['b'][0], and JSON Pointer's /a/b/0. There are no \
-            wildcards, slices or recursive descent: pipe --json into jq for those. Quote a \
-            path for the shell, whose globbing would take [0]. On an object, [-1] is the \
-            key -1.",
-        )],
-    },
-    Topic {
-        title: "POSITIONS",
-        note: "",
-        man: Man::Section,
-        blocks: &[Block::Text(
-            "--at takes LINE or LINE:COL, counted from 1, columns in characters, as an \
-            entry's line and col are. Inside the text, --at answers the node starting \
-            last at or before the position on its line, the innermost of several starting \
-            there (a line alone, or a column before the line's first node, that first \
-            node; on a line with no node of its own, a comment or a closing bracket, the \
-            last node before the line, or the document's first node when none is). \
-            Outside the text it names nothing, status 4: a line past the last line, or a \
-            column past the end of its line, where a line's text excludes its terminator \
-            (LF or CRLF), a trailing terminator starts no line, and an empty line has no \
-            column inside it.",
-        )],
-    },
-    Topic {
-        title: "OUTPUT",
-        note: "",
-        man: Man::Section,
-        blocks: &[
-            Block::Text("An entry describes one node:"),
-            Block::Code(r#"{"path":".spec.replicas","kind":"number","line":12,"col":3,"value":3}"#),
-            Block::Terms(&[
-                (
-                    "path",
-                    "where it is, in jq syntax: give it back to --path, or to jq, \
-                    unchanged",
-                ),
-                ("kind", "object, array, string, number, boolean or null"),
-                (
-                    "line, col",
-                    "where the node starts, from 1, columns in characters: at its key \
-                    when it has one, else at its value. Exact for the JSON family, TOML, \
-                    INI, CSV and ZON, and for C's tokens, from the places its syntax tree \
-                    records, best-effort for YAML, XML, Markdown, CSS, PGN and expressions, \
-                    loose for a .proto file's descriptor, and null when unknown, as \
-                    throughout a grammar's spec, which its compiler writes",
-                ),
-                (
-                    "length",
-                    "a container's item count, or the full length of a string cut short",
-                ),
-                (
-                    "value",
-                    "a scalar's value. A string over 200 characters is cut to 200, with \
-                    \"truncated\": true; NaN and the infinities are \"NaN\", \"Infinity\" \
-                    and \"-Infinity\"",
-                ),
-            ]),
-            Block::Text("What each option prints on standard output when it succeeds:"),
-            Block::Terms(&[
-                (
-                    "--json",
-                    "the value itself, indented 2 spaces a level (--indent N), or on one \
-                    line (--compact)",
-                ),
-                (
-                    "--paths",
-                    "{file, format, path, entries: [entry, ...], total, limit, \
-                    truncated}",
-                ),
-                (
-                    "--find",
-                    "{file, format, path, pattern, matches: [entry, ...], total, limit, \
-                    truncated}",
-                ),
-                (
-                    "--where",
-                    "{file, format, ...entry}: the entry, with file and format first",
-                ),
-                (
-                    "--check",
-                    "{ok, files: [{file, format, ok, error}]}, error null for a file that \
-                    parses",
-                ),
-            ]),
-            Block::Text(
-                "file is the path as given, or - for standard input; format is what the \
-                input was read as; path is where the listing starts. total counts every \
-                entry the listing found, and truncated is true when that is more than \
-                --limit let through: raise --limit (0 for all), or narrow with --path or \
-                --depth.",
-            ),
-        ],
-    },
-    Topic {
-        title: "ERRORS",
+        title: "KEYS",
         note: "",
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "An error is one JSON object on standard error, and standard output is \
-                then empty, with one exception: a failed --check still prints its report. \
-                A parse error:",
-            ),
-            Block::Code(
-                r#"{"error": {"kind": "parse", "file": "bad.json", "format": "json",
-  "code": "unexpected", "message": "unexpected end of input",
-  "line": 2, "col": 1, "hint": "The document ends before it is ...",
-  "source_line": "", "report": "[tabnas/unexpected]: unexpected ..."}}"#,
-            ),
-            Block::Text(
-                "kind says what failed, and which fields come with it. A parse error's \
-                fields are always there, null where they do not apply; another kind's \
-                fields named \"when\" are there only then:",
+                "The keys are jless's, and F1 or :help inside aless lists them all; the \
+                ones used most:",
             ),
             Block::Terms(&[
+                ("j k", "down / up; a count before a key repeats it (3j)"),
                 (
-                    "parse",
-                    "the input did not parse: file, format, code (the grammar's: \
-                    unexpected, unterminated_string, too_deep, ...), message, line, col, \
-                    hint, source_line (the line the error is on) and report (the whole \
-                    report the viewer shows, uncoloured)",
+                    "h l",
+                    "collapse / expand, or go to the parent / first child",
                 ),
+                ("J K", "next / previous sibling"),
+                ("g G", "first / last row; Ng goes to row N"),
+                ("C-d C-u", "half a page down / up"),
+                ("Space", "toggle the focused container"),
+                ("c e", "collapse / expand the focused node and its siblings"),
                 (
-                    "io",
-                    "an input or a --grammar file could not be read, or the output not \
-                    written: a parse error's fields, with the code io (file null when it \
-                    was standard output)",
+                    "/ ?",
+                    "search forward / backward; n N for the next / previous match",
                 ),
-                (
-                    "too_large",
-                    "over --max-size: an io error's fields, plus size (null for standard \
-                    input, which is read no further) and limit, in bytes; the hint names \
-                    the --max-size that would read it",
-                ),
-                (
-                    "timeout",
-                    "past --timeout: a parse error's fields, line and col showing how far \
-                    the parse got (null when the input was still being read, or the parse \
-                    finished late), plus seconds",
-                ),
-                (
-                    "not_found",
-                    "--path or --at names nothing: file, format, message, the path or at \
-                    given, nearest (the entry of the deepest node the path reached, or of \
-                    the node a position inside the text would have answered) and keys \
-                    (that node's first keys when it is an object)",
-                ),
-                (
-                    "usage",
-                    "the command is wrong: message, and nothing more, but that a \
-                    --grammar that does not compile adds grammar, and file when it came \
-                    from one",
-                ),
+                ("yy yp yq", "copy the value / its path / its jq path"),
+                ("m", "switch between data mode and line mode"),
+                ("s", "show the source text at the focused node"),
+                ("!", "show a parse error's report in full"),
+                ("Tab", "the next tab (Shift-Tab the previous)"),
+                (":", "a command: :open PATH, :format FORMAT, :w FILE, :help"),
+                ("q", "close the tab, quitting with the last; C-c quits"),
             ]),
-            Block::Text(
-                "An io, too_large or timeout error about a --grammar file adds grammar, \
-                with file the grammar file and format null. --compact puts an error on \
-                one line. The README's \"Scripts and agents\" section has every case at \
-                length.",
-            ),
-        ],
-    },
-    Topic {
-        title: "EXIT STATUS",
-        note: "",
-        man: Man::Section,
-        blocks: &[Block::Terms(&[
-            ("0", "success: standard output holds the answer"),
-            (
-                "1",
-                "the input did not parse (parse); with --check, an input failed, and the \
-                report says which",
-            ),
-            (
-                "2",
-                "bad usage (usage): an unknown option, a bad path, no input, a directory, \
-                a --grammar that does not compile, or the viewer without a terminal",
-            ),
-            (
-                "3",
-                "an input or a --grammar file could not be read, or the output not \
-                written (io)",
-            ),
-            ("4", "--path or --at names nothing (not_found)"),
-            (
-                "5",
-                "an input or a --grammar file is over --max-size (too_large)",
-            ),
-            (
-                "6",
-                "a parse, or a --grammar compile, ran past --timeout, or the input was \
-                still being read when it passed (timeout)",
-            ),
-        ])],
-    },
-    Topic {
-        title: "LARGE INPUTS AND LIMITS",
-        note: "",
-        man: Man::Section,
-        blocks: &[
-            Block::Text(
-                "An input is read whole and parsed whole before anything is printed, at \
-                about a megabyte a second and 40 bytes of memory per byte of input. \
-                --max-size (default 64M) refuses a larger input before it is read, and \
-                --timeout stops a parse that runs too long with an error that says how far \
-                it got: a caller with a deadline of its own should pass a --timeout a few \
-                seconds shorter. --path and --depth shrink the output, not the parse. A \
-                reader that stops early (aless --json big.json | head) ends aless quietly, \
-                with status 0.",
-            ),
-            Block::Text(
-                "A document nested deeper than aless reads fails as a parse error with the \
-                code too_deep: past about 1,000 levels, or sooner where the grammar has a \
-                limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
-                INI, ZON and expressions, an expression of 127 operations too, 256 for \
-                XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
-                file, counted before it is parsed, for C an expression of 127 \
-                operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
-                values a byte of the file written out (33,554,432 at most) or 2,048 bytes \
-                of names and strings a byte (256 MB at most), its reader repeating \
-                subtrees, and \
-                for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
-                512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
-                128 deep).",
-            ),
-            Block::Text(
-                "Numbers are 64-bit floats: --json and entries give an integer beyond 2^53 \
-                as the nearest one, and --json writes NaN and the infinities as null.",
-            ),
         ],
     },
     Topic {
@@ -914,7 +550,7 @@ const TOPICS: &[Topic] = &[
                 error before any input is read, and so is a repetition count over 1,024, \
                 or repetitions that would have \
                 the compiler write more than 1,024 rules. An input the grammar does not \
-                accept is a parse error, with format the grammar's name.",
+                accept opens as a parse error, with the grammar's name for its format.",
             ),
             Block::Text(
                 "Grammars for /etc/hosts, crontabs, /etc/passwd, /etc/group, /etc/fstab, \
@@ -925,41 +561,59 @@ const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
-        title: "THE VIEWER",
+        title: "LARGE INPUTS AND LIMITS",
         note: "",
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "In a terminal each FILE opens in a tab of its own, watched and reloaded \
-                when it changes, keeping your place. A directory opens in the file \
-                explorer, where Enter opens a file. Without a FILE the viewer reads \
-                standard input when it is not a terminal, and otherwise explores the \
-                current directory. The keys are jless's, and F1 or :help inside aless \
-                lists them all; the ones used most:",
+                "An input is read whole and parsed whole before anything is shown, at \
+                about a megabyte a second and 40 bytes of memory per byte of input. The \
+                parse holds the viewer: before a large file is read aless says so, and a \
+                reload of a large watched file pauses it for as long as the parse takes. \
+                --max-size (default 64M) refuses a larger input before it is read, as a \
+                tab that says so and names the size that would read it, and --timeout \
+                stops a parse that runs too long, as a tab that says how far it got.",
             ),
-            Block::Terms(&[
-                ("j k", "down / up; a count before a key repeats it (3j)"),
-                (
-                    "h l",
-                    "collapse / expand, or go to the parent / first child",
-                ),
-                ("J K", "next / previous sibling"),
-                ("g G", "first / last row; Ng goes to row N"),
-                ("C-d C-u", "half a page down / up"),
-                ("Space", "toggle the focused container"),
-                ("c e", "collapse / expand the focused node and its siblings"),
-                (
-                    "/ ?",
-                    "search forward / backward; n N for the next / previous match",
-                ),
-                ("yy yp yq", "copy the value / its path / its jq path"),
-                ("m", "switch between data mode and line mode"),
-                ("s", "show the source text at the focused node"),
-                ("Tab", "the next tab (Shift-Tab the previous)"),
-                (":", "a command: :open PATH, :format FORMAT, :w FILE, :help"),
-                ("q", "close the tab, quitting with the last; C-c quits"),
-            ]),
+            Block::Text(
+                "A document nested deeper than aless reads opens as a parse error with the \
+                code too_deep: past about 1,000 levels, or sooner where the grammar has a \
+                limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
+                INI, ZON and expressions, an expression of 127 operations too, 256 for \
+                XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
+                file, counted before it is parsed, for C an expression of 127 \
+                operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
+                values a byte of the file written out (33,554,432 at most) or 2,048 bytes \
+                of names and strings a byte (256 MB at most), its reader repeating \
+                subtrees, and \
+                for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
+                512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
+                128 deep).",
+            ),
+            Block::Text(
+                "Numbers are 64-bit floats: the tree, :w and the copy commands give an \
+                integer beyond 2^53 as the nearest one, and the source view (s) has the \
+                spelling.",
+            ),
         ],
+    },
+    Topic {
+        title: "EXIT STATUS",
+        note: "",
+        man: Man::Section,
+        blocks: &[Block::Terms(&[
+            ("0", "the viewer was quit"),
+            (
+                "1",
+                "the viewer failed while it ran: the terminal could not be drawn on or \
+                read",
+            ),
+            (
+                "2",
+                "the viewer could not start: bad usage (an unknown option, a bad value, a \
+                --grammar that does not compile or cannot be read), or no terminal to \
+                draw on and read keys from",
+            ),
+        ])],
     },
     Topic {
         title: "ENVIRONMENT",
@@ -969,8 +623,8 @@ const TOPICS: &[Topic] = &[
             ("NO_COLOR", "set and not empty: no colours, as --no-color"),
             (
                 "TERM",
-                "dumb: print instead of starting the viewer, as when standard output is \
-                not a terminal, since such a terminal cannot draw it",
+                "dumb: a terminal that cannot draw the viewer, which refuses to start, as \
+                without one",
             ),
         ])],
     },
@@ -1003,14 +657,6 @@ const TOPICS: &[Topic] = &[
                  eval \"$(aless --generate complete-zsh)\"      # ~/.zshrc, after compinit\n\
                  aless --generate complete-fish | source      # config.fish",
             ),
-            Block::Text(
-                "The Agent Skill (--generate skill) is a file an agent loads from a \
-                directory of its own. For Claude Code:",
-            ),
-            Block::Code(
-                "mkdir -p ~/.claude/skills/aless\n\
-                 aless --generate skill > ~/.claude/skills/aless/SKILL.md",
-            ),
         ],
     },
     Topic {
@@ -1018,14 +664,14 @@ const TOPICS: &[Topic] = &[
         note: "",
         man: Man::Section,
         blocks: &[Block::Code(
-            "aless --paths --depth 1 config.yaml       what is in it\n\
-             aless --json --path '.spec.containers[0]' deploy.yaml\n\
-             aless --where --at 42:7 deploy.yaml       the path at a linter's 42:7\n\
-             aless --where --path .a.b config.yaml     the line a path is on\n\
-             aless --find '\"image\":' deploy.yaml       every image, with its line\n\
-             aless --check $(git ls-files '*.toml')    do they all parse?\n\
-             aless -k csv --json < data.csv            stdin is JSON unless -k says\n\
-             aless --grammar hosts=hosts.abnf --json /etc/hosts",
+            "aless config.yaml                      one file, in a tab\n\
+             aless deploy.yaml values.toml a.csv    several files, a tab each\n\
+             curl -s https://api.example/x | aless  standard input, read as JSON\n\
+             aless -k yaml settings.conf            a file whose extension misleads\n\
+             aless --grammar hosts=hosts.abnf /etc/hosts    a format of your own\n\
+             aless --no-watch big.json              no reload when the file changes\n\
+             aless -m line -n x.json                line mode, with line numbers\n\
+             aless                                  explore the current directory",
         )],
     },
     Topic {
@@ -1033,11 +679,12 @@ const TOPICS: &[Topic] = &[
         note: "",
         man: Man::Section,
         blocks: &[Block::Terms(&[
-            ("jq(1), jless(1)", "where the paths and the keys come from"),
+            ("jless(1)", "where the keys come from"),
+            ("jq(1)", "whose syntax the copied paths (yq) take"),
             (
                 "the documentation",
                 concat!(
-                    "tutorials, how-to guides, this reference with every key of the \
+                    "tutorial, how-to guides, this reference with every key of the \
                     viewer, and how aless works: ",
                     env!("CARGO_PKG_HOMEPAGE")
                 ),
@@ -1053,6 +700,11 @@ const TOPICS: &[Topic] = &[
                 "tabnas/abnf",
                 "the ABNF compiler --grammar uses, and its annotations: \
                 https://github.com/tabnas/abnf",
+            ),
+            (
+                "dmog",
+                "the command that reads these formats in a script, writes a document as \
+                another format and runs a program over one: https://github.com/tabnas/dmog",
             ),
         ])],
     },
@@ -1274,9 +926,9 @@ pub fn summary() -> String {
     out.push('\n');
     push_filled(
         &mut out,
-        "aless --help prints the whole reference: what each option prints, the error \
-        objects and exit statuses, paths, positions, formats, limits and the viewer's \
-        keys.",
+        "aless --help prints the whole reference: what each option does, the formats, \
+        the keys used most, custom grammars, the limits, the exit statuses and the files \
+        aless writes.",
         0,
     );
     out
@@ -1285,7 +937,7 @@ pub fn summary() -> String {
 /// The reference `--help` prints, as HTML, for the documentation site:
 /// a section for each topic, in the same order, titled in sentence case
 /// with an `id` a link can name (`exit-status`), and each option with an
-/// `id` of its own (`opt-check` for `--check`), which a mention of the
+/// `id` of its own (`opt-kind` for `--kind`), which a mention of the
 /// option elsewhere in the reference links to.
 pub fn reference_html() -> String {
     let mut out = String::new();
@@ -1488,16 +1140,12 @@ pub fn generate(what: &str) -> Result<String, String> {
         "complete-zsh" => Ok(complete_zsh()),
         "complete-fish" => Ok(complete_fish()),
         "complete-powershell" => Ok(complete_powershell()),
-        "skill" => Ok(SKILL.to_string()),
         other => Err(format!(
             "--generate writes {}, not {other}",
             GENERATE.join(", ")
         )),
     }
 }
-
-/// The Agent Skill that teaches an agent to drive aless.
-pub const SKILL: &str = include_str!("../skills/aless/SKILL.md");
 
 /// The changelog, for the date of this version's release.
 const CHANGELOG: &str = include_str!("../CHANGELOG.md");
@@ -1625,6 +1273,7 @@ pub fn man_page() -> String {
     out.push_str(".nh\n");
     out.push_str(".SH NAME\n");
     roff_text(&mut out, &format!("aless \\- {}", roff(TAGLINE)));
+    let mut options_started = false;
     for topic in TOPICS {
         match topic.man {
             Man::Synopsis => {
@@ -1647,8 +1296,9 @@ pub fn man_page() -> String {
                 man_blocks(&mut out, topic.blocks);
             }
             Man::Options(title) => {
-                if title == "Output options" {
+                if !options_started {
                     out.push_str(".SH OPTIONS\n");
+                    options_started = true;
                 }
                 out.push_str(&format!(".SS \"{title}\"\n"));
                 man_blocks(&mut out, topic.blocks);
@@ -1925,8 +1575,10 @@ mod tests {
         assert!(lookup("--nope").is_none());
         assert!(lookup("-x").is_none());
         assert!(lookup("k").is_none());
-        assert!(asks_for_output("--json") && asks_for_output("--check"));
-        assert!(!asks_for_output("--depth") && !asks_for_output("-k"));
+        assert!(
+            lookup("--json").is_none(),
+            "aless is a viewer: no output option"
+        );
     }
 
     #[test]
@@ -2013,15 +1665,14 @@ mod tests {
         }
         let err = generate("nope").unwrap_err();
         assert!(err.contains("man, complete-bash"), "{err}");
-        assert_eq!(generate("skill").unwrap(), SKILL);
-        assert!(SKILL.starts_with("---\nname: aless\n"));
+        assert!(generate("skill").is_err(), "aless is a viewer: no skill");
     }
 
     /// The man page and the completions are ASCII, so no encoding a
     /// shell or a formatter reads them in can change them.
     #[test]
     fn the_generated_files_are_ascii() {
-        for what in GENERATE.iter().filter(|w| **w != "skill") {
+        for what in GENERATE {
             let text = generate(what).unwrap();
             let bad: Vec<char> = text.chars().filter(|c| !c.is_ascii()).collect();
             assert!(bad.is_empty(), "{what}: {bad:?}");
@@ -2128,13 +1779,12 @@ mod tests {
         assert_eq!(html_text("{\"a\": <1>}"), "{&quot;a&quot;: &lt;1&gt;}");
         assert_eq!(sentence_case("EXIT STATUS"), "Exit status");
         assert_eq!(
-            html_text("see OUTPUT, ERRORS and EXIT STATUS. Under OUTPUT OPTIONS --json"),
-            "see <a href=\"#output\">Output</a>, <a href=\"#errors\">Errors</a> and \
-             <a href=\"#exit-status\">Exit status</a>. Under \
-             <a href=\"#output-options\">Output options</a> \
-             <a href=\"#opt-json\"><code>--json</code></a>"
+            html_text("see KEYS and EXIT STATUS. Under INPUT OPTIONS -k"),
+            "see <a href=\"#keys\">Keys</a> and <a href=\"#exit-status\">Exit status</a>. \
+             Under <a href=\"#input-options\">Input options</a> \
+             <a href=\"#opt-kind\"><code>-k</code></a>"
         );
-        assert_eq!(html_text("OUTPUTS NO_PATHS"), "OUTPUTS NO_PATHS");
+        assert_eq!(html_text("KEYSTONE NO_KEYS"), "KEYSTONE NO_KEYS");
     }
 
     /// Cargo.toml's description is the line crates.io shows, and dist

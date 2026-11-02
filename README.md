@@ -8,11 +8,9 @@ grammars in ABNF, EBNF and GBNF, expressions and semantic versions, and
 any text format you describe with an ABNF grammar
 ([Custom grammars](#custom-grammars)), with **tabs** for several files
 at once and a **watch mode** that reloads a file when it changes while
-**keeping your place**.
-Without a screen it prints JSON instead, for scripts and agents: outlines,
-values by path, search hits and parse errors, each with its source
-position ([Scripts and agents](#scripts-and-agents)). Pure Rust; runs on
-Linux, macOS and Windows.
+**keeping your place**. aless is a viewer and nothing else: it draws on a
+terminal and reads keys from it, and without one it refuses to start.
+Pure Rust; runs on Linux, macOS and Windows.
 
 **Documentation: [aless.tabnas.dev](https://aless.tabnas.dev)**, with
 tutorials, how-to guides, the whole reference, and the reasons behind the
@@ -134,226 +132,28 @@ aless examples/bookshelf-openapi.yaml   # an OpenAPI spec to try (see examples/)
 | `--depth N` | fold containers deeper than N levels at start |
 | `-n` / `-N`, `-r` / `-R` | absolute / relative line numbers on / off |
 | `--scrolloff N` | rows kept around the focus when scrolling (default 3) |
-| `--indent N` | indentation per level (default 2), JSON output's too |
+| `--indent N` | indentation per level (default 2) |
 | `--hidden` | show dot-files in the explorer |
 | `--ascii` | ASCII fold markers (`v`, `>`) instead of `▼ ▽ ▶ ▷` |
 | `--no-color` (or `--no-colour`), `--no-mouse` | plain output; no mouse capture |
 | `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `K`, `M`, `G`; `0` for no limit); see [Performance](#performance) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none, `0` for no limit); on standard input, without a screen, it runs from the start, so waiting on the input counts |
-| `-h` / `--help` | a summary of the options / the whole reference: every option, what each output prints, the errors and exit statuses, paths, positions, formats and limits |
+| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (`2.5`, `90s`, `2m`; default none, `0` for no limit); the tab says how far the parse got |
+| `-h` / `--help` | a summary of the options / the whole reference: every option, the formats, the keys used most, custom grammars, the limits and the exit statuses |
 | `-V`, `--version` | the version |
-| `--generate WHAT` | print the man page (`man`), a shell's completions (`complete-bash`, `complete-zsh`, `complete-fish`, `complete-powershell`) or the Agent Skill (`skill`) |
+| `--generate WHAT` | print the man page (`man`) or a shell's completions (`complete-bash`, `complete-zsh`, `complete-fish`, `complete-powershell`) |
 
 `NO_COLOR` in the environment also disables colour.
 
-## Scripts and agents
-
-aless also runs without a screen. Give it any option from the table
-below except those the viewer shares (`--depth`, `--indent`, `-k`, the
-`--grammar` options, `--max-size` and `--timeout`), or let its standard
-output be something other than a terminal (a pipe, a file, an agent's
-tool call), or set `TERM=dumb`, and it prints JSON instead of starting
-the viewer. It
-never waits for keys: when the viewer cannot start, aless says so at
-once, before reading any input, with a `usage` error, and exits with
-status 2.
-
-```bash
-aless config.yaml | jq .spec                       # any format in, JSON out
-aless --paths --depth 1 big.json                   # an outline: what is in it
-aless --json --path '.spec.containers[0]' deploy.yaml
-aless --find '"image":' deploy.yaml                # nodes whose text matches
-aless --where --at 42:7 deploy.yaml                # the value a linter's 42:7 is in
-aless --where --path .spec.replicas deploy.yaml    # the line a path is on
-aless --check $(git ls-files '*.yaml' '*.toml')    # does everything parse?
-```
-
-| Option | Effect |
-|---|---|
-| `--json` | the document as JSON (the default), or the value at the start |
-| `--paths` | an entry for the start and each node below it |
-| `--find REGEX` | the entries of the nodes whose `"key": value` text matches: the viewer's search, so smart case (`REGEX/s` matches case) and `[ ] { }` literal unless escaped |
-| `--where` | the start's entry |
-| `--check` | parse every input and report on each |
-| `--path PATH` | start at PATH instead of the root |
-| `--at LINE[:COL]` | start at the node at that source position |
-| `--depth N` | `--paths` and `--find` go at most N levels below the start |
-| `--limit N` | at most N entries (default 200, 0 for all) |
-| `--compact` | JSON on one line, an error's too |
-| `--indent N` | `--json` indented N spaces a level (default 2) |
-| `-k`, `--kind FORMAT` | parse as FORMAT; standard input is JSON unless this says otherwise; `--format` is another name for it |
-| `--grammar NAME=FILE`, `--grammar-expr NAME=ABNF` | a format of your own, from an ABNF grammar ([Custom grammars](#custom-grammars)) |
-| `--max-size SIZE` | refuse an input larger than SIZE (default `64M`; `0` for no limit) |
-| `--timeout SECONDS` | stop a parse, or a `--grammar` compile, that runs longer than this (default none; `0` for no limit); on standard input the time runs from the start, so waiting on the input counts |
-| `TERM=dumb` | in the environment, not an option: JSON output, as when standard output is not a terminal, since such a terminal cannot draw the viewer |
-
-**Paths** are jq's syntax, which every output prints, so a path can go
-straight back in: `.`, `.a.b[0]`, `."odd key"`, `.["a.b"]`, `.[0]` for
-a root array's first item and `.[-1]` for its last. `a.b[0]` without the
-dot (and so `[0]` for `.[0]`), JSONPath's `$.a['b'][0]` and JSON
-Pointer's `/a/b/0` work too. Wildcards, slices and recursive descent
-are jq's work: pipe `--json` into jq for those. Quote a path for the
-shell, whose globbing would take `[0]`.
-
-**An entry** is one node:
-
-```json
-{"path":".store.books[1].title","kind":"string","line":7,"col":8,"value":"TAPL"}
-```
-
-- `kind` is jq's name for the type: object, array, string, number,
-  boolean or null.
-- `line` and `col` count from 1, columns in characters, and give where
-  the node starts in the source: at its key when it has one, else at its
-  value. They are exact for the JSON family, TOML, INI, CSV and ZON, and
-  for C's tokens, from the places its syntax tree records; best-effort
-  for YAML, XML, Markdown, CSS, PGN and expressions, loose for a `.proto`
-  file's descriptor, and `null` when unknown, as throughout a grammar's
-  spec, which its compiler writes.
-- A container has `length`, its item count; a scalar has `value`. A
-  string over 200 characters is cut to 200, with `"truncated": true` and
-  its full `length`. Numbers are 64-bit floats, so an integer beyond
-  2^53 loses precision; NaN and the infinities, which JSON cannot hold,
-  are `"NaN"`, `"Infinity"` and `"-Infinity"` in an entry and `null` in
-  `--json` output.
-
-Inside the text, `--at` answers the node starting last at or before the
-position on its line, the innermost of several starting there (a line
-alone, or a column before the line's first node, that first node; on a
-line with no node of its own, a comment or a closing bracket, the last
-node before the line, or the document's first node when none is).
-Outside the text it names nothing: a line past the last line, or a
-column past the end of its line, where a line's text excludes its
-terminator (LF or CRLF), a trailing terminator starts no line (`"a\n"`
-has one), and an empty line has no column inside it.
-
-A listing puts one entry per line and says what it left out:
-
-```
-$ aless --paths --depth 1 nested.json
-{
-  "file": "nested.json",
-  "format": "json",
-  "path": ".",
-  "entries": [
-    {"path":".","kind":"object","line":1,"col":1,"length":2},
-    {"path":".store","kind":"object","line":2,"col":3,"length":4},
-    {"path":".version","kind":"number","line":11,"col":3,"value":3}
-  ],
-  "total": 3,
-  "limit": 200,
-  "truncated": false
-}
-```
-
-`file` is the path as given, or `-` for standard input, and `path` is
-where the listing starts. `--find` prints the same with `pattern` and
-`matches`; `--where` prints one entry with `file` and `format`; `--check`
-prints `{"ok", "files": [{"file", "format", "ok", "error"}]}`, where a
-failing file's `error` is the object a run on that file alone would
-print (below): a parse error's fields for a file that does not parse,
-`kind` and `message` alone for a directory.
-
-**Errors** are JSON on standard error. Standard output then stays empty,
-with one exception: a failed `--check` still prints its report there,
-with status 1. A parse error:
-
-```
-$ aless bad.json
-{
-  "error": {
-    "kind": "parse",
-    "file": "bad.json",
-    "format": "json",
-    "code": "unexpected",
-    "message": "unexpected end of input",
-    "line": 2,
-    "col": 1,
-    "hint": "The document ends before it is complete: look for an unclosed\nbracket, brace or string, or a missing value at the end.",
-    "source_line": "",
-    "report": "[tabnas/unexpected]: unexpected end of input\n  --> bad.json:2:1\n  1 | {\"a\": 1, \"b\": \n  2 | \n      ^ unexpected end of input\n…"
-  }
-}
-```
-
-| Exit | Meaning | Error `kind` |
-|---|---|---|
-| 0 | success: standard output holds the answer | |
-| 1 | the input did not parse; with `--check`, some input failed and the report says which | `parse` |
-| 2 | bad usage: an unknown option, a bad path, no input, a directory, a `--grammar` that does not compile, or the viewer without a terminal | `usage` |
-| 3 | an input or a `--grammar` file could not be read, or the output could not be written | `io` |
-| 4 | `--path` or `--at` names nothing | `not_found` |
-| 5 | an input or a `--grammar` file is larger than `--max-size` | `too_large` |
-| 6 | a parse, or a `--grammar` compile, ran longer than `--timeout`, or the input was still being read when it passed | `timeout` |
-
-A `parse` or `io` error has `file`, `format`, `code` (the grammar's error
-code, or `io`), `message`, `line`, `col`, `hint`, `source_line` and
-`report`, the whole report the viewer shows, uncoloured; a field that
-does not apply is `null` (`file` too, when it was standard output that
-could not be written). A `not_found` error has the `path` or `at` it
-was given, the entry of the `nearest` node, the deepest node the path
-did reach or, for `--at`, the node a position inside the text would have
-answered (`null` when no node has a position), and `keys`, that node's
-first keys when it is an object and `null` otherwise. A `too_large`
-error has the
-fields of an `io` one plus the input's `size` (`null` for standard input,
-which is read no further than the limit) and the `limit`, in bytes, and
-its `hint` names the `--max-size` that would read it. A `timeout` error
-has the fields of a `parse` one, its `line` and `col` showing how far the
-parse got, plus the time limit in `seconds`; a parse that finished, but
-late, fails the same way, with `line` and `col` `null` and a `hint`
-saying how long it took. On standard input the time runs from
-the start of the run, so waiting on it counts: an input still being read
-when it passes (a writer that is slow, or sends nothing, or never closes
-its end) fails as `timeout` too, with `line` and `col` `null` and a
-message saying the input was still being read. On a file it runs from
-the start of the parse, so each file `--check` reads gets the whole of
-it. A `usage` error has only `kind` and `message`, the viewer's refusal
-without a terminal among them,
-except for a `--grammar` that does not compile, which adds the `grammar`
-name and, when it came from a file, the `file`. A grammar file that
-cannot be read is an `io` error, one over `--max-size` a `too_large`
-error and a compile past `--timeout` a `timeout` error, each with the
-fields of that kind, `file` the grammar file (`null` for
-`--grammar-expr`), `format` `null`, and `size`, `limit` or `seconds` as
-above, plus `grammar` ([Custom grammars](#custom-grammars)).
-A document nested deeper than aless parses fails as a `parse` error with
-the code `too_deep`: past about 1,000 levels, or sooner where the grammar
-has a limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML,
-TOML, INI, ZON and expressions, an expression of 127 operations too, 256
-for XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a
-`.proto` file, counted before it is parsed, C's own: an expression of
-127 operations, 1,024 open rules and a syntax tree 256 levels deep, and a
-tree of more than 256 values a byte of the file written out (33,554,432
-at most, however long the file) or of more than 2,048 bytes of names and
-strings a byte (256 MB at most), which its reader's repeated subtrees
-make of a few levels of nesting, and an ABNF,
-EBNF or GBNF grammar's compiler's: groups and options about 500 deep in
-ABNF, 130 in EBNF and 128 in GBNF, and elements nested 128 deep in any of
-them). For a grammar from the
-command line the 1,000 levels are measured on the value it built, once
-the parse is done, and the error then has no `line` ([Custom
-grammars](#custom-grammars)).
-
-**Large inputs.** An input is read whole, and parsed whole, before
-anything is printed: the tabnas grammars parse complete documents, so
-there is no streaming, and the first byte of output comes when the parse
-ends. That costs memory, about 40 bytes per byte of input, and time (see
-[Performance](#performance)), which is why inputs over `--max-size` are
-refused, before a file is read or as soon as standard input passes the
-limit, and why `--timeout` exists: at around a megabyte a second, a
-large input can take minutes, so a caller with a deadline of its own
-should pass a shorter one, and get an error it can read rather than a
-kill. Pipes are safe both ways: standard input can be a pipe or a file,
-and a reader that stops early (`aless --json big.json | head`) ends
-aless without an error, with status 0, though the parse has already been
-paid for.
-To take part of a large document, `--path` and `--depth` keep the output
-small; the input is still parsed in full. Writing a document as another
-format, and running a program over one, is the `dmog` command's work
-([tabnas/dmog](https://github.com/tabnas/dmog), data mogrify): `dmog
-translate --from yaml --to toml deploy.yaml`, `dmog run export.alc
-response.json`. aless reads, shows and prints JSON.
+aless needs a terminal to draw on and read keys from. Without one (standard
+output a pipe or a file, no terminal to open, or `TERM=dumb`) it refuses to
+start, before reading any input, with a line on standard error and the
+exit status 2; nothing but `-h`, `--help`, `-V` and `--generate` writes to
+standard output. Reading one of these formats in a script, writing a
+document as another format, and running a program over one are the `dmog`
+command's work ([tabnas/dmog](https://github.com/tabnas/dmog), data
+mogrify): `dmog translate --from yaml --to json deploy.yaml`, `dmog run
+export.alc response.json`. Inside the viewer, `:w FILE` writes the tab's
+document as JSON, and the `y` keys copy a value or its path.
 
 ## Formats
 
@@ -419,7 +219,7 @@ whose extension or whole file name is that name is read with it:
 
 ```bash
 aless --grammar hosts=hosts.abnf /etc/hosts              # the whole file name is `hosts`
-aless --grammar hosts=hosts.abnf --json backup.hosts     # or the extension
+aless --grammar hosts=hosts.abnf backup.hosts            # or the extension
 aless --grammar crontab,cron=crontab.abnf /etc/crontab jobs.cron   # two names, one grammar
 crontab -l | aless --grammar-expr 'jobs=…' -k jobs       # the text inline; -k for standard input
 ```
@@ -427,13 +227,12 @@ crontab -l | aless --grammar-expr 'jobs=…' -k jobs       # the text inline; -k
 `--grammar NAME=FILE` reads the grammar from FILE (within `--max-size`);
 `--grammar-expr NAME=ABNF` takes the text itself, everything after the
 first `=`. Both repeat, for several grammars at once. NAME is the
-format's name, as `--paths` and `--check` report it and as `-k` and
-`:format` take it, and what the extension or whole name must be, in any
-case. A name that is a built-in format's (`json`, `conf`) is allowed:
-the grammar then reads that extension. A grammar file is a document of
-its own as well: `aless hosts.abnf` shows the grammar spec it compiles
-to, and `aless --check hosts.abnf` says whether it compiles, with the
-compiler's message where it does not ([Formats](#formats)).
+format's name, as the status bar shows it and as `-k` and `:format` take
+it, and what the extension or whole name must be, in any case. A name
+that is a built-in format's (`json`, `conf`) is allowed: the grammar then
+reads that extension. A grammar file is a document of its own as well:
+`aless hosts.abnf` shows the grammar spec it compiles to, and a grammar
+that does not compile opens as the compiler's message ([Formats](#formats)).
 
 What the grammar builds is the document. With `; @object a b` and
 `; @array` comments on its rules (the annotation syntax is
@@ -442,8 +241,8 @@ explains it) the value is JSON of strings: one member per part of the
 rule that produces a value, nested where that part's own rule is
 annotated. Without annotations it is the compiler's parse tree, a
 `{"rule": …, "src": …, "kids": […]}` node per rule. Either way the
-viewer, `--json`, `--paths`, `--find`, `--where` and `--check` work on
-it as on any format. An empty file is `null`; one holding only
+viewer works on it as on any format: the tree, search, the source view,
+`:w` and the copy keys. An empty file is `null`; one holding only
 comments and blank lines is whatever the grammar builds from nothing,
 `[]` for the grammars below.
 
@@ -461,22 +260,32 @@ word    = ( TX )
 ```
 
 Run on the library's own sample (`tests/fixtures/grammars/hosts`, which
-is detected by its whole name; standard input needs `-k`):
+is detected by its whole name; standard input needs `-k`), the viewer
+shows an array of entries, each its address and its names:
 
 ```
-$ head -5 tests/fixtures/grammars/hosts
-# /etc/hosts: static table lookup for hostnames.
-# See hosts(5) for details.
-
-127.0.0.1       localhost
-127.0.1.1       workstation.example.com workstation
-$ head -5 tests/fixtures/grammars/hosts | aless --grammar hosts=tests/fixtures/grammars/hosts.abnf -k hosts --json --compact
-[{"address":"127.0.0.1","names":["localhost"]},{"address":"127.0.1.1","names":["workstation.example.com","workstation"]}]
-$ aless --grammar hosts=tests/fixtures/grammars/hosts.abnf --where --at 5:17 --compact tests/fixtures/grammars/hosts
-{"file":"tests/fixtures/grammars/hosts","format":"hosts","path":".[1].names[0]","kind":"string","line":5,"col":17,"value":"workstation.example.com"}
+$ cd tests/fixtures/grammars && aless --grammar hosts=hosts.abnf hosts
+▼ [
+  ▽ {
+      address: "127.0.0.1"
+    ▽ names: [
+        "localhost"
+  ▽ {
+      address: "127.0.1.1"
+    ▽ names: [
+        "workstation.example.com"
+        "workstation"
+  ▽ {
+      address: "10.0.0.5"
+    ▽ names: [
+        "fileserver"
+        "files"
+        "nas"
+ hosts .                                                 hosts · watching · 4:1
 ```
 
-(`tests/agent.rs` runs those commands and holds their output to this.)
+(`tests/grammars.rs` holds every grammar of the library to the JSON its
+sample parses to.)
 
 The library holds a grammar for each of `/etc/hosts`, `/etc/crontab` and
 a user's crontab, `/etc/passwd`, `/etc/group`, `/etc/fstab`,
@@ -500,37 +309,34 @@ keyword (`"nameserver"`) matches whole words only. The engine settings
 behind this are listed at the end of the library's README.
 
 **Errors.** A grammar that does not compile is a usage error, raised
-before any input is read: status 2, and without a screen
-`{"error": {"kind": "usage", "message": "--grammar hosts: <the
-compiler's message>", "grammar": "hosts", "file": "hosts.abnf"}}`
-(`file` omitted for `--grammar-expr`); the compiler's message is one
-line, without its colour codes. A repetition count over 1,024
-(`2000"a"`, `1*5000word`) is refused the same way, since the compiler
-writes out every copy and a count in the millions would take gigabytes
-before any input was read; and so is a grammar whose repetitions would
-have the compiler write more than 1,024 rules. It writes two for every
-copy past a repetition's minimum (`1*255word` is 509 rules) and none for
-the copies of a terminal up to it (`1024"a"`), one more for every copy
-of a rule or a group, and a rule's repetitions again into every
-alternative that starts with that rule (`doc = r "x"` writes `r`'s
-twice). Rules cost time faster than they add up, in the compile and
-again at the start of every parse, which assembles the grammar afresh:
-in a release build 1,000 rules add about a second to each parse, and
-2,000 add nine. That limit bounds what repetitions cost and nothing
-else. Other shapes can make a grammar slow to compile, rules of several
-alternatives that start with one another above all, since each copies
-the other's alternatives, and `--timeout` is what bounds a compile. A grammar file that cannot be read is an `io`
-error, status 3; one over `--max-size` is `too_large`, status 5, with
-its `size` and the `limit`; and the compile is held to `--timeout` as a
-parse is, with a `timeout` error, status 6, and the `seconds`. It runs
-on a thread of its own, which cannot be interrupted, so past the limit
-aless stops waiting for it and exits; when no thread can be started
-(the process is out of threads or memory), it runs on aless's own
-thread to its end instead, and one that ended past the limit is refused
-all the same, its hint saying how long it took. Each has the fields of that kind (`file` the
-grammar file, `format` `null`) plus `grammar`. An input the grammar
-does not accept is a `parse` error like any other, with `format` the
-grammar's name and the line and column the parse stopped at.
+before any input is read: one line on standard error, `aless: --grammar
+hosts: <the compiler's message>`, and the exit status 2; the compiler's
+message is one line, without its colour codes. A repetition count over
+1,024 (`2000"a"`, `1*5000word`) is refused the same way, since the
+compiler writes out every copy and a count in the millions would take
+gigabytes before any input was read; and so is a grammar whose
+repetitions would have the compiler write more than 1,024 rules. It
+writes two for every copy past a repetition's minimum (`1*255word` is
+509 rules) and none for the copies of a terminal up to it (`1024"a"`),
+one more for every copy of a rule or a group, and a rule's repetitions
+again into every alternative that starts with that rule (`doc = r "x"`
+writes `r`'s twice). Rules cost time faster than they add up, in the
+compile and again at the start of every parse, which assembles the
+grammar afresh: in a release build 1,000 rules add about a second to
+each parse, and 2,000 add nine. That limit bounds what repetitions cost
+and nothing else. Other shapes can make a grammar slow to compile, rules
+of several alternatives that start with one another above all, since
+each copies the other's alternatives, and `--timeout` is what bounds a
+compile. A grammar file that cannot be read, or one over `--max-size`,
+is refused the same way, naming the file, and the compile is held to
+`--timeout` as a parse is: it runs on a thread of its own, which cannot
+be interrupted, so past the limit aless stops waiting for it and exits;
+when no thread can be started (the process is out of threads or memory),
+it runs on aless's own thread to its end instead, and one that ended
+past the limit is refused all the same, saying how long it took. An
+input the grammar does not accept opens as a parse error like any other,
+with the grammar's name for its format and the line and column the parse
+stopped at.
 
 **Limits.** A grammar from the command line runs under the limits the
 built-in grammars do. Its rule stack may reach 3,000 open rules, and a
@@ -555,9 +361,8 @@ same 300,000 lines took 2.7 GB.
 text (a `TX` word, `*` included) is placed exactly; one assembled from
 several tokens or characters (a `1*DIGIT` rule, a group of several
 parts, `gecos = *( word / " " )`) is not, and shows no position of its
-own. `--where` at a position inside such a value answers, as on any
-line, the last placed node before it: the field before it, or the
-record.
+own: the status bar shows none, and the source view opens at the last
+placed node before it, the field before it or the record.
 
 ## Keys
 
@@ -752,7 +557,7 @@ records where each token is, so a token and its text are placed exactly
 where it says, each time the tree repeats it, and what the reader adds (a
 node's kind, a token's name, a span's own numbers) has no position. A
 grammar's spec is written by its compiler, which keeps no places, so no
-node of it has a position, and `--where` finds none.
+node of it has a position.
 
 ## Modes
 
@@ -868,8 +673,7 @@ there. `C-z` suspend is Unix-only.
   pattern cannot span rows.
 - `J`/`K` stop at the last sibling instead of tracking a desired depth.
 - jless's `--json` and `--yaml` name the input format; here that comes
-  from the extension or `--kind`, and `--json` asks for JSON output (see
-  [Scripts and agents](#scripts-and-agents)).
+  from the extension or `--kind`.
 
 ## Dependencies
 
@@ -880,15 +684,15 @@ the `tabnas-bnf` they share, the grammar notations' compilers (ABNF's
 also behind `--grammar`), and `tabnas-lsp`, whose semantic tokens colour
 the source view, come the same way. The other dependencies: crossterm
 (terminal), ratatui (drawing), notify (file watching), regex (search),
-unicode-width (layout), serde_json (JSON output), arboard (clipboard,
-optional).
+unicode-width (layout), serde_json (the JSON `:w` and the copy keys
+write), arboard (clipboard, optional).
 
 ## Development
 
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked                   # unit tests, fixture loading, headless app runs, the agent interface, the site
+cargo test --locked                   # unit tests, fixture loading, app runs without a terminal, the binary, the grammars, the site
 python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
 cargo package --locked                # the crate builds from exactly the files it publishes
 scripts/generate.sh                   # man/ and completions/, after an option or the help changes
@@ -897,7 +701,7 @@ scripts/generate.sh                   # man/ and completions/, after an option o
 Every option is in one table, `cli::OPTIONS`, and the parser reads no
 option it does not list. `-h`, `--help`, the man page and the completions
 are all written from it, and the committed `man/aless.1` and
-`completions/` are what `scripts/generate.sh` writes: `tests/agent.rs`
+`completions/` are what `scripts/generate.sh` writes: `tests/binary.rs`
 fails when they differ from what the binary writes.
 
 The documentation site is Markdown under `site/`, built by
@@ -912,9 +716,8 @@ the library is terminal-free and unit tested:
 |---|---|
 | `doc` | the parsed value as a pre-order arena; visible rows; paths; folding |
 | `explorer` | directory trees as documents, listed lazily |
-| `fmt` | text of keys and values, previews, JSON output, path formats |
+| `fmt` | text of keys and values, previews, the JSON `:w` writes, path formats |
 | `grammar` | custom grammars: `--grammar` and `--grammar-expr` parsed, ABNF compiled once, the registry `Format::Custom` indexes |
-| `headless` | the agent interface: paths, listings, search, positions, checks, JSON errors |
 | `cli` | every option, in one table the parser reads; the reference `--help` prints, the summary of `-h`, the man page and the shells' completions (`--generate`) |
 | `load` | format detection; the tabnas grammars; the grammar notations' documents compiled to their specs; errors with positions; the size, depth and time limits; text fallback |
 | `prov` | source positions by aligning the token stream with the tree |

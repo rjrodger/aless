@@ -37,7 +37,9 @@ EXTRAS = """
 TEST = """
   test do
     assert_match "aless #{version}", shell_output("#{bin}/aless --version")
-    assert_equal '{"a":[1,2]}', pipe_output("#{bin}/aless --json --compact", '{"a": [1, 2]}').strip
+    assert_match ".SH SYNOPSIS", shell_output("#{bin}/aless --generate man")
+    # A viewer: without a terminal it refuses to start, with status 2.
+    assert_match "terminal", pipe_output("#{bin}/aless 2>&1", '{"a": [1, 2]}', 2)
   end
 """
 

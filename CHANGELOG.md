@@ -10,13 +10,31 @@ bumps the version renames `Unreleased` to the version and its date
 
 ## [Unreleased]
 
+### Removed
+
+- The output options and the interface for scripts and agents: `--json`,
+  `--paths`, `--find`, `--where`, `--check`, `--path`, `--at`, `--limit`
+  and `--compact`, the JSON error objects and the exit statuses 3 to 6,
+  the Agent Skill and `--generate skill`, and the headless module behind
+  them. aless is a viewer and nothing else. Without a terminal to draw on
+  and read keys from (standard output a pipe or a file, no terminal to
+  open, or `TERM=dumb`) it refuses to start, before reading any input,
+  with one line on standard error and the exit status 2, where it
+  printed the document as JSON; nothing but `-h`, `--help`, `-V` and
+  `--generate` writes to standard output. A grammar that does not compile
+  or cannot be read is refused the same way. Reading one of these formats
+  in a script is `dmog`'s work (below), and `:w FILE` still writes a
+  tab's document as JSON. The reference `--help` prints, the man page and
+  the completions describe the viewer alone, and the site's tutorial for
+  scripts and its guides to extracting values, checking files and giving
+  an agent aless are gone.
+
 ### Changed
 
-- The command the README and the skill point to for writing a document as
-  another format, and for running a program over one, is `dmog` (data
-  mogrify), in [tabnas/dmog](https://github.com/tabnas/dmog): the
-  `alchemy` command of tabnas/alchemy-cli, renamed. aless itself is
-  unchanged.
+- The command the README points to for reading a document in a script,
+  writing it as another format, and running a program over one is `dmog`
+  (data mogrify), in [tabnas/dmog](https://github.com/tabnas/dmog): the
+  `alchemy` command of tabnas/alchemy-cli, renamed.
 
 ## [0.5.0] - 2026-10-24
 

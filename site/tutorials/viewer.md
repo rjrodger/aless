@@ -116,7 +116,7 @@ Press `y`, then `p`. aless copies the focused node's path, `.paths["/api/shelf/{
 Copied path to the clipboard
 ```
 
-Over SSH, or anywhere else no clipboard can be reached, it copies through the terminal instead, and says `the terminal clipboard (OSC 52)`. The path is in jq's syntax, so jq takes it, and so does aless's own `--path`, as the [next tutorial](/tutorials/scripting.html) shows. `yy` copies the value rather than its path.
+Over SSH, or anywhere else no clipboard can be reached, it copies through the terminal instead, and says `the terminal clipboard (OSC 52)`. The path is in jq's syntax, so jq takes it. `yy` copies the value rather than its path.
 
 ## Two more ways to look
 
@@ -178,4 +178,4 @@ The new summary is there, and the focus is still on `listBooks`. aless found it 
 
 ## Next
 
-That is the viewer's daily work: move, fold, search, copy. [Keys](/reference/keys.html) lists every key, as `F1` shows them inside aless, and the how-to guides go further on each of them: [Search a document](/how-to/search.html), [Choose how the viewer draws a document](/how-to/display.html), [Open several files in tabs](/how-to/tabs.html). The [next tutorial](/tutorials/scripting.html) asks the same file questions from the command line, without opening the viewer at all.
+That is the viewer's daily work: move, fold, search, copy. [Keys](/reference/keys.html) lists every key, as `F1` shows them inside aless, and the how-to guides go further on each of them: [Search a document](/how-to/search.html), [Choose how the viewer draws a document](/how-to/display.html), [Open several files in tabs](/how-to/tabs.html). [One tree for every format](/explanation/one-tree.html) says why the same keys work on a YAML file, a TOML file and a CSV file alike.

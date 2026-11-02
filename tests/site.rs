@@ -51,8 +51,7 @@ struct Group {
 }
 
 /// The sections, in the order the navigation lists them. The how-to
-/// guides are grouped by the two faces of aless, the viewer and the
-/// command line, with the guides to setting it up first.
+/// guides are in two groups: setting aless up, and a file open in it.
 const SECTIONS: [Section; 4] = [
     Section {
         dir: "tutorials",
@@ -73,13 +72,8 @@ const SECTIONS: [Section; 4] = [
             Group {
                 name: "In the viewer",
                 blurb: "A file open in a terminal: searching it, following it as it changes, \
-                        copying from it, several files at once, and a conversion beside it.",
-            },
-            Group {
-                name: "From the command line",
-                blurb: "The same files from a shell script, a CI job or an agent: a value \
-                        out, a format in or out, a program over the document, and a check \
-                        that files parse.",
+                        copying from it, several files at once, a directory, the format you \
+                        name, and a grammar of your own.",
             },
         ],
     },
@@ -239,7 +233,6 @@ fn build() -> Site {
         let previous = files.insert(format!("examples/{name}"), bytes);
         assert!(previous.is_none(), "two downloads are named {name}");
     }
-    files.insert("SKILL.md".into(), aless::cli::SKILL.as_bytes().to_vec());
     files.insert("llms.txt".into(), llms(&pages).into_bytes());
     files.insert("sitemap.xml".into(), sitemap(&pages).into_bytes());
     Site { pages, files }
@@ -430,8 +423,8 @@ fn reference_pages() -> Vec<Page> {
         Page {
             path: "reference/command-line.html".into(),
             title: "Command line".into(),
-            description: "Every option, what each output prints, the errors and the exit \
-                statuses: the whole reference aless --help prints."
+            description: "Every option, the formats, the keys used most, the limits and the \
+                exit statuses: the whole reference aless --help prints."
                 .into(),
             order: 1,
             section: Some(REFERENCE),
@@ -986,10 +979,8 @@ fn llms(pages: &[Page]) -> String {
         }
     }
     out.push_str(&format!(
-        "\n## Optional\n\n- [Agent Skill]({}): the skill that teaches an agent to drive \
-         aless, which aless --generate skill also prints\n- [Source]({REPOSITORY}): the \
-         code, the changelog and the releases\n",
-        url("SKILL.md")
+        "\n## Optional\n\n- [Source]({REPOSITORY}): the code, the changelog and the \
+         releases\n"
     ));
     out
 }

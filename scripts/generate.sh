@@ -5,7 +5,7 @@
 #
 #   scripts/generate.sh
 #
-# tests/agent.rs fails when a committed file differs from what the built
+# tests/binary.rs fails when a committed file differs from what the built
 # binary writes, and names this script. Run it after changing an option
 # or the reference, and after a version bump (the man page names the
 # version, and the date the changelog gives it).

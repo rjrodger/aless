@@ -4,7 +4,7 @@ description: What the viewer needs from a terminal on each platform, what differ
 group: Setting up
 order: 3
 ---
-aless runs on Linux, macOS and Windows, and its tests run on all three. The command line needs nothing of the terminal: without one, aless prints JSON. The viewer needs a terminal that understands VT escape sequences and a font that has its fold markers.
+aless runs on Linux, macOS and Windows, and its tests run on all three. It needs a terminal that understands VT escape sequences and a font that has its fold markers, and without a terminal it refuses to start.
 
 ## The fold markers
 
@@ -16,7 +16,7 @@ aless --ascii data.json
 
 ## Windows
 
-Use Windows Terminal, or another console that understands VT sequences. Piping into the viewer needs a console to read keys from, which a pipe takes away, so on Windows open a file by name rather than through a pipe; piping into the command line, as in `type data.json | aless --paths`, works as on any platform. `C-z`, which suspends aless, is Unix only. The installer puts `aless` in `~\.cargo\bin`, and the completions for PowerShell load from your profile ([Set up completions and the man page](/how-to/completions.html)).
+Use Windows Terminal, or another console that understands VT sequences. Piping into the viewer needs a console to read keys from, which a pipe takes away, so on Windows open a file by name rather than through a pipe. `C-z`, which suspends aless, is Unix only. The installer puts `aless` in `~\.cargo\bin`, and the completions for PowerShell load from your profile ([Set up completions and the man page](/how-to/completions.html)).
 
 ## Over SSH and in a container
 
@@ -24,7 +24,7 @@ The copy commands use the system clipboard where there is one. Where there is no
 
 ## Colour and the mouse
 
-`--no-color`, or `NO_COLOR` set in the environment, draws without colour. `--no-mouse` leaves the mouse to the terminal, for its own selection and scrolling, where the viewer would otherwise take the wheel and clicks. A terminal that cannot draw the viewer at all, `TERM=dumb`, gets JSON on standard output instead, as a pipe does.
+`--no-color`, or `NO_COLOR` set in the environment, draws without colour. `--no-mouse` leaves the mouse to the terminal, for its own selection and scrolling, where the viewer would otherwise take the wheel and clicks. A terminal that cannot draw the viewer at all, `TERM=dumb`, is refused as a pipe on standard output is: aless says so on standard error and exits with the status 2.
 
 ## Watching files
 

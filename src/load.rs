@@ -1846,7 +1846,7 @@ enum Compile {
 /// What a compile left to itself holds (its thread, its stack, its copy of
 /// the text, what it builds) is held until it ends, so while one runs no
 /// other compile with a deadline starts: it is the same `timeout` at once
-/// ([`LoadError::compile_behind`]), and a `--check` of many slow grammars
+/// ([`LoadError::compile_behind`]), and a run with many slow grammars
 /// leaves one compile behind it, not one each. Nor does one start once the
 /// deadline has passed: the time is read immediately before the thread is
 /// asked for, and a compile it finds too late is not started at all

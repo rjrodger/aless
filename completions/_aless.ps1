@@ -11,8 +11,8 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
     switch -CaseSensitive ($prev) {
         { $_ -cin '--kind', '--format', '-k' } { $values = @('json', 'jsonl', 'jsonic', 'jsonc', 'json5', 'yaml', 'toml', 'ini', 'csv', 'tsv', 'xml', 'zon', 'markdown', 'feed', 'css', 'proto', 'pgn', 'c', 'abnf', 'ebnf', 'gbnf', 'expr', 'semver', 'text') }
         { $_ -cin '--mode', '-m' } { $values = @('data', 'line') }
-        { $_ -cin '--generate' } { $values = @('man', 'complete-bash', 'complete-zsh', 'complete-fish', 'complete-powershell', 'skill') }
-        { $_ -cin '--find', '--path', '--at', '--limit', '--grammar', '--grammar-expr', '--depth', '--indent', '--max-size', '--timeout', '--scrolloff' } { return }
+        { $_ -cin '--generate' } { $values = @('man', 'complete-bash', 'complete-zsh', 'complete-fish', 'complete-powershell') }
+        { $_ -cin '--grammar', '--grammar-expr', '--max-size', '--timeout', '--depth', '--indent', '--scrolloff' } { return }
     }
     if ($null -ne $values) {
         $values | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -22,28 +22,19 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
     }
     if (-not $wordToComplete.StartsWith('-')) { return }
     @(
-        [System.Management.Automation.CompletionResult]::new('--json', '--json', [System.Management.Automation.CompletionResultType]::ParameterName, 'the document as JSON (the default)')
-        [System.Management.Automation.CompletionResult]::new('--paths', '--paths', [System.Management.Automation.CompletionResultType]::ParameterName, 'an entry for the start and each node below')
-        [System.Management.Automation.CompletionResult]::new('--find', '--find', [System.Management.Automation.CompletionResultType]::ParameterName, 'the entries whose "key": value text matches')
-        [System.Management.Automation.CompletionResult]::new('--where', '--where', [System.Management.Automation.CompletionResultType]::ParameterName, 'the start''s entry: its path and position')
-        [System.Management.Automation.CompletionResult]::new('--check', '--check', [System.Management.Automation.CompletionResultType]::ParameterName, 'parse each FILE and report on each')
-        [System.Management.Automation.CompletionResult]::new('--path', '--path', [System.Management.Automation.CompletionResultType]::ParameterName, 'start at PATH, in jq syntax')
-        [System.Management.Automation.CompletionResult]::new('--at', '--at', [System.Management.Automation.CompletionResultType]::ParameterName, 'start at the node at a source position')
-        [System.Management.Automation.CompletionResult]::new('--limit', '--limit', [System.Management.Automation.CompletionResultType]::ParameterName, 'at most N entries (default 200; 0 for all)')
-        [System.Management.Automation.CompletionResult]::new('--compact', '--compact', [System.Management.Automation.CompletionResultType]::ParameterName, 'JSON on one line, an error''s too')
         [System.Management.Automation.CompletionResult]::new('--kind', '--kind', [System.Management.Automation.CompletionResultType]::ParameterName, 'parse every input as FORMAT')
         [System.Management.Automation.CompletionResult]::new('--format', '--format', [System.Management.Automation.CompletionResultType]::ParameterName, 'parse every input as FORMAT')
         [System.Management.Automation.CompletionResult]::new('-k', '-k', [System.Management.Automation.CompletionResultType]::ParameterName, 'parse every input as FORMAT')
         [System.Management.Automation.CompletionResult]::new('--grammar', '--grammar', [System.Management.Automation.CompletionResultType]::ParameterName, 'a format of your own, from an ABNF grammar')
         [System.Management.Automation.CompletionResult]::new('--grammar-expr', '--grammar-expr', [System.Management.Automation.CompletionResultType]::ParameterName, 'the same, the grammar on the command line')
-        [System.Management.Automation.CompletionResult]::new('--depth', '--depth', [System.Management.Automation.CompletionResultType]::ParameterName, 'list N levels down; the viewer folds deeper')
-        [System.Management.Automation.CompletionResult]::new('--indent', '--indent', [System.Management.Automation.CompletionResultType]::ParameterName, 'indentation per level (default 2)')
         [System.Management.Automation.CompletionResult]::new('--max-size', '--max-size', [System.Management.Automation.CompletionResultType]::ParameterName, 'refuse an input over SIZE (default 64M)')
         [System.Management.Automation.CompletionResult]::new('--timeout', '--timeout', [System.Management.Automation.CompletionResultType]::ParameterName, 'stop a parse past SECONDS (default none)')
         [System.Management.Automation.CompletionResult]::new('--no-watch', '--no-watch', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not reload files when they change')
         [System.Management.Automation.CompletionResult]::new('--watch', '--watch', [System.Management.Automation.CompletionResultType]::ParameterName, 'reload files when they change (the default)')
         [System.Management.Automation.CompletionResult]::new('--mode', '--mode', [System.Management.Automation.CompletionResultType]::ParameterName, 'start in data (default) or line mode')
         [System.Management.Automation.CompletionResult]::new('-m', '-m', [System.Management.Automation.CompletionResultType]::ParameterName, 'start in data (default) or line mode')
+        [System.Management.Automation.CompletionResult]::new('--depth', '--depth', [System.Management.Automation.CompletionResultType]::ParameterName, 'fold containers deeper than N levels')
+        [System.Management.Automation.CompletionResult]::new('--indent', '--indent', [System.Management.Automation.CompletionResultType]::ParameterName, 'indentation per level (default 2)')
         [System.Management.Automation.CompletionResult]::new('--line-numbers', '--line-numbers', [System.Management.Automation.CompletionResultType]::ParameterName, 'show absolute line numbers')
         [System.Management.Automation.CompletionResult]::new('-n', '-n', [System.Management.Automation.CompletionResultType]::ParameterName, 'show absolute line numbers')
         [System.Management.Automation.CompletionResult]::new('--no-line-numbers', '--no-line-numbers', [System.Management.Automation.CompletionResultType]::ParameterName, 'hide absolute line numbers')
@@ -62,6 +53,6 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'the options (-h), or the whole reference')
         [System.Management.Automation.CompletionResult]::new('--version', '--version', [System.Management.Automation.CompletionResultType]::ParameterName, 'the version')
         [System.Management.Automation.CompletionResult]::new('-V', '-V', [System.Management.Automation.CompletionResultType]::ParameterName, 'the version')
-        [System.Management.Automation.CompletionResult]::new('--generate', '--generate', [System.Management.Automation.CompletionResultType]::ParameterName, 'a man page, shell completions or the skill')
+        [System.Management.Automation.CompletionResult]::new('--generate', '--generate', [System.Management.Automation.CompletionResultType]::ParameterName, 'a man page or a shell''s completions')
     ) | Where-Object { $_.CompletionText -clike "$wordToComplete*" }
 }

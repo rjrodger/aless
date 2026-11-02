@@ -17,8 +17,8 @@ JSON it parses to:
 | `resolv.conf.abnf` | `resolv.conf.sample` | `{"nameserver": "10.0.0.53"}`, `{"search": [...]}`, `{"domain": …}`, `{"options": […]}`, `{"sortlist": […]}`, `{"comment": ["generated", "by", …]}` for a `;` line |
 | `kv.abnf` (shell-style `KEY=value`, `export KEY=value`) | `kv.sample` | `{"key": "NAME", "value": "\"Ubuntu\""}` |
 
-`NAME.expected.json` is the exact value (pretty-printed) that
-`aless --grammar NAME=NAME.abnf --json` prints for `NAME.sample`. Every
+`NAME.expected.json` is the exact value (pretty-printed, as `:w FILE`
+writes it) that aless reads `NAME.sample` to with `NAME.abnf`. Every
 value is an array of records, one per line of the file; `#` comment
 lines and blank lines produce nothing (the one exception is
 resolv.conf's `;` comment line, which the lexer does not drop and the
@@ -27,7 +27,7 @@ always strings (`"uid": "0"`, not `0`).
 
 ```sh
 aless --grammar hosts=tests/fixtures/grammars/hosts.abnf /etc/hosts
-aless --grammar crontab=tests/fixtures/grammars/crontab.abnf --json /etc/crontab
+aless --grammar crontab=tests/fixtures/grammars/crontab.abnf /etc/crontab
 crontab -l | aless --grammar crontab-user=tests/fixtures/grammars/crontab-user.abnf -k crontab-user
 ```
 
@@ -40,9 +40,8 @@ installs it on a fresh engine, and parses the file. What the grammar
 builds is the document: with `; @object` / `; @array` annotations a JSON
 value, without them the `{rule, src, kids}` parse tree (note that `src`
 there is the matched tokens run together, without the spaces between
-them). Everything else in aless (`--json`, `--paths`, `--find`,
-`--where`, the viewer, watch mode) works on that value as on
-any other format.
+them). Everything else in aless (the tree, search, the source view,
+watch mode, `:w`) works on that value as on any other format.
 
 ## Writing a line-oriented grammar
 

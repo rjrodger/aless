@@ -12,7 +12,6 @@ pub mod doc;
 pub mod explorer;
 pub mod fmt;
 pub mod grammar;
-pub mod headless;
 pub mod highlight;
 pub mod load;
 pub mod prov;

@@ -5,28 +5,19 @@
 
 _aless() {
   _arguments -S \
-    '--json[the document as JSON (the default)]' \
-    '--paths[an entry for the start and each node below]' \
-    '--find=[the entries whose "key"\: value text matches]:REGEX: ' \
-    '--where[the start'\''s entry\: its path and position]' \
-    '--check[parse each FILE and report on each]' \
-    '--path=[start at PATH, in jq syntax]:PATH: ' \
-    '--at=[start at the node at a source position]:LINE[\:COL]: ' \
-    '--limit=[at most N entries (default 200; 0 for all)]:N: ' \
-    '--compact[JSON on one line, an error'\''s too]' \
     '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
     '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
     '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
     '*--grammar=[a format of your own, from an ABNF grammar]:NAME=FILE:_files' \
     '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
-    '--depth=[list N levels down; the viewer folds deeper]:N: ' \
-    '--indent=[indentation per level (default 2)]:N: ' \
     '--max-size=[refuse an input over SIZE (default 64M)]:SIZE: ' \
     '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
     '--no-watch[do not reload files when they change]' \
     '--watch[reload files when they change (the default)]' \
     '(--mode -m)--mode=[start in data (default) or line mode]:MODE:(data line)' \
     '(--mode -m)-m[start in data (default) or line mode]:MODE:(data line)' \
+    '--depth=[fold containers deeper than N levels]:N: ' \
+    '--indent=[indentation per level (default 2)]:N: ' \
     '(--line-numbers -n)--line-numbers[show absolute line numbers]' \
     '(--line-numbers -n)-n[show absolute line numbers]' \
     '(--no-line-numbers -N)--no-line-numbers[hide absolute line numbers]' \
@@ -45,7 +36,7 @@ _aless() {
     '(--help -h)-h[the options (-h), or the whole reference]' \
     '(--version -V)--version[the version]' \
     '(--version -V)-V[the version]' \
-    '--generate=[a man page, shell completions or the skill]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell skill)' \
+    '--generate=[a man page or a shell'\''s completions]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell)' \
     '*:file:_files'
 }
 

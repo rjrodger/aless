@@ -30,7 +30,7 @@ Some of those shapes are verbose, XML's and Markdown's above all, and the viewer
 
 ## What the model buys
 
-Everything above the parser is written once. There is one key map, one path syntax (jq's), one search, one error object, one set of exit statuses and one way of reporting where a value came from, for every format, including formats that did not exist when the code was written. A grammar you write on the command line gets the viewer, the outputs and the source positions without aless knowing anything about it.
+Everything above the parser is written once. There is one key map, one path syntax (jq's) for the paths you copy, one search, one error report and one way of knowing where a value came from, for every format, including formats that did not exist when the code was written. A grammar you write on the command line gets the viewer and the source positions without aless knowing anything about it.
 
 ## What the model gives up
 

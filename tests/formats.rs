@@ -27,7 +27,7 @@ fn every_fixture_loads() {
     for entry in std::fs::read_dir(fixture("")).unwrap() {
         let path = entry.unwrap().path();
         if !path.is_file() {
-            // The grammars have their own tests (`agent.rs`, below).
+            // The grammars have their own tests (`grammars.rs`, below).
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -92,8 +92,8 @@ fn every_fixture_loads() {
 }
 
 /// Every fixture grammar compiles, as the option that names it would
-/// compile it at startup; the values they parse to are checked against the
-/// built binary in `agent.rs`.
+/// compile it at startup; the values they parse to are checked in
+/// `grammars.rs`.
 #[test]
 fn every_fixture_grammar_compiles() {
     let mut count = 0;
