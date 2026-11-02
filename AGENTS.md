@@ -3,9 +3,9 @@
 This repository is **aless**: a jless-style terminal viewer, written in
 Rust, for every format the [tabnas](https://github.com/tabnas) parsers
 read — with tabs and a watch mode that reloads a changed file while
-keeping the reader's place — and, without a screen, a CLI that prints
-JSON for scripts and agents. Start with [README.md](README.md) for what
-it does, the key map, the agent interface and the module map;
+keeping the reader's place. It is a viewer and nothing else: without a
+terminal it refuses to start. Start with [README.md](README.md) for what
+it does, the key map and the module map;
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records what it borrows
 from jless. This file is the guide for any agent working here;
 `CLAUDE.md` imports it.
@@ -49,20 +49,26 @@ from jless. This file is the guide for any agent working here;
   - What a packager needs is in [PACKAGING.md](PACKAGING.md).
   - The published crate carries only what `Cargo.toml`'s `include` names:
     - `src/` and the licence files;
-    - every file the README links to: the docs, `skills/`, and the
-      example grammars under `tests/fixtures/`.
+    - every file the README links to: the docs, the man page and the
+      completions, and the example grammars under `tests/fixtures/`.
 
     So a file the build reads must be under `src/`, or on the list (the
-    skill and the changelog, which `--generate skill` and the man page
-    read), and a new file the README links to joins the list. CI's
-    `cargo package` checks the build.
-- **aless reads, shows and prints JSON; it writes no other format and
-  runs no programs.** Translating a document into another format and
-  running an alchemy program over one are the `dmog` command's work,
-  in [tabnas/dmog](https://github.com/tabnas/dmog) (data mogrify), the
-  composition root of alchemy, transduce and render; aless depends on
-  none of the three. A streaming export, a renderer or a program runner
-  does not belong here: add it to dmog, in its three runtimes.
+    changelog, which the man page reads for its date), and a new file the
+    README links to joins the list. CI's `cargo package` checks the build.
+- **aless is a viewer, and nothing else.** It draws a document on a
+  terminal and reads keys from it; the one thing it writes is the JSON
+  of `:w FILE` and the copy keys, and it runs no programs. Without a
+  terminal it refuses to start, before reading any input, with one line
+  on standard error and the status 2, and nothing but `-h`, `--help`,
+  `-V` and `--generate` writes to standard output: there is no output
+  option, no JSON on standard output and no agent interface. Reading one
+  of these formats in a script, translating a document into another
+  format and running an alchemy program over one are the `dmog`
+  command's work, in [tabnas/dmog](https://github.com/tabnas/dmog) (data
+  mogrify), the composition root of alchemy, transduce and render; aless
+  depends on none of the three. A query option, a streaming export, a
+  renderer or a program runner does not belong here: add it to dmog, in
+  its three runtimes.
 - **The dev profile turns the engine's debug assertions off**
   (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
   engine compares its whole rule stack with a shadow copy on every step,
@@ -113,11 +119,10 @@ from jless. This file is the guide for any agent working here;
   `--grammar` and `--grammar-expr` read within `--max-size`, compiled
   once at startup by tabnas-abnf, on a thread of their own within
   `--timeout` and under the repetition caps, with the plain-text lexing
-  options, into the registry `Format::Custom` indexes), `headless` (the
-  agent interface: paths, listings, search, positions, checks, JSON
-  errors), `cli` (every option, in the one table the parser reads; the
-  reference `--help` prints, the summary `-h` prints, the man page and
-  the shells' completions), `explorer` (directory trees as documents,
+  options, into the registry `Format::Custom` indexes), `cli` (every
+  option, in the one table the parser reads; the reference `--help`
+  prints, the summary `-h` prints, the man page and the shells'
+  completions), `explorer` (directory trees as documents,
   listed lazily), `prov` (source positions by token alignment), `search`,
   `tab` (view state, navigation, reload re-anchoring), `app` (modes, the
   source view, key map, commands, tabs, watch scheduling), `highlight`
@@ -129,10 +134,12 @@ from jless. This file is the guide for any agent working here;
   to how something is drawn needs its `render` test updated; a change to
   navigation needs its `tab` test.
 - **Tests** live next to the code (`#[cfg(test)]`) and in `tests/`
-  (`formats.rs` loads every fixture, `app_flow.rs` runs the app
-  headlessly against real files, `agent.rs` runs the built binary the way
-  an agent does). Fixtures are under `tests/fixtures/`, one per format at
-  least. Reload tests write to `std::env::temp_dir()`.
+  (`formats.rs` loads every fixture, `grammars.rs` holds every grammar
+  of the library to its sample's expected JSON, `app_flow.rs` runs the
+  app without a terminal against real files, `binary.rs` runs the built
+  binary: what it prints about itself, the generated files, and its
+  refusal without a terminal). Fixtures are under `tests/fixtures/`, one
+  per format at least. Reload tests write to `std::env::temp_dir()`.
 - **The documentation site** (`https://aless.tabnas.dev`, `Cargo.toml`'s
   `homepage`) is Markdown under `site/`, a directory for each of
   Diátaxis's kinds: `tutorials/` (lessons, followed from start to end),
@@ -153,15 +160,14 @@ from jless. This file is the guide for any agent working here;
   - the front matter is `title`, `description` (one sentence) and,
     on a page in a section's list (every page of a section but its
     index), `order`, its place in the list, and in a section listed by
-    group (the how-to guides: "Setting up", "In the viewer" and "From
-    the command line", the two faces of aless), `group`, the heading it
-    is under; the layout writes the `h1`, so the Markdown starts at `##`;
+    group (the how-to guides: "Setting up" and "In the viewer"), `group`,
+    the heading it is under; the layout writes the `h1`, so the Markdown
+    starts at `##`;
   - links between pages are from the site's root
-    (`/how-to/extract.html`), and the build makes them relative;
+    (`/how-to/search.html`), and the build makes them relative;
   - output is pasted from a real run, in a `console` block with `$ `
     before each command; a capture of the viewer is a `screen` block, 80
-    columns (60 on the home page, where two sit side by side), taken in
-    a pty as `scripts/pty-smoke.py` drives one;
+    columns, taken in a pty as `scripts/pty-smoke.py` drives one;
   - `{{version}}` and `{{tagline}}` are filled in from the binary.
 
   A new option or key reaches the reference by itself, and a release
@@ -190,17 +196,14 @@ from jless. This file is the guide for any agent working here;
   exclamation and emoji rules, and the rest is enforced at review. Quoted
   output keeps its own punctuation: the gate strips code spans and fenced
   blocks before it looks.
-- **The agent interface is a contract.** The output shapes (entries,
-  listings, `--check` reports, `{"error": …}` objects) and the exit
-  statuses are documented in four places that must agree with the code
-  and each other: the README's "Scripts and agents" section, the
-  reference `--help` prints (its topics in `src/cli.rs`),
-  [`skills/aless/SKILL.md`](skills/aless/SKILL.md), and the tests in
-  `src/headless.rs` and `tests/agent.rs`. Fields may be added; never
-  rename, remove or repurpose one. Headless runs never block and never
-  draw: no reading a terminal's standard input, no viewer without a
-  terminal (it refuses with status 2, writing nothing to standard
-  output), and nothing on standard output but the answer.
+- **Without a terminal, aless refuses and writes nothing.** The refusal
+  comes before any input is read, grammar files included, so a pipe left
+  open or a FIFO nobody writes cannot hold a viewer that cannot start;
+  it is one line on standard error, with the status 2, and standard
+  output stays empty. `tests/binary.rs` and `scripts/pty-smoke.py` hold
+  the binary to it. The exit statuses are three (0 quit, 1 the terminal
+  failed while the viewer ran, 2 it could not start) and documented in
+  the reference (`src/cli.rs`) and the README, which must agree.
 - **Every option is in `cli::OPTIONS`.** The parser in `src/main.rs`
   refuses any option the table does not list, and `-h`, `--help`, the
   man page and the completions are written from it, so a new option goes
@@ -209,9 +212,11 @@ from jless. This file is the guide for any agent working here;
   not. `man/aless.1` and `completions/` are the committed output of
   `scripts/generate.sh`, which a release archive and the crate carry:
   run it after changing an option, the reference or the version, and
-  `the_generated_files_are_current` fails until you do.
-- **To look at a file while working here**, use aless itself:
-  `target/debug/aless --paths --depth 1 FILE`, `--json --path P FILE`,
-  `--where --at LINE:COL FILE`; see [the skill](skills/aless/SKILL.md).
+  `the_generated_files_are_current` (`tests/binary.rs`) fails until you
+  do.
+- **To look at a file while working here**, an agent has no terminal to
+  run aless in: `dmog translate --from FORMAT --to json FILE` prints a
+  document of any format aless reads as JSON, and `jq` takes it from
+  there.
 - **Every transient task reports progress**: long commands print a line
   at least every 30 seconds (cargo's own output counts).

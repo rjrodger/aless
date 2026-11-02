@@ -1,6 +1,6 @@
 ---
 title: Choose how the viewer draws a document
-description: Data mode and line mode, line numbers, indentation, scrolling, the fold markers, colour and the mouse, set from the command line or inside aless.
+description: Data mode and line mode, line numbers, indentation, scrolling, the fold markers, colour and the mouse, set when aless starts or inside it.
 group: In the viewer
 order: 3
 ---
@@ -50,7 +50,7 @@ With both on, the focused row shows its own number and every other row its dista
 
 ## Indentation and long values
 
-`--indent N` sets the spaces per level of nesting, two unless you say otherwise, and the JSON the command line prints uses the same. Inside aless, `<` takes one space off every level and `>` adds one, and `:set indent=N` (or `sw=N`) sets it, up to 16. A value longer than the screen is cut at the right edge with an ellipsis: `.` and `,` scroll it one character right and left, and `;` to its end and back again.
+`--indent N` sets the spaces per level of nesting, two unless you say otherwise. Inside aless, `<` takes one space off every level and `>` adds one, and `:set indent=N` (or `sw=N`) sets it, up to 16. A value longer than the screen is cut at the right edge with an ellipsis: `.` and `,` scroll it one character right and left, and `;` to its end and back again.
 
 ## Scrolling and the focus
 

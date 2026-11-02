@@ -3,7 +3,7 @@ title: Where each value came from
 description: How aless knows the line and column of every value without any grammar recording it, where that is exact, and where it is a best effort.
 order: 2
 ---
-Every entry aless prints has a `line` and a `col`, the status bar shows them for the focused node, the source view opens at them, and a reload falls back on them. None of the grammars records them. aless works them out after the parse.
+The status bar shows the line and column of the focused node, the source view opens at them, and a reload falls back on them. None of the grammars records them. aless works them out after the parse.
 
 ## Matching the tokens to the tree
 
@@ -15,10 +15,10 @@ The benefit is that position is a property of every format at once, including a 
 
 The alignment is exact wherever the tree's values are the tokens' values: the JSON family, TOML, INI, CSV and TSV, and ZON. It is a best effort where a grammar builds values the source does not spell out. Markdown's syntax tree, XML's element records, CSS's and PGN's trees, an expression's operators and parts of YAML make nodes whose text is not one token's text, and a value assembled from several tokens matches none of them. A `.proto` file's descriptor is the loosest: it is derived from the file rather than read from it, its statements regrouped and its labels, types and indexes made by the reader, so only its first values, the imports, are placed reliably; its package, which it holds after its lists, comes too late to be placed. A C syntax tree needs no alignment: it records where each token is, so each token and its text are placed exactly there, each time the tree repeats it, and what the reader adds, a node's kind, a token's name and the numbers of a span, has no position. A grammar's spec is written by its compiler, which keeps no places, so none of its nodes has one.
 
-A node the alignment cannot place has no position, and says so: its `line` and `col` are `null`. It does not inherit its parent's, since a wrong position is worse than none for a caller that jumps to it.
+A node the alignment cannot place has no position, and says so: the status bar shows none for it. It does not inherit its parent's, since a wrong position is worse than none for the source view that jumps to it.
 
 ## The other direction
 
-`--where --at LINE:COL` asks the opposite question, which node a position is in. aless answers with the node that starts last at or before the position on its line, the innermost of several starting there, so a column inside a long value names that value. A line with no node of its own, a comment or a closing bracket, answers with the last node before it. A position outside the text, past the last line or the end of a line, names nothing, and the error says so.
+A reload asks the opposite question, which node is at a position. When the node you were reading is gone from the new document, aless looks within its nearest surviving ancestor for the node closest to the old source line, so that a renamed key or a reordered entry keeps your place. The source view asks the first question again: `s` opens the text at the focused node's line, with that line marked.
 
-Those rules are what let a linter's or a test's `42:7` become a path: [Ask a file questions from a script](/tutorials/scripting.html) shows one in use.
+The positions are one half of how a reload finds your place; [How a reload keeps your place](/explanation/reloading.html) tells the other half.

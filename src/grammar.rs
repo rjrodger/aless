@@ -10,8 +10,8 @@
 //! a parse builds is whatever the grammar says: with `; @object` and
 //! `; @array` annotations a JSON value of strings, without them the
 //! compiler's `{rule, src, kids}` tree. Either is a value the document
-//! model takes as it takes any grammar's, so the viewer and every headless
-//! operation work on it unchanged.
+//! model takes as it takes any grammar's, so the viewer works on it
+//! unchanged.
 //!
 //! The registry is filled from the command line before any load, and
 //! looked up by name from then on. It only grows: a name registered twice

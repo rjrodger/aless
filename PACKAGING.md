@@ -44,9 +44,6 @@ for the owner submitting it to one. How a release is made is in
   generate_completions_from_executable(bin/"aless", "--generate", shell_parameter_format: "complete-")
   (man1/"aless.1").write Utils.safe_popen_read(bin/"aless", "--generate", "man")
   ```
-
-  `aless --generate skill` writes the Agent Skill
-  (`skills/aless/SKILL.md`), for a package that offers one.
 - **The name.** On 2026-10-08 no package called `aless` was found in any
   repository Repology tracks, nor in Homebrew, Arch Linux, the AUR or
   crates.io.
@@ -110,7 +107,7 @@ lives in that channel's repository, not this one.
 pkgname=aless
 pkgver=0.5.0
 pkgrel=1
-pkgdesc='Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more'
+pkgdesc='Terminal viewer for JSON, YAML, TOML, CSV, XML and more, as one tree'
 arch=('x86_64' 'aarch64')
 url='https://aless.tabnas.dev'
 license=('MIT')
@@ -175,7 +172,7 @@ whose workflow keeps the manifest current through `checkver` and
 ```json
 {
     "version": "0.5.0",
-    "description": "Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more",
+    "description": "Terminal viewer for JSON, YAML, TOML, CSV, XML and more, as one tree",
     "homepage": "https://aless.tabnas.dev",
     "license": "MIT",
     "architecture": {

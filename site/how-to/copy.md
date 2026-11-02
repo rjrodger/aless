@@ -16,7 +16,7 @@ The copy commands are jless's: `y` and a second key. Move the focus to the node,
 | `yb` | the path, every step in brackets | `["paths"]["/api/shelf/{shelf_id}/book"]["get"]["operationId"]` |
 | `yq` | the path, as jq writes it | `.paths."/api/shelf/{shelf_id}/book".get.operationId` |
 
-The difference between a pretty and a one-line value shows on a container: `yy` copies an object as indented JSON, `yv` on one line. `yq`'s form is the one `--path` and jq both take, and the one every output of aless's command line prints.
+The difference between a pretty and a one-line value shows on a container: `yy` copies an object as indented JSON, `yv` on one line. `yq`'s form is the one jq takes, so a copied path goes straight into a jq filter.
 
 ## Where the copy goes
 

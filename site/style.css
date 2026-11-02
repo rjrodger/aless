@@ -515,18 +515,6 @@ a.card:hover { border-color: var(--border-strong); color: inherit; }
 .intro .lede { max-width: 62ch; margin: 0 auto; }
 .intro .meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-mute); margin-top: 1.5rem; }
 
-.faces { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; margin: 1rem 0 2rem; }
-.face {
-  border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.4rem;
-  background: var(--surface); min-width: 0;
-}
-.face .kind { margin-bottom: 0.25rem; }
-.face h2 { margin: 0 0 0.5rem; font-size: 1.6rem; }
-.face p { color: var(--ink-soft); font-size: 0.98rem; }
-/* The captures in the faces are 60 columns, taken so, to sit two abreast. */
-.face pre { margin: 0.9rem 0; }
-.face pre code { font-size: 0.78rem; }
-.face .more { font-family: var(--font-heading); font-style: italic; font-size: 1.05rem; margin: 0; }
 
 .home h2 { font-size: clamp(1.5rem, 3vw, 2rem); }
 .sec-note { color: var(--ink-soft); font-size: 0.98rem; max-width: 68ch; }

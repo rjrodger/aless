@@ -25,14 +25,13 @@ use ratatui::Terminal;
 use aless::app::{App, Effect, Input, Key, KeyCode, Options};
 use aless::cli;
 use aless::grammar::{self, Definition};
-use aless::headless::{self, Op, Request, Start};
 use aless::load::Format;
 use aless::render;
 use aless::watch::FileWatcher;
 
 /// What the command line asks for.
 enum Parsed {
-    /// The viewer, or output without one.
+    /// The viewer.
     Run(Box<Args>),
     /// Text to print as it is, and exit: `-h`, `--help`, `--version`,
     /// `--generate`.
@@ -49,13 +48,6 @@ struct Args {
     grammars: Vec<Definition>,
     opts: Options,
     mouse: bool,
-    /// The operation a headless option asked for.
-    op: Option<Op>,
-    start: Start,
-    limit: Option<usize>,
-    compact: bool,
-    /// An option that only means something without a screen was given.
-    headless: bool,
     /// The largest input to read, in bytes; `None` for no limit.
     max_size: Option<u64>,
     /// The longest a parse may run; `None` for no limit.
@@ -74,11 +66,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
         grammars: Vec::new(),
         opts: Options::default(),
         mouse: true,
-        op: None,
-        start: Start::Root,
-        limit: None,
-        compact: false,
-        headless: false,
         max_size: aless::load::Limits::DEFAULT.max_size,
         timeout: aless::load::Limits::DEFAULT.timeout,
     };
@@ -116,10 +103,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
             v.parse()
                 .map_err(|_| format!("{name} needs a number, not {v}"))
         };
-        if cli::asks_for_output(&name) {
-            args.headless = true;
-        }
-        let mut op = None;
         match name.as_str() {
             "-h" => return Ok(Parsed::Print(cli::summary())),
             "--help" => return Ok(Parsed::Print(cli::reference())),
@@ -136,29 +119,8 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
                 };
                 args.grammars.push(Definition::parse_os(&name, &v)?);
             }
-            "--json" => op = Some(Op::Json),
-            "--paths" => op = Some(Op::Paths),
-            "--find" => op = Some(Op::Find(value()?)),
-            "--where" => op = Some(Op::Where),
-            "--check" => op = Some(Op::Check),
-            "--path" => {
-                let v = value()?;
-                if matches!(args.start, Start::At(..)) {
-                    return Err("--path and --at both say where to start: give one".into());
-                }
-                args.start = Start::Path(v);
-            }
-            "--at" => {
-                let v = value()?;
-                if matches!(args.start, Start::Path(_)) {
-                    return Err("--path and --at both say where to start: give one".into());
-                }
-                args.start = Start::parse_at(&v)?;
-            }
-            "--limit" => args.limit = Some(number(value()?)?),
             "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
             "--timeout" => args.timeout = aless::load::parse_timeout(&value()?)?,
-            "--compact" => args.compact = true,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
             "-m" | "--mode" => args.opts.line_mode = parse_mode(&value()?)?,
@@ -180,21 +142,6 @@ fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String
         if let Some(v) = inline {
             return Err(format!("{name} takes no value, but was given {v:?}"));
         }
-        if let Some(op) = op {
-            match &args.op {
-                Some(prev) if prev.flag() != op.flag() => {
-                    return Err(format!(
-                        "{} and {} both say what to print: give one of --json, --paths, --find, --where, --check",
-                        prev.flag(),
-                        op.flag()
-                    ));
-                }
-                _ => args.op = Some(op),
-            }
-        }
-    }
-    if args.op == Some(Op::Check) && args.start != Start::Root {
-        return Err("--check parses whole files: it takes no --path or --at".into());
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
@@ -210,23 +157,28 @@ fn parse_mode(v: &str) -> Result<bool, String> {
     }
 }
 
-/// Whether this run prints rather than shows: an option asked for output,
-/// or there is no screen to show on (standard output is not a terminal,
-/// or it is one that cannot draw one, `TERM=dumb`).
-fn headless_wanted(args_ask: bool) -> bool {
-    args_ask || !io::stdout().is_terminal() || std::env::var_os("TERM").is_some_and(|t| t == "dumb")
+/// The exit status of a run that could not start: the command line asks
+/// for what cannot be done, or there is no terminal to show it on.
+const USAGE: i32 = 2;
+
+/// Why there is no screen to draw on, when there is none: standard output
+/// is not a terminal (a pipe, a file), or it is one that cannot draw the
+/// viewer (`TERM=dumb`).
+fn no_screen() -> Option<&'static str> {
+    if !io::stdout().is_terminal() {
+        Some("standard output is not a terminal")
+    } else if std::env::var_os("TERM").is_some_and(|t| t == "dumb") {
+        Some("TERM=dumb names a terminal that cannot draw it")
+    } else {
+        None
+    }
 }
 
-/// Say that the command line asks for what cannot be done, as JSON on
-/// standard error without a screen (on one line with `--compact`) and as a
-/// line with one, and exit with status 2.
-fn refuse_usage(e: &str, headless: bool, compact: bool) -> ! {
-    if headless {
-        eprint!("{}", headless::usage_failure(e, compact));
-    } else {
-        eprintln!("aless: {e}");
-    }
-    std::process::exit(headless::status::USAGE);
+/// Say that the command line asks for what cannot be done, as a line on
+/// standard error, and exit with status 2.
+fn refuse_usage(e: &str) -> ! {
+    eprintln!("aless: {e}");
+    std::process::exit(USAGE);
 }
 
 fn main() {
@@ -237,32 +189,16 @@ fn main() {
             let _ = io::stdout().write_all(text.as_bytes());
             std::process::exit(0);
         }
-        Err(e) => {
-            // The options could not be read, so ask the raw ones whether
-            // this was meant to run without a screen, and on one line.
-            let raw: Vec<String> = std::env::args_os()
-                .skip(1)
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            let asked = raw
-                .iter()
-                .any(|a| cli::asks_for_output(a.split('=').next().unwrap_or_default()));
-            // Options end at `--`; after it, `--compact` is a file's name.
-            let compact = raw
-                .iter()
-                .take_while(|a| a.as_str() != "--")
-                .any(|a| a == "--compact");
-            refuse_usage(&e, headless_wanted(asked), compact);
-        }
+        Err(e) => refuse_usage(&e),
     };
-    let headless = headless_wanted(args.headless);
     // Before any input is read, grammar files included: input that never
     // ends (a pipe left open, a FIFO) would otherwise keep a viewer that
     // cannot start waiting.
-    if !headless {
-        if let Err(e) = key_terminal() {
-            refuse_viewer(&e);
-        }
+    if let Some(why) = no_screen() {
+        refuse_viewer(why);
+    }
+    if let Err(e) = key_terminal() {
+        refuse_viewer(&format!("no terminal to read keys from ({e})"));
     }
     // The grammars come first: -k may name one, and so may a file's
     // extension. A grammar file is read within --max-size as any input is,
@@ -274,31 +210,18 @@ fn main() {
         started: None,
     };
     if let Err(e) = grammar::register_all(grammars, limits) {
-        let (text, status) = headless::grammar_failure(&e, args.compact);
-        if headless {
-            eprint!("{text}");
-        } else {
-            eprintln!("aless: {e}");
-        }
-        std::process::exit(status);
+        refuse_usage(&e.to_string());
     }
     if let Some(name) = &args.kind_name {
         match Format::from_name(name) {
             Some(f) => args.kind = Some(f),
-            None => refuse_usage(
-                &format!(
-                    "unknown format: {name} (one of {})",
-                    Format::known_names().join(" ")
-                ),
-                headless,
-                args.compact,
-            ),
+            None => refuse_usage(&format!(
+                "unknown format: {name} (one of {})",
+                Format::known_names().join(" ")
+            )),
         }
     }
     aless::load::set_limits(limits);
-    if headless {
-        std::process::exit(print_headless(args));
-    }
     let (width, height) = terminal::size().unwrap_or((80, 24));
     let mut app = App::new(args.opts, width, height);
 
@@ -335,7 +258,7 @@ fn main() {
 
     match run(app, args.mouse) {
         Ok(()) => {}
-        Err(Failed::Setup(e)) => refuse_viewer(&e),
+        Err(Failed::Setup(e)) => refuse_viewer(&e.to_string()),
         Err(Failed::Running(e)) => {
             let _ = restore_terminal(args.mouse);
             eprintln!("aless: {e}");
@@ -359,21 +282,15 @@ fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, form
     }
 }
 
-/// Say that the viewer cannot start and what works instead, then exit with
-/// status 2. Nothing has been drawn, so there is nothing to restore. There
-/// is no terminal to talk to, so this is said as every usage error is
-/// without one: `{"error": {"kind": "usage", "message"}}` on standard
-/// error, and nothing on standard output.
-fn refuse_viewer(e: &io::Error) -> ! {
-    refuse_usage(
-        &format!(
-            "cannot start the viewer, which needs a terminal to draw on and read keys from: {e}. \
-             To read a file without a screen, use --json, --paths, --find, --where or --check \
-             (see aless --help); aless FILE > out.json writes the document as JSON"
-        ),
-        true,
-        false,
-    )
+/// Say that the viewer cannot start, and why, then exit with status 2.
+/// Nothing has been drawn, so there is nothing to restore, and nothing is
+/// written to standard output: aless is a viewer, and without a terminal
+/// it has nothing to say there.
+fn refuse_viewer(why: &str) -> ! {
+    refuse_usage(&format!(
+        "cannot start the viewer, which needs a terminal to draw on and read keys from: {why} \
+         (aless --help says what aless does; dmog reads and writes these formats in a script)"
+    ))
 }
 
 /// Check that the viewer will have a terminal to read keys from: the one
@@ -436,52 +353,6 @@ fn attach_stdin_to_terminal() {
 
 #[cfg(not(unix))]
 fn attach_stdin_to_terminal() {}
-
-/// Run without a screen and print the result; returns the exit status.
-fn print_headless(args: Args) -> i32 {
-    let mut req = Request::new(args.op.unwrap_or(Op::Json));
-    req.files = args.files;
-    req.kind = args.kind;
-    req.start = args.start;
-    req.depth = args.opts.depth;
-    req.limit = args.limit.unwrap_or(headless::DEFAULT_LIMIT);
-    req.compact = args.compact;
-    req.indent = args.opts.indent;
-    req.max_size = args.max_size;
-    req.timeout = args.timeout;
-    // The deadline runs from here, and covers reading the input: standard
-    // input is read on a thread of its own, so that a writer that sends
-    // nothing, or never closes it, cannot hold the run past --timeout.
-    let started = Instant::now();
-    req.started = Some(started);
-    let mut input = io::stdin();
-    // Read on a thread of its own once the run reads it, and never before.
-    let mut timed = args
-        .timeout
-        .filter(|_| !input.is_terminal())
-        .and_then(|limit| aless::load::DeadlineReader::new(io::stdin(), started, limit));
-    let stdin: headless::Stdin = if input.is_terminal() {
-        None
-    } else if let Some(timed) = timed.as_mut() {
-        Some(timed)
-    } else {
-        Some(&mut input)
-    };
-    let out = headless::run(&req, stdin);
-    // A reader that stops early (`| head`) is not an error.
-    let mut stdout = io::stdout().lock();
-    let written = stdout
-        .write_all(out.stdout.as_bytes())
-        .and_then(|()| stdout.flush());
-    if let Err(e) = written {
-        if e.kind() != io::ErrorKind::BrokenPipe {
-            let _ = io::stderr().write_all(headless::write_failure(&e, req.compact).as_bytes());
-            return headless::status::IO;
-        }
-    }
-    let _ = io::stderr().write_all(out.stderr.as_bytes());
-    out.status
-}
 
 /// Why the viewer stopped: it never started (no terminal), or something
 /// failed while it ran.
@@ -695,9 +566,6 @@ mod tests {
             (_, Value::Format) => "json",
             ("--grammar", _) => "g=g.abnf",
             ("--grammar-expr", _) => "g=doc = TX",
-            ("--path", _) => ".a",
-            ("--at", _) => "1:1",
-            ("--find", _) => "x",
             ("--max-size", _) => "1M",
             _ => "1",
         }
@@ -752,7 +620,7 @@ mod tests {
         assert_eq!(print(&["--help"]), cli::reference());
         assert_eq!(print(&["-V"]), format!("aless {}\n", cli::VERSION));
         assert_eq!(print(&["--generate", "man"]), cli::man_page());
-        assert_eq!(print(&["--generate=skill"]), cli::SKILL);
+        assert_eq!(print(&["--generate=complete-fish"]), cli::complete_fish());
         let Err(e) = parse(&["--generate", "nope"]) else {
             panic!("--generate nope");
         };

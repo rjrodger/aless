@@ -6,7 +6,8 @@ Usage: scripts/pty-smoke.py [path/to/aless]
 Opens two fixture copies in a scratch directory, walks the tree, opens
 the help, switches tabs, edits a file behind the viewer's back and waits
 for the reload, then quits. Exit status 0 means every expectation held.
-Unix only (it needs a pty); Windows relies on the headless tests.
+Unix only (it needs a pty); Windows relies on the tests that drive the
+application without a terminal (tests/app_flow.rs).
 """
 import fcntl
 import os
@@ -318,12 +319,10 @@ def piped_input_scenario(work):
 
 def no_terminal_scenario(work):
     """A pty for standard output but no terminal to read keys from, as some
-    agent harnesses run commands: the viewer must refuse at once, draw
-    nothing, and name the options that work, in the JSON usage error every
-    refusal without a terminal is (`{"error": {"kind": "usage", "message"}}`
-    on standard error); with TERM=dumb, aless prints the document as JSON
-    instead."""
-    import json
+    agent harnesses run commands, and a terminal that cannot draw the viewer
+    (TERM=dumb): aless is a viewer, so it must refuse at once, draw nothing,
+    write nothing to standard output, and say on standard error that it
+    needs a terminal, with the status 2."""
     import subprocess
     failures = []
     target = os.path.join(work, "nested.json")
@@ -332,19 +331,19 @@ def no_terminal_scenario(work):
     grammar_fifo = os.path.join(work, "never-written.abnf")
     os.mkfifo(grammar_fifo)
     cases = (
-        ("TERM=xterm-256color", "xterm-256color", [target], subprocess.DEVNULL, 2),
+        ("TERM=xterm-256color", "xterm-256color", [target], subprocess.DEVNULL),
         # Input that never ends must not be read first: the refusal comes
         # before any input is opened.
         ("TERM=xterm-256color, stdin a pipe that stays open", "xterm-256color", [],
-         subprocess.PIPE, 2),
+         subprocess.PIPE),
         ("TERM=xterm-256color, a FIFO nobody writes", "xterm-256color", [fifo],
-         subprocess.DEVNULL, 2),
+         subprocess.DEVNULL),
         # A grammar file is input too: it is not opened before the refusal.
         ("TERM=xterm-256color, a --grammar FIFO nobody writes", "xterm-256color",
-         ["--grammar", f"kv={grammar_fifo}", target], subprocess.DEVNULL, 2),
-        ("TERM=dumb", "dumb", [target], subprocess.DEVNULL, 0),
+         ["--grammar", f"kv={grammar_fifo}", target], subprocess.DEVNULL),
+        ("TERM=dumb", "dumb", [target], subprocess.DEVNULL),
     )
-    for name, term, args, stdin, want_code in cases:
+    for name, term, args, stdin in cases:
         master, slave = pty.openpty()
         env = dict(os.environ, TERM=term)
         # A new session has no controlling terminal: /dev/tty cannot open.
@@ -373,31 +372,15 @@ def no_terminal_scenario(work):
         os.close(master)
         err = child.stderr.read().decode("utf-8", "replace")
         label = f"no controlling terminal, {name}"
-        if code != want_code:
-            print(f"FAIL {label}: exit {code}, wanted {want_code}; stderr: {err}")
+        said = err.startswith("aless: cannot start the viewer") and "terminal" in err
+        if code != 2:
+            print(f"FAIL {label}: exit {code}, wanted 2; stderr: {err}")
             failures.append(label)
-        elif want_code == 2:
-            try:
-                error = json.loads(err)["error"]
-                said = (error["kind"] == "usage" and "--json" in error["message"]
-                        and set(error) == {"kind", "message"})
-            except Exception:
-                said = False
-            if drawn or not said:
-                print(f"FAIL {label}: drew {bytes(drawn[:80])!r}, said {err!r}")
-                failures.append(label)
-            else:
-                print(f"ok   {label}: refuses at once with a usage error, draws nothing, "
-                      "points at --json")
-        elif want_code == 0:
-            try:
-                doc = json.loads(drawn.decode().replace("\r\n", "\n"))
-                assert doc["version"] == 3
-            except Exception as e:
-                print(f"FAIL {label}: not the document as JSON ({e}): {bytes(drawn[:80])!r}")
-                failures.append(label)
-            else:
-                print(f"ok   {label}: prints JSON")
+        elif drawn or not said or err.count("\n") != 1:
+            print(f"FAIL {label}: drew {bytes(drawn[:80])!r}, said {err!r}")
+            failures.append(label)
+        else:
+            print(f"ok   {label}: refuses at once with one line, draws nothing")
     return failures, ""
 
 

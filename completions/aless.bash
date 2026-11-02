@@ -14,15 +14,15 @@ _aless() {
             return 0
             ;;
         --generate)
-            COMPREPLY=($(compgen -W "man complete-bash complete-zsh complete-fish complete-powershell skill" -- "$cur"))
+            COMPREPLY=($(compgen -W "man complete-bash complete-zsh complete-fish complete-powershell" -- "$cur"))
             return 0
             ;;
-        --find|--path|--at|--limit|--grammar|--grammar-expr|--depth|--indent|--max-size|--timeout|--scrolloff)
+        --grammar|--grammar-expr|--max-size|--timeout|--depth|--indent|--scrolloff)
             return 0
             ;;
     esac
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--json --paths --find --where --check --path --at --limit --compact --kind --format -k --grammar --grammar-expr --depth --indent --max-size --timeout --no-watch --watch --mode -m --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
+        COMPREPLY=($(compgen -W "--kind --format -k --grammar --grammar-expr --max-size --timeout --no-watch --watch --mode -m --depth --indent --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --hidden --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
     fi
     return 0
 }

@@ -1,60 +1,41 @@
 ---
-title: a terminal viewer and a query tool, for people, scripts and agents
-description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, and without a terminal prints JSON for scripts and agents.
+title: a jless-style terminal viewer for every data format
+description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as one tree in a jless-style terminal viewer, with tabs, a file explorer and a watch mode that keeps your place.
 ---
 <section class="intro">
 <img class="logo logo-light" src="/logo.svg" alt="aless" width="1490" height="430"><img class="logo logo-dark" src="/logo-dark.svg" alt="aless" width="1490" height="430">
-<h1>Every format as one tree: a viewer in a terminal, and a query tool for scripts and agents</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree. In a terminal it is a viewer with jless's keys, with tabs and a watch mode that keeps your place. In a shell script, a pipe or an agent's tool call it prints JSON.</p>
+<h1>Every format as one tree, in a viewer for the terminal</h1>
+<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, INI, Markdown and a dozen formats more into one kind of tree, and shows it in a terminal with the keys of jless. Several files open in tabs, a directory opens as an explorer, and aless watches every file it shows: when one changes on disk it reloads it and keeps your place.</p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
 
-<div class="faces">
-<div class="face">
-<p class="kind">In a terminal</p>
-<h2>A viewer for files of any of those formats</h2>
-<p>Open a file and it is a tree. Fold it, move through it with the keys of jless, search it with a regular expression, and copy a value or its path. Several files open in tabs, and a directory opens as an explorer. aless watches every file it shows: when one changes on disk it reloads it and keeps your place.</p>
+## A viewer for files of any of those formats
+
+Open a file and it is a tree. Fold it, move through it with the keys of jless, search it with a regular expression, and copy a value or its path. Here an OpenAPI document in YAML, opened with its containers folded two levels down:
 
 ```screen
-▽ {
+▼ {
     openapi: "3.0.0"
-  ▷ info: (4) {title: "Bookshelf demo API", …}
-  ▷ servers: (1) [{…}]
-  ▷ tags: (2) [{…}, {…}]
+  ▽ info: {
+      title: "Bookshelf demo API"
+      version: "1.0.0"
+      description: "A small API for keeping books on shelves, written for aless…
+    ▷ license: (1) {name: "MIT"}
+  ▽ servers: [
+    ▷ (2) {url: "https://bookshelf.example/v1", …}
+  ▽ tags: [
+    ▷ (2) {name: "shelf", description: "Shelves, and the books on them"}
+    ▷ (2) {name: "author", description: "The people who wrote the books"}
   ▽ paths: {
-    ▶ "/api/shelf": (2) {get: {…}, post: {…}}
-    ▷ "/api/shelf/{shelf_id}": (4) {parameters: […], …}
-    ▷ "/api/shelf/{shelf_id}/book": (3) {parameters: […], …}
-    ▷ "/api/shelf/{shelf_id}/book/{book_id}": (3) {…}
-    ▷ "/api/author": (1) {get: {…}}
-…f-openapi.yaml .paths["/api/shelf"] yaml · watching · 19:3
+    ▷ "/api/shelf": (2) {get: {…}, post: {…}}
+    ▷ "/api/shelf/{shelf_id}": (4) {parameters: […], get: {…}, put: {…}, …}
+    ▷ "/api/shelf/{shelf_id}/book": (3) {parameters: […], get: {…}, …}
+ bookshelf-openapi.yaml .                                 yaml · watching · 1:1
 ```
 
-<p class="more"><a href="/tutorials/viewer.html">Look around a file in the viewer</a>, the first tutorial.</p>
-</div>
-<div class="face">
-<p class="kind">In a script, a pipe or an agent's tool call</p>
-<h2>A query tool for scripts and agents</h2>
-<p>Without a terminal, aless draws nothing and never waits for a key. It prints an outline of a file, the value at a path, the path at a line and column, the nodes a search finds, or a report on whether files parse, as JSON on standard output. A query answers with one JSON value, every error is one JSON object on standard error, and the exit status says which.</p>
+aless is a viewer and nothing else. It draws on a terminal and reads keys from it, and without a terminal it refuses to start. To read one of these formats in a script, or write a document as another format, there is [dmog](https://github.com/tabnas/dmog), which translates any format aless reads into any other.
 
-```console
-$ aless --json --path '.info.title' bookshelf-openapi.yaml
-"Bookshelf demo API"
-$ aless --where --at 4:3 bookshelf-openapi.yaml
-{
-  "file": "bookshelf-openapi.yaml",
-  "format": "yaml",
-  "path": ".info.version",
-  "kind": "string",
-  "line": 4,
-  "col": 3,
-  "value": "1.0.0"
-}
-```
-
-<p class="more"><a href="/tutorials/scripting.html">Ask a file questions from a script</a>, the second tutorial.</p>
-</div>
-</div>
+[Look around a file in the viewer](/tutorials/viewer.html), the tutorial, takes ten minutes.
 
 ## Install
 
@@ -80,27 +61,27 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/rjrodger/aless/rel
 
 ## What it reads
 
-Every format is read into the same tree, so the viewer, the paths, the search and the outputs are the same for all of them. A format aless has no parser for can be read with a grammar of your own, written in ABNF ([Read a format aless does not know](/how-to/grammar.html)).
+Every format is read into the same tree, so the viewer, the paths you copy, the search and the source positions are the same for all of them. A format aless has no parser for can be read with a grammar of your own, written in ABNF ([Read a format aless does not know](/how-to/grammar.html)).
 
 <p class="chips"><span class="chips-label">Reads</span> <span class="chip">json</span> <span class="chip">jsonl</span> <span class="chip">jsonic</span> <span class="chip">jsonc</span> <span class="chip">json5</span> <span class="chip">yaml</span> <span class="chip">toml</span> <span class="chip">ini</span> <span class="chip">csv</span> <span class="chip">tsv</span> <span class="chip">xml</span> <span class="chip">zon</span> <span class="chip">markdown</span> <span class="chip">rss</span> <span class="chip">atom</span> <span class="chip">css</span> <span class="chip">proto</span> <span class="chip">pgn</span> <span class="chip">c</span> <span class="chip">abnf</span> <span class="chip">ebnf</span> <span class="chip">gbnf</span> <span class="chip">expr</span> <span class="chip">semver</span> <span class="chip">text</span> <a class="chip" href="/how-to/grammar.html">any ABNF grammar</a></p>
 ## The documentation
 
 <div class="cards">
 <div class="card">
-<h3><a href="/tutorials/index.html">Tutorials</a></h3>
-<p>Two lessons from the start, one for each face: <a href="/tutorials/viewer.html">the viewer</a>, and <a href="/tutorials/scripting.html">the command line</a> a script or an agent uses.</p>
+<h3><a href="/tutorials/index.html">Tutorial</a></h3>
+<p>One lesson from the start: <a href="/tutorials/viewer.html">look around a file in the viewer</a>, move through it, fold it, search it and copy from it, then change it on disk and watch aless keep your place.</p>
 </div>
 <div class="card">
 <h3><a href="/how-to/index.html">How-to guides</a></h3>
-<p>One task each, in the viewer and from the command line: <a href="/how-to/search.html">search a document</a>, <a href="/how-to/watch.html">follow a file as it changes</a>, <a href="/how-to/extract.html">get a value out in a script</a>, <a href="/how-to/check.html">check that files parse</a>, <a href="/how-to/agents.html">give an agent aless</a>.</p>
+<p>One task each: <a href="/how-to/search.html">search a document</a>, <a href="/how-to/watch.html">follow a file as it changes</a>, <a href="/how-to/tabs.html">open several files in tabs</a>, <a href="/how-to/explore.html">browse a directory</a>, <a href="/how-to/grammar.html">read a format aless does not know</a>.</p>
 </div>
 <div class="card">
 <h3><a href="/reference/index.html">Reference</a></h3>
-<p>Every <a href="/reference/command-line.html">option, output, error and exit status</a>, every <a href="/reference/keys.html">key</a>, and every <a href="/reference/releases.html">release</a>, written from the aless binary and its changelog.</p>
+<p>Every <a href="/reference/command-line.html">option, format, limit and exit status</a>, every <a href="/reference/keys.html">key</a>, and every <a href="/reference/releases.html">release</a>, written from the aless binary and its changelog.</p>
 </div>
 <div class="card">
 <h3><a href="/explanation/index.html">Explanation</a></h3>
-<p>Why aless works as it does: <a href="/explanation/one-tree.html">one tree for every format</a>, <a href="/explanation/command-line.html">why the command line answers in JSON</a>, <a href="/explanation/positions.html">where values came from</a>, and what <a href="/explanation/large-inputs.html">large inputs</a> cost.</p>
+<p>Why aless works as it does: <a href="/explanation/one-tree.html">one tree for every format</a>, <a href="/explanation/positions.html">where values came from</a>, <a href="/explanation/reloading.html">how a reload keeps your place</a>, and what <a href="/explanation/large-inputs.html">large inputs</a> cost.</p>
 </div>
 </div>
 

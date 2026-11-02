@@ -4,7 +4,7 @@ version = "0.5.0"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Richard Rodger <http://richardrodger.com>"]
-description = "Terminal viewer and JSON CLI for JSON, YAML, TOML, CSV, XML and more"
+description = "Terminal viewer for JSON, YAML, TOML, CSV, XML and more, as one tree"
 license = "MIT"
 repository = "https://github.com/rjrodger/aless"
 homepage = "https://aless.tabnas.dev"
@@ -12,9 +12,8 @@ readme = "README.md"
 keywords = ["json", "yaml", "toml", "viewer", "tui"]
 categories = ["command-line-utilities"]
 # What the published crate carries: the sources, the licence files, and
-# every file the README links to (the docs, the agent skill, the man page
-# and the completions, the example grammars). The tests stay in the
-# repository.
+# every file the README links to (the docs, the man page and the
+# completions, the example grammars). The tests stay in the repository.
 include = [
     "/src",
     "/LICENSE",
@@ -23,7 +22,6 @@ include = [
     "/CHANGELOG.md",
     "/PACKAGING.md",
     "/RELEASING.md",
-    "/skills",
     "/man",
     "/completions",
     "/tests/fixtures/grammars",
