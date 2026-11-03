@@ -34,15 +34,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      # tests/translate_matrix.rs and tests/yaml_render.rs read the grammar
-      # repositories' own fixtures, which the published crates do not
-      # ship: checkouts at the tags of the locked versions, cloned here
-      # and named in TABNAS_FIXTURES_DIR and TABNAS_YAML_DIR for the steps
-      # after this one.
-      - name: The grammar repositories' fixtures
-        shell: bash
-        run: scripts/fixtures.sh
-
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -55,15 +46,6 @@ jobs:
 
       - name: Test
         run: cargo test --locked
-
-      # Every document of every format's own fixture corpus written into
-      # every format --render writes, and read back under the target's
-      # declared conventions: thousands of documents, in the optimised
-      # matrix profile, on one platform. --nocapture shows the line the
-      # test prints every 25 documents, so the step is never silent.
-      - name: Translation matrix (every format's fixtures)
-        if: runner.os == 'Linux'
-        run: cargo test --locked --profile matrix --test translate_matrix -- --ignored --nocapture
 
       - name: Terminal smoke test (pty)
         if: runner.os != 'Windows'
@@ -78,16 +60,18 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
-      - name: Binary starts, and answers without a screen
+      # A viewer: it answers -h, --help and --version anywhere, and without a
+      # terminal to draw on it refuses to start, with one line on standard
+      # error, nothing on standard output and the status 2.
+      - name: Binary starts, and refuses without a terminal
         shell: bash
         run: |
           ./target/release/aless --version
           ./target/release/aless --help | head -3
-          out=$(echo '{"a": [1, 2]}' | ./target/release/aless --json --compact)
-          test "$out" = '{"a":[1,2]}'
-          ./target/release/aless --where --at 7:9 tests/fixtures/nested.json | grep -q '"path": ".store.books\[1\].title"'
-          status=0; ./target/release/aless tests/fixtures/bad.json 2>/dev/null || status=$?
-          test "$status" = 1
+          status=0; ./target/release/aless tests/fixtures/nested.json </dev/null >out.txt 2>err.txt || status=$?
+          test "$status" = 2
+          test ! -s out.txt
+          grep -q 'needs a terminal' err.txt
 
   msrv:
     name: rust 1.88 (minimum supported)
