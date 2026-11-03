@@ -1,24 +1,33 @@
-# Handover: aless is a pure viewer, 0.6.0, 2026-11-02
+# Handover: CI for the pure viewer, housekeeping, and numbers as spelled, 2026-11-03
 
 This is the running handover page between sessions working on aless. It
-was last written on 2026-11-02, at the end of the session that made aless
-a pure viewer and released 0.6.0. The handover before it, on the
-streaming plan, left this repository when the streaming exports did
-(aless#96) and is kept in tabnas/admin as
+was last written on 2026-11-03, at the end of the session that took up
+the 0.6.0 page's open list: the stale CI workflow, the yanked crate, the
+stale link text, `__pycache__`, and numbers shown as doubles. The
+handover before 0.6.0, on the streaming plan, left this repository when
+the streaming exports did (aless#96) and is kept in tabnas/admin as
 [`notes/2026-10-23-aless-streaming-handover.md`](https://github.com/tabnas/admin/blob/main/notes/2026-10-23-aless-streaming-handover.md);
-the same session's fleet-wide record is admin's
+the 0.6.0 session's fleet-wide record is admin's
 [`notes/2026-11-02-aless-pure-viewer-handover.md`](https://github.com/tabnas/admin/blob/main/notes/2026-11-02-aless-pure-viewer-handover.md)
-(tabnas/admin#161). This page is aless's own view of it: what aless is
-now, what was decided, what is open here, and how to work here.
+(tabnas/admin#161). This page is aless's own view: what aless is now,
+what was decided, what is open here, and how to work here.
 
 Read [AGENTS.md](../../AGENTS.md) first; it is current. Nothing published
 (the README, the site, the changelog, `--help`) may cite this page.
 
 ## Where aless stands
 
-- **0.6.0 is released** (2026-11-02, `4cf5e05`, tag `v0.6.0`): the
-  GitHub Release with every asset, the crate on crates.io, and the
-  Homebrew tap's formula. `main` is at that commit.
+- **0.6.0 is the latest release** (2026-11-02, `4cf5e05`, tag `v0.6.0`):
+  the GitHub Release with every asset, the crate on crates.io, and the
+  Homebrew tap's formula.
+- **`main` is at `6a16d03`** (aless#104), with this page (aless#105) to
+  follow. **CI is green again** on Linux, macOS and Windows and on the
+  minimum Rust version, from aless#102 on: the first full runs since
+  0.5.0, so 0.5.0's and 0.6.0's code passes its tests on macOS and
+  Windows too.
+- **Unreleased on `main`:** a number shown as its source spells it,
+  where the spelling is JSON's (aless#104), under `Unreleased` in the
+  changelog; and `clipboard-win` 5.4.3 in the lock (aless#103).
 - **aless is a viewer and nothing else.** It draws a document on a
   terminal and reads keys from it. Without a terminal (standard output a
   pipe or a file, no terminal to open, or `TERM=dumb`) it refuses to
@@ -56,6 +65,13 @@ On 2026-11-02:
    maintainer ruled instead:
 5. **Make aless a pure viewer.** aless#99 did it; aless#100 released
    0.6.0.
+
+On 2026-11-03:
+
+6. **Implement the handover**: the 0.6.0 page's "Open, in aless".
+   aless#102, #103 and #104 are that work.
+7. **Merge the pull requests.** #102 first; #103 and #104 after their
+   branches took `main` and their CI ran the new workflow green.
 
 Ruling 5 is not yet an ADR in tabnas/admin. ADR-31 and ADR-32 cover one
 implementation and the rename; if the pure viewer is to be a recorded
@@ -110,37 +126,98 @@ Not rulings; revisit with the maintainer if wanted.
 - The refusal names its cause, points at `aless --help`, and names dmog.
 - `:w FILE` and the copy keys stay.
 
+## What this session did (ruling 6)
+
+| Pull request | Commit | What |
+|---|---|---|
+| aless#102 | `65e0e39` | `ci.yml` as #99's description gave it: the fixtures and translation-matrix steps go, and the last step checks the refusal (status 2, nothing on standard output, `needs a terminal` on standard error). |
+| aless#103 | `7089741` | `cargo update -p clipboard-win` (5.4.1, yanked, to 5.4.3); `one-tree.md`'s link text; `__pycache__/` in `.gitignore`. |
+| aless#104 | `6a16d03` | A number keeps its source's spelling where the spelling is JSON's: in the tree, a collapsed preview, search, `:w` and the copy keys. |
+
+### Numbers as spelled (aless#104)
+
+- **`fmt::spelling(text, n)`** keeps a spelling that is a JSON number
+  (RFC 8259), denotes `n` bit for bit, and is not what `fmt::number`
+  writes: `1.0`, `-0`, `1e21`, `1E3`, `2.50` and integers past 2^53. A
+  short integer returns at once, and a decimal `fmt::number` writes as
+  spelled before the text is read back.
+- **The spelling rides on the token**: `TokVal::Num(f64,
+  Option<Box<String>>)`, a thin box, so `Tok` stays 48 bytes (a
+  `Box<str>` field makes it 64). `prov::take_spelling` hands it to the
+  node placed at the token only when the node holds that very number;
+  `Doc::spellings` holds them by node, sparse.
+- **`fmt::value_text(doc, id)`** is where every written value goes:
+  `render`'s row, `fmt::preview`, `fmt::search_text` and
+  `fmt::serialize`. `leaf_text(kind)` stays for a kind alone.
+- **Measured**: a 7.2 MB array of 60,000 records loads about 3% slower,
+  both when 120,000 of its numbers keep a spelling and when none does,
+  against run-to-run noise of about 2% (release build, best of three,
+  macOS aarch64). The figures are in #104's description.
+
+### Decisions the session made within ruling 6
+
+Not rulings; revisit with the maintainer if wanted.
+
+- **A spelling is kept only where it is JSON's**, since `:w` and the copy
+  keys write JSON. `0x1F` (JSON5), `1_000` (TOML), `+1`, `.5`, `5.` and
+  `Infinity` are given as the value, as before.
+- **CSV's column alignment hands no spelling on.** aless never turns on
+  tabnas-csv's number lexing, so its cells are strings; a record that
+  falls back to value matching goes through `align_nodes`, which does.
+- **Numbers left the deviations from jless** (the README's and
+  `site/explanation/jless.md`), since jless shows a JSON number as
+  spelled too. The reference's sentence moved from LARGE INPUTS AND
+  LIMITS to INPUT AND FORMATS, beside "Map keys keep their source order".
+- **No release is cut.** #104 changes what the viewer shows; the bump
+  that releases it (0.6.1 or 0.7.0), and when, is the maintainer's call.
+
 ## Open, in aless
 
-- **`.github/workflows/ci.yml` is stale and red on every push since
-  0.5.0.** It still runs `scripts/fixtures.sh` and the translation matrix
-  (both deleted) and its last step runs `--json` and `--where` (both
-  gone). The replacement is the diff in aless#99's description. A
-  session's credentials cannot push a workflow file: GitHub refuses the
-  push for want of the `workflow` scope (confirmed on a probe branch), as
-  it refuses the API write. Only the maintainer can land it. Until then
-  the macOS and Windows test jobs have not run on 0.5.0 or 0.6.0; both
-  passed every gate locally on Linux, with `cargo check` for the Windows
-  and macOS targets. The Codex thread on aless#99 that found the stale
-  step is left open on purpose.
-- **`clipboard-win 5.4.1` in `Cargo.lock` is yanked** (behind the
-  optional clipboard feature, through arboard); `cargo package` warns.
-  `cargo update -p clipboard-win` moves it, on the maintainer's word.
-- **aless#29**, housekeeping, is the one open issue. The merged remote
-  branches `pure-viewer` and `bump-0.6.0` could go with it.
-- **Numbers are shown as doubles.** `1e+21`, and an integer past 2^53
-  loses digits; the source view keeps the spelling. `prov` already
-  aligns the parser's tokens with the nodes, so showing the lexeme is
-  within reach.
-- **A stale link text**: `site/explanation/one-tree.md` links to "Large
-  inputs, streaming and limits"; the page is "Large inputs and limits".
-  The site test checks targets, not text.
-- **`scripts/__pycache__/` is not ignored**; importing `pty-smoke.py`
-  writes it, and `git add scripts` picked it up once.
+- **A release** of #104, when the maintainer says so (RELEASING.md).
+- **The Codex thread on aless#99** that found the stale CI step can be
+  resolved: #102 is in `main`.
+- **aless#29, the remote branches.** 60 branches predate this session.
+  59 lose nothing if deleted: 58 are the heads of merged pull requests,
+  each still reachable as `refs/pull/N/head`, and `wip/abnf-grammars` is
+  in `main`'s history. One, `claude/handover-2026-10-02` (aless#41,
+  closed unmerged, 5 commits of documentation not in `main`), is the
+  maintainer's call. This session asked before deleting anything. The
+  59, from a fresh fetch, are the remote branches whose pull request
+  merged, plus `wip/abnf-grammars`; the same command takes this
+  session's branches too, each merged:
+
+  ```bash
+  git fetch --prune origin
+  gh pr list --state merged --limit 500 --json headRefName \
+    --jq '.[].headRefName' | sort -u > /tmp/merged
+  git branch -r --format='%(refname:lstrip=3)' | sort > /tmp/remote
+  comm -12 /tmp/merged /tmp/remote | xargs git push origin --delete
+  git push origin --delete wip/abnf-grammars
+  ```
+
+  An open pull request's branch is not in the merged list, so it is left
+  alone, and `claude/handover-2026-10-02`'s pull request was closed, not
+  merged. Turning on "Automatically delete head branches" in the
+  repository's settings keeps them from piling up again. Then #29 can
+  close.
+- **A number placed by a best-effort alignment** (YAML, XML, Markdown)
+  takes its spelling from the token it matched by value, so a misplaced
+  match would show another spelling of the same float, and for an
+  integer past 2^53, other digits. It is exact for the JSON family,
+  TOML, INI and ZON. No case of it was found.
+- **The Windows and macOS `cargo check --target` gates** were not run
+  locally: the maintainer's machine has Homebrew's Rust, without rustup.
+  CI's three platforms run them (green on #102, #103 and #104).
 
 ## Open, around aless
 
 - **The pure-viewer ruling has no ADR** (above).
+- **`tabnas/dmog` does not exist on GitHub yet**: the repository is
+  still `tabnas/alchemy-cli`, and `https://github.com/tabnas/dmog`
+  answers 404 (checked 2026-11-03). aless's README, changelog, site and
+  `--help` link to it five times, so those links are broken until the
+  repository is renamed. Renaming it fixes them and leaves a redirect
+  for the old name.
 - **dmog's gaps, flagged when streaming moved:** a streamed export for a
   custom grammar has no home there (it would need all three runtimes);
   `translate` has no `--timeout` or `--max-size`, and `--from` is
@@ -148,7 +225,8 @@ Not rulings; revisit with the maintainer if wanted.
 - **admin's daily `port-deps` check has failed since 2026-10-31:**
   alchemy-cli's ports name the repository `dmog` while the job's clone is
   named `alchemy-cli`, and `docs/deps/deps.json` is stale with it. A
-  pull request to admin meets that red check whatever it changes.
+  pull request to admin meets that red check whatever it changes. The
+  rename above likely settles it.
 - Carried over from the streaming handover, now dmog's and the parts'
   concern: TypeScript and Go reading a reader a window at a time (step
   10's item 7), their steps 12 and 13, `lex.window` in the other plugins,
@@ -162,7 +240,8 @@ Not rulings; revisit with the maintainer if wanted.
   with its console examples included), `python3 scripts/pty-smoke.py
   target/debug/aless`, `cargo package --locked` (`--allow-dirty` before
   the commit), and `cargo check --locked --target` for
-  `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`.
+  `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` where rustup is
+  installed.
 - **After an option or reference change**, `scripts/generate.sh`;
   `the_generated_files_are_current` fails until it runs.
 - **Screen captures for the site** come from a pty at 80 columns. A
@@ -178,16 +257,29 @@ Not rulings; revisit with the maintainer if wanted.
   eleven minutes), then with the tag (about thirteen), then confirm the
   Release by tag, crates.io and the tap's raw formula. 0.5.0 and 0.6.0
   were both made this way.
+- **To measure a change's cost**, time `load::load_path` on a generated
+  file in a test of its own (`cargo test --release --test NAME --
+  --nocapture`), in this checkout and in a detached worktree of `main`,
+  alternating, best of three. Delete the test after.
 - **Edit with scripts that fail loudly**: Python with an exact-match
   `rep(old, new)` that asserts one occurrence, heredocs for whole files,
   `sed` for one-line changes.
-- **What a session's credentials cannot do**: push a workflow file, push
-  a tag, amend or force-push. A follow-up commit does what an amend
-  would. Keep `rm -rf` out of compound commands and never of the
-  directory you are in.
+- **What a session can do depends on where it runs.** On the
+  maintainer's machine git pushes over SSH and `gh`'s token has the
+  `workflow` scope, so a workflow file can be pushed (#102 was). A cloud
+  session's credentials cannot push a workflow file or a tag, amend, or
+  force-push; there, a follow-up commit does what an amend would. In
+  auto mode a merge is refused ("Merge Without Review") until the
+  maintainer asks for it in so many words, and changing a pull request's
+  base or closing and reopening one was refused too; `gh pr
+  update-branch` (a merge of `main` into the branch, no force-push) is
+  how a branch took `main` here. Keep `rm -rf` out of compound commands
+  and never of the directory you are in.
 - **To look at a file while working here**, an agent has no terminal to
   run aless in: `dmog translate --from FORMAT --to json FILE` prints it
-  as JSON, and `jq` takes it from there.
+  as JSON, and `jq` takes it from there. dmog was not installed on the
+  maintainer's machine on 2026-11-03; `load::load_str` in a throwaway
+  test does the same through aless's own loader.
 
 ## Leaving this page current
 
