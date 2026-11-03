@@ -36,10 +36,10 @@ Everything above the parser is written once. There is one key map, one path synt
 
 A model every format fits in holds only what they have in common. Comments, YAML's anchors and tags, and the spelling of a number are not part of it.
 
-Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. The viewer shows the value, not the spelling, which is one of the ways aless differs from jless; the source view (`s`) shows the spelling.
+Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. aless keeps a number's spelling beside the value, from the token the number was read from, so the viewer, search, `:w` and the copy commands give `1.0`, `1e21` and a long integer as the source spells them, as jless does. The spelling is kept only where it is JSON's, since `:w` and the copy commands write JSON: `0x1F` in JSON5 and `1_000` in TOML are given as the values they denote, `31` and `1000`, and the source view (`s`) shows the spelling.
 
 ## Why one engine
 
 Every format is parsed by the same engine, [tabnas](https://tabnas.dev), with a grammar for each format. aless has no parser of its own. That is why a new format is a grammar rather than a feature, and why every format reports its errors in the same shape, with a line, a column and a hint.
 
-The cost is speed. A general rule engine is slower than a parser written by hand for one format: aless reads about a megabyte a second, where a dedicated JSON parser reads hundreds. For the files people read in a terminal that is fast enough, and [Large inputs, streaming and limits](/explanation/large-inputs.html) says what happens with the files for which it is not.
+The cost is speed. A general rule engine is slower than a parser written by hand for one format: aless reads about a megabyte a second, where a dedicated JSON parser reads hundreds. For the files people read in a terminal that is fast enough, and [Large inputs and limits](/explanation/large-inputs.html) says what happens with the files for which it is not.

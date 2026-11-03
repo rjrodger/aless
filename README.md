@@ -188,7 +188,12 @@ text, one line per row, so every file is viewable.
 | text | txt, text, log, anything else | none |
 
 CSV and TSV show a list of records keyed by the header row. Map keys keep
-their **source order**. A `.proto` file shows the FileDescriptorProto its
+their **source order**, and a number its **source spelling** where the
+spelling is JSON's: `1.0`, `1e21` and an integer beyond 2^53 are shown,
+searched, copied and written by `:w` as the source spells them. A
+spelling JSON has no syntax for (`0x1F` in JSON5, `1_000` in TOML) is
+shown as the value it denotes, `31` and `1000`, and the source view has
+the spelling. A `.proto` file shows the FileDescriptorProto its
 crate builds, not the syntax tree its grammar parses; an expression shows
 its operations as S-expressions (`1+2*3` is `["+", 1, ["*", 2, 3]]`), as
 the crate's fixtures write them; and a version is read without the line
@@ -666,9 +671,6 @@ there. `C-z` suspend is Unix-only.
 
 - Multiple files open in tabs rather than one document; `q` closes the
   current tab and quits only when it was the last.
-- Numbers are shown as the parsed value (`1e+21`, `55`), not the source
-  spelling, because tabnas values are doubles; the source view has the
-  spelling.
 - Search runs over each node's own line-mode text (`"key": value`), so a
   pattern cannot span rows.
 - `J`/`K` stop at the last sibling instead of tracking a desired depth.

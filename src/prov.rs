@@ -13,6 +13,11 @@
 //! JSON family, TOML, INI, CSV and ZON values, and degrades gracefully for
 //! YAML, XML and Markdown.
 //!
+//! A number placed at its token also takes the token's spelling, when the
+//! source spells it in JSON's syntax otherwise than the value is written
+//! ([`crate::fmt::spelling`]): the token is matched by value, so the
+//! spelling it hands on denotes the node's number exactly.
+//!
 //! Records keyed by a header row (CSV, TSV) are the one shape whose keys
 //! are not in the stream where the values are: every record's keys are
 //! the header's cells, lexed once, before any value, and a value is told
@@ -73,7 +78,10 @@ pub struct Tok {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokVal {
     Str(String),
-    Num(f64),
+    /// A number, and its source's spelling when the viewer keeps it
+    /// ([`crate::fmt::spelling`]); boxed, so that a token is no larger for
+    /// the room, which few numbers use.
+    Num(f64, Option<Box<String>>),
     Bool(bool),
     Null,
     Other,
@@ -101,7 +109,10 @@ impl Tok {
         };
         let val = match &t.val {
             Value::Text(s) => TokVal::Str(s.string.clone()),
-            Value::Number(n) => TokVal::Num(*n),
+            Value::Number(n) => TokVal::Num(
+                *n,
+                crate::fmt::spelling(src, *n).map(|s| Box::new(s.to_string())),
+            ),
             Value::Bool(b) => TokVal::Bool(*b),
             Value::Null => TokVal::Null,
             _ => stands_for.map_or(TokVal::Other, |s| TokVal::Str(s.to_string())),
@@ -147,7 +158,7 @@ pub fn worth_keeping(tok: &Tok) -> bool {
     match &tok.val {
         TokVal::Other => false,
         TokVal::Str(s) => !s.trim().is_empty() && !tok.bare_punct,
-        TokVal::Num(_) => tok.digit,
+        TokVal::Num(..) => tok.digit,
         TokVal::Bool(_) | TokVal::Null => true,
     }
 }
@@ -231,7 +242,7 @@ fn matches_str(tok: &Tok, s: &str) -> bool {
     match &tok.val {
         TokVal::Str(t) => t == s,
         // A key spelled as a number in the source (`{1: "a"}`).
-        TokVal::Num(n) if tok.digit => crate::fmt::number(*n) == s,
+        TokVal::Num(n, _) if tok.digit => crate::fmt::number(*n) == s,
         _ => false,
     }
 }
@@ -253,7 +264,7 @@ fn matches_open(tok: &Tok, kind: &Kind) -> bool {
 fn matches_kind(tok: &Tok, kind: &Kind) -> bool {
     match (kind, &tok.val) {
         (Kind::Str(s), _) => matches_str(tok, s),
-        (Kind::Number(a), TokVal::Num(b)) => tok.digit && (a == b || (a.is_nan() && b.is_nan())),
+        (Kind::Number(a), TokVal::Num(b, _)) => tok.digit && (a == b || (a.is_nan() && b.is_nan())),
         (Kind::Number(a), TokVal::Str(s)) => tok.digit && crate::fmt::number(*a) == *s,
         (Kind::Bool(a), TokVal::Bool(b)) => a == b,
         (Kind::Null, TokVal::Null) => tok.has_src,
@@ -364,7 +375,7 @@ fn cell_text(cell: &[Tok]) -> Option<String> {
     for t in cell {
         match &t.val {
             TokVal::Str(s) => text.push_str(&squeeze(s)),
-            TokVal::Num(n) if t.digit => text.push_str(&crate::fmt::number(*n)),
+            TokVal::Num(n, _) if t.digit => text.push_str(&crate::fmt::number(*n)),
             _ => return None,
         }
     }
@@ -438,6 +449,16 @@ fn place_record(doc: &mut Doc, record: u32, run: &[Tok], columns: &HashMap<Strin
     }
 }
 
+/// Hand a number token's spelling ([`TokVal::Num`]) to the node at `i`
+/// placed at it, when the node holds the very number the token does.
+fn take_spelling(doc: &mut Doc, i: usize, tok: &Tok) {
+    if let (Kind::Number(a), TokVal::Num(b, Some(spelled))) = (&doc.nodes[i].kind, &tok.val) {
+        if a.to_bits() == b.to_bits() {
+            doc.spellings.insert(i as u32, spelled.as_str().into());
+        }
+    }
+}
+
 /// What [`align_nodes`] looks for in the stream besides a node's value.
 #[derive(Clone, Copy)]
 struct Look {
@@ -491,6 +512,7 @@ fn align_nodes(doc: &mut Doc, range: Range<usize>, toks: &[Tok], look: Look) {
                     doc.nodes[i].line = toks[j].line;
                     doc.nodes[i].col = toks[j].col;
                 }
+                take_spelling(doc, i, &toks[j]);
                 cursor = j + 1;
             } else if let Kind::Str(s) = &kind {
                 if s.len() >= CONTAIN_MIN {
@@ -676,7 +698,7 @@ mod tests {
             .iter()
             .map(|t| match &t.val {
                 TokVal::Str(s) => s.clone(),
-                TokVal::Num(n) => n.to_string(),
+                TokVal::Num(n, _) => n.to_string(),
                 TokVal::Bool(b) => b.to_string(),
                 TokVal::Null => "null".to_string(),
                 TokVal::Other => "?".to_string(),
@@ -727,6 +749,41 @@ mod tests {
         p.parse("a * b").unwrap();
         let kept: Vec<bool> = sink.lock().unwrap().iter().map(|t| t.text).collect();
         assert_eq!(kept.len(), 2, "the `*` is not kept for the JSON family");
+    }
+
+    /// A number placed at its token takes the token's spelling when JSON's
+    /// syntax spells it otherwise than the value is written, whatever else
+    /// sits around it, and only then.
+    #[test]
+    fn a_number_takes_its_tokens_spelling() {
+        let doc =
+            parse(r#"{"a": 1.0, "b": [-0, 55, 1e21], "1.0": 12345678901234567890, "c": 0.5}"#);
+        let spelled: Vec<(u32, &str)> = (0..doc.len() as u32)
+            .filter_map(|i| doc.spelling(i).map(|s| (i, s)))
+            .collect();
+        assert_eq!(
+            spelled,
+            vec![
+                (1, "1.0"),
+                (3, "-0"),
+                (5, "1e21"),
+                (6, "12345678901234567890")
+            ]
+        );
+    }
+
+    /// The token is matched by value, and `-0` equals `0`: the spelling
+    /// goes only to a node holding the very number it denotes.
+    #[test]
+    fn a_spelling_goes_only_to_its_own_number() {
+        let mut p = tabnas_json::make();
+        let sink = capture(&mut p);
+        let v = p.parse("[-0]").unwrap();
+        let mut doc = Doc::from_value(&v);
+        doc.nodes[1].kind = Kind::Number(0.0);
+        align(&mut doc, &sink.lock().unwrap());
+        assert_eq!(doc.nodes[1].col, 2, "placed at the token");
+        assert_eq!(doc.spelling(1), None, "but not spelled `-0`");
     }
 
     #[test]

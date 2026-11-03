@@ -8,6 +8,18 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date
 ([RELEASING.md](RELEASING.md)).
 
+## [Unreleased]
+
+### Changed
+
+- A number is shown as its source spells it where the spelling is
+  JSON's: `1.0`, `-0`, `1e21` and an integer beyond 2^53 keep their
+  digits in the tree, a collapsed preview, search, and the JSON that `:w`
+  and the copy commands write, where they were given as the nearest
+  64-bit float in its shortest form (`1`, `0`, `1e+21`). A spelling JSON
+  has no syntax for (`0x1F` in JSON5, `1_000` in TOML) is still given as
+  the value it denotes, and the source view has the spelling.
+
 ## [0.6.0] - 2026-11-02
 
 ### Removed

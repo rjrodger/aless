@@ -19,7 +19,6 @@ Each extension to the viewer is on a key jless leaves free, so none of jless's k
 ## Where they differ
 
 - Several files open in tabs rather than one document, so `q` closes the focused tab and quits only when it was the last.
-- Numbers are shown as their value (`1e+21`, `55`), not as the source spelled them, because the tree holds numbers as 64-bit floats ([One tree for every format](/explanation/one-tree.html)). The source view shows the spelling.
 - Search matches each node's own `"key": value` text, so a pattern cannot span rows, where jless searches the whole document as one line ([Search a document](/how-to/search.html)).
 - Line numbers count the rows on screen, in data mode as in line mode, where jless numbers the lines of the pretty-printed document; the status bar gives the focused node's line and column in the source file ([Choose how the viewer draws a document](/how-to/display.html)).
 - `J` and `K` stop at the last sibling, rather than tracking a depth you asked for earlier.

@@ -10,6 +10,7 @@
 //! those flags with [`Doc::rows`]; in line mode every expanded non-empty
 //! container also yields a closing-bracket row, as jless does.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tabnas::Value;
@@ -90,6 +91,12 @@ pub struct Row {
 #[derive(Clone, Debug, Default)]
 pub struct Doc {
     pub nodes: Vec<Node>,
+    /// The source's spelling of each number node whose source spells it
+    /// otherwise than [`crate::fmt::number`] writes its value, in JSON's
+    /// syntax ([`crate::fmt::spelling`]): `1.0`, `-0`, `1e21`, an integer
+    /// past 2^53. Filled in by the alignment ([`crate::prov`]); most
+    /// documents have none.
+    pub spellings: HashMap<NodeId, Box<str>>,
 }
 
 impl Doc {
@@ -150,7 +157,10 @@ impl Doc {
             let (size, parent) = (nodes[i].size, nodes[i].parent);
             nodes[parent as usize].size += size;
         }
-        Doc { nodes }
+        Doc {
+            nodes,
+            spellings: HashMap::new(),
+        }
     }
 
     /// A document from nodes already in pre-order with `parent`, `key`,
@@ -164,7 +174,10 @@ impl Doc {
             let (size, parent) = (nodes[i].size, nodes[i].parent);
             nodes[parent as usize].size += size;
         }
-        Doc { nodes }
+        Doc {
+            nodes,
+            spellings: HashMap::new(),
+        }
     }
 
     /// A document made of plain text lines (the fallback for unknown
@@ -195,7 +208,10 @@ impl Doc {
                 col: 1,
             });
         }
-        Doc { nodes }
+        Doc {
+            nodes,
+            spellings: HashMap::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -212,6 +228,15 @@ impl Doc {
 
     pub fn root(&self) -> &Node {
         &self.nodes[0]
+    }
+
+    /// The source's spelling of the number at `id`, when the viewer keeps
+    /// it ([`Doc::spellings`]).
+    pub fn spelling(&self, id: NodeId) -> Option<&str> {
+        if self.spellings.is_empty() {
+            return None;
+        }
+        self.spellings.get(&id).map(|s| &**s)
     }
 
     /// First index past the subtree of `id`.
