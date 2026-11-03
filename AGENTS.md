@@ -13,9 +13,8 @@ The decisions everything here rests on are in [ADR.md](ADR.md):
 **ADR-002** (every format through a tabnas grammar), **ADR-003** (jless's
 interface, unless the README says otherwise), **ADR-004** (correctness
 and uniformity before performance), **ADR-005** (published crates,
-pinned), **ADR-006** (the reference written from the option table) and
-**ADR-007** (a repetition is a replace loop). Read them before a change
-that bends one.
+pinned) and **ADR-006** (the reference written from the option table).
+Read them before a change that bends one.
 
 ## Where the detail lives
 

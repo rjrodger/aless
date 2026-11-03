@@ -20,7 +20,6 @@ what superseded it, so the citations of it still resolve.
 | [ADR-004](#adr-004-correctness-and-uniformity-come-before-performance) | Correctness and uniformity come before performance | Accepted |
 | [ADR-005](#adr-005-dependencies-are-published-crates-pinned-by-the-lock) | Dependencies are published crates, pinned by the lock | Accepted |
 | [ADR-006](#adr-006-the-reference-is-written-from-the-option-table) | The reference is written from the option table | Accepted |
-| [ADR-007](#adr-007-a-repetition-is-a-replace-loop-and-depth-is-nesting) | A repetition is a replace loop, and depth is nesting | Accepted |
 
 ## ADR-001: aless is a terminal viewer
 
@@ -141,26 +140,3 @@ detail. `man/aless.1` and `completions/` are committed output of
 **Enforcement.** `every_option_in_the_table_is_read` in `src/main.rs`,
 `the_generated_files_are_current` in `tests/binary.rs`, and
 `the_reference_is_the_binarys` in `tests/site.rs`.
-
-## ADR-007: A repetition is a replace loop, and depth is nesting
-
-**Status:** Accepted.
-
-**Decision.** In a grammar a repetition re-enters its rule in the same
-frame (a replace, `r`) rather than pushing a child rule (`p`) for each
-item, so a file's length never adds depth. The cap of open rules
-(`MAX_RULE_DEPTH` in `src/load.rs`) guards nesting, the same for a
-custom grammar as for a built-in one.
-
-**Context.** This is the tabnas fleet's rule for every grammar. A
-repetition spelled as a rule that calls itself makes the rule stack grow
-with the input, so a flat file of a few thousand lines reads as nested
-past any cap.
-
-**Consequences.** A grammar of this repository's own never writes a
-repetition as a rule that calls itself. A custom grammar's value is
-measured for nesting separately (`MAX_VALUE_DEPTH`), since the compiler
-builds it in a shape of its own.
-
-**Enforcement.** `a_custom_grammars_repetition_is_not_nesting` in
-`src/load.rs` holds a long custom-grammar file to a constant rule depth.

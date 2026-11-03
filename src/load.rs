@@ -365,7 +365,7 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
 
 /// How deep a parse's rule stack may grow before aless stops it as `too_deep`. It guards a
 /// grammar with no nesting limit of its own: deeper, some recurse until the stack runs out,
-/// which ends the process. Depth follows nesting, never a file's length (ADR-007).
+/// which ends the process. Depth follows nesting, never a file's length.
 pub const MAX_RULE_DEPTH: usize = 3_000;
 
 /// How deep a custom grammar's value may nest, the levels [`MAX_RULE_DEPTH`] works out to.
@@ -2313,7 +2313,7 @@ mod tests {
         deepest.load(Ordering::Relaxed)
     }
 
-    /// A repetition in a command-line grammar adds no rule depth (ADR-007).
+    /// A repetition in a command-line grammar adds no rule depth.
     #[test]
     fn a_custom_grammars_repetition_is_not_nesting() {
         let def = grammar::Definition::parse(

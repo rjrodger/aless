@@ -108,7 +108,7 @@ fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
     }
 }
 
-/// A long file reads at a constant rule depth (ADR-007), and a value nested past
+/// A long file reads at a constant rule depth, and a value nested past
 /// the cap is `too_deep`, found once the parse is done, so without a position.
 #[test]
 fn custom_grammars_read_files_of_thousands_of_lines() {
