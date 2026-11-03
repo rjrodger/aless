@@ -302,7 +302,8 @@ fn unicode_and_edge_values_render() {
     assert_eq!(aless::fmt::path_jq(&doc.path(ab)), ".\"weird key\".\"a-b\"");
     let nums = doc.resolve(&[Key::Name("nums".into())]).unwrap();
     let line = aless::fmt::to_json_line(doc, nums);
-    assert!(line.starts_with("[0, -1.5, 1e+21, "), "{line}");
+    // As the source spells them, past 2^53 and in exponent form too.
+    assert_eq!(line, "[0, -1.5, 1e21, 12345678901234567890]");
     let pretty = aless::fmt::to_json_pretty(doc, 0, 2);
     let back: serde_json::Value = serde_json::from_str(&pretty).unwrap();
     assert_eq!(back["empty_obj"], serde_json::json!({}));
@@ -379,4 +380,42 @@ fn line_of_example(needle: &str) -> u32 {
         .position(|l| l.trim_end() == needle)
         .map(|i| i as u32 + 1)
         .unwrap()
+}
+
+/// A number keeps its source's spelling, on screen and in the JSON `:w`
+/// and the copy keys write, wherever the source spells it in JSON's syntax;
+/// a spelling JSON has no syntax for is written as the value it denotes.
+#[test]
+fn numbers_keep_their_json_spelling_in_every_format() {
+    let cases = [
+        (
+            Format::Json,
+            r#"{"a": 1.0, "b": 12345678901234567890, "c": 1e21, "d": -0}"#,
+            r#"{"a": 1.0, "b": 12345678901234567890, "c": 1e21, "d": -0}"#,
+        ),
+        (
+            Format::Json5,
+            "{a: 1.0, b: 0x1F, c: +1, d: .5, e: 12345678901234567890}",
+            r#"{"a": 1.0, "b": 31, "c": 1, "d": 0.5, "e": 12345678901234567890}"#,
+        ),
+        (
+            Format::Yaml,
+            "a: 1.0\nb: 12345678901234567890\nc: 1e3\nd: [2.50, 0x1F]\n",
+            r#"{"a": 1.0, "b": 12345678901234567890, "c": 1e3, "d": [2.50, 31]}"#,
+        ),
+        (
+            Format::Toml,
+            "a = 1.0\nb = 1_000\nc = 9007199254740993\n",
+            r#"{"a": 1.0, "b": 1000, "c": 9007199254740993}"#,
+        ),
+        (
+            Format::Jsonl,
+            "{\"a\": 1.0}\n{\"a\": 12345678901234567890}\n",
+            r#"[{"a": 1.0}, {"a": 12345678901234567890}]"#,
+        ),
+    ];
+    for (format, source, json) in cases {
+        let loaded = load::load_str(source.to_string(), format).unwrap();
+        assert_eq!(aless::fmt::to_json_line(&loaded.doc, 0), json, "{format}");
+    }
 }

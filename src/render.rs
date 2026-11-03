@@ -768,7 +768,7 @@ fn tree_lines(
                 let text = match &node.kind {
                     Kind::Object => "{}".to_string(),
                     Kind::Array => "[]".to_string(),
-                    k => fmt::leaf_text(k),
+                    _ => fmt::value_text(&tab.doc, row.node),
                 };
                 (text, style, line_mode && has_next)
             };
@@ -1400,6 +1400,22 @@ mod tests {
         let row = text.lines().nth(1).unwrap();
         assert!(row.contains("…xxx"), "{row}");
         assert!(row.ends_with("\""), "{row}");
+    }
+
+    /// A number is drawn as its source spelled it in JSON's syntax, in its
+    /// row and in a collapsed preview.
+    #[test]
+    fn a_number_is_drawn_as_spelled() {
+        let mut a = app(r#"{"a": 1.0, "big": [12345678901234567890, 1e21]}"#, 50, 8);
+        let text = screen(&mut a).text();
+        assert!(text.lines().any(|l| l.contains("a: 1.0")), "{text}");
+        assert!(text.contains("12345678901234567890"), "{text}");
+        assert!(text.contains("1e21") && !text.contains("1e+21"), "{text}");
+        a.handle(Input::Key(Key::ch('j')));
+        a.handle(Input::Key(Key::ch('j')));
+        a.handle(Input::Key(Key::ch('h')));
+        let text = screen(&mut a).text();
+        assert!(text.contains("(2) [12345678901234567890, 1e21]"), "{text}");
     }
 
     #[test]
