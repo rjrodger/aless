@@ -220,3 +220,8 @@ from jless. This file is the guide for any agent working here;
   there.
 - **Every transient task reports progress**: long commands print a line
   at least every 30 seconds (cargo's own output counts).
+- **The handover page** between sessions is
+  [`doc/handover/README.md`](doc/handover/README.md): where aless stands,
+  what is open and how to work here. Read it first, and leave it current
+  before a session ends. It is internal, so no published page cites it,
+  and the crate does not carry it.
