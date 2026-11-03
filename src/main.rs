@@ -197,7 +197,6 @@ fn main() {
     let limits = aless::load::Limits {
         max_size: args.max_size,
         timeout: args.timeout,
-        started: None,
     };
     if let Err(e) = grammar::register_all(grammars, limits) {
         refuse_usage(&e.to_string());

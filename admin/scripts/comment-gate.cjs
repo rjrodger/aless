@@ -176,7 +176,13 @@ function lex(text, syntax) {
       codeLine.add(line)
       i++
       while (i < n) {
-        if (!raw && text[i] === '\\') { i += 2; continue }
+        if (!raw && text[i] === '\\') {
+          // A line continuation: the string goes on, and so does the line count.
+          const crlf = text[i + 1] === '\r' && text[i + 2] === '\n'
+          if (crlf || text[i + 1] === '\n') line++
+          i += crlf ? 3 : 2
+          continue
+        }
         if (text[i] === '\n') { if (quote !== '`') break; line++ }
         if (text[i] === quote) { i++; break }
         i++

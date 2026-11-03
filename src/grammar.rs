@@ -844,7 +844,6 @@ word    = ( TX )
             Limits {
                 max_size: Some(8),
                 timeout: None,
-                started: None,
             },
         )
         .unwrap_err();
@@ -876,7 +875,6 @@ word    = ( TX )
             Limits {
                 max_size: Some(1 << 20),
                 timeout: None,
-                started: None,
             },
         )
         .unwrap();
@@ -933,7 +931,6 @@ word    = ( TX )
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_secs(10)),
-            started: None,
         };
         let e = register(many, limits).unwrap_err();
         assert!(
@@ -1032,7 +1029,6 @@ word    = ( TX )
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_millis(1)),
-            started: None,
         };
         let e = register(slow, limits).unwrap_err();
         assert!(!e.is_usage());
@@ -1059,7 +1055,6 @@ word    = ( TX )
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_secs(600)),
-            started: None,
         };
         assert!(register(inline("impl-slow-b", "doc = 1*20\"a\"\n"), limits).is_ok());
     }

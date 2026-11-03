@@ -179,7 +179,7 @@ fn other_grammars_place_values() {
 /// version's parts are placed where the source has them; a .proto descriptor
 /// only best effort, since its later members are derived and regrouped.
 #[test]
-fn the_newer_grammars_place_values() {
+fn css_proto_pgn_expr_and_semver_place_values() {
     let line = |name: &str, format: Option<Format>, path: &[Key]| {
         let doc = load::load_path(&fixture(name), format).unwrap().doc;
         let node = doc

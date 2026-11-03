@@ -496,7 +496,7 @@ mod tests {
     /// The bundled registry knows each of these by the name aless gives it,
     /// with a clean lex stream, so none needs registering.
     #[test]
-    fn the_newer_formats_are_coloured_as_their_grammars_lex_them() {
+    fn css_proto_pgn_expr_semver_and_c_are_coloured_as_lexed() {
         for (format, text) in [
             (Format::Css, "a { color: red }\n"),
             (

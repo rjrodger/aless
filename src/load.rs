@@ -4,7 +4,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, Read};
+use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -244,9 +244,6 @@ pub struct Limits {
     pub max_size: Option<u64>,
     /// Stop a parse that runs longer than this (`--timeout`).
     pub timeout: Option<Duration>,
-    /// When the time limit started running, so that time spent reading the input counts too
-    /// ([`DeadlineReader`]); `None` for the start of the parse.
-    pub started: Option<Instant>,
 }
 
 impl Limits {
@@ -254,13 +251,11 @@ impl Limits {
     pub const DEFAULT: Limits = Limits {
         max_size: Some(DEFAULT_MAX_SIZE),
         timeout: None,
-        started: None,
     };
 
     pub const NONE: Limits = Limits {
         max_size: None,
         timeout: None,
-        started: None,
     };
 
     /// The limits [`set_limits`] last set for this process.
@@ -269,7 +264,6 @@ impl Limits {
         Limits {
             max_size: set(MAX_SIZE.load(Ordering::Relaxed)),
             timeout: set(TIMEOUT_MS.load(Ordering::Relaxed)).map(Duration::from_millis),
-            started: None,
         }
     }
 }
@@ -321,19 +315,6 @@ fn seconds(t: Duration) -> String {
     t.as_secs_f64().to_string()
 }
 
-/// The message and hint of a `timeout` for input still being read at the deadline.
-pub(crate) fn input_timed_out_words(limit: Duration) -> (String, String) {
-    let limit = seconds(limit);
-    (
-        format!("timeout: the input was still being read after {limit} s"),
-        format!(
-            "The input had not ended when --timeout {limit} passed: whatever writes it is \
-             slow, or waiting.\nPass a larger --timeout to wait for it, or --timeout 0 for no \
-             limit."
-        ),
-    )
-}
-
 /// A size as `--max-size` takes it: bytes, or with a `K`, `M` or `G` suffix counted in 1024s
 /// (`kb` and `mib` alike); 0 for no limit.
 pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
@@ -368,187 +349,18 @@ pub fn size_flag(bytes: u64) -> String {
 }
 
 /// Read all of `input`, holding at most `max` bytes: a longer input is refused, the rest
-/// unread. A read still waiting at its deadline ([`DeadlineReader`]) is a `timeout`.
+/// unread.
 pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, LoadError> {
     let mut buf = Vec::new();
     let read = match max {
         Some(max) => input.take(max.saturating_add(1)).read_to_end(&mut buf),
         None => input.read_to_end(&mut buf),
     };
-    read.map_err(|e| match read_timed_out(&e) {
-        Some(limit) => LoadError::input_timed_out(limit),
-        None => LoadError::new(e.to_string()),
-    })?;
+    read.map_err(|e| LoadError::new(e.to_string()))?;
     match max {
         Some(max) if buf.len() as u64 > max => Err(LoadError::too_large(None, max)),
         _ => Ok(buf),
     }
-}
-
-/// Standard input read on its own thread, so that no read outlasts `--timeout`: a writer that
-/// never closes its end would hold a read for ever. The thread starts on the first read, so
-/// input never read is left to whoever else holds it, and runs at most [`CHUNKS_AHEAD`] chunks
-/// ahead. A blocked read cannot be called off, so a thread still waiting is left to the
-/// process's exit.
-pub struct DeadlineReader {
-    /// The input, until the first read starts the thread that reads it.
-    input: Option<Box<dyn Read + Send>>,
-    chunks: Option<mpsc::Receiver<io::Result<Vec<u8>>>>,
-    chunk: Vec<u8>,
-    at: usize,
-    deadline: Instant,
-    limit: Duration,
-    ended: bool,
-}
-
-const CHUNKS_AHEAD: usize = 4;
-
-const CHUNK_BYTES: usize = 64 << 10;
-
-impl DeadlineReader {
-    /// Read `input` until `limit` after `started`; `None` when that is too far off to reach.
-    pub fn new(
-        input: impl Read + Send + 'static,
-        started: Instant,
-        limit: Duration,
-    ) -> Option<DeadlineReader> {
-        Some(DeadlineReader {
-            input: Some(Box::new(input)),
-            chunks: None,
-            chunk: Vec::new(),
-            at: 0,
-            deadline: started.checked_add(limit)?,
-            limit,
-            ended: false,
-        })
-    }
-
-    /// Start the reading thread, once. If none can be had the read fails, rather than run with
-    /// no deadline.
-    fn start(&mut self) -> io::Result<()> {
-        let Some(mut input) = self.input.take() else {
-            return Ok(());
-        };
-        let (send, chunks) = mpsc::sync_channel(CHUNKS_AHEAD);
-        std::thread::Builder::new()
-            .name("aless-input".into())
-            .spawn(move || loop {
-                let mut buf = vec![0; CHUNK_BYTES];
-                let read = match input.read(&mut buf) {
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Ok(n) => {
-                        buf.truncate(n);
-                        Ok(buf)
-                    }
-                    Err(e) => Err(e),
-                };
-                let last = !matches!(&read, Ok(b) if !b.is_empty());
-                if send.send(read).is_err() || last {
-                    break;
-                }
-            })
-            .map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("no thread could be started to read the input within --timeout: {e}"),
-                )
-            })?;
-        self.chunks = Some(chunks);
-        Ok(())
-    }
-}
-
-impl Read for DeadlineReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-        self.start()?;
-        let Some(chunks) = &self.chunks else {
-            unreachable!("started above");
-        };
-        while self.at == self.chunk.len() {
-            if self.ended {
-                return Ok(0);
-            }
-            // Past the deadline nothing more is taken, though chunks may be
-            // waiting: a writer fast enough would keep one waiting for ever.
-            let now = Instant::now();
-            if now >= self.deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    ReadTimedOut(self.limit),
-                ));
-            }
-            match chunks.recv_timeout(self.deadline - now) {
-                Ok(Ok(chunk)) if chunk.is_empty() => self.ended = true,
-                Ok(Ok(chunk)) => {
-                    self.chunk = chunk;
-                    self.at = 0;
-                }
-                Ok(Err(e)) => {
-                    self.ended = true;
-                    return Err(e);
-                }
-                // Looked at again above: the deadline has passed.
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => self.ended = true,
-            }
-        }
-        let n = buf.len().min(self.chunk.len() - self.at);
-        buf[..n].copy_from_slice(&self.chunk[self.at..self.at + n]);
-        self.at += n;
-        Ok(n)
-    }
-}
-
-/// A [`DeadlineReader`] read past its deadline, with the limit for the report.
-#[derive(Debug)]
-struct ReadTimedOut(Duration);
-
-impl fmt::Display for ReadTimedOut {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "the input was still being read when --timeout {} passed",
-            seconds(self.0)
-        )
-    }
-}
-
-impl std::error::Error for ReadTimedOut {}
-
-/// A reader that hands over `first`, then blocks: a writer gone quiet with its end open.
-#[cfg(test)]
-pub(crate) fn quiet(first: &[u8]) -> impl Read + Send + 'static {
-    struct Quiet {
-        first: Vec<u8>,
-        wait: mpsc::Receiver<()>,
-        _held: mpsc::Sender<()>,
-    }
-    impl Read for Quiet {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.first.is_empty() {
-                let _ = self.wait.recv();
-                return Ok(0);
-            }
-            let n = buf.len().min(self.first.len());
-            buf[..n].copy_from_slice(&self.first[..n]);
-            self.first.drain(..n);
-            Ok(n)
-        }
-    }
-    let (held, wait) = mpsc::channel();
-    Quiet {
-        first: first.to_vec(),
-        wait,
-        _held: held,
-    }
-}
-
-/// The time limit a read waited past, when `e` is a [`DeadlineReader`]'s timeout.
-pub(crate) fn read_timed_out(e: &io::Error) -> Option<Duration> {
-    e.get_ref()?.downcast_ref::<ReadTimedOut>().map(|t| t.0)
 }
 
 /// How deep a parse's rule stack may grow before aless stops it as `too_deep`. It guards a
@@ -754,11 +566,6 @@ impl LoadError {
         self.code == "timeout"
     }
 
-    pub(crate) fn input_timed_out(limit: Duration) -> LoadError {
-        let (message, hint) = input_timed_out_words(limit);
-        LoadError::tagged("timeout", message).with_hint(&hint)
-    }
-
     /// An input over the size limit: `size` when known (a file), `None` for a stream.
     pub fn too_large(size: Option<u64>, limit: u64) -> LoadError {
         use crate::explorer::human_size;
@@ -818,7 +625,7 @@ impl LoadError {
              larger --timeout to let it finish, or --timeout 0 for no limit. {}",
             Self::SLOW_GRAMMARS
         );
-        Self::compile_late(limit).with_hint(&hint)
+        Self::compile_timeout(limit).with_hint(&hint)
     }
 
     /// A grammar not compiled because a compile aless stopped waiting for still runs.
@@ -861,14 +668,14 @@ impl LoadError {
             seconds(took),
             Self::SLOW_GRAMMARS
         );
-        Self::compile_late(limit).with_hint(&hint)
+        Self::compile_timeout(limit).with_hint(&hint)
     }
 
     const SLOW_GRAMMARS: &'static str = "Long repetitions (1*500word), and rules of several \
                                          alternatives that start with one another, make a \
                                          grammar slow to compile.";
 
-    fn compile_late(limit: Duration) -> LoadError {
+    fn compile_timeout(limit: Duration) -> LoadError {
         let message = format!(
             "timeout: the grammar took longer than {} s to compile",
             seconds(limit)
@@ -1896,16 +1703,6 @@ pub fn parse_within(
     format: Format,
     timeout: Option<Duration>,
 ) -> Result<Doc, LoadError> {
-    parse_until(src, format, timeout, None)
-}
-
-/// [`parse_within`], the time limit running from `started` when given rather than from now.
-pub(crate) fn parse_until(
-    src: &str,
-    format: Format,
-    timeout: Option<Duration>,
-    started: Option<Instant>,
-) -> Result<Doc, LoadError> {
     if format == Format::Text {
         let src = src.strip_prefix('\u{feff}').unwrap_or(src);
         return Ok(Doc::from_lines(&lines(src)));
@@ -1914,32 +1711,25 @@ pub(crate) fn parse_until(
     if format.is_notation() {
         return on_parse_thread(
             timeout,
-            started,
             || {},
             |deadline| compile_notation_by(format, src, deadline).map(|v| Doc::from_value(&v)),
         );
     }
-    on_parse_thread(
-        timeout,
-        started,
-        || {},
-        |deadline| parse_here(src, format, deadline),
-    )
+    on_parse_thread(timeout, || {}, |deadline| parse_here(src, format, deadline))
 }
 
 /// Run `work`, a parse, on a thread with [`PARSE_STACK`], handing it the deadline `timeout`
-/// sets from `started` or now. This thread only waits, so it keeps the time: past the deadline
+/// sets from now. This thread only waits, so it keeps the time: past the deadline
 /// it raises the alarm [`Deadline::passed`] reads and calls `on_alarm`. With no thread to be
 /// had, `work` runs here on a clock-read deadline and `on_alarm` is never called.
 pub(crate) fn on_parse_thread<T: Send>(
     timeout: Option<Duration>,
-    started: Option<Instant>,
     on_alarm: impl FnOnce() + Send,
     work: impl FnOnce(Option<Deadline>) -> T + Send,
 ) -> T {
     // A time too far off to reach is no limit.
     let deadline = timeout.and_then(|limit| {
-        let at = started.unwrap_or_else(Instant::now).checked_add(limit)?;
+        let at = Instant::now().checked_add(limit)?;
         Some(Deadline {
             at,
             limit,
@@ -2345,7 +2135,7 @@ pub fn load_str_within(
     format: Format,
     limits: Limits,
 ) -> Result<Loaded, LoadError> {
-    let doc = parse_until(&source, format, limits.timeout, limits.started)?;
+    let doc = parse_within(&source, format, limits.timeout)?;
     Ok(Loaded {
         doc,
         format,
@@ -2724,7 +2514,6 @@ mod tests {
         Limits {
             max_size,
             timeout: None,
-            started: None,
         }
     }
 
@@ -2864,69 +2653,6 @@ mod tests {
         assert_eq!(e.code, "too_deep", "{}", e.message);
         assert!(e.line > 1, "stopped at {}:{}", e.line, e.col);
         assert_eq!(stopped.position(), (e.line, e.col));
-    }
-
-    #[test]
-    fn a_read_past_its_deadline_is_a_timeout() {
-        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
-        let whole = DeadlineReader::new(
-            std::io::Cursor::new(data.clone()),
-            Instant::now(),
-            Duration::from_secs(600),
-        )
-        .unwrap();
-        assert_eq!(read_within(whole, None).unwrap(), data);
-        for first in [&b""[..], b"[1, 2,"] {
-            let started = Instant::now();
-            let reader = DeadlineReader::new(quiet(first), started, Duration::from_millis(200));
-            let e = read_within(reader.unwrap(), Some(1 << 20)).unwrap_err();
-            let took = started.elapsed();
-            assert!(e.is_timeout(), "{}", e.message);
-            assert_eq!(
-                e.message,
-                "timeout: the input was still being read after 0.2 s"
-            );
-            assert!(e.hint.contains("--timeout 0 for no limit"), "{}", e.hint);
-            assert!(e.plain_report().starts_with("[aless/timeout]"));
-            assert!(
-                took >= Duration::from_millis(200) && took < Duration::from_secs(10),
-                "{took:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_endless_input_is_a_timeout_too() {
-        let started = Instant::now();
-        let endless =
-            DeadlineReader::new(std::io::repeat(b'x'), started, Duration::from_millis(200));
-        let e = read_within(endless.unwrap(), None).unwrap_err();
-        assert!(e.is_timeout(), "{}", e.message);
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            started.elapsed()
-        );
-    }
-
-    #[test]
-    fn a_deadline_reader_reads_nothing_before_it_is_read() {
-        struct Watched(Arc<AtomicBool>);
-        impl Read for Watched {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                self.0.store(true, Ordering::Relaxed);
-                Ok(0)
-            }
-        }
-        let touched = Arc::new(AtomicBool::new(false));
-        let watched = Watched(touched.clone());
-        let mut reader =
-            DeadlineReader::new(watched, Instant::now(), Duration::from_secs(600)).unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(!touched.load(Ordering::Relaxed), "read before the run read");
-        let mut buf = [0u8; 8];
-        assert_eq!(reader.read(&mut buf).unwrap(), 0);
-        assert!(touched.load(Ordering::Relaxed));
     }
 
     #[test]

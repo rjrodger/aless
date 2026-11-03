@@ -18,3 +18,11 @@ The answer to a question the agent asked: what should happen to
 ```
 Keep as history
 ```
+
+## 2026-11-03 17:48 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+fix the findings, here and in agent-info (checkout to rjrodger/agent-info locally); then ask me about each ADR in order to refine it or remove it
+```
