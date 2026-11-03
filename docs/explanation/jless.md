@@ -3,7 +3,7 @@ title: aless and jless
 description: What aless takes from jless, what it adds, and where the two behave differently, on purpose.
 order: 5
 ---
-[jless](https://jless.io) is a terminal viewer for JSON and YAML, by Paul Julius Martinez. aless reproduces its interface: the key map, data and line modes, collapsed previews, regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
+[jless](https://jless.io), by Paul Julius Martinez, is the inspiration for aless. It is a terminal viewer for JSON and YAML ([its source](https://github.com/PaulJuliusMartinez/jless)), and it set out how a large document reads in a terminal: a tree folded and unfolded with vim's keys, a data mode without the punctuation, previews of folded nodes, and paths copied in two keystrokes. aless reproduces that interface: the key map, data and line modes, collapsed previews, regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
 
 aless is an independent implementation, not a fork. Its tree, its rendering and its parsers are its own, and it reads every format through the [tabnas](https://tabnas.dev) engine rather than through a JSON or YAML library. jless is credited, with its licence, in aless's notices, as the design aless follows.
 

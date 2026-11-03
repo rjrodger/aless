@@ -34,11 +34,20 @@ design.
 /TAPL  [1/1]
 ```
 
-aless reproduces jless's interface (the key map, data and line modes,
-collapsed previews, regex search, the yank commands) and adds tabs,
-watching, and a reload that re-anchors the view. jless is credited in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Deviations from jless are
-listed [below](#deviations-from-jless).
+## Thanks to jless
+
+aless is inspired by [jless](https://jless.io), Paul Julius Martinez's
+terminal viewer for JSON and YAML ([its
+source](https://github.com/PaulJuliusMartinez/jless)). jless set out how
+a large document reads in a terminal: a tree you fold and unfold with
+vim's keys, a data mode that drops the punctuation, a preview of what a
+folded node holds, and a path copied in two keystrokes. aless keeps that
+interface whole (the key map, data and line modes, collapsed previews,
+regex search, the yank commands) and carries it to every format the
+tabnas parsers read, adding tabs, watching, and a reload that re-anchors
+the view. jless's licence is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and the deviations from
+jless are listed [below](#deviations-from-jless).
 
 ## Install
 

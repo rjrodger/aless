@@ -94,7 +94,7 @@ Every format is read into the same tree, so the viewer, the paths you copy, the 
 </div>
 <div class="card">
 <h3>What it owes jless</h3>
-<p>The viewer's interface is <a href="https://jless.io">jless</a>'s, by Paul Julius Martinez: the key map, the data and line modes, the collapsed previews, the search and the copy commands. aless is an independent implementation, its <a href="https://github.com/rjrodger/aless/blob/main/THIRD_PARTY_NOTICES.md">notices</a> credit jless as the design it follows, and <a href="/explanation/jless.html">aless and jless</a> says where the two differ.</p>
+<p>aless is inspired by <a href="https://jless.io">jless</a>, by Paul Julius Martinez, and its interface is jless's: the key map, the data and line modes, the collapsed previews, the search and the copy commands. aless is an independent implementation, its <a href="https://github.com/rjrodger/aless/blob/main/THIRD_PARTY_NOTICES.md">notices</a> credit jless as the design it follows, and <a href="/explanation/jless.html">aless and jless</a> says where the two differ.</p>
 </div>
 <div class="card">
 <h3>Licence and source</h3>

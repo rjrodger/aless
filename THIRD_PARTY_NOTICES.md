@@ -1,11 +1,11 @@
 # Third-party notices
 
-aless is an independent implementation. Its interface — the key map, the
-data and line modes, the collapsed previews, the search and yank
-commands — follows **jless** by Paul Julius Martinez
-(<https://github.com/PaulJuliusMartinez/jless>, <https://jless.io>). No
-source code from jless was copied; it is acknowledged here as the design
-this program reproduces.
+aless is inspired by **jless**, by Paul Julius Martinez
+(<https://jless.io>, <https://github.com/PaulJuliusMartinez/jless>), and
+its interface is jless's: the key map, the data and line modes, the
+collapsed previews, the search and the yank commands. aless is an
+independent implementation, and no source code from jless was copied.
+jless's licence follows, with thanks for the design aless is built on.
 
 ## jless
 
