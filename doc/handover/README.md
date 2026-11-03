@@ -19,23 +19,15 @@ Read [AGENTS.md](../../AGENTS.md) first; it is current. Nothing published
 
 - **0.6.0 is the latest release** (2026-11-02, `4cf5e05`, tag `v0.6.0`):
   the GitHub Release with every asset, the crate on crates.io, and the
-  Homebrew tap's formula. `main` is at `71febd8` (aless#101, this page's
-  previous version).
-- **Four pull requests wait for the maintainer**, every local gate green.
-  This session could not merge them (below). Merge them in this order:
-  1. **aless#102**, CI for the pure viewer. Its CI is green on Linux,
-     macOS and Windows, the first full run since 0.5.0, so 0.5.0's and
-     0.6.0's code passes its tests on macOS and Windows too.
-  2. **aless#103**, housekeeping: `clipboard-win` 5.4.3, the link text,
-     `__pycache__/` ignored.
-  3. **aless#104**, a number shown as its source spells it, where the
-     spelling is JSON's. Under `Unreleased` in the changelog.
-  4. **aless#105**, this page.
-
-  The CI of #103, #104 and #105 fails until #102 is in `main`: a pull
-  request runs the workflow of its merge with `main`, which still has
-  the stale one. Once #102 is merged, update each branch (rebase on
-  `main`, or GitHub's "Update branch") and its CI runs the new workflow.
+  Homebrew tap's formula.
+- **`main` is at `6a16d03`** (aless#104), with this page (aless#105) to
+  follow. **CI is green again** on Linux, macOS and Windows and on the
+  minimum Rust version, from aless#102 on: the first full runs since
+  0.5.0, so 0.5.0's and 0.6.0's code passes its tests on macOS and
+  Windows too.
+- **Unreleased on `main`:** a number shown as its source spells it,
+  where the spelling is JSON's (aless#104), under `Unreleased` in the
+  changelog; and `clipboard-win` 5.4.3 in the lock (aless#103).
 - **aless is a viewer and nothing else.** It draws a document on a
   terminal and reads keys from it. Without a terminal (standard output a
   pipe or a file, no terminal to open, or `TERM=dumb`) it refuses to
@@ -78,6 +70,8 @@ On 2026-11-03:
 
 6. **Implement the handover**: the 0.6.0 page's "Open, in aless".
    aless#102, #103 and #104 are that work.
+7. **Merge the pull requests.** #102 first; #103 and #104 after their
+   branches took `main` and their CI ran the new workflow green.
 
 Ruling 5 is not yet an ADR in tabnas/admin. ADR-31 and ADR-32 cover one
 implementation and the rename; if the pure viewer is to be a recorded
@@ -134,11 +128,11 @@ Not rulings; revisit with the maintainer if wanted.
 
 ## What this session did (ruling 6)
 
-| Pull request | Branch | What |
+| Pull request | Commit | What |
 |---|---|---|
-| aless#102 | `claude/ci-pure-viewer` | `ci.yml` as #99's description gave it: the fixtures and translation-matrix steps go, and the last step checks the refusal (status 2, nothing on standard output, `needs a terminal` on standard error). |
-| aless#103 | `claude/housekeeping-0.6` | `cargo update -p clipboard-win` (5.4.1, yanked, to 5.4.3); `one-tree.md`'s link text; `__pycache__/` in `.gitignore`. |
-| aless#104 | `claude/numbers-as-spelled` | A number keeps its source's spelling where the spelling is JSON's: in the tree, a collapsed preview, search, `:w` and the copy keys. |
+| aless#102 | `65e0e39` | `ci.yml` as #99's description gave it: the fixtures and translation-matrix steps go, and the last step checks the refusal (status 2, nothing on standard output, `needs a terminal` on standard error). |
+| aless#103 | `7089741` | `cargo update -p clipboard-win` (5.4.1, yanked, to 5.4.3); `one-tree.md`'s link text; `__pycache__/` in `.gitignore`. |
+| aless#104 | `6a16d03` | A number keeps its source's spelling where the spelling is JSON's: in the tree, a collapsed preview, search, `:w` and the copy keys. |
 
 ### Numbers as spelled (aless#104)
 
@@ -175,16 +169,13 @@ Not rulings; revisit with the maintainer if wanted.
   spelled too. The reference's sentence moved from LARGE INPUTS AND
   LIMITS to INPUT AND FORMATS, beside "Map keys keep their source order".
 - **No release is cut.** #104 changes what the viewer shows; the bump
-  that releases it, and when, is the maintainer's call.
+  that releases it (0.6.1 or 0.7.0), and when, is the maintainer's call.
 
 ## Open, in aless
 
-- **Merge #102, then update and merge #103, #104 and #105** (above). In
-  auto mode this session was refused a merge ("Merge Without Review"),
-  and changing a pull request's base or closing and reopening it ("an
-  unrequested commit in a connected app"), so the maintainer merges.
+- **A release** of #104, when the maintainer says so (RELEASING.md).
 - **The Codex thread on aless#99** that found the stale CI step can be
-  resolved once #102 is in `main`.
+  resolved: #102 is in `main`.
 - **aless#29, the remote branches.** 60 branches predate this session.
   59 lose nothing if deleted: 58 are the heads of merged pull requests,
   each still reachable as `refs/pull/N/head`, and `wip/abnf-grammars` is
@@ -192,7 +183,8 @@ Not rulings; revisit with the maintainer if wanted.
   closed unmerged, 5 commits of documentation not in `main`), is the
   maintainer's call. This session asked before deleting anything. The
   59, from a fresh fetch, are the remote branches whose pull request
-  merged, plus `wip/abnf-grammars`:
+  merged, plus `wip/abnf-grammars`; the same command takes this
+  session's branches too, each merged:
 
   ```bash
   git fetch --prune origin
@@ -215,7 +207,7 @@ Not rulings; revisit with the maintainer if wanted.
   TOML, INI and ZON. No case of it was found.
 - **The Windows and macOS `cargo check --target` gates** were not run
   locally: the maintainer's machine has Homebrew's Rust, without rustup.
-  CI's three platforms run them (green on #102).
+  CI's three platforms run them (green on #102, #103 and #104).
 
 ## Open, around aless
 
@@ -277,8 +269,11 @@ Not rulings; revisit with the maintainer if wanted.
   `workflow` scope, so a workflow file can be pushed (#102 was). A cloud
   session's credentials cannot push a workflow file or a tag, amend, or
   force-push; there, a follow-up commit does what an amend would. In
-  auto mode no session merges, retargets, closes or reopens a pull
-  request: the maintainer does. Keep `rm -rf` out of compound commands
+  auto mode a merge is refused ("Merge Without Review") until the
+  maintainer asks for it in so many words, and changing a pull request's
+  base or closing and reopening one was refused too; `gh pr
+  update-branch` (a merge of `main` into the branch, no force-push) is
+  how a branch took `main` here. Keep `rm -rf` out of compound commands
   and never of the directory you are in.
 - **To look at a file while working here**, an agent has no terminal to
   run aless in: `dmog translate --from FORMAT --to json FILE` prints it
