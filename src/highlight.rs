@@ -1,16 +1,7 @@
-//! Colour for text: the source view colours each token as the text's
-//! grammar lexed it, through tabnas-lsp's semantic tokens, the ones
-//! its language server sends an editor.
-//!
-//! Colouring parses the whole text and keeps its lex trace, which at its
-//! peak holds a few hundred times the text: 270 MB and a second of a
-//! release build for 0.9 MB of JSON. So it runs off the viewer's thread:
-//! one worker takes the texts in turn, each on a thread of its own with
-//! the stack a parse needs, under the parse timeout and aless's depth cap,
-//! and only up to [`MAX_BYTES`]. A text the view no longer shows is skipped,
-//! or called off. The text shows uncoloured until its colours come in. A grammar the registry
-//! marks as lexing speculatively (its trace holds tokens the parse took
-//! back) is never coloured, and neither is plain text.
+//! Colour for the source view: each token as the text's grammar lexed it,
+//! through tabnas-lsp's semantic tokens. A colouring holds the whole lex
+//! trace, many times the text's size, so it runs off the viewer's thread and
+//! only up to [`MAX_BYTES`]; the text shows uncoloured until it is done.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -23,36 +14,29 @@ use tabnas_lsp::{Entry, Registry, Span, TokenType};
 
 use crate::load::{self, CatchGuard, Deadline, Format};
 
-/// The longest text coloured: 512 KiB, which peaks near 150 MB while its
-/// colours are made.
+/// The longest text coloured, since a colouring's peak memory grows with it.
 pub const MAX_BYTES: usize = 512 << 10;
 
-/// The longest one text's colours may take, or the parse timeout when
-/// that is shorter: colours are worth a wait, not a worker held by a slow
-/// grammar while other texts queue. A parse stopped here colours what it
-/// had lexed.
+/// The longest one text's colours may take, or the parse timeout when that
+/// is shorter, so a slow grammar does not hold the worker while texts queue.
 pub const MAX_TIME: Duration = Duration::from_secs(10);
 
-/// The most colourings left running, called off or out of time and still
-/// making their parsers: with that many, a text shown waits in the queue
-/// until one ends, while the worker takes in newer texts and skips hidden
-/// ones. Each holds a thread with the parse stack and a grammar's install,
-/// so a run of slow grammars hidden in turn cannot pile them up.
+/// The most colourings left running once called off or out of time: at that
+/// many, a shown text waits for one to end, so slow grammars hidden in turn
+/// cannot pile up threads that each hold a parse stack.
 const MAX_LEFT: usize = 2;
 
-/// How long past a text's deadline the worker still waits for its
-/// colours: a parse stops itself at the deadline, and what it had lexed
-/// is still worth colouring once its spans are made.
+/// How long past a text's deadline the worker still waits: the parse stops
+/// itself at the deadline, and what it had lexed is still worth colouring.
 const GRACE: Duration = Duration::from_secs(1);
 
-/// A text's colours, line by line as [`load::lines`] splits it: each
-/// line's runs, in order and not overlapping.
+/// A text's colours: each line's runs, as [`load::lines`] splits it, in order
+/// and not overlapping.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Painted {
     lines: Vec<Vec<Run>>,
 }
 
-/// A coloured byte range of one line, and what the grammar lexed there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Run {
     pub start: usize,
@@ -61,7 +45,6 @@ pub struct Run {
 }
 
 impl Painted {
-    /// Line `n`'s runs.
     pub fn line(&self, n: usize) -> &[Run] {
         self.lines.get(n).map_or(&[], Vec::as_slice)
     }
@@ -87,9 +70,8 @@ impl Painted {
     }
 }
 
-/// The registry's entry for `format`'s grammar, when it has one: a
-/// format's language id is its name. A custom grammar's name is the user's,
-/// so it is never looked up.
+/// The registry's entry for `format`, found by its name. A custom grammar's
+/// name is the user's, so it is never looked up.
 fn entry(format: Format, registry: &Registry) -> Option<&Entry> {
     if format.is_custom() {
         return None;
@@ -97,21 +79,18 @@ fn entry(format: Format, registry: &Registry) -> Option<&Entry> {
     registry.entry(format.name())
 }
 
-/// Whether a text of `format` can be coloured: it has a grammar, and
-/// `registry` does not mark its lex stream speculative.
+/// Whether a text of `format` can be coloured: it has a grammar, and `registry`
+/// does not mark its lex stream speculative (holding tokens the parse took back).
 fn colourable_by(format: Format, registry: &Registry) -> bool {
     format != Format::Text && entry(format, registry).is_none_or(Entry::is_clean)
 }
 
-/// [`colourable_by`] the registry tabnas-lsp bundles.
 pub fn colourable(format: Format) -> bool {
     colourable_by(format, Registry::bundled())
 }
 
-/// Colour `text` as `format`'s grammar lexes it, on this thread: the
-/// worker's work. The parse stops at `timeout` or past aless's depth cap,
-/// and the tokens lexed by then are coloured. A text too long to colour,
-/// one without a grammar, and a grammar that panics colour nothing.
+/// Colour `text` on this thread. A parse stopped by `timeout` or the depth cap
+/// colours what it had lexed; a grammar that panics colours nothing.
 pub fn paint(format: Format, text: &str, timeout: Option<Duration>) -> Option<Painted> {
     paint_unless(format, text, timeout, None)
 }
@@ -149,30 +128,22 @@ fn paint_unless(
     .ok()
 }
 
-/// A painting's key: the tab, its generation and the format whose grammar
-/// lexes its text. A tab's generation moves with every text it takes, so a
-/// key names one text.
+/// A painting's key: tab, generation and format. A tab's generation moves with
+/// every text it takes, so a key names one text.
 pub type Key = (u64, u64, Format);
 
-/// Colours made off the viewer's thread, by one worker, which takes the
-/// texts in turn. It starts with the first text asked for.
+/// Colours made off the viewer's thread by one worker, which takes the texts in turn.
 #[derive(Default)]
 pub struct Painter {
-    /// Where texts go and colours come back.
     worker: Option<Worker>,
     /// No worker could be started, so nothing is coloured.
     failed: bool,
-    /// The newest painting of each tab: the key it was made for, and its
-    /// colours, `None` for a text that is not coloured.
+    /// The newest painting of each tab, `None` for a text that is not coloured.
     done: HashMap<u64, (Key, Option<Arc<Painted>>)>,
-    /// The painting each tab waits for.
     asked: HashMap<u64, Key>,
-    /// What the view shows, shared with the worker.
     shown: Arc<Mutex<Shown>>,
-    /// The colouring threads running, the one waited for and those left
-    /// behind, shared with the worker.
+    /// The colouring threads running, those left behind among them.
     running: Arc<AtomicUsize>,
-    /// How long one text's parse may take.
     timeout: Option<Duration>,
 }
 
@@ -181,23 +152,17 @@ struct Worker {
     done: Receiver<(Key, Made)>,
 }
 
-/// What the view shows, as the painter and its worker share it: the
-/// worker skips a job whose text is not among `keys` when its turn comes,
+/// What the view shows: the worker skips a job whose text is not among `keys`,
 /// and the painter calls off the one `running` once its text leaves them.
 #[derive(Default)]
 struct Shown {
-    /// The texts the view shows now.
     keys: HashSet<Key>,
-    /// The text the worker is colouring, and the flag that stops it.
     running: Option<(Key, Arc<AtomicBool>)>,
 }
 
-/// What the worker made of a job.
 enum Made {
-    /// The text's colours: `None` for a text that is not coloured.
     Colours(Option<Painted>),
-    /// Nothing: the view did not show the text when its turn came, or it was
-    /// called off once none did.
+    /// The text was out of view at its turn, or was called off.
     Skipped,
 }
 
@@ -208,8 +173,7 @@ struct Job {
 }
 
 impl Painter {
-    /// A painter whose parses stop after `timeout`, or [`MAX_TIME`] when
-    /// that is sooner or there is none.
+    /// A painter whose parses stop after `timeout`, capped at [`MAX_TIME`].
     pub fn new(timeout: Option<Duration>) -> Painter {
         Painter {
             timeout: Some(timeout.map_or(MAX_TIME, |t| t.min(MAX_TIME))),
@@ -217,7 +181,6 @@ impl Painter {
         }
     }
 
-    /// The colours for `key`, once they are in.
     pub fn get(&self, key: Key) -> Option<Arc<Painted>> {
         match self.done.get(&key.0) {
             Some((k, painted)) if *k == key => painted.clone(),
@@ -225,15 +188,12 @@ impl Painter {
         }
     }
 
-    /// Whether `key` is painted or on its way.
     pub fn has(&self, key: Key) -> bool {
         self.done.get(&key.0).is_some_and(|(k, _)| *k == key)
             || self.asked.get(&key.0) == Some(&key)
     }
 
-    /// Ask for the colours of `text`, the text `key` names, unless they
-    /// are in or on their way. A text that cannot be coloured is settled
-    /// at once, as uncoloured.
+    /// Ask for `key`'s colours; a text that cannot be coloured settles at once.
     pub fn ask(&mut self, key: Key, text: &str) {
         if self.has(key) {
             return;
@@ -258,10 +218,8 @@ impl Painter {
         }
     }
 
-    /// Take in the colours that have come: true when any did. Colours for
-    /// a text its tab has since replaced are dropped. A worker that has
-    /// gone leaves every text it had uncoloured, and nothing more is
-    /// asked of it.
+    /// Take in the colours that have come: true when any did. A worker that
+    /// has gone leaves every text it had uncoloured, and is not asked again.
     pub fn collect(&mut self) -> bool {
         let Some(worker) = &self.worker else {
             return false;
@@ -293,10 +251,8 @@ impl Painter {
         any
     }
 
-    /// Name the texts the view shows now, the ones whose colours are worth
-    /// making. A job for any other is skipped when its turn comes, and the
-    /// one being coloured is called off, so a tab left or closed never
-    /// holds up the one in view.
+    /// Name the texts the view shows. Any other is skipped at its turn, or called
+    /// off while coloured, so a tab left or closed never holds up the one in view.
     pub fn want(&mut self, keys: impl IntoIterator<Item = Key>) {
         let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
         shown.keys.clear();
@@ -308,18 +264,16 @@ impl Painter {
         }
     }
 
-    /// Whether colours are on their way.
     pub fn pending(&self) -> bool {
         !self.asked.is_empty()
     }
 
-    /// Forget the paintings of tabs `live` no longer names.
+    /// Forget the paintings of tabs for which `live` is false.
     pub fn retain(&mut self, live: impl Fn(u64) -> bool) {
         self.done.retain(|id, _| live(*id));
         self.asked.retain(|id, _| live(*id));
     }
 
-    /// The worker, started on first use.
     fn worker(&mut self) -> Option<&Worker> {
         if self.worker.is_none() && !self.failed {
             let (jobs, queued) = mpsc::channel();
@@ -339,7 +293,6 @@ impl Painter {
         self.worker.as_ref()
     }
 
-    /// Wait up to `limit` for every text asked for, taking in its colours.
     #[cfg(test)]
     pub fn settle(&mut self, limit: Duration) {
         let until = Instant::now() + limit;
@@ -351,10 +304,8 @@ impl Painter {
     }
 }
 
-/// The worker: paint each text asked for, in order, skipping one that a
-/// newer text for the same tab has replaced and one the view no longer
-/// shows, and stopping one whose text leaves the view while it is
-/// coloured. It ends when the painter is dropped.
+/// The worker: paint each text in order, skipping one that a later text for its
+/// tab replaces or the view does not show, until the painter is dropped.
 fn work(
     jobs: Receiver<Job>,
     done: Sender<(Key, Made)>,
@@ -388,8 +339,7 @@ fn work(
             (in_view, busy)
         };
         if in_view && busy {
-            // Held until a thread left behind ends, taking in newer texts,
-            // which may replace it, meanwhile.
+            // Held until a thread left behind ends; a later text may replace it.
             queue.push_front(job);
             match jobs.recv_timeout(Duration::from_millis(20)) {
                 Ok(newer) => queue.push_back(newer),
@@ -419,17 +369,11 @@ fn work(
     }
 }
 
-/// Run `colour` on a thread of its own and wait for it: its colours, or
-/// `Some(None)` for none. The wait ends early, and the thread is left to
-/// finish alone, when `stop` is raised (`None`), or once `limit` and
-/// [`GRACE`] have passed (`Some(None)`, as for a parse out of time). The
-/// flag and the deadline stop a parse at its next step, but making the
-/// parser comes first, seconds for a large custom grammar, and neither
-/// reaches it. So a text hidden or out of time never holds the worker, and
-/// the next text starts at once, whatever is left running; a thread left
-/// behind ends once its parser is made, its parse stopping at the first
-/// step. `running` counts the threads. Without a thread to be had, the
-/// work runs here.
+/// Run `colour` on a thread of its own and wait: its colours, `None` once `stop`
+/// is raised, or `Some(None)` past `limit` and [`GRACE`]. Neither flag nor
+/// deadline reaches the making of a parser, seconds for a large custom grammar,
+/// so the thread is then left to finish alone, counted in `running`, and the
+/// worker goes on. Without a thread to be had, the work runs here.
 fn apart(
     colour: impl FnOnce() -> Option<Painted> + Send + 'static,
     stop: &AtomicBool,
@@ -508,9 +452,7 @@ mod tests {
         assert!(second.contains(&("\"x\"".into(), "string")), "{second:?}");
     }
 
-    /// TOML's strings, values and quoted keys alike, are coloured
-    /// (tabnas/lsp#28): the TOML lexer reports a string at its end, and
-    /// the token after it hid it.
+    /// The TOML lexer reports a string at its end, where the next token can hide it.
     #[test]
     fn toml_strings_and_quoted_keys_are_coloured() {
         let toml = "a = \"x\"\n\"q k\" = 'lit'\nb = [\"y\"]\n";
@@ -528,8 +470,6 @@ mod tests {
 
     #[test]
     fn runs_count_from_the_first_byte_and_stay_in_their_line() {
-        // A byte-order mark is not parsed, but the runs count it; a line
-        // ending in CRLF keeps its runs short of the CR.
         let text = "\u{feff}a: 1\r\nb: two\r\n";
         let p = paint(Format::Yaml, text, None).unwrap();
         let first = kinds(&p, text, 0);
@@ -541,9 +481,6 @@ mod tests {
         }
     }
 
-    /// A JSON5 string continued across a CRLF is coloured as across an LF:
-    /// the parser reads it as the loader does, and the runs are those of
-    /// the LF text, line for line, none taking a line's CR.
     #[test]
     fn json5_colours_a_continuation_across_crlf() {
         let lf = "{\n  a: 'x\\\n  y',\n  b: [1, \"p\\\nq\"],\n  c: true\n}\n";
@@ -556,10 +493,8 @@ mod tests {
         assert!(kinds(&two, &crlf, 5).contains(&("true".into(), "keyword")));
     }
 
-    /// The newer formats need no registering: the bundled registry knows
-    /// each by the name aless gives it (proto, css, c and expr by their
-    /// package's, pgn and semver by their own `languageId`), with a clean
-    /// lex stream, so each is coloured as its grammar lexes it.
+    /// The bundled registry knows each of these by the name aless gives it,
+    /// with a clean lex stream, so none needs registering.
     #[test]
     fn the_newer_formats_are_coloured_as_their_grammars_lex_them() {
         for (format, text) in [
@@ -618,9 +553,8 @@ mod tests {
         let too_long = " ".repeat(MAX_BYTES + 1);
         assert_eq!(paint(Format::Json, &too_long, None), None);
         assert_eq!(paint(Format::Text, "a", None), None);
-        // A grammar's compiler lexes it with a parser of its own, which it
-        // does not hand over: the registry knows the three notations, and
-        // aless has nothing to colour them with.
+        // A grammar's compiler lexes with a parser it does not hand over, so the
+        // registry knows ABNF, EBNF and GBNF and aless cannot colour them.
         for format in [Format::Abnf, Format::Ebnf, Format::Gbnf] {
             assert!(entry(format, Registry::bundled()).is_some());
             assert_eq!(paint(format, "a = \"x\"\n", None), None);
@@ -666,9 +600,6 @@ mod tests {
         assert!(painter.get((1, 1, json)).is_none(), "its tab is gone");
     }
 
-    /// A job whose text the view does not show by its turn is skipped, so a tab left
-    /// or closed never holds up the one in view; shown again, the text is
-    /// asked for again and coloured.
     #[test]
     fn a_text_the_view_does_not_show_is_skipped() {
         let json = Format::Json;
@@ -687,8 +618,6 @@ mod tests {
         assert!(painter.get(left).is_some(), "shown again, it is coloured");
     }
 
-    /// A text that leaves the view while it is coloured is called off:
-    /// its parse stops, and it is skipped rather than coloured in part.
     #[test]
     fn a_text_hidden_while_it_is_coloured_is_called_off() {
         let key = (1, 0, Format::Json);
@@ -709,9 +638,6 @@ mod tests {
         assert!(!painter.has(key), "called off, not coloured");
     }
 
-    /// With as many colourings left running as allowed, a shown text waits
-    /// in the queue for one to end rather than start another, while a
-    /// hidden one is skipped at once; once there is room, it is coloured.
     #[test]
     fn a_shown_text_waits_while_too_many_are_left_running() {
         let json = Format::Json;
@@ -736,15 +662,11 @@ mod tests {
         assert!(painter.get(shown).is_some(), "coloured once there is room");
     }
 
-    /// Work no flag reaches, as making a large grammar's parser is, is left
-    /// to finish on its own thread once called off or out of time, and the
-    /// worker goes on: the next text starts at once, however many are left
-    /// running, and the count of them falls as they end.
+    /// Work no flag reaches, as making a large grammar's parser is.
     #[test]
     fn work_called_off_or_out_of_time_is_left_to_finish_alone() {
         let running = Arc::new(AtomicUsize::new(0));
-        // Work that ends when released, as an install ends when done, and
-        // after twenty seconds should nothing release it.
+        // Work that ends when released, or after a failsafe sleep.
         let stuck = || {
             let (release, held) = mpsc::channel::<()>();
             let failsafe = release.clone();
@@ -758,7 +680,7 @@ mod tests {
             })
         };
         let mut releases = Vec::new();
-        // Two texts hidden while their grammars install.
+        // Texts hidden while their grammars install.
         for _ in 0..2 {
             let stop = Arc::new(AtomicBool::new(false));
             let raise = {
@@ -785,7 +707,6 @@ mod tests {
         assert!(began.elapsed() < GRACE + Duration::from_secs(5));
         releases.push(release);
         assert_eq!(running.load(Ordering::SeqCst), 3);
-        // The next text starts at once, whatever is left running.
         let began = Instant::now();
         let colours = apart(|| Some(Painted::default()), &calm, None, &running);
         assert_eq!(colours, Some(Some(Painted::default())));
@@ -794,7 +715,6 @@ mod tests {
         let stop = AtomicBool::new(true);
         let colours = apart(|| unreachable!("it started"), &stop, None, &running);
         assert!(colours.is_none());
-        // Each thread left ends once its work does.
         for release in releases {
             release.send(()).unwrap();
         }

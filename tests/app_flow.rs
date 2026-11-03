@@ -1,4 +1,4 @@
-//! A headless run of the application against real files: open, move,
+//! A run of the application without a terminal, against real files: open, move,
 //! fold, search, then change the file on disk and check the reload keeps
 //! the reader's place.
 
@@ -89,8 +89,7 @@ fn edit_reload_keeps_the_place_and_the_screen_row() {
         "landed on {p}"
     );
 
-    // A broken write keeps the document and reports the error; fixing it
-    // recovers.
+    // A broken write keeps the document and reports the error; fixing it recovers.
     std::fs::write(&path, "{ \"broken\": ").unwrap();
     app.handle(Input::FileChanged(path.clone()));
     app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
@@ -132,11 +131,9 @@ fn search_and_yank_through_the_key_map() {
     assert!(screen.lines().any(|l| l.contains("value: 42")), "{screen}");
 }
 
-/// A grammar in a cycle of rules whose alternatives start with one
-/// another, which a compiler's left-recursion pass would multiply (2^20
-/// of them for twenty rules), opens at once as the compiler's refusal,
-/// tabnas-bnf's bound on the alternatives one rule gains, never as a
-/// viewer waiting on a compile it cannot stop.
+/// A cycle of rules whose alternatives start with one another, which a
+/// left-recursion pass multiplies exponentially, opens at once as tabnas-bnf's
+/// refusal, never as a viewer waiting on a compile it cannot stop.
 #[test]
 fn a_grammar_whose_alternatives_multiply_opens_as_its_refusal() {
     let mut text = String::from("root ::= r0\n");

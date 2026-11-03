@@ -8,8 +8,8 @@ grammars in ABNF, EBNF and GBNF, expressions and semantic versions, and
 any text format you describe with an ABNF grammar
 ([Custom grammars](#custom-grammars)), with **tabs** for several files
 at once and a **watch mode** that reloads a file when it changes while
-**keeping your place**. aless is a viewer and nothing else: it draws on a
-terminal and reads keys from it, and without one it refuses to start.
+**keeping your place**. aless is a viewer: it draws on a terminal and
+reads keys from it, and without one it refuses to start.
 Pure Rust; runs on Linux, macOS and Windows.
 
 **Documentation: [aless.tabnas.dev](https://aless.tabnas.dev)**, with
@@ -148,12 +148,8 @@ aless needs a terminal to draw on and read keys from. Without one (standard
 output a pipe or a file, no terminal to open, or `TERM=dumb`) it refuses to
 start, before reading any input, with a line on standard error and the
 exit status 2; nothing but `-h`, `--help`, `-V` and `--generate` writes to
-standard output. Reading one of these formats in a script, writing a
-document as another format, and running a program over one are the `dmog`
-command's work ([tabnas/dmog](https://github.com/tabnas/dmog), data
-mogrify): `dmog translate --from yaml --to json deploy.yaml`, `dmog run
-export.alc response.json`. Inside the viewer, `:w FILE` writes the tab's
-document as JSON, and the `y` keys copy a value or its path.
+standard output. Inside the viewer, `:w FILE` writes the tab's document as
+JSON, and the `y` keys copy a value or its path.
 
 ## Formats
 
@@ -220,7 +216,7 @@ command line: the next section.
 A text format aless has no parser for can be read with a grammar you
 write in [ABNF](https://github.com/tabnas/abnf) (RFC 5234, compiled by
 tabnas/abnf). The command line ties the grammar to a name, and a file
-whose extension or whole file name is that name is read with it:
+whose extension or whole filename is that name is read with it:
 
 ```bash
 aless --grammar hosts=hosts.abnf /etc/hosts              # the whole file name is `hosts`
@@ -691,25 +687,33 @@ write), arboard (clipboard, optional).
 
 ## Development
 
+`AGENTS.md` is the guide for anyone working on aless, person or agent,
+and `docs/contributing/` has the detail. The gates CI runs, from the
+repository root:
+
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked                   # unit tests, fixture loading, app runs without a terminal, the binary, the grammars, the site
-python3 scripts/pty-smoke.py          # unix: drives the built binary in a pseudo-terminal
-cargo package --locked                # the crate builds from exactly the files it publishes
-scripts/generate.sh                   # man/ and completions/, after an option or the help changes
+cargo test --locked                      # unit tests, fixtures, the app without a terminal, the binary, the grammars, the site
+python3 admin/scripts/pty-smoke.py       # unix: drives the built binary in a pseudo-terminal
+cargo package --locked                   # the crate builds from exactly the files it publishes
+node admin/scripts/comment-gate.cjs      # code comments
+node admin/scripts/prose-gate.cjs        # the documentation's house style and links
+vale --minAlertLevel=error $(node admin/scripts/prose-gate.cjs --list)
+node admin/scripts/vale-counts.cjs
+admin/scripts/generate.sh                # man/ and completions/, after an option or the help changes
 ```
 
 Every option is in one table, `cli::OPTIONS`, and the parser reads no
 option it does not list. `-h`, `--help`, the man page and the completions
 are all written from it, and the committed `man/aless.1` and
-`completions/` are what `scripts/generate.sh` writes: `tests/binary.rs`
+`completions/` are what `admin/scripts/generate.sh` writes: `tests/binary.rs`
 fails when they differ from what the binary writes.
 
-The documentation site is Markdown under `site/`, built by
+The documentation site is Markdown under `docs/`, built by
 `tests/site.rs`, which also runs every example on its pages and checks
 their links; `ALESS_SITE_OUT=DIR cargo test --test site` writes the site
-into `DIR`. `AGENTS.md` says how its pages are written.
+into `DIR`. `docs/contributing/site.md` says how its pages are written.
 
 Module map: `src/main.rs` is the only file that touches the terminal;
 the library is terminal-free and unit tested:

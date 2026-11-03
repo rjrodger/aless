@@ -1,2 +1,9 @@
 /target
 __pycache__/
+
+# Vale: the Google package arrives from the pinned URL in .vale.ini via
+# `vale sync`; the house style and vocabulary under .vale/styles/ are
+# committed. The second file is written by vale-counts.cjs while it
+# measures, and removed after.
+/.vale/styles/Google/
+.vale-counts.ini

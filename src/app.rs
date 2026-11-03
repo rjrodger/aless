@@ -297,14 +297,7 @@ impl App {
         self.height.saturating_sub(2 + self.strip_rows()).max(1)
     }
 
-    /// Rows the error panel takes at the foot of the pane: shown while the
-    /// active tab's file fails to parse but its last good document is
-    /// still on screen (a broken save while watching). A tab that never
-    /// loaded shows its report in the whole pane instead.
-    ///
-    /// This holds while an overlay or the source view covers the pane,
-    /// though the panel is not drawn then: the tree keeps the height it
-    /// will be shown at again, so the tab's scroll does not move.
+    /// Rows the error panel takes at the foot of the pane ([`panel_rows`]).
     pub fn error_panel_rows(&self) -> usize {
         match self.tab_ref() {
             Some(tab) => panel_rows(tab, self.pane_height()),
@@ -361,12 +354,10 @@ impl App {
 
     // ----- colours -------------------------------------------------------------------
 
-    /// Ask for the colours of the text the source view shows, take in
-    /// those that have come, and forget those of tabs that are gone. A
-    /// text the view no longer shows is skipped when its turn comes.
-    /// Without colour (`--no-color`, `NO_COLOR`) nothing would show them,
-    /// so none are made: no text is parsed for them, and the loop never
-    /// ticks for them.
+    /// Ask for the colours of the text the source view shows, take in those
+    /// that have come, and forget those of closed tabs; a text not shown when
+    /// its turn comes is skipped. Without colour (`--no-color`, `NO_COLOR`)
+    /// nothing is asked, so no text is parsed and the loop never ticks for it.
     fn paint_source(&mut self) {
         if !self.opts.color {
             return;
@@ -405,7 +396,7 @@ impl App {
         self.painter.pending()
     }
 
-    /// Ask for the colours the panes need, wait for them and take them
+    /// Ask for the colours the source view needs, wait for them and take them
     /// in, as the terminal loop's ticks would.
     #[cfg(test)]
     pub fn settle_colours(&mut self) {
@@ -811,7 +802,7 @@ impl App {
         }
     }
 
-    /// Re-root the active explorer, moving its watch to the new root.
+    /// Re-root the active explorer at `dir`, moving its watch there.
     fn reroot_active(&mut self, dir: &Path) {
         let view = self.view();
         let tab = self.tab();
@@ -1551,14 +1542,10 @@ impl App {
     }
 }
 
-/// Rows the error panel takes at the foot of a pane `height` rows tall
-/// showing `tab`: shown while the tab's file fails to parse but its last
-/// good document is still on screen (a broken save while watching). A tab
-/// that never loaded shows its report in the whole pane instead.
-///
-/// This holds while an overlay or the source view covers the pane, though
-/// the panel is not drawn then: the tree keeps the height it will be shown
-/// at again, so the tab's scroll does not move.
+/// Rows the error panel takes at the foot of a pane `height` rows tall showing
+/// `tab`: while its file fails to parse and the last good document is on screen.
+/// Counted even while an overlay or the source view covers it, so the tree keeps
+/// the height it returns to and the tab's scroll does not move.
 pub fn panel_rows(tab: &Tab, height: usize) -> usize {
     let Some(err) = tab.error.as_ref() else {
         return 0;
@@ -1570,7 +1557,7 @@ pub fn panel_rows(tab: &Tab, height: usize) -> usize {
     (err.report.lines().count() + 1).min(height / 2)
 }
 
-/// Do two paths name the same file? Canonical forms when both resolve,
+/// Do `a` and `b` name the same file? Canonical forms when both resolve,
 /// else a plain comparison.
 pub fn same_path(a: &Path, b: &Path) -> bool {
     if a == b {
@@ -2222,9 +2209,9 @@ mod tests {
         }
     }
 
-    /// The source view is coloured once the colours come in. A reload
-    /// drops them until the new text's colours come, so no colour lands on
-    /// a token it was not made for.
+    /// The source view is coloured once the colours come in. A reload drops
+    /// them until the reloaded text's come, so no colour lands on a token it
+    /// was not made for.
     #[test]
     fn colours_follow_the_text() {
         use tabnas_lsp::TokenType;

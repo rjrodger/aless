@@ -21,20 +21,17 @@ pub fn number(n: f64) -> String {
     }
 }
 
-/// The source's spelling of the number `n`, when the viewer keeps it: a
-/// number in JSON's syntax that denotes `n` exactly and that [`number`]
-/// writes otherwise, as it does `1.0`, `-0`, `1e21` and an integer past
-/// 2^53. `None` for the spelling [`number`] writes (`55`, `0.5`), and for
-/// one JSON has no syntax for (`0x1F`, `1_000`, `+1`, `.5`): such a number
-/// is shown as [`number`] writes its value, and the source view has the
-/// spelling.
+/// The source's spelling of `n` when the viewer keeps it: text in JSON's syntax
+/// that denotes `n` exactly and that [`number`] writes otherwise (`1.0`, `-0`,
+/// `1e21`, an integer past 2^53). `None` for what [`number`] writes and for a
+/// spelling JSON has no syntax for (`0x1F`, `+1`), which only the source view shows.
 pub fn spelling(text: &str, n: f64) -> Option<&str> {
     let text = text.trim();
     if !is_json_number(text) {
         return None;
     }
-    // Most numbers are short integers, which `number` writes as spelled:
-    // up to 15 digits is below 2^53, and JSON has no leading zero.
+    // Most numbers are short integers, which `number` writes as spelled: at this
+    // length an integer is below 2^53, and JSON has no leading zero.
     let digits = text.strip_prefix('-').unwrap_or(text);
     if digits.len() <= 15 && digits.bytes().all(|b| b.is_ascii_digit()) && text != "-0" {
         return None;
@@ -49,9 +46,7 @@ pub fn spelling(text: &str, n: f64) -> Option<&str> {
         .then_some(text)
 }
 
-/// Whether `text` is a number in JSON's syntax (RFC 8259, section 6): a
-/// minus sign or none, an integer part with no leading zero, then a
-/// fraction and an exponent, each optional.
+/// Whether `text` is a number in JSON's syntax (RFC 8259, section 6).
 fn is_json_number(text: &str) -> bool {
     fn digits(b: &[u8], i: &mut usize) -> usize {
         let start = *i;
@@ -249,9 +244,7 @@ pub fn to_json_compact(doc: &Doc, id: NodeId) -> String {
 enum Layout {
     /// One item per line, indented this many spaces a level.
     Pretty(usize),
-    /// One line, `, ` and `: ` spaced.
     Line,
-    /// One line, no spaces.
     Compact,
 }
 

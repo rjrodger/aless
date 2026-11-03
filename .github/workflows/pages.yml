@@ -2,7 +2,7 @@ name: pages
 
 # Publishes the documentation site, https://aless.tabnas.dev, from main.
 #
-# The pages are Markdown under site/, and tests/site.rs builds them, with
+# The pages are Markdown under docs/, and tests/site.rs builds them, with
 # the reference written from the aless binary built from the same commit.
 # It checks them as it builds (links, the options each example names, each
 # console example's output, the house style) and writes the site into
@@ -11,7 +11,7 @@ name: pages
 # The owner verifies the domain for their account, then sets two things
 # once, in Settings → Pages: the source, "GitHub Actions", and the custom
 # domain. With that source GitHub reads the domain from the setting and
-# ignores a CNAME file; site/CNAME is published all the same, and
+# ignores a CNAME file; docs/CNAME is published all the same, and
 # tests/site.rs holds it to Cargo.toml's homepage. Until Pages is enabled,
 # the site is built and checked and the deploy is skipped with a notice,
 # rather than failing main. RELEASING.md has the steps, the DNS records

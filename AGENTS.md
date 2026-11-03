@@ -1,227 +1,106 @@
 # AGENTS.md
 
-This repository is **aless**: a jless-style terminal viewer, written in
-Rust, for every format the [tabnas](https://github.com/tabnas) parsers
-read — with tabs and a watch mode that reloads a changed file while
-keeping the reader's place. It is a viewer and nothing else: without a
-terminal it refuses to start. Start with [README.md](README.md) for what
-it does, the key map and the module map;
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records what it borrows
-from jless. This file is the guide for any agent working here;
-`CLAUDE.md` imports it.
+aless is a jless-style terminal viewer, written in Rust, for every format
+the [tabnas](https://github.com/tabnas) parsers read, with tabs and a
+watch mode that reloads a changed file while keeping the reader's place.
+[README.md](README.md) says what it does, and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) what it borrows from
+jless. This file is the guide for any agent working here; `CLAUDE.md` is
+a symbolic link to it.
 
-## Working on this repository
+The decisions everything here rests on are in [ADR.md](ADR.md):
+**ADR-001** (a terminal viewer, and nothing that runs without one),
+**ADR-002** (every format through a tabnas grammar), **ADR-003** (jless's
+interface, unless the README says otherwise), **ADR-004** (correctness
+and uniformity before performance), **ADR-005** (published crates,
+pinned), **ADR-006** (the reference written from the option table) and
+**ADR-007** (a repetition is a replace loop). Read them before a change
+that bends one.
 
-- **Build and test** from the repo root; the gates CI runs are exactly:
-  ```bash
-  cargo fmt --all --check
-  cargo clippy --all-targets --locked -- -D warnings
-  cargo test --locked
-  python3 scripts/pty-smoke.py target/debug/aless   # unix: drives the real binary in a pty, and checks it refuses without one
-  cargo package --locked                            # linux: the crate builds from exactly the files it publishes
-  ```
-  `cargo test` builds the binary too. Windows and macOS are release
-  targets, and CI tests all three; from Linux, `cargo check --target
-  x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin` (after
-  `rustup target add`) catch platform-specific compile errors early.
-- **Dependencies come from crates.io, pinned by `Cargo.lock`.** The
-  engine's package is `tabnas-parser` (its library keeps the name
-  `tabnas`), so its line reads
-  `tabnas = { package = "tabnas-parser", version = … }`; every grammar
-  and lsp is a plain version requirement.
-  `cargo update -p tabnas-parser` (or any of them) moves a pin to the
-  newest release the requirement allows. Do not vendor or copy tabnas
-  code into this repository.
-- **Releases are dist's.** [`dist-workspace.toml`](dist-workspace.toml)
-  configures them, and dist generates `.github/workflows/release.yml` from
-  it. Never edit that workflow by hand: change the config and run
-  `dist generate` with the dist version the config names. A pull request's
-  `plan` job fails when the two disagree.
-  [`.github/workflows/publish-crates.yml`](.github/workflows/publish-crates.yml)
-  and [`publish-homebrew.yml`](.github/workflows/publish-homebrew.yml)
-  are this repository's own: the crates.io job, and the Homebrew job
-  that writes the formula dist makes through
-  [`scripts/homebrew-formula.py`](scripts/homebrew-formula.py) (the man
-  page, the completions and a test) and pushes it to the tap, both called
-  by dist.
-  - A release is a `workflow_dispatch` that creates its own tag
-    ([RELEASING.md](RELEASING.md)).
-  - What a packager needs is in [PACKAGING.md](PACKAGING.md).
-  - The published crate carries only what `Cargo.toml`'s `include` names:
-    - `src/` and the licence files;
-    - every file the README links to: the docs, the man page and the
-      completions, and the example grammars under `tests/fixtures/`.
+## Where the detail lives
 
-    So a file the build reads must be under `src/`, or on the list (the
-    changelog, which the man page reads for its date), and a new file the
-    README links to joins the list. CI's `cargo package` checks the build.
-- **aless is a viewer, and nothing else.** It draws a document on a
-  terminal and reads keys from it; the one thing it writes is the JSON
-  of `:w FILE` and the copy keys, and it runs no programs. Without a
-  terminal it refuses to start, before reading any input, with one line
-  on standard error and the status 2, and nothing but `-h`, `--help`,
-  `-V` and `--generate` writes to standard output: there is no output
-  option, no JSON on standard output and no agent interface. Reading one
-  of these formats in a script, translating a document into another
-  format and running an alchemy program over one are the `dmog`
-  command's work, in [tabnas/dmog](https://github.com/tabnas/dmog) (data
-  mogrify), the composition root of alchemy, transduce and render; aless
-  depends on none of the three. A query option, a streaming export, a
-  renderer or a program runner does not belong here: add it to dmog, in
-  its three runtimes.
-- **The dev profile turns the engine's debug assertions off**
-  (`[profile.dev.package.tabnas-parser]` in `Cargo.toml`). With them on, the
-  engine compares its whole rule stack with a shadow copy on every step,
-  an O(depth) check per step that a deep rule stack pays on every one of
-  them: while tabnas-bnf spelled a repetition as a rule calling itself
-  per item (the history the next point tells), a custom grammar's rule
-  stack grew with the input and 800 lines of `hosts` took 31 s in a
-  debug build, 0.4 s without the check. The check is the engine's own
-  self-test, not aless's. `cargo test` and `target/debug/aless` inherit
-  the setting; keep it.
-- **A repetition is a replace loop, never a push chain.** In the engine an
-  alternate that hands control to another rule either pushes a child
-  rule (`p`), which opens a new frame for something the tree must nest,
-  or replaces the current rule (`r`), which re-enters it in the same
-  frame for the next item of a sequence. Every `*A`, `1*A` and `m*A` in
-  a grammar compiles to a replace loop, the loop `r` and the item `p`
-  where it nests, so the loop's iterations add no depth: a grammar's
-  real recursion still nests with its input, but depth never grows with
-  a file's length. That is the maintainer's rule for the whole tabnas
-  fleet, and `load` is written to it: the shared cap of 3,000 open rules
-  (`MAX_RULE_DEPTH` in `src/load.rs`) is a nesting guard, for a grammar
-  from the command line as for the built-in ones, and a flat file of any
-  length stays far under it. tabnas-bnf has compiled the star so since
-  tabnas/bnf#80, which `Cargo.lock` pins. Until then its `desugar`
-  spelled `*entry` as `H = inner H / ε`, a rule that calls itself once
-  per item, 1,500 lines of `hosts` were "nested deeper than aless
-  reads", and aless carried a workaround (commit 3ed798c): a
-  `Format::Custom` parse ran under a cap of 1,000,000 open rules, with
-  nesting measured on the built value instead. The cap is gone; the
-  value measure stays (`MAX_VALUE_DEPTH`), since a custom grammar builds
-  its value in the compiler's shape, an object and a `kids` array per
-  level, which its rule stack does not count in the same units. Never
-  write a repetition as a rule that calls itself in a grammar of this
-  repository's own. The observable is the engine's rule depth `d`, what
-  the guard in `load` reads as `ctx.rule_stack.len()`:
-  `a_custom_grammars_repetition_is_not_nesting` holds 2,000 lines to
-  the depth of two, and a 10,000-line `hosts` file to the depth of
-  three. Rule depth over a repetition is constant; a test that repeats
-  an item ten thousand times and asserts the maximum `d` stays what a
-  single item needs is the proof.
-- **Layout.** `src/main.rs` is the only file that touches the terminal
-  (crossterm) and the only one with platform-specific code. Everything
-  in the library is terminal-free and unit tested: `doc` (the arena
-  model and rows), `fmt` (text forms, previews, JSON output, paths),
-  `load` (format detection, the grammars, the grammar notations'
-  documents compiled to their specs, errors, the size, depth and time
-  limits, the parse's own thread), `grammar` (custom grammars:
-  `--grammar` and `--grammar-expr` read within `--max-size`, compiled
-  once at startup by tabnas-abnf, on a thread of their own within
-  `--timeout` and under the repetition caps, with the plain-text lexing
-  options, into the registry `Format::Custom` indexes), `cli` (every
-  option, in the one table the parser reads; the reference `--help`
-  prints, the summary `-h` prints, the man page and the shells'
-  completions), `explorer` (directory trees as documents,
-  listed lazily), `prov` (source positions by token alignment), `search`,
-  `tab` (view state, navigation, reload re-anchoring), `app` (modes, the
-  source view, key map, commands, tabs, watch scheduling), `highlight`
-  (colour for the source view through tabnas-lsp, made off the viewer's
-  thread), `render` (the screen as ratatui widgets),
-  `watch` (notify wrapper), `clip` (clipboard and OSC 52).
-- **Behaviour is jless's unless the README says otherwise.** Keep the
-  key map compatible: new bindings go on keys jless leaves free. A change
-  to how something is drawn needs its `render` test updated; a change to
-  navigation needs its `tab` test.
-- **Tests** live next to the code (`#[cfg(test)]`) and in `tests/`
-  (`formats.rs` loads every fixture, `grammars.rs` holds every grammar
-  of the library to its sample's expected JSON, `app_flow.rs` runs the
-  app without a terminal against real files, `binary.rs` runs the built
-  binary: what it prints about itself, the generated files, and its
-  refusal without a terminal). Fixtures are under `tests/fixtures/`, one
-  per format at least. Reload tests write to `std::env::temp_dir()`.
-- **The documentation site** (`https://aless.tabnas.dev`, `Cargo.toml`'s
-  `homepage`) is Markdown under `site/`, a directory for each of
-  Diátaxis's kinds: `tutorials/` (lessons, followed from start to end),
-  `how-to/` (one task each), `reference/` and `explanation/` (why).
-  `tests/site.rs` builds it: it renders the pages with tabnas-markdown into
-  `site/layout.html`, and writes the reference's pages from the binary
-  (`cli::reference_html`, `app::help_lines`) and from `CHANGELOG.md`
-  (the releases), never by hand. It checks every link and anchor, every
-  option an example names, every `console` example's output (on Unix,
-  run by `sh` in a directory of the files the site publishes under
-  `/examples/`: `examples/*` and the `tests/fixtures/` that `FIXTURES`
-  names), and the prose's house style (the next point), on every page and
-  on `README.md`. `ALESS_SITE_OUT=DIR` writes the site, and
-  `.github/workflows/pages.yml` publishes it from `main`. The site is
-  drawn as tabnas.dev is drawn: `site/style.css` carries tabnas/web's
-  design tokens whole, and `site/fonts/` its faces, so the two sites read
-  as one family and a page requests nothing anywhere else. On a page:
-  - the front matter is `title`, `description` (one sentence) and,
-    on a page in a section's list (every page of a section but its
-    index), `order`, its place in the list, and in a section listed by
-    group (the how-to guides: "Setting up" and "In the viewer"), `group`,
-    the heading it is under; the layout writes the `h1`, so the Markdown
-    starts at `##`;
-  - links between pages are from the site's root
-    (`/how-to/search.html`), and the build makes them relative;
-  - output is pasted from a real run, in a `console` block with `$ `
-    before each command; a capture of the viewer is a `screen` block, 80
-    columns, taken in a pty as `scripts/pty-smoke.py` drives one;
-  - `{{version}}` and `{{tagline}}` are filled in from the binary.
+| Page | What it carries |
+|------|-----------------|
+| [DEV-PROCESS.md](DEV-PROCESS.md) | how work is done: the prompt log, testing, documentation, comments, what each folder holds. Read it first. |
+| [STYLE-GUIDE.md](STYLE-GUIDE.md) | how documentation is written, and the gates that hold a page to it |
+| [docs/contributing/building.md](docs/contributing/building.md) | the gates, platforms, dependencies, the generated files, the crate, releases |
+| [docs/contributing/design.md](docs/contributing/design.md) | the modules, and the invariants a change keeps |
+| [docs/contributing/site.md](docs/contributing/site.md) | the documentation site: its build, its pages, its examples and captures |
+| [RELEASING.md](RELEASING.md) | cutting a release, step by step |
+| [PACKAGING.md](PACKAGING.md) | what a packager needs |
+| [admin/OPEN.md](admin/OPEN.md) | known work not yet done |
 
-  A new option or key reaches the reference by itself, and a release
-  reaches `/reference/releases.html` from `CHANGELOG.md`; a change to an
-  output a page quotes fails `tests/site.rs` until the page matches.
-- **The documentation follows the tabnas style guide**,
-  [`doc/STYLE-GUIDE.md` in tabnas/parser](https://github.com/tabnas/parser/blob/main/doc/STYLE-GUIDE.md):
-  the site, `README.md`, `CHANGELOG.md` (which the site publishes as its
-  releases page) and the reference `--help` prints. Its rules, in short:
-  every page is one of Diátaxis's four kinds, and the normative statement
-  of a fact lives in the reference, which the other kinds link to; a
-  published page cites nothing internal (no decision records, no
-  `AGENTS.md`, no handover notes) and carries no project history (what an
-  option used to be called, which release moved it); the reader is "you",
-  "we" appears in tutorials alone and "I" nowhere; code is introduced by
-  a short sentence ending in a colon, and followed by the one thing to
-  notice; a page closes by handing the reader a link or a next step,
-  never a summary; no em dash in prose (a comma, parentheses, a colon or
-  a new sentence instead), a list item's gloss after a full stop rather
-  than a dash, sentence-style headings, British spellings, no emoji, at
-  most one exclamation mark on a page and only in a tutorial, and no
-  `**Bold term**: gloss` lists (sentences, or a table). `site/reject.txt`
-  is the guide's banned list, a copy of tabnas/parser's
-  `.vale/styles/config/vocabularies/Tabnas/reject.txt`; `tests/site.rs`
-  holds every page and the README to it, with the em dash, first person,
-  exclamation and emoji rules, and the rest is enforced at review. Quoted
-  output keeps its own punctuation: the gate strips code spans and fenced
-  blocks before it looks.
-- **Without a terminal, aless refuses and writes nothing.** The refusal
-  comes before any input is read, grammar files included, so a pipe left
-  open or a FIFO nobody writes cannot hold a viewer that cannot start;
-  it is one line on standard error, with the status 2, and standard
-  output stays empty. `tests/binary.rs` and `scripts/pty-smoke.py` hold
-  the binary to it. The exit statuses are three (0 quit, 1 the terminal
-  failed while the viewer ran, 2 it could not start) and documented in
-  the reference (`src/cli.rs`) and the README, which must agree.
-- **Every option is in `cli::OPTIONS`.** The parser in `src/main.rs`
-  refuses any option the table does not list, and `-h`, `--help`, the
-  man page and the completions are written from it, so a new option goes
-  into the table, with its summary and its detail, and is read in
-  `parse_args`; `every_option_in_the_table_is_read` fails when it is
-  not. `man/aless.1` and `completions/` are the committed output of
-  `scripts/generate.sh`, which a release archive and the crate carry:
-  run it after changing an option, the reference or the version, and
-  `the_generated_files_are_current` (`tests/binary.rs`) fails until you
-  do.
-- **To look at a file while working here**, an agent has no terminal to
-  run aless in: `dmog translate --from FORMAT --to json FILE` prints a
-  document of any format aless reads as JSON, and `jq` takes it from
-  there.
-- **Every transient task reports progress**: long commands print a line
-  at least every 30 seconds (cargo's own output counts).
-- **The handover page** between sessions is
-  [`doc/handover/README.md`](doc/handover/README.md): where aless stands,
-  what is open and how to work here. Read it first, and leave it current
-  before a session ends. It is internal, so no published page cites it,
-  and the crate does not carry it.
+## Repository layout
+
+```
+.
+├── ADR.md          # the decision record
+├── AGENTS.md       # this file (CLAUDE.md links to it)
+├── DEV-PROCESS.md  # how work is done, kept identical across projects
+├── STYLE-GUIDE.md  # how documentation is written, kept identical too
+├── src/            # the crate: the library, and main.rs, the terminal side
+├── tests/          # integration tests, the site build, fixtures
+├── docs/           # the documentation site, and docs/contributing/
+├── examples/       # the files the site's examples read
+├── man/  completions/  # generated by admin/scripts/generate.sh
+├── admin/          # notes, trackers and scripts, admin/scripts/ among them
+└── sketch/         # working files, to be ignored; the prompt log
+```
+
+## The gates
+
+Before every push, from the repository root. CI runs each on every push
+and pull request, and `git config core.hooksPath .githooks` runs the
+comment gate before a push leaves the machine:
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+python3 admin/scripts/pty-smoke.py target/debug/aless
+cargo package --locked
+node admin/scripts/comment-gate.cjs
+node admin/scripts/prose-gate.cjs
+vale --minAlertLevel=error $(node admin/scripts/prose-gate.cjs --list)
+node admin/scripts/vale-counts.cjs
+```
+
+After an option, the reference or the version changes, run
+`admin/scripts/generate.sh`. [building.md](docs/contributing/building.md)
+says what each gate covers.
+
+## Pages and their kinds
+
+The site's pages predate the style guide's file names, so a page's kind
+is its directory: `docs/tutorials/` tutorials, `docs/how-to/` how-to
+guides, `docs/reference/` reference, `docs/explanation/` explanation.
+Each `index.md`, `docs/index.md` and `docs/404.md` are navigation. The
+pages under `docs/contributing/`, `README.md`, `RELEASING.md` and
+`PACKAGING.md` are contributor pages. `CHANGELOG.md` is published as the
+releases page. `tests/site.rs` is the harness for examples: it runs every
+`console` fence ([site.md](docs/contributing/site.md)).
+
+## Terms
+
+| Term | Means | Never swapped with |
+|------|-------|--------------------|
+| tab | one open document, with its own view | window, pane, buffer |
+| node | one value of the tree: a container or a scalar | row |
+| row | one line of the tree as drawn | node, line |
+| line | a line of the source file | row |
+| data mode, line mode | jless's two ways of drawing the tree | view |
+| source view | the tab's source text, coloured by its grammar | raw view |
+| explorer | a directory shown as a tree, opening files in tabs | file browser |
+| format | what a file is read as, such as `json` or `yaml` | kind, type |
+| grammar | a tabnas grammar, built in or custom | parser |
+| custom grammar | one named with `--grammar` or `--grammar-expr` | plugin |
+| reload | reading a watched file again after it changes | refresh |
+
+## Rules for an agent here
+
+- The prompt log, `sketch/PROMPT-LOG.md`, is kept to the rules in
+  `DEV-PROCESS.md`: every prompt is appended before its work starts.
+- A feature that runs without a terminal does not belong here (ADR-001).
+- An agent has no terminal to run aless in. To see what aless reads from
+  a file, load it through `aless::load::load_str` in a throwaway test,
+  and delete the test after.

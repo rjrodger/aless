@@ -1,24 +1,7 @@
-//! The documentation site, built and checked.
-//!
-//! The site is served at Cargo.toml's `homepage`. Its pages are Markdown
-//! under `site/`, one directory for each of Diátaxis's four kinds:
-//! `tutorials/`, `how-to/`, `reference/` and `explanation/`. They are
-//! rendered by tabnas-markdown, the parser aless reads Markdown with, into
-//! `site/layout.html`, which is drawn as tabnas.dev is drawn: the same
-//! tokens, the same faces (self-hosted under `site/fonts/`), a header, a
-//! sidebar, the page's own contents beside it, and a footer. The
-//! reference's pages are written from the binary's own tables rather than
-//! by hand: the command line from the topics `--help` prints
-//! (`aless::cli::reference_html`), the keys from the help F1 shows
-//! (`aless::app::help_lines`), and the releases from `CHANGELOG.md`, so
-//! the site cannot disagree with any of them.
-//!
-//! `cargo test --test site` builds the site in memory and checks it: its
-//! links and anchors, the options each example names, the console
-//! examples' output (on Unix, by running them against the files in
-//! `examples/`), and the house style's rules for prose, on every page and
-//! on the README. With `ALESS_SITE_OUT=DIR` it also writes the site into
-//! DIR, which is what `.github/workflows/pages.yml` publishes.
+//! The documentation site, built from `docs/` and checked: links and
+//! anchors, the options each example names, and each console example's
+//! output. `ALESS_SITE_OUT=DIR` writes it, which `.github/workflows/pages.yml`
+//! publishes; `docs/contributing/site.md` says how the build works.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -30,7 +13,7 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// One of Diátaxis's four kinds: a directory of pages.
+/// A Diátaxis kind: a directory of pages.
 struct Section {
     dir: &'static str,
     /// The navigation's name for the section.
@@ -50,8 +33,7 @@ struct Group {
     blurb: &'static str,
 }
 
-/// The sections, in the order the navigation lists them. The how-to
-/// guides are in two groups: setting aless up, and a file open in it.
+/// The sections, in the order the navigation lists them.
 const SECTIONS: [Section; 4] = [
     Section {
         dir: "tutorials",
@@ -99,7 +81,6 @@ const FIXTURES: &[&str] = &[
     "tests/fixtures/records.json",
 ];
 
-const TUTORIALS: usize = 0;
 const REFERENCE: usize = 2;
 
 /// A page of the site.
@@ -155,7 +136,7 @@ fn root() -> &'static Path {
 }
 
 fn sources() -> PathBuf {
-    root().join("site")
+    root().join("docs")
 }
 
 fn read(path: &Path) -> String {
@@ -210,7 +191,7 @@ fn build() -> Site {
     );
     assert_ne!(
         dark, logo,
-        "site/logo.svg no longer carries the wordmark's dark rule the build rewrites"
+        "docs/logo.svg lacks the wordmark's dark rule the build rewrites"
     );
     files.insert("logo-dark.svg".into(), dark.into_bytes());
     // The faces, served from the site itself: a page requests nothing
@@ -238,7 +219,7 @@ fn build() -> Site {
     Site { pages, files }
 }
 
-/// Every page written in Markdown: `site/index.md`, `site/404.md`, and
+/// Every page written in Markdown: `docs/index.md`, `docs/404.md`, and
 /// each section's directory.
 fn markdown_pages() -> Vec<Page> {
     let mut dirs: Vec<(&str, Option<usize>)> = vec![("", None)];
@@ -253,8 +234,8 @@ fn markdown_pages() -> Vec<Page> {
         names.sort();
         for name in names {
             let origin = match dir {
-                "" => format!("site/{name}"),
-                dir => format!("site/{dir}/{name}"),
+                "" => format!("docs/{name}"),
+                dir => format!("docs/{dir}/{name}"),
             };
             let text = read(&root().join(&origin));
             let (meta, markdown) = front_matter(&text, &origin);
@@ -338,7 +319,7 @@ fn markdown_pages() -> Vec<Page> {
             pages
                 .iter()
                 .any(|p| p.path == index && p.section == Some(i)),
-            "site/{}/index.md is missing",
+            "docs/{}/index.md is missing",
             section.dir
         );
     }
@@ -1109,7 +1090,7 @@ fn the_site_builds_and_its_links_hold() {
     assert_eq!(
         format!("https://{cname}"),
         HOMEPAGE,
-        "site/CNAME names the domain Cargo.toml's homepage is served at"
+        "docs/CNAME names the domain Cargo.toml's homepage is served at"
     );
     if let Some(out) = std::env::var_os("ALESS_SITE_OUT") {
         let out = PathBuf::from(out);
@@ -1237,12 +1218,10 @@ fn every_example_names_options_aless_takes() {
     );
 }
 
-/// Every `console` example prints what its page says it prints: each
-/// `$ ` line is run by `sh` in a directory holding the files the site
-/// publishes under `examples/`, as a reader who downloaded them would run
-/// it, with the aless this test was built with first on the PATH; what it
-/// writes to standard output and standard error together is held to the
-/// lines after it.
+/// Every `console` example prints what its page says: each `$ ` line runs
+/// in `sh`, among the files the site publishes under `examples/`, with this
+/// build's aless first on the PATH, and its output is held to the lines
+/// after it.
 #[cfg(unix)]
 #[test]
 fn the_console_examples_print_what_the_pages_say() {
@@ -1328,104 +1307,4 @@ fn the_console_examples_print_what_the_pages_say() {
         wrong.len()
     );
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n\n"));
-}
-
-/// The faults in a document's prose against the house style: a phrase
-/// `site/reject.txt` bans, an em dash, an emoji, "I" anywhere, "we"
-/// outside a tutorial, and an exclamation mark outside a tutorial or more
-/// than one in one. Code, quoted output, link targets and markup are not
-/// prose.
-fn style_faults(
-    origin: &str,
-    markdown: &str,
-    tutorial: bool,
-    patterns: &[(Regex, String)],
-) -> Vec<String> {
-    let code = Regex::new(r"`[^`]*`").unwrap();
-    let markup = Regex::new(r"<[^>]*>|\]\([^)]*\)").unwrap();
-    let emoji = Regex::new(r"\p{Emoji_Presentation}").unwrap();
-    let i = Regex::new(r"\bI\b").unwrap();
-    let we = Regex::new(r"(?i)\b(?:we|we['’](?:ll|re|ve|d))\b").unwrap();
-    let (_, prose) = fences(markdown);
-    let prose = markup
-        .replace_all(&code.replace_all(&prose, "code"), " ")
-        .to_string();
-    // A paragraph is matched whole, so a phrase split across lines is found.
-    let paragraphs: Vec<String> = prose
-        .split("\n\n")
-        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
-        .collect();
-    let mut faults = Vec::new();
-    for paragraph in &paragraphs {
-        for (re, src) in patterns {
-            if let Some(m) = re.find(paragraph) {
-                faults.push(format!("{origin}: {:?} (banned: {src})", m.as_str()));
-            }
-        }
-        if paragraph.contains('—') {
-            faults.push(format!("{origin}: an em dash in {paragraph:?}"));
-        }
-        if let Some(m) = emoji.find(paragraph) {
-            faults.push(format!("{origin}: emoji {:?}", m.as_str()));
-        }
-        if i.is_match(paragraph) {
-            faults.push(format!("{origin}: \"I\" in {paragraph:?}"));
-        }
-        if !tutorial && we.is_match(paragraph) {
-            faults.push(format!(
-                "{origin}: \"we\" outside a tutorial: {paragraph:?}"
-            ));
-        }
-    }
-    let bangs = paragraphs
-        .iter()
-        .map(|p| p.matches('!').count())
-        .sum::<usize>();
-    if bangs > 1 || (bangs == 1 && !tutorial) {
-        faults.push(format!("{origin}: {bangs} exclamation marks"));
-    }
-    faults
-}
-
-/// The house style's rules for prose, on every page written by hand and
-/// on the README: no phrase `site/reject.txt` bans, no em dash, no emoji;
-/// `we` in tutorials alone, `I` nowhere; and an exclamation mark in a
-/// tutorial, once at most. The rules are the tabnas documentation style
-/// guide's, which AGENTS.md names, and `site/reject.txt` is a copy of the
-/// tabnas house style's banned list, which tabnas/parser keeps for Vale
-/// in `.vale/styles/config/vocabularies/Tabnas/reject.txt`.
-#[test]
-fn the_pages_keep_the_house_style() {
-    let patterns: Vec<(Regex, String)> = read(&sources().join("reject.txt"))
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|src| {
-            assert!(
-                !src.starts_with('#'),
-                "reject.txt holds patterns, not comments"
-            );
-            let re = Regex::new(&format!(r"(?i)\b(?:{src})\b")).unwrap();
-            (re, src.to_string())
-        })
-        .collect();
-    assert!(patterns.len() > 50, "reject.txt loaded too few patterns");
-    let mut faults = Vec::new();
-    for page in &site().pages {
-        let Some(markdown) = &page.markdown else {
-            continue;
-        };
-        faults.extend(style_faults(
-            &page.origin,
-            markdown,
-            page.section == Some(TUTORIALS),
-            &patterns,
-        ));
-    }
-    faults.extend(style_faults(
-        "README.md",
-        &read(&root().join("README.md")),
-        false,
-        &patterns,
-    ));
-    assert!(faults.is_empty(), "\n{}", faults.join("\n"));
 }

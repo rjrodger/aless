@@ -33,13 +33,8 @@ pub struct Pattern {
     pub regex: Regex,
 }
 
-/// Compile a search line as typed after `/` or `?`.
-///
-/// - `pat/s` forces case sensitivity; a single trailing `/` is dropped and
-///   `//` stands for a literal `/`.
-/// - Smart case: the search is case-insensitive unless the pattern has an
-///   uppercase letter.
-/// - Unescaped `[ ] { }` match themselves; write `\[` for a regex class.
+/// Compile a search line as typed after `/` or `?`: a single trailing `/` is
+/// dropped, and `//` stands for a literal `/`.
 pub fn compile(input: &str) -> Result<Pattern, String> {
     let (body, forced) = strip_suffix(input);
     let sensitive = forced || body.chars().any(char::is_uppercase);

@@ -1,9 +1,5 @@
-//! The command line's vocabulary: every option aless takes ([`OPTIONS`])
-//! and the reference written from it. The summary `-h` prints, the
-//! reference `--help` prints, the man page and the shells' completions
-//! (`--generate`) all come from the table and the topics here, and the
-//! binary's parser refuses any option the table does not list, so none of
-//! them can name an option aless does not take, or leave one out.
+//! Every option aless takes ([`OPTIONS`]), and the reference written from
+//! it: `-h`, `--help`, the man page and the completions (ADR-006).
 
 use crate::load::Format;
 
@@ -101,7 +97,7 @@ impl Opt {
     }
 }
 
-/// The width of a summary, so that `-h` fits 80 columns.
+/// The width of a summary, so that `-h` fits a terminal of `WIDTH`.
 pub const SUMMARY_WIDTH: usize = 44;
 
 const MODES: &[&str] = &["data", "line"];
@@ -437,8 +433,7 @@ const TOPICS: &[Topic] = &[
         man: Man::Description("The viewer"),
         blocks: &[
             Block::Text(
-                "aless is a viewer: it draws on a terminal and reads keys from it, and does \
-                nothing else. Each FILE opens in a tab of its own, watched and reloaded \
+                "aless is a viewer: it draws on a terminal and reads keys from it. Each FILE opens in a tab of its own, watched and reloaded \
                 when it changes, keeping your place; a directory opens in the file \
                 explorer, where Enter opens a file; and without a FILE, aless reads \
                 standard input when it is not a terminal, and otherwise explores the \
@@ -451,9 +446,7 @@ const TOPICS: &[Topic] = &[
                 or a file, no terminal to open, or TERM=dumb) aless refuses to start, at \
                 once and before reading any input, with a line on standard error and the \
                 status 2. Nothing but -h, --help, -V and --generate writes to standard \
-                output. To read one of these formats in a script, or write a document as \
-                another format, use dmog (https://github.com/tabnas/dmog), which \
-                translates any format aless reads into any other.",
+                output.",
             ),
         ],
     },
@@ -700,11 +693,6 @@ const TOPICS: &[Topic] = &[
                 "the ABNF compiler --grammar uses, and its annotations: \
                 https://github.com/tabnas/abnf",
             ),
-            (
-                "dmog",
-                "the command that reads these formats in a script, writes a document as \
-                another format and runs a program over one: https://github.com/tabnas/dmog",
-            ),
         ])],
     },
 ];
@@ -803,8 +791,8 @@ fn format_terms() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Terms in two columns: the term, then what it means, filled beside it,
-/// or below it when the term is wider than the column.
+/// Each term, then what it means, filled beside it, or below it when the
+/// term is wider than its column.
 fn push_terms(out: &mut String, terms: &[(String, String)], indent: usize) {
     const MAX_TERM: usize = 30;
     let width = terms
@@ -1072,8 +1060,7 @@ fn html_text(text: &str) -> String {
 
 /// Where the first topic named by its title starts in `text`, and the
 /// title: a whole word or words in capitals, as the terminal's reference
-/// names a section. Of two titles that start there, the longer, so
-/// `OUTPUT OPTIONS` is not read as `OUTPUT`.
+/// names a section; where titles start at one place, the longest.
 fn next_title(text: &str) -> Option<(usize, &'static str)> {
     let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
     TOPICS
@@ -1149,8 +1136,8 @@ pub fn generate(what: &str) -> Result<String, String> {
 /// The changelog, for the date of this version's release.
 const CHANGELOG: &str = include_str!("../CHANGELOG.md");
 
-/// The date this version was released, as the changelog's heading for it
-/// gives it (`## [0.1.0] - 2026-10-09`); empty before then.
+/// The date this version was released, from its heading in the
+/// changelog; empty before it is.
 fn release_date() -> &'static str {
     let heading = format!("## [{VERSION}] - ");
     CHANGELOG
@@ -1186,7 +1173,7 @@ fn roff_line(out: &mut String, line: &str) {
     out.push('\n');
 }
 
-/// Roff text, filled to lines of 80 bytes at most where its words allow,
+/// Roff text, filled to lines shorter than `WIDTH` where its words allow,
 /// as man pages are written; the formatter fills them again.
 fn roff_text(out: &mut String, text: &str) {
     for line in wrap(text, 79) {
@@ -1574,10 +1561,6 @@ mod tests {
         assert!(lookup("--nope").is_none());
         assert!(lookup("-x").is_none());
         assert!(lookup("k").is_none());
-        assert!(
-            lookup("--json").is_none(),
-            "aless is a viewer: no output option"
-        );
     }
 
     #[test]
@@ -1595,7 +1578,7 @@ mod tests {
         }
     }
 
-    /// The help is read in a terminal 80 columns wide.
+    /// The help is read in a terminal `WIDTH` wide.
     #[test]
     fn the_help_fits_80_columns() {
         for (name, text) in [("--help", reference()), ("-h", summary())] {
@@ -1664,7 +1647,6 @@ mod tests {
         }
         let err = generate("nope").unwrap_err();
         assert!(err.contains("man, complete-bash"), "{err}");
-        assert!(generate("skill").is_err(), "aless is a viewer: no skill");
     }
 
     /// The man page and the completions are ASCII, so no encoding a
@@ -1711,8 +1693,8 @@ mod tests {
         }
     }
 
-    /// A man page sets code as it is, 7 columns in (9 under a paragraph),
-    /// so code fits 80 columns there too.
+    /// A man page sets code as it is, indented, so code fits a terminal
+    /// there too.
     #[test]
     fn code_fits_a_man_page() {
         for topic in TOPICS {

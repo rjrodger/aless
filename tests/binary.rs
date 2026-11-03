@@ -52,14 +52,11 @@ fn short_help_is_a_summary_of_the_options() {
     ] {
         assert!(text.contains(said), "{said:?} in:\n{text}");
     }
-    for gone in ["--json", "--paths", "--check", "EXIT STATUS", "agent"] {
-        assert!(!text.contains(gone), "{gone:?} in:\n{text}");
-    }
+    assert!(!text.contains("EXIT STATUS"), "{text}");
 }
 
 /// `--help` is the whole reference, and it describes a viewer: what it
-/// shows, every option, the keys, the limits, the exit statuses, and where
-/// a script reads these formats instead.
+/// shows, every option, the keys, the limits and the exit statuses.
 #[test]
 fn help_describes_the_viewer() {
     let out = aless(&["--help"]);
@@ -87,7 +84,6 @@ fn help_describes_the_viewer() {
         "EXIT STATUS: 0 the viewer was quit 1 the viewer failed while it ran",
         "2 the viewer could not start",
         "TERM dumb: a terminal that cannot draw the viewer",
-        "https://github.com/tabnas/dmog",
         "-k, --kind, --format <FORMAT>",
         "--format is another name for this option",
         "--watch Reload a file when it changes, keeping your place (the default)",
@@ -96,21 +92,6 @@ fn help_describes_the_viewer() {
         "NO_COLOR set and not empty",
     ] {
         assert!(flat.contains(said), "{said:?} in:\n{text}");
-    }
-    for gone in [
-        "--json",
-        "--paths",
-        "--find",
-        "--where",
-        "--check",
-        "--path ",
-        "--at ",
-        "--compact",
-        "skill",
-        "standard output for scripts",
-        "WITHOUT A SCREEN",
-    ] {
-        assert!(!text.contains(gone), "{gone:?} in:\n{text}");
     }
 }
 
@@ -130,11 +111,10 @@ fn the_generated_files_are_current() {
         let committed = std::fs::read(path).unwrap_or_default();
         assert!(
             out.stdout == committed,
-            "{path} is not what `aless --generate {what}` writes: run scripts/generate.sh"
+            "{path} is not what `aless --generate {what}` writes: run admin/scripts/generate.sh"
         );
     }
-    // There is no skill: aless is a viewer, with nothing to teach an agent.
-    let out = aless(&["--generate", "skill"]);
+    let out = aless(&["--generate", "nope"]);
     assert_eq!(code(&out), 2);
     assert!(out.stdout.is_empty());
     assert!(
@@ -185,12 +165,8 @@ fn usage_errors_are_one_line_with_status_2() {
             "aless: unknown option: --nope (see aless --help)",
         ),
         (
-            &["--json", "x.json"],
-            "aless: unknown option: --json (see aless --help)",
-        ),
-        (
-            &["--paths"],
-            "aless: unknown option: --paths (see aless --help)",
+            &["--frob", "x.json"],
+            "aless: unknown option: --frob (see aless --help)",
         ),
         (
             &["--mode", "nope"],

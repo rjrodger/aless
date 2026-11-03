@@ -9,7 +9,7 @@ name: publish-homebrew
 # commits it to the tap as it is. That formula installs the binary and
 # puts every other file of the archive in $(brew --prefix)/share/aless,
 # the man page and the shells' completions among them, where neither man
-# nor a shell looks. scripts/homebrew-formula.py adds what a formula in
+# nor a shell looks. admin/scripts/homebrew-formula.py adds what a formula in
 # homebrew-core has: the man page in man1, the completions in
 # bash_completion, zsh_completion, fish_completion and pwsh_completion,
 # and a test for `brew test`. Then `brew style --fix` tidies dist's own lines, as dist's
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
-      contents: read  # the release commit, for scripts/homebrew-formula.py
+      contents: read  # the release commit, for admin/scripts/homebrew-formula.py
     steps:
       - name: The release commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tap/Formula
-          python3 aless/scripts/homebrew-formula.py dist-artifacts/aless.rb > tap/Formula/aless.rb
+          python3 aless/admin/scripts/homebrew-formula.py dist-artifacts/aless.rb > tap/Formula/aless.rb
           ruby -c tap/Formula/aless.rb
 
       # As dist's job: the runner's Homebrew, with the cops for the

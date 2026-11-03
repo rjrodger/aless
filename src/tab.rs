@@ -716,10 +716,8 @@ impl Tab {
 
     // ----- reload ----------------------------------------------------------------
 
-    /// Re-read the file and fold the result in, keeping the reader's place:
-    /// expansions whose paths survive stay, the focused node is found again
-    /// by path, else by its nearest surviving ancestor and, within that, the
-    /// node nearest the old source line; the focus keeps its screen line.
+    /// Re-read the file and fold the result in, keeping the reader's place as
+    /// docs/explanation/reloading.md describes.
     pub fn reload(&mut self, view: View) {
         if self.explorer.is_some() {
             self.explorer_refresh(view);
@@ -772,9 +770,8 @@ impl Tab {
         }
 
         let mut doc = loaded.doc;
-        // A fresh document has everything expanded; apply the old folds
-        // where their paths still resolve. Containers the old document did
-        // not have keep the default (expanded).
+        // A fresh document has everything expanded, so only the remembered
+        // folds that still resolve are applied.
         for p in &collapsed {
             if let Some(id) = doc.resolve(p) {
                 doc.set_expanded(id, false);
@@ -786,7 +783,6 @@ impl Tab {
             }
         }
 
-        // The anchor.
         let anchor = match &anchor_path {
             Some(p) => match doc.resolve(p) {
                 Some(id) => id,
@@ -802,7 +798,7 @@ impl Tab {
         };
         doc.reveal(anchor);
 
-        // Search matches are recomputed against the new document.
+        // Matches are node ids into the replaced document.
         if let Some(s) = self.search.as_mut() {
             s.matches = (0..doc.len() as NodeId)
                 .filter(|&i| s.pattern.regex.is_match(&fmt::search_text(&doc, i)))
@@ -831,10 +827,8 @@ impl Tab {
         self.clamp_source_scroll(view.height);
     }
 
-    /// Keep the text view on its text, `height` rows tall: scrolled past
-    /// where its last line shows at the foot, after a shorter text or in a
-    /// taller pane, it shows the text's last `height` lines instead of
-    /// blank rows.
+    /// Keep the text view on its text, `height` rows tall: after a shorter text
+    /// or a taller screen it shows the last `height` lines, not blank rows.
     pub fn clamp_source_scroll(&mut self, height: usize) {
         let total = load::line_count(&self.source);
         self.source_scroll = self.source_scroll.min(total.saturating_sub(height));
@@ -938,8 +932,8 @@ impl Tab {
     }
 
     /// Make `dir` the explorer's root. Listings already read are kept, the
-    /// folds under the old root survive when it sits inside the new one,
-    /// and the focus stays on the same entry.
+    /// folds under the current root survive when it sits inside `dir`, and
+    /// the focus stays on the same entry.
     pub fn reroot(&mut self, dir: &Path, view: View) {
         let Some(old) = self.explorer.take() else {
             return;
@@ -948,7 +942,7 @@ impl Tab {
         let show_hidden = old.show_hidden;
         let mut ex = Explorer::open(dir, show_hidden);
         ex.adopt_listings(old);
-        // The old root's place under the new one, as node-path keys.
+        // Where `old_root` sits under `dir`, as node-path keys.
         let prefix: Vec<Key> = old_root
             .strip_prefix(&ex.root)
             .map(|rel| {
@@ -1329,9 +1323,8 @@ mod tests {
         assert_eq!(t.doc.node(1).kind, Kind::Number(2.0));
     }
 
-    /// A reload that shortens the text leaves the text view on it, showing
-    /// its last lines rather than the blank past its end, whether the new
-    /// text parses or not.
+    /// A reload that shortens the text leaves the text view on its last lines
+    /// rather than the blank past its end, whether the shorter text parses or not.
     #[test]
     fn a_shorter_reload_keeps_the_text_view_on_the_text() {
         let long: Vec<String> = (0..100).map(|i| i.to_string()).collect();

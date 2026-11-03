@@ -1,11 +1,10 @@
 //! Copying text out: the system clipboard when the `clipboard` feature is
-//! on and a clipboard exists, else the terminal's own OSC 52 sequence,
-//! which terminals such as xterm, kitty, WezTerm, iTerm2, Alacritty,
-//! foot and Windows Terminal turn into a clipboard write (over SSH too).
+//! on and a clipboard exists, else the terminal's OSC 52 escape, which
+//! most terminals turn into a clipboard write, over SSH too.
 
 use std::io::Write;
 
-/// The OSC 52 sequence that asks the terminal to set its clipboard.
+/// `text` wrapped in OSC 52, the escape that sets the terminal's clipboard.
 pub fn osc52(text: &str) -> String {
     format!("\x1b]52;c;{}\x07", base64(text.as_bytes()))
 }

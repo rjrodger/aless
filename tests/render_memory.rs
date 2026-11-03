@@ -1,10 +1,5 @@
-//! Drawing a long value costs a screenful, not the value. The width
-//! measures in `render` walk grapheme clusters lazily and stop once they
-//! have their answer, so a string of millions of characters, well within
-//! the input limit, is measured and clipped without holding anything per
-//! character; a coloured line of a pane's text reads only what shows. A counting allocator reads the most memory each measure
-//! holds at once beyond what was live when it began; this binary holds
-//! this one test, so nothing else allocates while it runs.
+//! Measuring, clipping and colouring a long value holds a screenful, not the value.
+//! The allocator counts every thread, so this binary must hold no other test.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
@@ -20,8 +15,8 @@ struct Counting;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 
-// SAFETY: every call goes straight to the system allocator; the counters
-// only observe the sizes.
+// SAFETY: every call goes straight to the system allocator; the counters only
+// read sizes.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { System.alloc(layout) };
@@ -41,8 +36,7 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static COUNTING: Counting = Counting;
 
-/// What `f` returns, and the most memory it held at once beyond what was
-/// live when it began.
+/// What `f` returns, and the most memory it held at once beyond what was live before it.
 fn held<T>(f: impl FnOnce() -> T) -> (T, usize) {
     let base = LIVE.load(SeqCst);
     PEAK.store(base, SeqCst);
@@ -50,14 +44,12 @@ fn held<T>(f: impl FnOnce() -> T) -> (T, usize) {
     (out, PEAK.load(SeqCst) - base)
 }
 
-/// Far above a screenful of text, far below a value's length: collecting
-/// one entry per character of these values took tens of megabytes.
+/// Far above a screenful of text, far below one entry per character of these values.
 const SCREENFUL: usize = 64 << 10;
 
 #[test]
 fn a_long_value_is_measured_and_clipped_in_a_screenful() {
     let chars = 1 << 20;
-    // ASCII, one column a character, and CJK, two.
     for (unit, per) in [("a", 1), ("日", 2)] {
         let big = unit.repeat(chars);
         let (width, bytes) = held(|| cols(&big));
@@ -86,8 +78,7 @@ fn a_long_value_is_measured_and_clipped_in_a_screenful() {
         assert!(bytes < SCREENFUL, "fitting {unit:?}s held {bytes} bytes");
     }
 
-    // A minified line, a token every other character: its colours are
-    // made for what shows, not for every token.
+    // A minified line, a token every other character: only what shows is coloured.
     let tokens = chars / 2;
     let minified = "1,".repeat(tokens);
     let runs: Vec<Run> = (0..tokens)

@@ -1,6 +1,5 @@
-//! Format detection and loading: a file (or a string) goes in, a
-//! positioned [`Doc`] comes out, parsed by the tabnas grammar for its
-//! format, or split into lines when no grammar claims it.
+//! Format detection and loading: a file or string goes in, a positioned [`Doc`] comes out,
+//! parsed by its format's tabnas grammar or split into lines.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -18,9 +17,7 @@ use crate::doc::Doc;
 use crate::grammar::{self, CustomId};
 use crate::prov;
 
-/// A format aless reads: a built-in grammar, plain text, or a grammar the
-/// command line gave (`--grammar`, `--grammar-expr`), which
-/// [`Format::Custom`] names by its place in the [`grammar`] registry.
+/// A format aless reads: a built-in grammar, plain text, or a grammar from the command line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
     Json,
@@ -39,28 +36,20 @@ pub enum Format {
     Feed,
     Css,
     Proto,
-    /// PGN, chess games, by tabnas-chess: its manifest's `languageId`.
+    /// Named by its manifest's `languageId`, not after the tabnas-chess crate.
     Pgn,
-    /// C source, by tabnas-c: its concrete syntax tree.
     C,
-    /// A grammar in ABNF (RFC 5234), by tabnas-abnf: the grammar spec its
-    /// compiler writes for it, of the schema the three notations share.
     Abnf,
-    /// A grammar in W3C EBNF, by tabnas-ebnf, read as [`Format::Abnf`] is.
     Ebnf,
-    /// A grammar in llama.cpp's GBNF, by tabnas-gbnf, read as
-    /// [`Format::Abnf`] is.
     Gbnf,
     Expr,
     Semver,
     Text,
-    /// A grammar registered from the command line; see [`grammar`].
     Custom(CustomId),
 }
 
 impl Format {
-    /// The built-in formats. A custom grammar is not among them: the
-    /// registry lists those ([`grammar::registered`]).
+    /// The built-in formats; custom grammars are in the [`grammar`] registry.
     pub const ALL: [Format; 24] = [
         Format::Json,
         Format::Jsonl,
@@ -114,36 +103,26 @@ impl Format {
             Format::Expr => "expr",
             Format::Semver => "semver",
             Format::Text => "text",
-            // An id only comes from the registry, so the grammar is there.
             Format::Custom(id) => grammar::get(id).map_or("custom", |g| g.name),
         }
     }
 
-    /// Whether this is a grammar from the command line rather than a
-    /// built-in format.
     pub fn is_custom(self) -> bool {
         matches!(self, Format::Custom(_))
     }
 
-    /// Whether a document of this format is a grammar in a notation (ABNF,
-    /// EBNF, GBNF), read as the grammar spec its compiler writes for it
-    /// ([`compile_notation`]) rather than by a parse aless drives: the
-    /// compiler parses it with a parser of its own, which takes no guard of
-    /// aless's and lexes no tokens aless sees, so a grammar has no source
-    /// positions and no colours.
+    /// A grammar notation, read as the spec its compiler writes ([`compile_notation`]). The
+    /// compiler uses its own parser, so the value has no source positions and no colours.
     pub fn is_notation(self) -> bool {
         matches!(self, Format::Abnf | Format::Ebnf | Format::Gbnf)
     }
 
-    /// Whether the document is a list of records keyed by a header row,
-    /// so that no record carries its keys in the source (CSV, TSV).
+    /// Records keyed by a header row, so no record carries its keys in the source.
     pub fn keyed_by_header(&self) -> bool {
         matches!(self, Format::Csv | Format::Tsv)
     }
 
-    /// A format by name or by a common alias (`yml`, `md`, `ndjson`, `txt`).
-    /// A custom grammar's name comes first: the command line asked for it,
-    /// even over a built-in's.
+    /// A format by name or alias (`yml`, `md`); a custom grammar's name wins over a built-in's.
     pub fn from_name(s: &str) -> Option<Format> {
         let s = s.trim().to_lowercase();
         grammar::lookup(&s)
@@ -152,10 +131,7 @@ impl Format {
             .or_else(|| Format::from_extension(&s))
     }
 
-    /// Every name [`from_name`](Format::from_name) takes as a format's own:
-    /// the built-ins', then the custom grammars', each once (a grammar
-    /// registered twice under one name, or under a built-in's, is listed
-    /// once, as it resolves once).
+    /// Every name [`from_name`](Format::from_name) takes as a format's own, each once.
     pub fn known_names() -> Vec<&'static str> {
         let mut names: Vec<&'static str> = Format::ALL.iter().map(|f| f.name()).collect();
         for name in grammar::names() {
@@ -169,11 +145,8 @@ impl Format {
         names
     }
 
-    /// The file extensions (without the dot, in lower case) that imply a
-    /// built-in format, as its crate's manifest declares them; none for a
-    /// format whose manifest declares none (expressions, a version), which
-    /// `-k` names, or for a custom grammar, whose names are its own. The
-    /// help's table of formats is this one.
+    /// The extensions (lower case, no dot) the format's crate manifest declares; none for expr
+    /// and semver, which `-k` names. The help's table of formats is this one.
     pub fn extensions(self) -> &'static [&'static str] {
         match self {
             Format::Json => &["json", "geojson", "har", "jsonld", "webmanifest"],
@@ -203,8 +176,7 @@ impl Format {
         }
     }
 
-    /// The format a file extension (without the dot) implies: a custom
-    /// grammar of that name first, then the built-in table.
+    /// The format an extension implies: a custom grammar of that name, else a built-in.
     pub fn from_extension(ext: &str) -> Option<Format> {
         if let Some(id) = grammar::lookup(ext) {
             return Some(Format::Custom(id));
@@ -215,9 +187,8 @@ impl Format {
             .find(|f| f.extensions().contains(&ext.as_str()))
     }
 
-    /// The format of a path: a custom grammar whose name is the whole file
-    /// name (`/etc/hosts`), else the extension's ([`from_extension`]);
-    /// plain text when neither says.
+    /// The format of a path: a custom grammar named by the whole file name (`/etc/hosts`), else
+    /// the extension's; plain text when neither says.
     pub fn detect(path: &Path) -> Format {
         Format::detect_known(path).unwrap_or(Format::Text)
     }
@@ -243,42 +214,27 @@ impl fmt::Display for Format {
     }
 }
 
-/// Why a load failed: an I/O error (no position) or a parse error with the
-/// 1-based line and column the grammar reported.
+/// Why a load failed: an I/O error (no position) or a parse error at a 1-based line and column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadError {
     /// One line, for the status bar.
     pub message: String,
-    /// What went wrong, in a word: the grammar's error code
-    /// (`unexpected`, `unterminated_string`, …), or `io` or `grammar` for
-    /// an error aless raised itself.
+    /// The grammar's error code, or aless's own for an error it raised itself.
     pub code: String,
     pub line: u32,
     pub col: u32,
-    /// The grammar's advice, as the report shows it; empty when it gave
-    /// none. (This and `source_line` are boxed to keep the error small.)
+    /// The grammar's advice, or empty. Boxed, as is `source_line`, to keep the error small.
     pub hint: Box<str>,
-    /// The source line the error is on, cut to a window around the column
-    /// when it is long; `None` when the error has no position.
+    /// The error's source line, cut to a window around the column when long.
     pub source_line: Option<Box<str>>,
-    /// The full report, as the tabnas engine renders it: the `[tag/code]`
-    /// header, the `-->` location, the source lines around the error with
-    /// a caret under it, the grammar's hint and link, and the engine's
-    /// diagnostics line. Carries the engine's ANSI colour codes, which the
-    /// renderer turns into styles.
+    /// The report as the engine renders it, its ANSI colour codes styled when drawn.
     pub report: String,
 }
 
-/// The largest input aless reads unless `--max-size` says otherwise. A
-/// parse takes about [`MEMORY_PER_BYTE`] bytes of memory per byte of
-/// input, so this is some 2.7 GB, and under a minute of parsing.
+/// The largest input read unless `--max-size` says otherwise: some 2.7 GB of parse memory.
 pub const DEFAULT_MAX_SIZE: u64 = 64 << 20;
 
-/// Roughly how many bytes of memory a parse takes per byte of input,
-/// measured on JSON records in a release build: 12 MB peaked at 0.42 GB,
-/// 60 MB at 2.1 GB. With the engine's whole rule history kept, before
-/// [`RULE_HISTORY`] bounded it, it was twice that: 13 MB peaked at 1.0 GB,
-/// 66 MB at 5.1 GB.
+/// Roughly the bytes of memory a parse takes per byte of input, measured on JSON records.
 pub const MEMORY_PER_BYTE: u64 = 40;
 
 /// What a load may cost: how much input it reads, and how long it parses.
@@ -288,22 +244,19 @@ pub struct Limits {
     pub max_size: Option<u64>,
     /// Stop a parse that runs longer than this (`--timeout`).
     pub timeout: Option<Duration>,
-    /// When the time limit started running: the start of a run without a
-    /// screen, so that the time it spent reading its input counts too
+    /// When the time limit started running, so that time spent reading the input counts too
     /// ([`DeadlineReader`]); `None` for the start of the parse.
     pub started: Option<Instant>,
 }
 
 impl Limits {
-    /// [`DEFAULT_MAX_SIZE`], and no time limit: how long a parse may take
-    /// depends on the machine, so only the caller can say.
+    /// [`DEFAULT_MAX_SIZE`], and no time limit: a fair one depends on the machine.
     pub const DEFAULT: Limits = Limits {
         max_size: Some(DEFAULT_MAX_SIZE),
         timeout: None,
         started: None,
     };
 
-    /// No limit on either.
     pub const NONE: Limits = Limits {
         max_size: None,
         timeout: None,
@@ -331,15 +284,13 @@ impl Default for Limits {
 static MAX_SIZE: AtomicU64 = AtomicU64::new(DEFAULT_MAX_SIZE);
 static TIMEOUT_MS: AtomicU64 = AtomicU64::new(0);
 
-/// Set the limits that [`load_path`], [`load_str`] and [`parse`] apply
-/// from now on in this process.
+/// Set the limits [`load_path`], [`load_str`] and [`parse`] apply from now on.
 pub fn set_limits(limits: Limits) {
     MAX_SIZE.store(limits.max_size.unwrap_or(0), Ordering::Relaxed);
     TIMEOUT_MS.store(timeout_ms(limits.timeout), Ordering::Relaxed);
 }
 
-/// A timeout as [`TIMEOUT_MS`] holds it: milliseconds, and at least one,
-/// since 0 stands for no limit.
+/// A timeout as [`TIMEOUT_MS`] holds it: milliseconds, never under 1, as 0 is no limit.
 fn timeout_ms(timeout: Option<Duration>) -> u64 {
     timeout.map_or(0, |t| t.as_millis().clamp(1, u128::from(u64::MAX)) as u64)
 }
@@ -370,8 +321,7 @@ fn seconds(t: Duration) -> String {
     t.as_secs_f64().to_string()
 }
 
-/// The message and hint of a `timeout` for an input still being read at
-/// the deadline.
+/// The message and hint of a `timeout` for input still being read at the deadline.
 pub(crate) fn input_timed_out_words(limit: Duration) -> (String, String) {
     let limit = seconds(limit);
     (
@@ -384,9 +334,8 @@ pub(crate) fn input_timed_out_words(limit: Duration) -> (String, String) {
     )
 }
 
-/// A size as `--max-size` takes it: bytes, or with a `K`, `M` or `G`
-/// suffix counted in 1024s (`KB`, `MiB` and the like are the same), and 0
-/// for no limit.
+/// A size as `--max-size` takes it: bytes, or with a `K`, `M` or `G` suffix counted in 1024s
+/// (`kb` and `mib` alike); 0 for no limit.
 pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
     parse_size_for("--max-size", text)
 }
@@ -418,9 +367,8 @@ pub fn size_flag(bytes: u64) -> String {
     bytes.to_string()
 }
 
-/// Read all of `input`, but hold no more than `max` bytes of it: an input
-/// longer than that is refused as too large, and the rest is not read. A
-/// read still waiting at its deadline ([`DeadlineReader`]) is a `timeout`.
+/// Read all of `input`, holding at most `max` bytes: a longer input is refused, the rest
+/// unread. A read still waiting at its deadline ([`DeadlineReader`]) is a `timeout`.
 pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, LoadError> {
     let mut buf = Vec::new();
     let read = match max {
@@ -437,16 +385,11 @@ pub fn read_within(mut input: impl Read, max: Option<u64>) -> Result<Vec<u8>, Lo
     }
 }
 
-/// Standard input, read on a thread of its own, so that no read outlasts
-/// `--timeout`: a writer that never writes, or never closes its end, would
-/// otherwise hold a run in a read for ever, where no deadline is looked
-/// at. The thread starts with the first read, so a run that never reads
-/// standard input (a named file) leaves it to whoever else
-/// holds it. It hands over what each read returns through a channel a few
-/// chunks deep, so it reads no further ahead of the run than that; at the
-/// deadline a read fails as [`io::ErrorKind::TimedOut`], which
-/// [`read_within`] reports as `timeout`. The thread is left to the
-/// process's end when it is still waiting: nothing can call a read off.
+/// Standard input read on its own thread, so that no read outlasts `--timeout`: a writer that
+/// never closes its end would hold a read for ever. The thread starts on the first read, so
+/// input never read is left to whoever else holds it, and runs at most [`CHUNKS_AHEAD`] chunks
+/// ahead. A blocked read cannot be called off, so a thread still waiting is left to the
+/// process's exit.
 pub struct DeadlineReader {
     /// The input, until the first read starts the thread that reads it.
     input: Option<Box<dyn Read + Send>>,
@@ -458,15 +401,12 @@ pub struct DeadlineReader {
     ended: bool,
 }
 
-/// How many chunks the reading thread may be ahead of the run.
 const CHUNKS_AHEAD: usize = 4;
 
-/// The most one chunk holds.
 const CHUNK_BYTES: usize = 64 << 10;
 
 impl DeadlineReader {
-    /// Read `input` until `limit` after `started`; `None` when that time is
-    /// too far off to reach, which is no limit.
+    /// Read `input` until `limit` after `started`; `None` when that is too far off to reach.
     pub fn new(
         input: impl Read + Send + 'static,
         started: Instant,
@@ -483,9 +423,8 @@ impl DeadlineReader {
         })
     }
 
-    /// Start the thread that reads the input, once. A thread that cannot
-    /// be had fails the read, rather than leave the run to read on this
-    /// one with no deadline at all.
+    /// Start the reading thread, once. If none can be had the read fails, rather than run with
+    /// no deadline.
     fn start(&mut self) -> io::Result<()> {
         let Some(mut input) = self.input.take() else {
             return Ok(());
@@ -503,8 +442,6 @@ impl DeadlineReader {
                     }
                     Err(e) => Err(e),
                 };
-                // An empty chunk is the end; after it, or an error, or a
-                // reader that went away, there is nothing left to do.
                 let last = !matches!(&read, Ok(b) if !b.is_empty());
                 if send.send(read).is_err() || last {
                     break;
@@ -565,8 +502,7 @@ impl Read for DeadlineReader {
     }
 }
 
-/// The error of a [`DeadlineReader`] read that waited past its deadline:
-/// the time limit, for the report.
+/// A [`DeadlineReader`] read past its deadline, with the limit for the report.
 #[derive(Debug)]
 struct ReadTimedOut(Duration);
 
@@ -582,9 +518,7 @@ impl fmt::Display for ReadTimedOut {
 
 impl std::error::Error for ReadTimedOut {}
 
-/// A reader that hands over `first` and then waits for ever: a writer
-/// that sent that much and went quiet without closing its end. Its thread
-/// stays blocked until the test process ends.
+/// A reader that hands over `first`, then blocks: a writer gone quiet with its end open.
 #[cfg(test)]
 pub(crate) fn quiet(first: &[u8]) -> impl Read + Send + 'static {
     struct Quiet {
@@ -595,7 +529,6 @@ pub(crate) fn quiet(first: &[u8]) -> impl Read + Send + 'static {
     impl Read for Quiet {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if self.first.is_empty() {
-                // Never answered: the sender is held, and sends nothing.
                 let _ = self.wait.recv();
                 return Ok(0);
             }
@@ -613,61 +546,30 @@ pub(crate) fn quiet(first: &[u8]) -> impl Read + Send + 'static {
     }
 }
 
-/// The time limit a read waited past, when `e` is a [`DeadlineReader`]'s
-/// timeout.
+/// The time limit a read waited past, when `e` is a [`DeadlineReader`]'s timeout.
 pub(crate) fn read_timed_out(e: &io::Error) -> Option<Duration> {
     e.get_ref()?.downcast_ref::<ReadTimedOut>().map(|t| t.0)
 }
 
-/// How deep a parse's rule stack may grow before aless stops it: about
-/// three rules a level, so some 1,000 levels of nesting, far past any real
-/// document. Most grammars stop sooner, each as `too_deep` too: JSON,
-/// JSONL, JSONic, JSON5, YAML, TOML, INI, ZON and expressions at 127
-/// levels (an expression at 127 operations, too), XML at 256, JSONC at
-/// 512 and CSS at 768 open rules, and proto refuses braces nested past
-/// 100 levels before it parses. This cap is for a grammar with no limit
-/// of its own (PGN's variations, a grammar from the command line):
-/// deeper, some recurse until the stack runs out, which ends the process,
-/// and slow down with the square of the depth long before that.
-///
-/// Rule depth follows nesting, never length: every repetition the
-/// compilers emit is a loop that re-enters its rule in one frame (a
-/// replace, `r`, in the engine's terms), so a flat file of any length
-/// stays at the depth of one item. Until tabnas-bnf compiled a star that
-/// way (tabnas/bnf#80), a grammar from the command line kept one rule
-/// open per item of a repetition and ran under a cap of 1,000,000 open
-/// rules instead; `a_custom_grammars_repetition_is_not_nesting` holds the
-/// loop to constant depth.
+/// How deep a parse's rule stack may grow before aless stops it as `too_deep`. It guards a
+/// grammar with no nesting limit of its own: deeper, some recurse until the stack runs out,
+/// which ends the process. Depth follows nesting, never a file's length (ADR-007).
 pub const MAX_RULE_DEPTH: usize = 3_000;
 
-/// How deep the value a custom grammar built may nest: the levels
-/// [`MAX_RULE_DEPTH`] works out to for the other grammars. It is measured
-/// once the parse is done: such a grammar builds its value in the
-/// compiler's shape, an object and its `kids` array per level, which its
+/// How deep a custom grammar's value may nest, the levels [`MAX_RULE_DEPTH`] works out to.
+/// Measured after the parse: the compiler builds an object and its `kids` per level, which the
 /// rule stack does not count in the same units.
 pub const MAX_VALUE_DEPTH: usize = MAX_RULE_DEPTH / 3;
 
-/// How many predecessor snapshots a rule reaches through `prev` in every
-/// document aless parses: the engine's `options.rule.history`, set on
-/// every parser [`make_parser`] makes, a custom grammar's included, where
-/// the grammar does not bound it itself (CSS's, at one, is kept).
-/// Unbounded, the engine's default, every rule replaced or pushed stays
-/// reachable from the current one until its container closes, so a
-/// parse's memory grows with the document's length, not its nesting:
-/// a parse of 23 MB of JSON records peaked at 1.6 GB, where three steps
-/// take 0.3 GB, and the parse is faster. The deepest walk any grammar of
-/// the fleet reads is three hops (tabnas/parser
-/// `doc/rule-history-bound.md`), and the parsed value is the same under
-/// every bound; what a bound changes is only what a grammar can reach.
+/// How far back through `prev` a rule reaches, on every parser [`make_parser`] makes unless its
+/// grammar bounds it tighter. Unbounded, parse memory grows with document length.
 pub const RULE_HISTORY: usize = 3;
 
-/// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide
-/// margin, whatever the calling thread has (a Windows main thread has
-/// 1 MB). The rule stack itself is the engine's, on the heap.
+/// The stack a parse runs on: room for [`MAX_RULE_DEPTH`] with a wide margin, whatever the
+/// calling thread has (a Windows main thread has 1 MB).
 pub(crate) const PARSE_STACK: usize = 64 << 20;
 
-/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or
-/// time past the timeout.
+/// Why aless stopped a parse itself: nesting past [`MAX_RULE_DEPTH`], or time.
 pub(crate) const STOP_DEPTH: u8 = 1;
 pub(crate) const STOP_TIME: u8 = 2;
 
@@ -675,20 +577,16 @@ pub(crate) const STOP_TIME: u8 = 2;
 #[derive(Clone)]
 pub(crate) struct Deadline {
     at: Instant,
-    /// The time the parse was given, for its report.
     limit: Duration,
-    /// Raised by the thread waiting on the parse once `at` passes, so that
-    /// the parse has only a flag to look at between its steps, not the
-    /// clock. `None` when no thread waits, and the parse reads the clock.
+    /// Raised by the thread waiting on the parse once `at` passes, so the parse reads a flag
+    /// between steps, not the clock; `None` when no thread waits.
     alarm: Option<Arc<AtomicBool>>,
-    /// Raised by whoever called the parse off, whatever the time: the
-    /// painter, when the view no longer shows the text.
+    /// Raised by whoever calls the parse off: the painter, once its text is out of view.
     cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Deadline {
-    /// A deadline `timeout` from now, read from the clock, for a parse no
-    /// thread waits on; `None` for no limit, or one too far off to reach.
+    /// A clock-read deadline `timeout` from now; `None` for no limit, or one out of reach.
     pub(crate) fn after(timeout: Option<Duration>) -> Option<Deadline> {
         let limit = timeout?;
         Some(Deadline {
@@ -707,8 +605,7 @@ impl Deadline {
         }
     }
 
-    /// Whether the time is up, or the parse was called off, as the parse
-    /// finds it between two steps.
+    /// Whether the time is up or the parse was called off, as the parse checks between steps.
     pub(crate) fn passed(&self) -> bool {
         if self
             .cancel
@@ -723,26 +620,21 @@ impl Deadline {
         }
     }
 
-    /// [`Deadline::passed`], or the clock past the deadline whether or
-    /// not the alarm has been seen yet: for work that hands over to a
-    /// stage the alarm stops by another flag, and has to know the time at
-    /// the handover itself.
+    /// [`Deadline::passed`], or the clock past `at` whether or not the alarm is up: for work
+    /// about to hand over to a stage the alarm does not stop.
     pub(crate) fn is_past(&self) -> bool {
         self.passed() || Instant::now() >= self.at
     }
 }
 
-/// What [`guard`] records when aless stops a parse: why ([`STOP_DEPTH`] or
-/// [`STOP_TIME`], else 0), and the source position the parse had reached,
-/// so a report can show how far it got when the engine's own error does
-/// not survive, or does not know (see [`Stop::place`]).
+/// What [`guard`] records when aless stops a parse: why, and the place it had reached, for a
+/// report the engine's own error cannot place ([`Stop::place`]).
 #[derive(Debug)]
 pub(crate) struct Stop {
     why: AtomicU8,
     line: AtomicU64,
     col: AtomicU64,
-    /// The token the position is taken from: its offset, its name and its
-    /// text, for a report that shows it in its line.
+    /// The token the place is taken from: its offset, name and text.
     token: Mutex<Option<(usize, String, String)>>,
 }
 
@@ -756,9 +648,8 @@ impl Stop {
         })
     }
 
-    /// Record `why`, at the token the parse is about to read or, when it
-    /// holds none, the last one it read: between two steps the lookahead
-    /// is often empty, once a step has consumed what it matched.
+    /// Record `why` at the next token or, when there is none, the last one read: between steps
+    /// the lookahead is often empty.
     fn record(&self, why: u8, ctx: &tabnas::Context) {
         if let Some(t) = ctx.t0().or_else(|| ctx.v1()) {
             self.line.store(t.site.ri as u64, Ordering::Relaxed);
@@ -769,10 +660,8 @@ impl Stop {
         self.why.store(why, Ordering::Relaxed);
     }
 
-    /// Move `e`, the engine's `cancel` for a parse the guard stopped, to
-    /// the place the guard recorded. The engine puts it at the token about
-    /// to be read, and with none in hand at line 1, column 1, which says
-    /// nothing about how far the parse got.
+    /// Move `e`, the engine's `cancel` for a parse the guard stopped, to the recorded place:
+    /// with no token in hand the engine puts it at the start of the document.
     fn place(&self, e: &mut tabnas::TabnasError) {
         let token = self.token.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((pos, name, src)) = token.as_ref() {
@@ -787,13 +676,12 @@ impl Stop {
         }
     }
 
-    /// [`STOP_DEPTH`], [`STOP_TIME`], or 0 when aless did not stop it.
+    /// [`STOP_DEPTH`], [`STOP_TIME`], or zero when the parse was not stopped by aless.
     pub(crate) fn why(&self) -> u8 {
         self.why.load(Ordering::Relaxed)
     }
 
-    /// The 1-based line and column the parse was at when stopped; 0 when
-    /// unknown.
+    /// The 1-based line and column the parse was stopped at; 0 when unknown.
     pub(crate) fn position(&self) -> (u32, u32) {
         let at = |n: &AtomicU64| u32::try_from(n.load(Ordering::Relaxed)).unwrap_or(u32::MAX);
         (at(&self.line), at(&self.col))
@@ -810,8 +698,7 @@ const END_HINT: &str = "The document ends before it is complete: look for an unc
                         bracket, brace or string, or a missing value at the end.";
 
 impl LoadError {
-    /// An error the viewer raised itself (reading the file, a grammar that
-    /// panicked), reported in the engine's layout under `[aless/<tag>]`.
+    /// An error aless raised itself, in the engine's layout under its own tag.
     pub fn new(message: impl Into<String>) -> LoadError {
         LoadError::tagged("io", message)
     }
@@ -833,11 +720,8 @@ impl LoadError {
         }
     }
 
-    /// A refusal a format's crate made of the document outside its
-    /// grammar's parse (proto's check of the version a file declares, a
-    /// grammar notation's compiler's refusal that names no place), in the
-    /// engine's layout under `[<format>/<code>]`, with no position, and
-    /// the hint unless it is empty.
+    /// A refusal a format's crate made outside its grammar's parse (proto's version check, a
+    /// notation compiler's unplaced refusal), under `[<format>/<code>]`, with no position.
     pub(crate) fn refused(
         format: Format,
         code: &str,
@@ -855,8 +739,7 @@ impl LoadError {
         }
     }
 
-    /// Whether the input could not be read at all, as opposed to read and
-    /// found not to parse.
+    /// Whether the input could not be read at all, rather than read and found not to parse.
     pub fn is_io(&self) -> bool {
         self.code == "io"
     }
@@ -871,15 +754,12 @@ impl LoadError {
         self.code == "timeout"
     }
 
-    /// A `timeout` for an input still being read at the deadline:
-    /// standard input whose writer is slow, or waiting, or never closed it.
     pub(crate) fn input_timed_out(limit: Duration) -> LoadError {
         let (message, hint) = input_timed_out_words(limit);
         LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
-    /// An input over the size limit: `size` is its size when known (a
-    /// file), `None` for a stream that ran past the limit.
+    /// An input over the size limit: `size` when known (a file), `None` for a stream.
     pub fn too_large(size: Option<u64>, limit: u64) -> LoadError {
         use crate::explorer::human_size;
         let message = match size {
@@ -908,16 +788,12 @@ impl LoadError {
         LoadError::tagged("too_large", message).with_hint(&hint)
     }
 
-    /// A grammar file over the size limit: as [`too_large`](Self::too_large),
-    /// worded for a file no parse of which is coming.
+    /// A grammar file over the size limit, worded for a file no parse of which is coming.
     pub(crate) fn grammar_too_large(size: Option<u64>, limit: u64) -> LoadError {
         LoadError::file_too_large("the grammar file", "A grammar file", size, limit)
     }
 
-    /// A file of the command line's own (`what`, as the message names it;
-    /// `which`, as the hint opens) over the size limit: the message says
-    /// which file and how large, and the hint how to read it, without the
-    /// parse's memory estimate, which is for an input.
+    /// A command-line file over the size limit, its hint without an input's memory estimate.
     fn file_too_large(what: &str, which: &str, size: Option<u64>, limit: u64) -> LoadError {
         use crate::explorer::human_size;
         let message = match size {
@@ -936,8 +812,6 @@ impl LoadError {
         LoadError::tagged("too_large", message).with_hint(&hint)
     }
 
-    /// A grammar whose compile ran past the time limit. The compiler cannot
-    /// be interrupted, so aless stopped waiting for it.
     pub(crate) fn compile_timed_out(limit: Duration) -> LoadError {
         let hint = format!(
             "The compiler cannot be interrupted, so aless stopped waiting for it.\nPass a \
@@ -947,9 +821,7 @@ impl LoadError {
         Self::compile_late(limit).with_hint(&hint)
     }
 
-    /// A grammar not compiled, since a compile aless stopped waiting for
-    /// is still running ([`compile_notation_by`]): the time is up for it
-    /// before it starts.
+    /// A grammar not compiled because a compile aless stopped waiting for still runs.
     pub(crate) fn compile_behind(limit: Duration) -> LoadError {
         let message = format!(
             "timeout: the grammar was not compiled within {} s: a compile aless stopped \
@@ -965,9 +837,7 @@ impl LoadError {
         LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
-    /// A grammar not compiled, since the time was up before its compile
-    /// started ([`compile_notation_by`]): a compiler cannot be interrupted,
-    /// so one started then would be left to itself at once.
+    /// A grammar not compiled because the time was up before its compile started.
     pub(crate) fn compile_unstarted(limit: Duration) -> LoadError {
         let message = format!(
             "timeout: the grammar was not compiled within {} s: the time was up before its \
@@ -980,12 +850,9 @@ impl LoadError {
         LoadError::tagged("timeout", message).with_hint(hint)
     }
 
-    /// A grammar whose compile ended past the time limit on the caller's
-    /// thread, the one place it can run when no thread of its own can be
-    /// started: it cannot be stopped there, so it ran to its end, and the
-    /// report says how long it took, as a parse that finished late does.
+    /// A compile that ended past the limit on the caller's thread, where it runs when no thread
+    /// of its own can be started, and so could not be stopped.
     pub(crate) fn compile_finished_late(limit: Duration, took: Duration) -> LoadError {
-        // To the millisecond, and never 0.
         let took = Duration::from_millis(timeout_ms(Some(took)));
         let hint = format!(
             "No thread could be started for the compiler, so it ran to its end on aless's \
@@ -997,12 +864,10 @@ impl LoadError {
         Self::compile_late(limit).with_hint(&hint)
     }
 
-    /// What makes a grammar slow to compile, for the hints above.
     const SLOW_GRAMMARS: &'static str = "Long repetitions (1*500word), and rules of several \
                                          alternatives that start with one another, make a \
                                          grammar slow to compile.";
 
-    /// The message both of those carry.
     fn compile_late(limit: Duration) -> LoadError {
         let message = format!(
             "timeout: the grammar took longer than {} s to compile",
@@ -1011,10 +876,8 @@ impl LoadError {
         LoadError::tagged("timeout", message)
     }
 
-    /// A parse that finished, but after its time limit. It stopped nowhere
-    /// in particular, so the report says how long it took instead.
+    /// A parse finished past its limit: it stopped nowhere, so the report gives the time taken.
     fn finished_late(limit: Duration, took: Duration) -> LoadError {
-        // To the millisecond, and never 0.
         let took = Duration::from_millis(timeout_ms(Some(took)));
         let message = format!("timeout: the parse ran longer than {} s", seconds(limit));
         let hint = format!(
@@ -1025,8 +888,7 @@ impl LoadError {
         LoadError::tagged("timeout", message).with_hint(&hint)
     }
 
-    /// Add advice to an error aless raised itself, shown under the report
-    /// as the engine shows a grammar's.
+    /// Add advice to an error aless raised, under the report as the engine puts a grammar's.
     pub(crate) fn with_hint(mut self, hint: &str) -> LoadError {
         let hint = escape_controls_but_newlines(hint);
         self.report.push_str("\n\n");
@@ -1040,40 +902,24 @@ impl LoadError {
         self
     }
 
-    /// Name the file the report is about, in place of the engine's
-    /// `<no-file>`. A path may hold control characters (a newline is legal
-    /// in a Unix file name), so they are shown escaped: the report's colour
-    /// codes are obeyed when it is drawn, and a name must not add lines or
-    /// styles of its own.
+    /// Name the file in place of `<no-file>`, its control characters escaped: a Unix file name
+    /// may hold a newline, and the report's colour codes are obeyed.
     pub fn with_origin(mut self, origin: &str) -> LoadError {
         self.report = replace_after_header(&self.report, NO_FILE, &escape_controls(origin));
         self
     }
 
-    /// From an engine error. Everything in the report that came from the
-    /// file is made safe to draw, since the report's own colour codes are
-    /// obeyed:
-    ///
-    /// - control characters in the message and hint are shown escaped
-    ///   (`\n`); the offending token of an unterminated string runs into a
-    ///   newline, and would otherwise break the report's lines;
-    /// - in the quoted source lines they are shown as their one-column
-    ///   Unicode pictures (`␛`), so the caret, which the engine places by
-    ///   character count, still lines up;
-    /// - a quoted line too long for a screen (a minified file) is cut to a
-    ///   window around the error column, and the caret stops at the end of
-    ///   its line, so the caret and the message after it stay in view.
-    ///
-    /// `hint_template` is the grammar's template for the error's hint (see
-    /// [`hint_template`]); it tells the hint's own line breaks from those
-    /// the token brought in.
+    /// From an engine error, with all that came from the file made safe to draw, since the
+    /// report's colour codes are obeyed: control characters are escaped in the message and hint
+    /// and drawn as one-column pictures in quoted lines, so the caret still lines up
+    /// ([`visible`]); a long line is cut to a window ([`shape_excerpt`]). `hint_template` tells
+    /// the hint's own line breaks from the token's.
     pub fn from_tabnas(e: &tabnas::TabnasError, hint_template: Option<&str>) -> LoadError {
         let mut shown = e.clone();
         shown.detail = escape_controls(&e.detail);
         shown.hint = escape_hint(&e.hint, hint_template, &e.src);
         if e.code == "unexpected" && e.token.name == END_TOKEN && e.src.is_empty() {
-            // The engine words this as an unexpected character, and quotes
-            // none: the document stopped before it was complete.
+            // The engine calls this an unexpected character, quoting none: the input ended.
             shown.detail = "unexpected end of input".to_string();
             shown.hint = END_HINT.to_string();
         }
@@ -1114,15 +960,13 @@ impl LoadError {
         }
     }
 
-    /// The report without its colour codes.
     pub fn plain_report(&self) -> String {
         strip_ansi(&self.report)
     }
 }
 
-/// The `--max-size` to suggest for an input of `size` bytes over `limit`:
-/// the first doubling of the limit that holds it, or four times the limit
-/// when the size is not known (a stream).
+/// The `--max-size` to suggest: the first doubling of `limit` that holds `size`, or the limit
+/// quadrupled for a stream, whose size is unknown.
 fn room_for(size: Option<u64>, limit: u64) -> u64 {
     match size {
         Some(n) => {
@@ -1136,8 +980,7 @@ fn room_for(size: Option<u64>, limit: u64) -> u64 {
     }
 }
 
-/// Break text into lines of at most `width` characters, at spaces, keeping
-/// its own line breaks.
+/// Break text into lines of at most `width` characters at spaces, keeping its own line breaks.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     for para in text.split('\n') {
@@ -1166,8 +1009,7 @@ fn escape_controls_but_newlines(s: &str) -> String {
     escape(s, true)
 }
 
-/// The template a grammar's hint for `code` was rendered from, looked up
-/// the way the engine does: the code's own, else the `unknown` one.
+/// The hint template for `code`, found as the engine finds it: its own, else `unknown`'s.
 pub fn hint_template<'a>(hints: &'a HashMap<String, String>, code: &str) -> Option<&'a str> {
     hints
         .get(code)
@@ -1176,15 +1018,9 @@ pub fn hint_template<'a>(hints: &'a HashMap<String, String>, code: &str) -> Opti
         .map(String::as_str)
 }
 
-/// A hint with the control characters its placeholders brought in shown
-/// escaped, and the template's own line breaks kept.
-///
-/// The template says which text is its own: the hint is matched against
-/// it, each `{name}` standing for any text, and only what the placeholders
-/// matched is escaped. `{src}` alone cannot be searched for, since the
-/// token may be a single newline and the template has newlines of its own.
-/// Without a template, or when the hint does not match it (a grammar that
-/// set its own), the first occurrence of the token is taken for it.
+/// A hint with what its placeholders brought in escaped and the template's own line breaks
+/// kept. `{src}` alone cannot be searched for: the token may be a newline, and the template has
+/// its own. Without a matching template, the token's first occurrence is taken for it.
 fn escape_hint(hint: &str, template: Option<&str>, src: &str) -> String {
     if let Some(escaped) = template.and_then(|t| escape_placeholders(hint, t)) {
         return escaped;
@@ -1198,8 +1034,7 @@ fn escape_hint(hint: &str, template: Option<&str>, src: &str) -> String {
 }
 
 fn escape_placeholders(hint: &str, template: &str) -> Option<String> {
-    // The engine fills `{key}` for any key up to the next `}`, and trims
-    // the result.
+    // The engine fills `{key}` up to the next `}`, and trims the result.
     let mut pattern = String::from("(?s)^");
     let mut rest = template.trim();
     while let Some(open) = rest.find('{') {
@@ -1249,17 +1084,14 @@ fn replace_after_header(report: &str, from: &str, to: &str) -> String {
     }
 }
 
-/// A quoted source line longer than this many characters is cut to a
-/// window around the error column.
+/// A quoted source line longer than this many characters is cut to a window around the error.
 const LONG_LINE: usize = 160;
-/// The window's width in characters...
 const WINDOW: usize = 120;
-/// ...and how many of them come before the error column.
+/// How many of the window's characters come before the error column.
 const WINDOW_LEAD: usize = 40;
 
-/// A source line as an error quotes it: whole, or when longer than
-/// [`LONG_LINE`] a [`WINDOW`] of it around the 1-based `col`, marked `…`
-/// where cut.
+/// A source line as an error quotes it: whole, or a [`WINDOW`] around the 1-based `col` when
+/// longer than [`LONG_LINE`], marked `…` where cut.
 fn window(line: &str, col: usize) -> String {
     let chars: Vec<char> = line.chars().collect();
     if chars.len() <= LONG_LINE {
@@ -1278,13 +1110,10 @@ fn window(line: &str, col: usize) -> String {
     out
 }
 
-/// Prepare the source the engine quotes (up to two lines either side of
-/// the error) for drawing; see [`LoadError::from_tabnas`]. Only those lines
-/// are kept, the ones above them left empty so the line numbers hold. When
-/// any of them is longer than [`LONG_LINE`], all of them are cut to the same
-/// window, marked `…` where cut, and the column moves with the window. The
-/// caret runs from the error column to the end of its line at most: the
-/// token of an unterminated string is the rest of the file.
+/// Prepare the lines the engine quotes around the error for drawing
+/// ([`LoadError::from_tabnas`]), those above left empty so the line numbers hold. When any is
+/// longer than [`LONG_LINE`] all are cut to one window, the column moving with it. The caret
+/// stops at the end of its line: an unterminated string's token is the rest of the file.
 fn shape_excerpt(shown: &mut tabnas::TabnasError, e: &tabnas::TabnasError) {
     if e.full_source.is_empty() {
         return;
@@ -1334,10 +1163,8 @@ fn shape_excerpt(shown: &mut tabnas::TabnasError, e: &tabnas::TabnasError) {
     shown.src = e.src.chars().take(carets).collect();
 }
 
-/// A character of a quoted source line as it is drawn: a control
-/// character becomes its picture from the U+2400 block (or U+FFFD, for the
-/// C1 controls, which have none), one column wide like the character it
-/// stands for. A tab stays; the renderer draws it as a space.
+/// A quoted character as drawn: a control becomes its one-column picture from the U+2400 block
+/// (U+FFFD for C1 controls, which have none). A tab stays, drawn as a space.
 fn visible(c: char) -> char {
     match c {
         '\t' => '\t',
@@ -1404,18 +1231,14 @@ pub struct Loaded {
     pub source: String,
 }
 
-/// The tabnas parser for a format; `None` for plain text, which has none.
-/// A custom grammar's is a fresh engine with its compiled spec installed;
-/// should that fail (it was installed once when the grammar was
-/// registered, so it does not), the error is a `grammar` one.
+/// The tabnas parser for a format; `None` for a format aless does not drive (plain text, the
+/// notations). A custom grammar that fails to install is a `grammar` error.
 pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
     let mut parser = match format {
         Format::Json => tabnas_json::make(),
         Format::Jsonl => tabnas_jsonl::make(),
         Format::Jsonic => tabnas_jsonic::make(),
-        // A trailing comma before `}` or `]` is accepted, as the editors
-        // that read JSONC (VS Code's settings among them) accept it; the
-        // crate's default refuses it.
+        // Take a trailing comma as VS Code does; the crate's default refuses it.
         Format::Jsonc => tabnas_jsonc::make_with(
             tabnas_jsonc::JsoncOptions::new().with_allow_trailing_comma(true),
         ),
@@ -1434,15 +1257,10 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         Format::Markdown => tabnas_markdown::make(),
         Format::Feed => tabnas_feed::make(),
         Format::Css => tabnas_css::make(),
-        // An engine with the rewind history the grammar needs, which
-        // backtracks across whole statements; the tree its parse builds is
-        // read into the descriptor by [`read_as`].
         Format::Proto => tabnas_proto::make(),
         Format::Pgn => match tabnas_chess::make(&tabnas_chess::ChessOptions::default()) {
-            // The crate colours its reports only when standard output is a
-            // terminal; aless styles or strips the engine's codes itself,
-            // so every grammar's report carries them, as the engine's
-            // default has it.
+            // The crate colours reports only when stdout is a terminal; aless styles or strips
+            // the engine's codes itself, so it restores the engine's default.
             Ok(mut parser) => {
                 parser.options.color.active = tabnas::Options::default().color.active;
                 parser
@@ -1451,13 +1269,9 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
         },
         Format::Expr => tabnas_expr::make(),
         Format::Semver => tabnas_semver::make(),
-        // Plain C23 with the whole preprocessor, the crate's default; its
-        // parse builds the tree in this thread's arena, which
-        // [`parse_value`] realizes.
+        // C23, whole preprocessor; [`parse_value`] realizes the tree from this thread's arena.
         Format::C => tabnas_c::make(),
-        // A grammar's compiler parses it with a parser of its own
-        // ([`compile_notation`]), and has none to hand over to drive, to
-        // colour with or to align with.
+        // A notation's compiler parses with a parser of its own ([`compile_notation`]).
         Format::Text | Format::Abnf | Format::Ebnf | Format::Gbnf => return Ok(None),
         Format::Custom(id) => {
             let Some(g) = grammar::get(id) else {
@@ -1470,24 +1284,18 @@ pub(crate) fn make_parser(format: Format) -> Result<Option<Tabnas>, LoadError> {
             }
         }
     };
-    // A grammar that bounds its own history keeps its bound: CSS's, which
-    // is tighter; a grammar from the command line cannot set one.
+    // A grammar's own, tighter bound (CSS's) is kept; one from the command line sets none.
     parser.options.rule.history.get_or_insert(RULE_HISTORY);
     Ok(Some(parser))
 }
 
-/// The text a format's parser reads: the source without its byte-order
-/// mark. Every line and column is where it is in the source. (A JSON5
-/// string continued across a CRLF is the grammar's to read, and it does
-/// since tabnas/json5#82.)
+/// The text a parser reads: the source without its byte-order mark, positions unchanged.
 pub(crate) fn parser_text(src: &str) -> &str {
     src.strip_prefix('\u{feff}').unwrap_or(src)
 }
 
-/// The text `format`'s grammar parses: [`parser_text`], and a version
-/// (`semver`) without the one line break a file holding it ends with,
-/// which the grammar, taking no whitespace at all, would refuse. Every
-/// line and column is where it is in the source.
+/// [`parser_text`], and a `semver` version without the line break its file ends with, which the
+/// grammar, taking no whitespace, would refuse.
 pub(crate) fn parse_text(src: &str, format: Format) -> &str {
     let text = parser_text(src);
     match format {
@@ -1499,11 +1307,8 @@ pub(crate) fn parse_text(src: &str, format: Format) -> &str {
     }
 }
 
-/// What a format's crate checks of a text before its grammar parses it:
-/// proto counts a document's braces, and refuses one that nests them
-/// deeper than [`tabnas_proto::MAX_NESTING_DEPTH`], since the tree its
-/// parse would build for one is let go of by recursion
-/// ([`tabnas_proto::preflight`]).
+/// What a format's crate checks before its grammar parses: proto refuses braces nested past
+/// [`tabnas_proto::MAX_NESTING_DEPTH`], since its parse tree for one is let go of by recursion.
 pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
     match format {
         Format::Proto => tabnas_proto::preflight(src).map_err(|e| proto_refused(format, e)),
@@ -1511,31 +1316,10 @@ pub(crate) fn check_text(format: Format, src: &str) -> Result<(), LoadError> {
     }
 }
 
-/// What a document of `format`, `source_len` bytes long, is read as, from
-/// the value [`parse_value`] built: that value, for every format but
-/// three, whose crates build the tree their manifests' schemas name from
-/// it.
-/// proto's is the FileDescriptorProto (`proto-descriptor`) in the JSON form
-/// protoc writes one in, which [`tabnas_proto::to_descriptor_value`] builds
-/// from the syntax tree the parse returns, its members in the order of the
-/// canonical descriptor the crate's other runtimes write, refusing a
-/// declaration of a version it does not know; a number its reader reads as
-/// NaN stays NaN, which the JSON outputs write as null. expr's is its
-/// S-expressions (`expr`): each operation a list of its operator's source
-/// text and its terms, as [`tabnas_expr::simplify`] reads the nodes the
-/// parse left in this thread's arena, so it runs on the parse's thread,
-/// before that thread parses again, which releases them.
-///
-/// C's is its syntax tree (`c`), as the crate realized it, refused when it
-/// holds more values or more text written out than [`c_tree_cap`] allows:
-/// the reader repeats a node's subtrees under the members that name them
-/// (`operand`, `cond` and the like) beside its `children`, sharing each, so
-/// the tree it hands over is small and the tree written out, which the
-/// viewer and every output make of it, doubles with each level of a chain
-/// of subscripts or member accesses, a run of prefix operators, a
-/// conditional or a brace initializer, and with it every name and string
-/// under that level. It is measured before anything is written out, in
-/// time that follows the shared tree.
+/// What a document is read as, from [`parse_value`]'s value: proto's descriptor, expr's
+/// S-expressions (read from this thread's arena before it parses again), and C's tree, refused
+/// past [`c_tree_cap`]: its reader shares subtrees under several members, so the tree written
+/// out doubles with each level of a member chain. It is measured shared.
 pub(crate) fn read_as(
     format: Format,
     value: tabnas::Value,
@@ -1559,53 +1343,30 @@ pub(crate) fn read_as(
     }
 }
 
-/// How many values a C syntax tree may hold written out, per byte of the
-/// source it was read from: over four times what the most expression-laden
-/// code of tabnas-c's own corpus holds. Its 100 Csmith programs, read as
-/// tabnas-c's own test reads them (GCC's extensions on, stdint's typedefs
-/// known), hold from 0.9 to 58 values a byte written out (32 the median),
-/// and from 1 to 9.2 times the values the reader built for them; aless's
-/// fixture, ordinary declarations and functions, holds 4.7.
+/// Values a C tree may hold written out per source byte, far past tabnas-c's Csmith corpus.
 pub const C_TREE_PER_BYTE: u64 = 256;
 
-/// The fewest values [`c_tree_cap`] allows any C document, so that a short
-/// one is not refused for its length: 1,048,576, as [`Deep::Repeated`]'s
-/// hint says.
+/// The fewest values [`c_tree_cap`] allows, so a short document is not refused for its length.
+/// [`Deep::Repeated`]'s hint spells it out.
 pub const C_TREE_FLOOR: u64 = 1 << 20;
 
-/// The most values any C document may hold written out, however long it
-/// is: 33,554,432 (2^25), the most a 64 MB JSON array of single digits,
-/// the default `--max-size`, makes of another format, and nearly twice
-/// the most a Csmith program of tabnas-c's corpus holds, 18 million values
-/// from 411 KB. Without it the cap would grow with the file, so a long
-/// comment beside a short chain of member accesses would raise the cap
-/// that chain is held to; with it no padding raises the cap past this.
+/// The most values a C document may hold written out, however long: without it a long comment
+/// beside a short member chain would raise that chain's cap. The hint spells it out.
 pub const C_TREE_CEILING: u64 = 1 << 25;
 
-/// How much text, the bytes of its strings and member names, a C syntax
-/// tree may hold written out, per byte of the source: about six times the
-/// most tabnas-c's Csmith programs hold, from 5.5 to 342 bytes a byte (197
-/// the median, some six bytes a value); aless's fixture holds 29. The
-/// values count a scalar once whatever its length, so this is what holds a
-/// long name in a subtree the tree repeats.
+/// Bytes of names and strings a C tree may hold written out per source byte: the value count
+/// takes a scalar once, so this holds a long name in a repeated subtree.
 pub const C_TREE_BYTES_PER_BYTE: u64 = 2048;
 
-/// The least text [`c_tree_cap`] allows any C document: 8 MB, eight bytes
-/// for each value of [`C_TREE_FLOOR`].
+/// The least text [`c_tree_cap`] allows any C document.
 pub const C_TREE_BYTES_FLOOR: u64 = 8 << 20;
 
-/// The most text any C document may hold written out, however long it is:
-/// 256 MB, over twice the most a Csmith program of tabnas-c's corpus holds,
-/// 111 million bytes from 411 KB. Without it a name a megabyte long under
-/// 18 member accesses, which repeat it 2^18 times in a tree of 14 million
-/// values, well under [`C_TREE_CEILING`], would be written out a quarter
-/// of a million times: half a terabyte of text, since the reader keeps a
-/// name twice.
+/// The most text a C document may hold written out: without it, a long name under a member
+/// chain that stays within [`C_TREE_CEILING`] would be written out past any memory.
 pub const C_TREE_BYTES_CEILING: u64 = 256 << 20;
 
-/// What a value holds written out as a tree: its values, every container
-/// and scalar counted, and its text, the bytes of every string and member
-/// name, each counted in every place a shared container puts it.
+/// What a value holds written out as a tree: every value, and the bytes of every string and
+/// member name, each counted in every place a shared container puts it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WrittenOut {
     pub(crate) values: u64,
@@ -1613,7 +1374,6 @@ pub(crate) struct WrittenOut {
 }
 
 impl WrittenOut {
-    /// Both counts, added, saturating.
     fn plus(self, other: WrittenOut) -> WrittenOut {
         WrittenOut {
             values: self.values.saturating_add(other.values),
@@ -1621,16 +1381,12 @@ impl WrittenOut {
         }
     }
 
-    /// Whether either count passes `cap`'s.
     pub(crate) fn past(self, cap: WrittenOut) -> bool {
         self.values > cap.values || self.bytes > cap.bytes
     }
 }
 
-/// What a C document `source_len` bytes long may hold written out:
-/// [`C_TREE_PER_BYTE`] values a byte, at least [`C_TREE_FLOOR`] and never
-/// more than [`C_TREE_CEILING`], and [`C_TREE_BYTES_PER_BYTE`] bytes of
-/// text a byte, between [`C_TREE_BYTES_FLOOR`] and [`C_TREE_BYTES_CEILING`].
+/// What a C document `source_len` bytes long may hold written out, scaled and clamped.
 pub(crate) fn c_tree_cap(source_len: usize) -> WrittenOut {
     let len = source_len as u64;
     WrittenOut {
@@ -1643,18 +1399,12 @@ pub(crate) fn c_tree_cap(source_len: usize) -> WrittenOut {
     }
 }
 
-/// What `value` holds written out as a tree ([`WrittenOut`]): every
-/// container and scalar, the root among them, and the bytes of every
-/// string and member name, a container shared by several parents counted
-/// once in each. A shared container (one its `Arc` holds more than once)
-/// is measured once and remembered, so the count takes time that follows
-/// the shared tree, however large the tree written out; it stops as soon
-/// as a container passes `cap` in either count, answering that container's
-/// counts. Walked with a stack of its own.
+/// What `value` holds written out ([`WrittenOut`]), the root included. A shared container (its
+/// `Arc` held more than once) is measured once and remembered, so the walk follows the shared
+/// tree. It stops at the first container past `cap`, answering that one's counts.
 pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut {
     use tabnas::Value;
-    /// A container's members, each with the bytes of the name it is under
-    /// (none in a list).
+    /// A container's members, each with its name's bytes (none in a list).
     type Members<'a> = Vec<(&'a Value, u64)>;
     /// A container's identity, whether it is shared, and its members.
     fn container(v: &Value) -> Option<(usize, bool, Members<'_>)> {
@@ -1682,7 +1432,6 @@ pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut 
             _ => return None,
         })
     }
-    /// A scalar's text.
     fn text(v: &Value) -> u64 {
         match v {
             Value::String(s) => s.len() as u64,
@@ -1693,8 +1442,8 @@ pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut 
     enum Step<'a> {
         /// A value to measure, and the bytes of the name it is under.
         Enter(&'a Value, u64),
-        /// A container's members are measured: its identity, whether it is
-        /// shared, where its members' counts start, and its name's bytes.
+        /// A container's members are counted: its identity, whether it is shared, where its
+        /// members' counts start, and its name's bytes.
         Leave(usize, bool, usize, u64),
     }
     let mut known: HashMap<usize, WrittenOut> = HashMap::new();
@@ -1746,13 +1495,9 @@ pub(crate) fn written_out(value: &tabnas::Value, cap: WrittenOut) -> WrittenOut 
     counts.pop().unwrap_or_default()
 }
 
-/// Parse `text` with `parser`, which [`make_parser`] made for `format`:
-/// the engine's parse, and for C the crate's own, which realizes the tree
-/// the parse built in this thread's arena into plain values
-/// ([`tabnas_c::parse_with`]), on the parse's thread, before that thread
-/// parses again. It refuses a tree deeper than it realizes
-/// ([`tabnas_c::REALIZE_DEPTH_CAP`]) with the engine's `cancel`, which
-/// [`unplaced_c_cancel`] tells from a cancel that names a place.
+/// Parse `text` with `parser` from [`make_parser`]. For C, tabnas-c's own parse realizes the
+/// arena tree on this thread before it parses again, refusing a tree deeper than
+/// [`tabnas_c::REALIZE_DEPTH_CAP`] with an unplaced `cancel`.
 pub(crate) fn parse_value(
     parser: &Tabnas,
     format: Format,
@@ -1765,32 +1510,16 @@ pub(crate) fn parse_value(
     .map_err(Box::new)
 }
 
-/// Whether `e`, a `cancel` from a C parse, names no place: the engine's
-/// for a stop with no token in hand, and tabnas-c's for a tree it could not
-/// realize, are both at offset 0, line 1, column 1, with no token text.
+/// Whether `e`, a C parse's `cancel`, names no place: the engine's with no token in hand and
+/// tabnas-c's for a tree it could not realize are at offset 0 with no text.
 pub(crate) fn unplaced_c_cancel(format: Format, e: &tabnas::TabnasError) -> bool {
     format == Format::C && e.code == "cancel" && e.pos == 0 && e.src.is_empty()
 }
 
-/// The grammar spec a grammar document's compiler writes for it: what a
-/// document of ABNF, EBNF or GBNF is read as (the schema `grammar-spec`,
-/// which the three share). It is the pure-data spec, with the tree
-/// builders every compiled grammar carries, as each crate says a host
-/// reads one, which is the text its TypeScript compiler writes: ABNF's
-/// [`tabnas_abnf::abnf_compile`]'s, with `recognition` off (`builtins`
-/// and `marks` on), EBNF's and GBNF's conversions with `builtins` on, each
-/// lowered to pure data by [`tabnas_abnf::to_pure_spec`], as tabnas-bnf's
-/// `compile_spec` lowers it before writing it as text.
-///
-/// Each compiler bounds the grammar it reads: its parse refuses groups
-/// nested past a limit of its own (2,048 open rules for ABNF, some 500
-/// groups; 520 for EBNF and 512 for GBNF, some 130), its emitter elements
-/// nested past 128 and a repetition that would be written out past 8,192
-/// copies, and its left-recursion pass (tabnas-bnf 0.1.29) more than 512
-/// alternatives added to one rule or 131,072 elements added to the
-/// grammar, each before anything that deep or that large is built. It
-/// runs where it is called, uninterrupted ([`compile_notation_by`] bounds
-/// the wait).
+/// The grammar spec a notation's compiler writes for the document (the schema `grammar-spec`):
+/// the pure-data spec with tree builders, which each crate says a host reads and its TypeScript
+/// compiler writes. The compiler bounds nesting itself and runs uninterrupted;
+/// [`compile_notation_by`] bounds the wait.
 pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Value, LoadError> {
     use tabnas_abnf::AbnfConvertOptions as Convert;
     let builtins = Convert {
@@ -1821,14 +1550,12 @@ pub(crate) fn compile_notation(format: Format, src: &str) -> Result<tabnas::Valu
     }
 }
 
-/// How many grammar compiles aless stopped waiting for still run. While
-/// any does, [`compile_notation_by`] starts no other with a deadline, so a
-/// run leaves one behind, or as many as it started at the same moment.
+/// How many compiles aless stopped waiting for still run; while any does,
+/// [`compile_notation_by`] starts none with a deadline.
 static ABANDONED_COMPILES: AtomicUsize = AtomicUsize::new(0);
 
-/// Where a compile [`compile_notation_by`] started stands: running, given
-/// up on by the thread that waited for it, or done, whichever of the last
-/// two comes first; each side reads and writes it under its lock.
+/// A compile's state: running, or abandoned by its waiter or done, whichever happens first;
+/// each side reads and writes it under its lock.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Compile {
     Running,
@@ -1836,23 +1563,10 @@ enum Compile {
     Done,
 }
 
-/// [`compile_notation`] within `deadline`. A compile cannot be stopped
-/// part way, so with a deadline it runs on a thread of its own, with the
-/// stack a parse has, and past the deadline aless stops waiting for it and
-/// leaves the thread to itself, as it does a grammar's from the command
-/// line; with none it runs here, on the parse's thread. A panic in the
-/// compiler is a `grammar` error, as one in a parse is.
-///
-/// What a compile left to itself holds (its thread, its stack, its copy of
-/// the text, what it builds) is held until it ends, so while one runs no
-/// other compile with a deadline starts: it is the same `timeout` at once
-/// ([`LoadError::compile_behind`]), and a run with many slow grammars
-/// leaves one compile behind it, not one each. Nor does one start once the
-/// deadline has passed: the time is read immediately before the thread is
-/// asked for, and a compile it finds too late is not started at all
-/// ([`LoadError::compile_unstarted`]). When no thread can be had
-/// the grammar is not compiled at all (a `grammar` error), since a compile
-/// on this thread could not be held to the deadline.
+/// [`compile_notation`] within `deadline`. A compile cannot be stopped part way, so with a
+/// deadline it runs on its own thread, left to itself past the deadline and holding what it
+/// holds until it ends: while one runs, or once the deadline has passed, no other starts.
+/// Without a thread it is a `grammar` error, since it could not be held to the deadline.
 pub(crate) fn compile_notation_by(
     format: Format,
     src: &str,
@@ -1871,8 +1585,8 @@ pub(crate) fn compile_notation_by(
     let theirs = state.clone();
     let (send, compiled) = mpsc::channel();
     let text = src.to_string();
-    // A compile started past the deadline would be abandoned as soon as it
-    // started, holding its thread and what it builds until it ends.
+    // The time is read just before the spawn: a compile started late would be abandoned at
+    // once.
     if deadline.is_past() {
         return Err(LoadError::compile_unstarted(deadline.limit));
     }
@@ -1884,8 +1598,7 @@ pub(crate) fn compile_notation_by(
             drop(text);
             let mut state = theirs.lock().unwrap_or_else(|e| e.into_inner());
             if *state == Compile::Abandoned {
-                // Nothing waits for it: let the outcome go, and the next
-                // compile start.
+                // Nothing waits for it: let the outcome go, and the next compile start.
                 drop(outcome);
                 ABANDONED_COMPILES.fetch_sub(1, Ordering::SeqCst);
             } else {
@@ -1918,10 +1631,8 @@ pub(crate) fn compile_notation_by(
     }
 }
 
-/// What a grammar notation's compiler refused a document for, whichever
-/// notation it is: its message (prefixed with the notation's name), the
-/// place the refusal names, when it names one, and the engine's code,
-/// when the engine refused the text.
+/// What a notation's compiler refused a document for: its message (prefixed with the notation's
+/// name), the place it names, and the engine's code when the engine refused the text.
 #[derive(Debug)]
 struct Refusal {
     message: String,
@@ -1941,8 +1652,7 @@ impl Refusal {
         }
     }
 
-    /// A refusal of the compiler's, at the range of the grammar's text it
-    /// names, when it names one.
+    /// A refusal of the compiler's, at the range of the grammar's text it names.
     fn spanned(message: String, span: Option<tabnas_abnf::SrcSpan>) -> Refusal {
         Refusal {
             message,
@@ -1952,8 +1662,7 @@ impl Refusal {
         }
     }
 
-    /// A refusal of the notation's parse: the engine's, with its code, or
-    /// the front-end's own, with none.
+    /// A refusal of the notation's parse: the engine's with its code, or the front-end's.
     fn parsed(
         message: String,
         line: Option<usize>,
@@ -1968,21 +1677,16 @@ impl Refusal {
         }
     }
 
-    /// The refusal as aless reports a load error of `format`, a document
-    /// whose text is `src`. Nesting past what the compiler reads is
-    /// `too_deep`, as any grammar's limit is; the engine's refusal of the
-    /// text keeps the engine's code, and any other refusal of the
-    /// compiler's is `compile`. Each is placed where the refusal says, in
-    /// the engine's layout, with the line quoted; without a place it has
-    /// none.
+    /// The refusal as a load error of `format`: nesting past the compiler's limit is
+    /// `too_deep`, the engine's refusal keeps its code, and any other is `compile`; each is
+    /// placed where the refusal says, with its line quoted.
     fn load_error(self, format: Format, src: &str) -> LoadError {
         let plain = strip_ansi(&self.message);
         let detail = plain
             .strip_prefix(&format!("{format}: "))
             .unwrap_or(&plain)
             .to_string();
-        // The engine's own report, which the front-end quotes after its
-        // place: `parse error at line 1, column 5: [tabnas/unexpected]: …`.
+        // The engine's report, quoted by the front-end after its `parse error at` place.
         let detail = match (&self.code, detail.find("]: ")) {
             (Some(_), Some(at)) if detail.starts_with("parse error") => {
                 detail[at + 3..].to_string()
@@ -2061,9 +1765,8 @@ impl From<tabnas_gbnf::GbnfError> for Refusal {
     }
 }
 
-/// The byte offset of the 1-based `line` and `col` (counted in characters)
-/// in `src`, or the nearest place there is: a column past its line's end
-/// is that end, a line past the last is the source's end.
+/// The byte offset of the 1-based `line` and `col` (in characters) in `src`, or the nearest
+/// there is: a line's end, or the source's.
 fn offset_of(src: &str, line: usize, col: usize) -> usize {
     let Some(start) = src
         .split_inclusive('\n')
@@ -2083,10 +1786,8 @@ fn offset_of(src: &str, line: usize, col: usize) -> usize {
             .map_or(end, |(i, _)| i)
 }
 
-/// A refusal of proto's own, outside its grammar's parse, as aless reports
-/// a load error: nesting past its braces (`too_deep`), a declaration of a
-/// version it does not know (`version`); an engine error as the engine
-/// gave it, and a grammar that would not install as the grammar's failure.
+/// A refusal of proto's own, outside its grammar's parse, as a load error: braces nested too
+/// deep are `too_deep`, an unknown version is `version`.
 fn proto_refused(format: Format, e: tabnas_proto::ProtoError) -> LoadError {
     use tabnas_proto::ProtoError;
     match e {
@@ -2110,8 +1811,7 @@ fn proto_refused(format: Format, e: tabnas_proto::ProtoError) -> LoadError {
     }
 }
 
-/// Split text into lines: `\n` or `\r\n` terminated, the terminator of the
-/// last line optional.
+/// Split text into lines ended by `\n` or `\r\n`, the last one's ending optional.
 pub fn lines(src: &str) -> Vec<&str> {
     let mut out: Vec<&str> = src
         .split('\n')
@@ -2123,8 +1823,7 @@ pub fn lines(src: &str) -> Vec<&str> {
     out
 }
 
-/// How many lines [`lines`] splits `src` into, counted without collecting
-/// them.
+/// How many lines [`lines`] splits `src` into, without collecting them.
 pub fn line_count(src: &str) -> usize {
     let breaks = src.bytes().filter(|&b| b == b'\n').count();
     if src.is_empty() || src.ends_with('\n') {
@@ -2139,11 +1838,9 @@ thread_local! {
     static CATCHING: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Is a grammar running under [`parse`]'s panic guard on this thread right
-/// now? A panic hook (the terminal's, which restores the screen) runs on
-/// the panicking thread and should stand down then: the panic is caught
-/// and reported as a [`LoadError`]. A panic on any other thread, such as
-/// the one reading input, is not caught, so the answer is per thread.
+/// Whether a grammar runs under [`parse`]'s panic guard on this thread. The terminal's panic
+/// hook, which restores the screen, stands down then, since the panic is caught and reported; a
+/// panic on another thread is not caught, so the answer is per thread.
 pub fn parse_in_progress() -> bool {
     CATCHING.try_with(|c| c.get() > 0).unwrap_or(false)
 }
@@ -2163,9 +1860,8 @@ impl Drop for CatchGuard {
     }
 }
 
-/// Run a grammar's code under the panic guard: a grammar is a plugin, and
-/// a defect in one must not take the process down. A panic comes back as
-/// its message, for a `grammar` error.
+/// Run a grammar's code under the panic guard: a defect in a plugin must not take the process
+/// down. A panic comes back as its message.
 pub(crate) fn catch_grammar<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     let _guard = CatchGuard::enter();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
@@ -2191,17 +1887,10 @@ pub fn parse(src: &str, format: Format) -> Result<Doc, LoadError> {
     parse_within(src, format, Limits::current().timeout)
 }
 
-/// Parse `src` as `format`, stopping after `timeout`.
-///
-/// The parse runs on a thread of its own with a large stack
-/// ([`PARSE_STACK`]), and stops at its rule cap ([`MAX_RULE_DEPTH`]):
-/// nesting that deep fails as `too_deep` rather than overflowing the
-/// stack, which would end the process where no error can be caught, as
-/// does nesting past a grammar's own, lower limit, and as does a custom
-/// grammar's value found nested past [`MAX_VALUE_DEPTH`]. Past `timeout`
-/// it fails as
-/// `timeout`: stopped at the place it had reached, or, when its last step
-/// ran past the time, as soon as it finishes.
+/// Parse `src` as `format`, stopping after `timeout`. It runs on its own thread with
+/// [`PARSE_STACK`] under the rule cap ([`MAX_RULE_DEPTH`]), so nesting fails as `too_deep`
+/// instead of overflowing the stack, which no error can catch. Past `timeout` it fails as
+/// `timeout`, placed where it stopped or, when its last step ran late, as it finishes.
 pub fn parse_within(
     src: &str,
     format: Format,
@@ -2210,8 +1899,7 @@ pub fn parse_within(
     parse_until(src, format, timeout, None)
 }
 
-/// [`parse_within`], the time limit running from `started` when given
-/// (the run's start, see [`Limits::started`]) rather than from now.
+/// [`parse_within`], the time limit running from `started` when given rather than from now.
 pub(crate) fn parse_until(
     src: &str,
     format: Format,
@@ -2224,7 +1912,6 @@ pub(crate) fn parse_until(
     }
     let src = parse_text(src, format);
     if format.is_notation() {
-        // The grammar spec has no source positions, nor its nodes a place.
         return on_parse_thread(
             timeout,
             started,
@@ -2240,14 +1927,10 @@ pub(crate) fn parse_until(
     )
 }
 
-/// Run `work`, a parse, on a thread with the stack a parse needs
-/// ([`PARSE_STACK`]), and hand it the deadline `timeout` sets, counted
-/// from `started` when given, else from now. This thread
-/// only waits, so it keeps the time: once the deadline passes it raises
-/// the alarm the deadline's [`Deadline::passed`] reads, and calls
-/// `on_alarm`, for a parse that has a stop flag of its own to set. When no
-/// thread can be had, `work` runs on this one with
-/// a deadline that reads the clock, and `on_alarm` is never called.
+/// Run `work`, a parse, on a thread with [`PARSE_STACK`], handing it the deadline `timeout`
+/// sets from `started` or now. This thread only waits, so it keeps the time: past the deadline
+/// it raises the alarm [`Deadline::passed`] reads and calls `on_alarm`. With no thread to be
+/// had, `work` runs here on a clock-read deadline and `on_alarm` is never called.
 pub(crate) fn on_parse_thread<T: Send>(
     timeout: Option<Duration>,
     started: Option<Instant>,
@@ -2298,8 +1981,7 @@ pub(crate) fn on_parse_thread<T: Send>(
                     .join()
                     .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
             }
-            // No thread to be had: parse on this one, within the same caps,
-            // reading the clock itself.
+            // No thread to be had: parse on this one, same caps, reading the clock itself.
             Err(_) => {
                 let work = take().expect("a failed spawn never ran the work");
                 work(deadline)
@@ -2315,8 +1997,7 @@ fn parse_here(src: &str, format: Format, deadline: Option<Deadline>) -> Result<D
     parse_with(parser, src, format, deadline)
 }
 
-/// Parse `src` as `format` with `parser`, within aless's caps: the work of
-/// [`parse_here`] once it has a parser.
+/// Parse `src` as `format` with `parser`, under aless's caps.
 fn parse_with(
     parser: Tabnas,
     src: &str,
@@ -2338,8 +2019,7 @@ fn parse_capped(
     parse_guarded(parser, &stopped, src, format, deadline, max_depth)
 }
 
-/// [`parse_capped`] with the guard on the parser already: `stopped` is its
-/// record.
+/// [`parse_capped`] with the guard already on the parser: `stopped` is its record.
 fn parse_guarded(
     mut parser: Tabnas,
     stopped: &Stop,
@@ -2349,10 +2029,8 @@ fn parse_guarded(
     max_depth: usize,
 ) -> Result<Doc, LoadError> {
     check_text(format, src)?;
-    // Under a grammar of plain text, a lone `*` is a word and a value; a
-    // document of records keyed by a header row (CSV, TSV) is aligned by
-    // column, which its separators and line ends carry. A C syntax tree
-    // carries every token's place itself, so its tokens are not kept.
+    // A custom grammar's lone `*` is a word and a value; CSV and TSV align by column, from
+    // separators and line ends; a C tree carries every token's place itself.
     let sink = if format == Format::C {
         None
     } else if format.is_custom() {
@@ -2360,12 +2038,9 @@ fn parse_guarded(
     } else if format.keyed_by_header() {
         Some(prov::capture_cells(&mut parser))
     } else if format == Format::Pgn {
-        // tabnas-chess counts a game's moves itself, so the tree holds a
-        // number for every move, most of which the source never spells,
-        // and a move number and a glyph are number tokens: matched by
-        // value, a count no token spells would take the next game's `1.`,
-        // and leave that game's tags behind the cursor. They place
-        // nothing, as before their tokens carried values.
+        // tabnas-chess numbers moves itself, so the tree holds numbers the source never spells,
+        // which, matched by value, would take the next game's `1.`: move numbers and glyphs
+        // place nothing.
         Some(prov::capture_except(&mut parser, &["#MVN", "#NAG"]))
     } else {
         Some(prov::capture(&mut parser))
@@ -2379,10 +2054,8 @@ fn parse_guarded(
     };
     let stop = stopped.why();
     let now = Instant::now();
-    // The time is looked at between steps, and a step is not cut short: one
-    // that reads a long string can run past the deadline and be the parse's
-    // last. A parse that comes to its end late, with a value or an error,
-    // is still too late.
+    // The time is checked between steps, and a step is not cut short, so a parse can end late
+    // with a value or an error: still too late.
     let late = deadline
         .as_ref()
         .filter(|d| stop == 0 && outcome.is_ok() && now >= d.at);
@@ -2402,16 +2075,13 @@ fn parse_guarded(
             }
             let value = read_as(format, value, src.len())?;
             let mut doc = Doc::from_value(&value);
-            // The engine's tree is not needed past this point; letting it
-            // go before the alignment lowers the peak on a large document.
+            // Dropped before the alignment, to lower the peak on a large document.
             drop(value);
             match sink {
-                // C's tokens, at the places its tree says.
                 None => prov::align_spans(&mut doc),
                 Some(sink) => {
                     if let Ok(toks) = sink.lock() {
-                        // CSV and TSV records are keyed by the header row,
-                        // which is lexed once, ahead of every value.
+                        // The header row is lexed once, ahead of every record it keys.
                         if format.keyed_by_header() {
                             prov::align_records(&mut doc, &toks);
                         } else {
@@ -2443,19 +2113,14 @@ fn parse_guarded(
             );
             Err(LoadError::from_tabnas(&e, None))
         }
-        // A C parse stopped with no token in hand (by tabnas-expr's bound
-        // between two tokens, or by tabnas-c, refusing the tree it could
-        // not realize) is stopped nowhere in particular: the engine's
-        // line 1, column 1 is no place in the document.
+        // A C parse stopped with no token in hand (tabnas-expr's bound between tokens, or a
+        // tree tabnas-c could not realize) has no place to report.
         Ok(Err(e)) if e.code == "cancel" && unplaced_c_cancel(format, &e) => {
             let (message, hint) = too_deep_words(format, Deep::Grammar);
             Err(LoadError::tagged("too_deep", message).with_hint(&hint))
         }
-        // A grammar's own depth limit, lower than aless's: JSON's (and
-        // YAML's, INI's and the rest of jsonic's family) is a parse guard
-        // and XML's is in its lexer, and each stops the parse with the
-        // engine's `cancel`, which no grammar here raises for anything
-        // else. Its hint would blame a budget of the caller's.
+        // A grammar's own depth limit (jsonic's parse guard, XML's lexer) stops the parse with
+        // `cancel`, which nothing else here raises; its hint would blame the caller's budget.
         Ok(Err(e)) if e.code == "cancel" => {
             let mut e = *e;
             e.tag = "aless".to_string();
@@ -2471,15 +2136,9 @@ fn parse_guarded(
     }
 }
 
-/// Stop the parse when its rule stack passes `max_depth` (the format's
-/// [`MAX_RULE_DEPTH`]), or when its deadline passes. Both are looked at
-/// between every two steps of the
-/// engine, in the parse budget. A grammar's own depth limit is a parse
-/// guard, which the engine runs beside the budget rather than in it, so
-/// setting this one leaves it in place; a budget the grammar keeps itself
-/// still runs, at its own interval. Returns a record of why aless stopped
-/// the parse, if it did, and where. `notify` is called as the parse is
-/// stopped, for a caller with a flag of its own to raise.
+/// Stop the parse when its rule stack passes `max_depth` or its deadline passes, checked at
+/// every step of the parse budget. A grammar's depth guard runs beside the budget and stays,
+/// and a budget it keeps still runs at its own interval. `notify` is called on a stop.
 pub(crate) fn guard(
     parser: &mut Tabnas,
     deadline: Option<Deadline>,
@@ -2514,21 +2173,17 @@ pub(crate) fn guard(
 pub(crate) enum Deep {
     /// Its rule stack passed this cap (the shared [`MAX_RULE_DEPTH`]).
     Rules(usize),
-    /// A custom grammar's value nests past [`MAX_VALUE_DEPTH`], which is
-    /// found once the parse is done.
+    /// A custom grammar's value nests past [`MAX_VALUE_DEPTH`], found after the parse.
     Value,
     /// The grammar's own nesting limit stopped it (the engine's `cancel`).
     Grammar,
-    /// The format's crate counted the text's braces before the parse, and
-    /// they nest past this many levels (proto's).
+    /// The format's crate found the braces nested past this, before the parse (proto's).
     Braces(usize),
-    /// A C syntax tree holds more values written out than [`c_tree_cap`]
-    /// allows, its reader repeating subtrees under several members.
+    /// A C tree holds more written out than [`c_tree_cap`] allows.
     Repeated,
 }
 
-/// The message and hint of a `too_deep` error. The message starts with the
-/// code, as the engine's own do.
+/// The message and hint of a `too_deep` error; the message starts with its code.
 pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
     match why {
         Deep::Rules(cap) if format.is_custom() => (
@@ -2557,10 +2212,8 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
              same units.\nReal documents nest a few dozen levels at most."
                 .to_string(),
         ),
-        // An expression's tree nests an operation in the next, so a long
-        // flat one is deep too: the grammar bounds the operations one
-        // expression holds (a group in parentheses is one), besides the
-        // nesting of its lists and maps, at the same number.
+        // An expression's tree nests each operation in the next, so a long flat one is deep
+        // too: the grammar bounds the operations an expression holds.
         Deep::Grammar if format == Format::Expr => (
             "too_deep: an expression larger or deeper than the expr grammar reads".to_string(),
             format!(
@@ -2571,11 +2224,8 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
                 limit = tabnas_expr::NODE_LIMIT
             ),
         ),
-        // C's limits are its reader's: tabnas-expr's bounds on the
-        // expressions it reads (each argument of a call one of the
-        // operations), and tabnas-c's on the tree it realizes, which it
-        // passes on a conditional that is a whole initializer, a tree that
-        // holds itself.
+        // C's limits are its reader's: tabnas-expr's on expressions, and tabnas-c's on the
+        // realized tree, which a conditional that is a whole initializer passes.
         Deep::Grammar if format == Format::C => (
             "too_deep: an expression larger, or code nested deeper, than the c reader reads"
                 .to_string(),
@@ -2622,9 +2272,8 @@ pub(crate) fn too_deep_words(format: Format, why: Deep) -> (String, String) {
     }
 }
 
-/// Whether `value` nests more than `cap` levels deep (the root is level
-/// one). Walked with a stack of its own: the value may be too deep to
-/// recurse over.
+/// Whether `value` nests more than `cap` levels deep, the root at level one, walked with its
+/// own stack: it may be too deep to recurse over.
 pub(crate) fn nests_past(value: &tabnas::Value, cap: usize) -> bool {
     use tabnas::Value;
     let mut stack = vec![(value, 1usize)];
@@ -2636,8 +2285,7 @@ pub(crate) fn nests_past(value: &tabnas::Value, cap: usize) -> bool {
             Value::Array(items) => stack.extend(items.iter().map(|c| (c, depth + 1))),
             Value::ListRef(list) => {
                 stack.extend(list.value.iter().map(|c| (c, depth + 1)));
-                // `drop_deep` lets the child go too, so it is measured here
-                // as well: depth held there is depth all the same.
+                // Measured as `drop_deep` frees it: depth held in `child` is depth too.
                 if let Some(child) = &list.child {
                     stack.push((child, depth + 1));
                 }
@@ -2650,11 +2298,9 @@ pub(crate) fn nests_past(value: &tabnas::Value, cap: usize) -> bool {
     false
 }
 
-/// Let go of a value without recursing into it. A value found nested past
-/// [`MAX_VALUE_DEPTH`] is refused, and dropping it the ordinary way would
-/// recurse once per level, on a stack that has room for far fewer levels
-/// than the rule cap allows. Each container is taken out of its `Arc`
-/// when this is its last holder, and its children queued.
+/// Let go of a value without recursing: an ordinary drop recurses once per level, and a value
+/// past [`MAX_VALUE_DEPTH`] has more levels than the stack has room for. A container is taken
+/// from its `Arc` when this is its last holder.
 pub(crate) fn drop_deep(value: tabnas::Value) {
     use tabnas::Value;
     let mut queue = vec![value];
@@ -2688,14 +2334,12 @@ pub(crate) fn drop_deep(value: tabnas::Value) {
     }
 }
 
-/// Parse an in-memory source (stdin) as `format`, within the time limit of
-/// [`Limits::current`].
+/// Parse an in-memory source (stdin) as `format`, within [`Limits::current`]'s time limit.
 pub fn load_str(source: String, format: Format) -> Result<Loaded, LoadError> {
     load_str_within(source, format, Limits::current())
 }
 
-/// [`load_str`] within its own limits (the source is already read, so only
-/// the time limit applies).
+/// [`load_str`] within its own limits; the source is read, so only the time limit applies.
 pub fn load_str_within(
     source: String,
     format: Format,
@@ -2721,14 +2365,12 @@ pub fn origin_of(path: &Path) -> String {
         .to_string()
 }
 
-/// Read and parse a file within [`Limits::current`]; `format` overrides the
-/// extension.
+/// Read and parse a file within [`Limits::current`]; `format` overrides the extension.
 pub fn load_path(path: &Path, format: Option<Format>) -> Result<Loaded, LoadError> {
     load_path_within(path, format, Limits::current())
 }
 
-/// [`load_path`] within its own limits. A file known to be over the size
-/// limit is refused before any of it is read.
+/// [`load_path`] within its own limits.
 pub fn load_path_within(
     path: &Path,
     format: Option<Format>,
@@ -2739,10 +2381,8 @@ pub fn load_path_within(
     load_str_within(source, format, limits).map_err(|e| e.with_origin(&origin_of(path)))
 }
 
-/// Read a file's text, holding no more than `max_size` bytes of it: a file
-/// known to be over the limit is refused before any of it is read. Bytes
-/// that are not UTF-8 are replaced. The error names the file as a report
-/// does ([`origin_of`]).
+/// Read a file's text within `max_size`, a file known to be over refused unread; bytes that are
+/// not UTF-8 are replaced.
 pub fn read_path_within(path: &Path, max_size: Option<u64>) -> Result<String, LoadError> {
     let origin = origin_of(path);
     let file = std::fs::File::open(path)
@@ -2813,14 +2453,12 @@ mod tests {
         assert_eq!(Format::from_name("ndjson"), Some(Format::Jsonl));
         assert!(Format::known_names().starts_with(&["json", "jsonl"]));
         assert!(!Format::Json.is_custom());
-        // The extensions each crate's manifest declares.
         assert_eq!(Format::detect(Path::new("site.css")), Format::Css);
         assert_eq!(Format::detect(Path::new("api/v1.proto")), Format::Proto);
         assert_eq!(Format::detect(Path::new("games.PGN")), Format::Pgn);
         assert_eq!(Format::detect(Path::new("src/main.c")), Format::C);
         assert_eq!(Format::detect(Path::new("include/vec.H")), Format::C);
         assert_eq!(Format::from_name("c"), Some(Format::C));
-        // Expressions and versions declare none: -k names them.
         assert!(Format::Expr.extensions().is_empty() && Format::Semver.extensions().is_empty());
         assert_eq!(Format::detect(Path::new("calc.expr")), Format::Text);
         assert_eq!(Format::detect(Path::new("VERSION")), Format::Text);
@@ -2834,8 +2472,6 @@ mod tests {
         );
     }
 
-    /// A custom grammar is detected by the whole file name (`/etc/hosts`)
-    /// as well as by the extension, whatever the case, and only by those.
     #[test]
     fn custom_grammars_are_detected_by_file_name_or_extension() {
         let def = grammar::Definition::parse(
@@ -2866,8 +2502,7 @@ mod tests {
         assert_eq!(Format::from_name("impl-etc-hosts.conf"), Some(custom));
         assert!(custom.is_custom());
         assert!(Format::known_names().contains(&"impl-etc-hosts"));
-        // A parse through the format (`:` is an ordinary character in
-        // plain text), and a parse error in its name.
+        // `:` is an ordinary character in plain text.
         let doc = parse("a: = b:c\nd = e\n", custom).unwrap();
         assert!(doc.len() > 1);
         // The position is the entry the parse could not complete.
@@ -2876,8 +2511,7 @@ mod tests {
         assert_eq!(e.code, "unexpected");
     }
 
-    /// The deepest the engine's rule stack gets over a parse of `src`: the
-    /// rule depth `d`, as the guard reads it.
+    /// The deepest the engine's rule stack gets over a parse of `src`, as the guard reads it.
     fn deepest_rule(mut parser: Tabnas, src: &str) -> usize {
         let deepest = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen = deepest.clone();
@@ -2889,12 +2523,7 @@ mod tests {
         deepest.load(Ordering::Relaxed)
     }
 
-    /// A repetition in a grammar from the command line adds no rule depth:
-    /// the compiler emits `*entry` as a loop that re-enters its rule in
-    /// one frame, so a flat file of any length parses at the depth of one
-    /// line, under the shared cap. (Until tabnas/bnf#80 the star was a rule
-    /// calling itself once per item, 2,000 lines kept some 4,000 rules
-    /// open, and aless allowed a grammar from the command line 1,000,000.)
+    /// A repetition in a command-line grammar adds no rule depth (ADR-007).
     #[test]
     fn a_custom_grammars_repetition_is_not_nesting() {
         let def = grammar::Definition::parse(
@@ -2908,8 +2537,7 @@ mod tests {
         let doc = parse(&flat, custom).unwrap();
         assert_eq!(doc.node(0).children, 2_000);
         assert_eq!(doc.nodes.iter().map(|n| n.depth).max(), Some(2));
-        // The rule stack over 2,000 lines is as deep as over two, and
-        // nowhere near the cap.
+        // A long file's rule stack is as deep as a short one's, and far under the cap.
         let two = deepest_rule(make_parser(custom).unwrap().unwrap(), &lines(2));
         let many = deepest_rule(make_parser(custom).unwrap().unwrap(), &flat);
         assert_eq!(
@@ -2921,8 +2549,7 @@ mod tests {
         let parser = make_parser(custom).unwrap().unwrap();
         let doc = parse_capped(parser, &flat, custom, None, two).unwrap();
         assert_eq!(doc.node(0).children, 2_000);
-        // ...and under a lower one the error names the open rules, says
-        // that depth is not length, and says where the parse stopped.
+        // ...and under a lower one it is `too_deep`, naming the open rules and the place.
         let parser = make_parser(custom).unwrap().unwrap();
         let e = parse_capped(parser, &flat, custom, None, two - 1).unwrap_err();
         assert_eq!(e.code, "too_deep");
@@ -2936,7 +2563,7 @@ mod tests {
         assert!(e.hint.contains("a repetition adds none"), "{}", e.hint);
         assert!(e.line > 0, "{e}");
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
-        // The other grammars are worded as before.
+        // A built-in grammar's message names levels.
         let (message, hint) = too_deep_words(Format::Yaml, Deep::Rules(MAX_RULE_DEPTH));
         assert_eq!(
             message,
@@ -2945,8 +2572,6 @@ mod tests {
         assert!(hint.contains("overflow the parser's stack"), "{hint}");
     }
 
-    /// The fixtures' hosts grammar over 10,000 lines: it parses under the
-    /// shared cap, at the rule depth of a three-line file.
     #[test]
     fn a_ten_thousand_line_hosts_file_parses_under_the_shared_cap() {
         let path = concat!(
@@ -2977,8 +2602,6 @@ mod tests {
         assert!(three < MAX_RULE_DEPTH / 100, "{three}");
     }
 
-    /// Nesting in a custom grammar's value is found once the parse is
-    /// done, since its rule stack says nothing about it.
     #[test]
     fn a_custom_value_nested_past_the_cap_is_too_deep() {
         let def = grammar::Definition::parse(
@@ -3007,8 +2630,6 @@ mod tests {
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
     }
 
-    /// The value walks recurse on nothing: a value nested far deeper than
-    /// the test thread's stack could take is measured and let go.
     #[test]
     fn deep_values_are_measured_and_dropped_without_recursion() {
         use tabnas::Value;
@@ -3027,8 +2648,6 @@ mod tests {
         drop_deep(v);
     }
 
-    /// The measure and the release walk the same links: a chain held in
-    /// a list's `child` counts toward the depth as `drop_deep` frees it.
     #[test]
     fn a_lists_child_counts_toward_its_depth() {
         use tabnas::{ListRef, Value};
@@ -3159,8 +2778,7 @@ mod tests {
 
     #[test]
     fn the_process_limits_default_and_encode() {
-        // No test sets the process's limits: a parse in a test running
-        // alongside would see them.
+        // No test sets the process's limits: a parse in a parallel test would see them.
         assert_eq!(Limits::current(), Limits::DEFAULT);
         assert_eq!(Limits::default(), Limits::DEFAULT);
         assert_eq!(timeout_ms(None), 0);
@@ -3178,7 +2796,6 @@ mod tests {
         assert!(e.line > 0, "the report shows how far the parse got");
         assert!(e.hint.contains("--timeout 0 for no limit"), "{}", e.hint);
         assert!(e.plain_report().starts_with("[aless/timeout]"));
-        // A generous limit lets a small document through.
         let quick = parse_within(&many_tables(2), Format::Toml, Some(Duration::from_secs(60)));
         assert_eq!(quick.unwrap().len(), 1 + 1 + 2 * 3);
     }
@@ -3189,11 +2806,8 @@ mod tests {
         format!("[\n{items}{{}}]\n")
     }
 
-    /// Raise `up` between two steps that hold no token to read next (the
-    /// step before consumed what it matched), once the parse has read a
-    /// token on line `line`: where the engine's `cancel` has no place of
-    /// its own to give, and falls back to line 1, column 1. Put on the
-    /// parser after [`guard`], so that the guard sees `up` in the same
+    /// Raise `up` at a step with no token to read next, once one on `line` was read: where the
+    /// engine's `cancel` has no place. Put on after [`guard`], which sees `up` in the same
     /// call.
     fn between_steps_past(parser: &mut Tabnas, line: usize, up: Arc<AtomicBool>) {
         let guarded = parser.config().parse.budget;
@@ -3205,9 +2819,6 @@ mod tests {
         });
     }
 
-    /// A parse the deadline stops between two steps is reported where it
-    /// had got to, the last token it read, not at line 1, column 1; and the
-    /// guard's record is the same place (aless#15).
     #[test]
     fn a_timeout_between_steps_is_placed_at_the_last_token_read() {
         let src = records(300);
@@ -3244,8 +2855,6 @@ mod tests {
         assert_eq!(stopped.position(), (e.line, e.col));
     }
 
-    /// Nesting past the cap is reported at the guard's place too, the
-    /// same as its record.
     #[test]
     fn too_deep_between_steps_is_placed_at_the_last_token_read() {
         let src = format!("{}\n{}", "[\n".repeat(30), "]".repeat(30));
@@ -3257,9 +2866,6 @@ mod tests {
         assert_eq!(stopped.position(), (e.line, e.col));
     }
 
-    /// A read still waiting at its deadline fails as `timeout`, whether
-    /// the writer sent nothing or stopped part way, and an input that ends
-    /// is read whole (aless#16).
     #[test]
     fn a_read_past_its_deadline_is_a_timeout() {
         let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
@@ -3289,8 +2895,6 @@ mod tests {
         }
     }
 
-    /// Past the deadline nothing more is taken, however fast the writer:
-    /// an input without end is a timeout, not a read for ever.
     #[test]
     fn an_endless_input_is_a_timeout_too() {
         let started = Instant::now();
@@ -3305,8 +2909,6 @@ mod tests {
         );
     }
 
-    /// The input is not touched until the run reads it: a run that never
-    /// does (a named file) leaves it to whoever else has it.
     #[test]
     fn a_deadline_reader_reads_nothing_before_it_is_read() {
         struct Watched(Arc<AtomicBool>);
@@ -3329,8 +2931,7 @@ mod tests {
 
     #[test]
     fn a_parse_of_few_steps_is_held_to_its_timeout_too() {
-        // One long string is a handful of the engine's steps, with nearly
-        // all the time spent in one of them.
+        // One long string is a handful of steps, nearly all the time in one.
         let src = format!("\"{}\"", "x".repeat(1 << 20));
         match parse_within(&src, Format::Json, Some(Duration::from_millis(1))) {
             Err(e) => assert!(e.is_timeout(), "{}", e.message),
@@ -3341,8 +2942,7 @@ mod tests {
 
     #[test]
     fn a_parse_that_ends_after_its_deadline_is_too_late() {
-        // With no alarm raised, as when the last step runs past the
-        // deadline, the parse is judged as it ends, value or error.
+        // With no alarm, as when the last step runs late, the parse is judged as it ends.
         let silent = || Deadline {
             at: Instant::now(),
             limit: Duration::from_millis(1),
@@ -3362,7 +2962,6 @@ mod tests {
             );
             assert!(e.plain_report().starts_with("[aless/timeout]"));
         }
-        // In time, it stands.
         let later = Deadline {
             at: Instant::now() + Duration::from_secs(600),
             ..silent()
@@ -3384,9 +2983,7 @@ mod tests {
         assert!(e.hint.contains("got this far"), "{}", e.hint);
     }
 
-    /// Parse as [`parse`] does, on a stack of [`PARSE_STACK`], with YAML's
-    /// own depth limit taken off: YAML standing for a grammar with no limit
-    /// of its own, which is what the cap is for.
+    /// Parse as [`parse`] does, with YAML's own depth limit off, leaving the cap to stop it.
     fn parse_yaml_without_its_own_limit(src: &str) -> Result<Doc, LoadError> {
         std::thread::scope(|scope| {
             std::thread::Builder::new()
@@ -3407,15 +3004,12 @@ mod tests {
 
     #[test]
     fn nesting_deeper_than_the_cap_stops_cleanly() {
-        // This deep (50,000 levels), a grammar with no limit of its own can
-        // overflow the stack without the cap, ending the process; with it,
-        // the parse fails at the cap.
+        // Without the cap, nesting this deep can overflow the stack and end the process.
         let yaml = "- ".repeat(50_000) + "x\n";
         let e = parse_yaml_without_its_own_limit(&yaml).unwrap_err();
         assert_eq!(e.code, "too_deep");
         assert!(e.message.contains("about 1000 levels"), "{}", e.message);
         assert!(e.plain_report().starts_with("[aless/too_deep]"));
-        // Nesting well inside the cap parses.
         assert!(parse_yaml_without_its_own_limit(&("- ".repeat(500) + "x\n")).is_ok());
         // With its limit, YAML stops such a document itself, sooner.
         let e = parse(&yaml, Format::Yaml).unwrap_err();
@@ -3428,12 +3022,7 @@ mod tests {
 
     #[test]
     fn a_grammars_own_lower_limit_is_too_deep_too() {
-        // JSON stops at 127 levels and YAML's compact sequences at 127, each
-        // with a parse guard, which aless's budget does not replace, and XML
-        // at 256 open elements, in its lexer, all with the engine's
-        // `cancel`, whose hint blames a budget of the caller's. aless
-        // reports them as it does its own cap, at the place the grammar
-        // stopped.
+        // Each stops with the engine's `cancel`, and is reported as aless's own cap is.
         let json = |n: usize| "[".repeat(n) + &"]".repeat(n);
         let yaml = |n: usize| "- ".repeat(n) + "x\n";
         let xml = |n: usize| "<a>".repeat(n) + &"</a>".repeat(n);
@@ -3469,7 +3058,6 @@ mod tests {
             assert!(report.contains("unexpected end of input"), "{report}");
             assert!(!report.contains("character(s)"), "{report}");
         }
-        // An unexpected character is still one.
         let e = parse("[1, @]", Format::Json).unwrap_err();
         assert_eq!(e.message, "unexpected character(s): @");
         assert_eq!(e.source_line.as_deref(), Some("[1, @]"));
@@ -3555,16 +3143,14 @@ mod tests {
 
     #[test]
     fn names_and_file_text_cannot_restyle_the_report() {
-        // A file name holding a newline and an escape sequence, and a
-        // message that happens to quote the placeholder.
+        // A name with a newline and an escape, and a message quoting the placeholder.
         let e = LoadError::new("cannot read <no-file>").with_origin("evil\n\x1b[31mname");
         let lines: Vec<&str> = e.report.lines().collect();
         assert_eq!(lines.len(), 2, "{:?}", e.report);
         assert!(lines[0].ends_with("cannot read <no-file>"), "{lines:?}");
         assert!(lines[1].ends_with("evil\\n\\u001b[31mname"), "{lines:?}");
 
-        // An escape sequence in the quoted source is shown as a picture,
-        // one column wide, so the caret still points at it.
+        // An escape in the quoted source is a one-column picture, so the caret points at it.
         let e = parse("{\"a\": \"x\u{1b}[31my\"}", Format::Json).unwrap_err();
         assert!(!e.report.contains("\u{1b}[31my"), "{:?}", e.report);
         let plain = e.plain_report();
@@ -3657,8 +3243,7 @@ mod tests {
             ),
             "A \\n B\nC q\\u001b[1mr D"
         );
-        // A hint that does not match its template: the token's first
-        // occurrence, and any other control character.
+        // Unmatched template: the token's first occurrence and any control are escaped.
         assert_eq!(
             escape_hint("x \n y\u{7}\nz", Some("other"), "\n"),
             "x \\n y\\u0007\nz"
@@ -3668,9 +3253,7 @@ mod tests {
 
     #[test]
     fn grammar_codes_carry_their_own_hints() {
-        // Until ini 0.5.10 and zon 0.5.9 these codes had no hint, so the
-        // report fell back to the one for an unknown code, which calls the
-        // error a bug in the parser.
+        // Each code has a hint of its own, not the unknown code's, which blames the parser.
         for (src, format, code) in [
             ("[s\nk = v\n", Format::Ini, "unterminated_section"),
             ("0X2A", Format::Zon, "zon_number"),
@@ -3681,10 +3264,8 @@ mod tests {
         }
     }
 
-    /// A JSON5 string continued across a CRLF reads as it does across an
-    /// LF (#30), and every node keeps the line and column it has with LF
-    /// endings, as does an error after the continuation. A raw CRLF after
-    /// an escaped backslash is no continuation, and is still refused.
+    /// A JSON5 string continued across a CRLF reads as across an LF, every node and error in
+    /// the same place; a raw CRLF after an escaped backslash is no continuation.
     #[test]
     fn json5_continues_a_string_across_crlf() {
         let lf = "{\n  a: 'x\\\n  y',\n  b: [1, \"p\\\nq\"], // c \\\n  c: 3\n}\n";
@@ -3702,14 +3283,12 @@ mod tests {
         assert_eq!((two.line, two.col), (one.line, one.col));
         assert_eq!(one.line, 3);
         assert!(parse("['a\\\\\r\nb']", Format::Json5).is_err());
-        // Three backslashes are an escaped one and a continuation.
+        // An escaped backslash, then a continuation.
         let three = parse("['a\\\\\\\r\nb']", Format::Json5).unwrap();
         assert_eq!(crate::fmt::to_json_compact(&three, 0), r#"["a\\b"]"#);
     }
 
-    /// A quoted CSV field holds any character but its quote, the C0
-    /// controls included, as the CSV renderer writes them (tabnas/csv#82):
-    /// a TAB, an ASCII 30 and an ASCII 31 read back as written.
+    /// A quoted CSV field holds any character but its quote, C0 controls included.
     #[test]
     fn csv_reads_control_characters_in_a_quoted_field() {
         let src = "a,b,c\n\"x\ty\",\"\u{1e}\",\"\u{1f}z\"\n";
@@ -3720,15 +3299,11 @@ mod tests {
         );
     }
 
-    /// Every parser aless makes bounds how far a rule reaches back
-    /// (#27), a custom grammar's included, and the bound changes no
-    /// value: every fixture, every grammar fixture's sample and a longer
-    /// document of each format parse to the same value, or fail the same
-    /// way, bounded and not.
+    /// Every parser aless makes bounds how far a rule reaches back, and the bound changes no
+    /// value: fixtures, grammar samples and a long document of each format parse alike.
     #[test]
     fn the_rule_history_bound_changes_no_value() {
-        // Each value as aless reads it (`read_as`): an expression's tree is
-        // in the thread's arena until its S-expressions are read.
+        // Read as aless reads it (`read_as`): an expression's tree lives in the thread's arena.
         let both = |format: Option<Format>, make: &dyn Fn() -> Tabnas, src: &str, what: &str| {
             let bounded = make();
             // aless's bound, or a grammar's own where it is tighter (CSS's).
@@ -3756,8 +3331,7 @@ mod tests {
             };
             assert_eq!(run(bounded), run(unbounded), "{what}");
         };
-        // A grammar's compiler parses it with a parser of its own, which
-        // aless has no way to bound.
+        // A notation's compiler parses with its own parser, which aless cannot bound.
         for format in Format::ALL
             .iter()
             .copied()
@@ -3829,8 +3403,6 @@ mod tests {
             let path = entry.unwrap().path();
             let format = match fixture_format(&path) {
                 Some(Format::Text) | None => continue,
-                // A grammar is its compiler's to parse, with a parser
-                // aless does not make.
                 Some(format) if format.is_notation() => continue,
                 Some(format) => format,
             };
@@ -3862,8 +3434,7 @@ mod tests {
             read += 1;
         }
         assert!(read >= 25, "{read} fixtures read");
-        // A grammar from the command line takes the bound from
-        // `make_parser` too.
+        // A grammar from the command line takes the bound from `make_parser` too.
         let def = grammar::Definition::parse(
             "--grammar-expr",
             &format!("impl-kv-h={}", grammar::tests::KV),
@@ -3874,9 +3445,7 @@ mod tests {
         assert_eq!(parser.options.rule.history, Some(RULE_HISTORY));
     }
 
-    /// JSONC takes a trailing comma before `}` or `]`, as the editors that
-    /// read it do (#31), with the positions it always had; an elision is
-    /// still no value.
+    /// JSONC takes a trailing comma, keeping its positions; an elision is still no value.
     #[test]
     fn jsonc_accepts_a_trailing_comma() {
         let json = |src: &str| {
@@ -3895,9 +3464,8 @@ mod tests {
         assert!(parse("[1,,2]", Format::Jsonc).is_err());
     }
 
-    /// The format a fixture is read as: its extension's, or, for a format
-    /// that declares no extension of its own (`sample.expr`,
-    /// `sample.semver`), the one its extension names, as `-k` names it.
+    /// The format a fixture is read as: its extension's, or the format its extension names when
+    /// that format declares none (`sample.expr`), as `-k` names it.
     fn fixture_format(path: &Path) -> Option<Format> {
         Format::detect_known(path).or_else(|| {
             path.extension()
@@ -3940,9 +3508,7 @@ mod tests {
             (Format::Expr, "a: 1+2*3, b: (4)\n"),
             (Format::Semver, "1.2.3-rc.1+build.5\n"),
         ];
-        // Every built-in but plain text has a sample: `ALL` is the list this
-        // (and `make_parser`, `name`) must be exhaustive over, and a custom
-        // grammar is never in it.
+        // `ALL` lists every built-in and no custom grammar; each but plain text has a sample.
         assert_eq!(samples.len() + 1, Format::ALL.len());
         assert!(Format::ALL.contains(&Format::Text));
         assert!(!Format::ALL.iter().any(|f| f.is_custom()));
@@ -3958,11 +3524,8 @@ mod tests {
         }
     }
 
-    /// A grammar in a notation reads as the pure-data spec its compiler
-    /// writes for it, as each crate says a host reads one: its rules, the
-    /// start wrapper the compiler adds, the tree builders every compiled
-    /// grammar carries, and the tokens; ABNF's literals matching either
-    /// case, as RFC 5234 has them. The three read one schema.
+    /// A notation reads as the pure-data spec its compiler writes: rules, the start wrapper,
+    /// tree builders and tokens, ABNF's literals matching either case (RFC 5234).
     #[test]
     fn a_grammar_reads_as_the_spec_its_compiler_writes() {
         let spec = |src: &str, format: Format| -> serde_json::Value {
@@ -3989,12 +3552,6 @@ mod tests {
         assert_eq!(gbnf["rule"]["greet"]["open"][0]["g"], "gbnf");
     }
 
-    /// What a notation's compiler refuses is a load error of aless's: a
-    /// grammar nested past the compiler's own limit is `too_deep`, with no
-    /// place, or the rule's where the refusal names one; the engine's
-    /// refusal of the text keeps the engine's code, placed; any other of
-    /// the compiler's is `compile`, placed where it says, and quoted in the
-    /// engine's layout under the notation's name.
     #[test]
     fn a_grammars_refusals_are_load_errors() {
         for (format, src) in [
@@ -4062,14 +3619,6 @@ mod tests {
         assert!(!e.is_io() && !e.is_too_large() && !e.is_timeout());
     }
 
-    /// A compile cannot be stopped part way: past the deadline aless stops
-    /// waiting for it, and says so as a grammar's compile that ran past
-    /// --timeout, where without one it runs to its end. While a compile
-    /// left to itself runs, no other with a deadline starts: it is the same
-    /// timeout at once, so a run of many slow grammars leaves one compile
-    /// behind, not one each; once that compile ends, compiles start again.
-    /// Nor does one start once the deadline has passed: it is refused at
-    /// once, and nothing is left behind.
     #[test]
     fn a_grammars_compile_is_waited_for_within_the_deadline() {
         let rules: String = (0..2_000)
@@ -4127,14 +3676,8 @@ mod tests {
         crate::fmt::to_json_compact(&doc, 0)
     }
 
-    /// A .proto file reads as its FileDescriptorProto (the schema
-    /// `proto-descriptor`), in the JSON form protoc writes one in, not as
-    /// the syntax tree the grammar builds, in the member order of the
-    /// canonical descriptor the crate's other runtimes write: the lists
-    /// every descriptor has, then what a statement places (the syntax, the
-    /// package, a field's `proto3Optional`) in the statements' order. A
-    /// number the reader reads as NaN (a digit separator, `1_0`) stays
-    /// NaN, which JSON writes as null.
+    /// A .proto file reads as its FileDescriptorProto in protoc's JSON form and the crate's
+    /// canonical member order; a number read as NaN (`1_0`) stays NaN, written as null.
     #[test]
     fn proto_reads_as_its_descriptor() {
         assert_eq!(
@@ -4160,10 +3703,6 @@ mod tests {
         assert!(read_json("message M {}", Format::Proto).ends_with(r#""syntax":"proto2"}"#));
     }
 
-    /// What proto's crate refuses outside its grammar's parse: braces
-    /// nested past its limit, counted before the parse, and a version it
-    /// does not know, found in the tree after it; each as aless words a
-    /// load error, with no position, since the crate gives none.
     #[test]
     fn proto_refuses_what_its_crate_refuses() {
         let cap = tabnas_proto::MAX_NESTING_DEPTH;
@@ -4189,11 +3728,8 @@ mod tests {
         assert!(!e.is_io() && !e.is_too_large() && !e.is_timeout());
     }
 
-    /// An expression reads as its S-expressions (the schema `expr`): an
-    /// operation the list of its operator's source text and its terms, a
-    /// group `(`'s, as the crate's own fixtures compare them, not the
-    /// descriptions its arena holds. Past the grammar's limits the parse
-    /// is too deep, in words that fit a long expression as a deep one.
+    /// An expression reads as its S-expressions, an operation as the list of its operator's
+    /// text and its terms; past the grammar's limits it is too deep.
     #[test]
     fn expr_reads_as_its_s_expressions() {
         assert_eq!(read_json("1+2*3", Format::Expr), r#"["+",1,["*",2,3]]"#);
@@ -4213,9 +3749,6 @@ mod tests {
         assert!(e.hint.contains("127 operations"), "{}", e.hint);
     }
 
-    /// A version file ends with a line break, which the grammar, taking no
-    /// whitespace at all, would refuse: aless reads the version without
-    /// one, and only one.
     #[test]
     fn a_version_reads_without_its_line_break() {
         let version = r#"{"major":1,"minor":2,"patch":3,"prerelease":["rc",1],"build":[]}"#;
@@ -4232,10 +3765,7 @@ mod tests {
         }
     }
 
-    /// CSS reads as its syntax tree (`css-ast`) and PGN as its database of
-    /// games (`pgn-database`), each as its grammar builds it; PGN's reports
-    /// carry the engine's colour codes whatever standard output is, as
-    /// every other grammar's do.
+    /// CSS and PGN read as their grammars build them; PGN's reports carry colour codes too.
     #[test]
     fn css_and_pgn_read_as_their_grammars_build_them() {
         assert_eq!(
@@ -4261,10 +3791,7 @@ mod tests {
         assert!(e.message.contains("not chess notation"), "{}", e.message);
     }
 
-    /// A C file reads as its concrete syntax tree, as tabnas-c realizes it:
-    /// every node its kind, span, children and trivia, every token its
-    /// name, text and span, the subtrees the reader repeats under members
-    /// such as `operand` included.
+    /// A C file reads as tabnas-c's realized tree, with the subtrees repeated under `operand`.
     #[test]
     fn c_reads_as_its_syntax_tree() {
         let tree = read_json("int x = 1;", Format::C);
@@ -4286,14 +3813,8 @@ mod tests {
         assert!(doc.nodes[operand].is_container());
     }
 
-    /// C's limits are its reader's, each `too_deep`: tabnas-expr's 127
-    /// operations in one expression and its 1,024 open rules, placed where
-    /// the parse stopped, or nowhere when it stopped between two tokens;
-    /// tabnas-c's tree of 256 levels, which a conditional that is a whole
-    /// initializer passes, holding itself; and aless's bound on the tree
-    /// written out, which the reader's repeated subtrees double with each
-    /// level of a chain of member accesses, refused before anything is
-    /// written out, as quickly as the reader read it.
+    /// C's limits are its reader's, each `too_deep`, placed, or unplaced when stopped between
+    /// tokens; a tree too large written out is refused at once.
     #[test]
     fn c_is_bounded_by_its_readers_limits_and_the_tree_written_out() {
         let terms = |n: usize| {
@@ -4323,8 +3844,7 @@ mod tests {
         let e = parse(&blocks(2000), Format::C).unwrap_err();
         assert_eq!(e.code, "too_deep");
         assert!(e.line == 1 && e.col > 300, "{e}");
-        // Each member access doubles the tree written out: 12 levels are
-        // read, 40 are refused at once, before the doubling is written out.
+        // Each member access doubles the tree written out; a long chain is refused before that.
         let members = |n: usize| format!("int f(void) {{ return a{}; }}", ".b".repeat(n));
         assert!(parse(&members(12), Format::C).is_ok());
         let started = Instant::now();
@@ -4339,8 +3859,6 @@ mod tests {
         assert_eq!((e.line, e.col), (0, 0));
     }
 
-    /// A tree written out counts a shared container once in each place,
-    /// measured once; the count stops at the first container past the cap.
     #[test]
     fn written_out_counts_a_shared_subtree_in_every_place() {
         use tabnas::Value;
@@ -4353,8 +3871,7 @@ mod tests {
         for _ in 0..100 {
             level = Value::array(vec![level.clone(), level]);
         }
-        // 2^100 leaves written out, from 101 containers: the count stops
-        // at the first level past the cap, the eighth, of 2^10 - 1 values.
+        // A doubling chain: the count stops at the first level past the cap.
         assert_eq!(written_out(&level, values(1_000)).values, 1_023);
         let all = written_out(&level, values(u64::MAX));
         assert_eq!(all.values, u64::MAX, "saturated");
@@ -4369,8 +3886,7 @@ mod tests {
         let shared = Value::array(vec![Value::Number(1.0)]);
         let twice = Value::array(vec![shared.clone(), shared]);
         assert_eq!(written_out(&twice, values(1_000)).values, 5);
-        // Text is counted in every place too: each string's bytes and each
-        // member name's, a shared container's own name among them.
+        // Text is counted in every place too, a shared container's own name among it.
         let inner = Value::from_json(&serde_json::json!({"name": "abc"}));
         let mut outer = Value::from_json(&serde_json::json!({"key": null}));
         outer.as_object_mut().unwrap().insert(
@@ -4385,8 +3901,7 @@ mod tests {
                 bytes: 24
             }
         );
-        // The count stops at the first container past either cap: here the
-        // list, of 21 bytes of text.
+        // It stops at the first container past either cap: here the list.
         let text = WrittenOut {
             values: u64::MAX,
             bytes: 20,
@@ -4403,18 +3918,15 @@ mod tests {
         let cap = |values, bytes| WrittenOut { values, bytes };
         assert_eq!(c_tree_cap(10), cap(C_TREE_FLOOR, C_TREE_BYTES_FLOOR));
         assert_eq!(c_tree_cap(1 << 16), cap(256 << 16, 2048 << 16));
-        // Past 131,072 bytes the ceilings hold, however long the file.
+        // Past some length the ceilings hold, however long the file.
         let ceilings = cap(C_TREE_CEILING, C_TREE_BYTES_CEILING);
         assert_eq!(c_tree_cap(1 << 17), ceilings);
         assert_eq!(c_tree_cap(64 << 20), ceilings);
         assert_eq!(c_tree_cap(usize::MAX), ceilings);
     }
 
-    /// A name a megabyte long at the foot of 18 member accesses, which
-    /// write it out 2^18 times: some 14 million values, under the ceiling
-    /// a file that long is held to, but half a terabyte of text, refused by
-    /// the ceiling on text. The name read once, or under four accesses (32
-    /// MB of text), reads.
+    /// A megabyte-long name under a member chain is within the value ceiling but far past the
+    /// text ceiling, and is refused; under a short chain it reads.
     #[test]
     fn a_long_name_in_a_repeated_subtree_is_held_to_its_text() {
         let name = "a".repeat(1 << 20);
@@ -4448,10 +3960,7 @@ mod tests {
         }
     }
 
-    /// A chain of member accesses whose tree written out (115,343,533
-    /// values for 21 of them) the ceiling refuses, whatever a long comment
-    /// beside it adds to the file: 4 MB of it would have raised a cap of
-    /// 256 values a byte to a billion.
+    /// The ceiling refuses a member chain whatever a long comment adds to the file's length.
     #[test]
     fn padding_does_not_raise_a_c_trees_cap() {
         let chain = format!("int f(void) {{ return a{}; }}\n", ".b".repeat(21));
@@ -4460,8 +3969,7 @@ mod tests {
             let e = parse(&src, Format::C).unwrap_err();
             assert_eq!(e.code, "too_deep", "{} bytes: {e}", src.len());
         }
-        // Real code past the length where the ceiling holds reads: 4,000
-        // functions, a line each, 160 KB.
+        // Real code past the length at which the ceilings hold still reads.
         let functions: String = (0..4_000)
             .map(|i| format!("int f{i}(int a) {{ return a.b.c + {i}; }}\n"))
             .collect();

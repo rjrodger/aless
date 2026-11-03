@@ -49,7 +49,7 @@ jobs:
 
       - name: Terminal smoke test (pty)
         if: runner.os != 'Windows'
-        run: python3 scripts/pty-smoke.py target/debug/aless
+        run: python3 admin/scripts/pty-smoke.py target/debug/aless
 
       # The published crate carries only what Cargo.toml's include list
       # names, and packaging it builds it from exactly those files.
@@ -72,6 +72,32 @@ jobs:
           test "$status" = 2
           test ! -s out.txt
           grep -q 'needs a terminal' err.txt
+
+  # The comment gate, the prose gate, Vale and Vale's recorded counts
+  # (DEV-PROCESS.md, STYLE-GUIDE.md). Node is on the runner; Vale is
+  # fetched at the version pinned here, and its Google package at the URL
+  # .vale.ini pins, so a release of either cannot turn a run red.
+  gates:
+    name: comments and prose
+    runs-on: ubuntu-latest
+    env:
+      VALE_VERSION: 3.24.0
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install Vale
+        run: |
+          curl -fsSL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" vale
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: vale sync
+      - name: Comment gate
+        run: node admin/scripts/comment-gate.cjs
+      - name: Prose gate
+        run: node admin/scripts/prose-gate.cjs
+      - name: Vale
+        run: vale --minAlertLevel=error $(node admin/scripts/prose-gate.cjs --list)
+      - name: Vale's recorded counts
+        run: node admin/scripts/vale-counts.cjs
 
   msrv:
     name: rust 1.88 (minimum supported)
