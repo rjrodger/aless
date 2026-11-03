@@ -42,4 +42,4 @@ Numbers are the loss you are most likely to meet. The model's numbers are 64-bit
 
 Every format is parsed by the same engine, [tabnas](https://tabnas.dev), with a grammar for each format. aless has no parser of its own. That is why a new format is a grammar rather than a feature, and why every format reports its errors in the same shape, with a line, a column and a hint.
 
-The cost is speed. A general rule engine is slower than a parser written by hand for one format: aless reads about a megabyte a second, where a dedicated JSON parser reads hundreds. For the files people read in a terminal that is fast enough, and [Large inputs, streaming and limits](/explanation/large-inputs.html) says what happens with the files for which it is not.
+The cost is speed. A general rule engine is slower than a parser written by hand for one format: aless reads about a megabyte a second, where a dedicated JSON parser reads hundreds. For the files people read in a terminal that is fast enough, and [Large inputs and limits](/explanation/large-inputs.html) says what happens with the files for which it is not.
