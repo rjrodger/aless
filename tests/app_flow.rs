@@ -162,3 +162,28 @@ fn a_grammar_whose_alternatives_multiply_opens_as_its_refusal() {
     );
     assert!(!screen.contains("timeout"), "{screen}");
 }
+
+/// An integer past 2^53 is copied and written with the digits its source
+/// spells, not as the nearest 64-bit float.
+#[test]
+fn a_long_integer_is_copied_and_written_as_spelled() {
+    let path = temp(
+        "big.json",
+        "{\"id\": 12345678901234567890, \"ratio\": 1.50}\n",
+    );
+    let mut app = App::new(Options::default(), 60, 12);
+    app.open_path(&path, None);
+    keys(&mut app, "jyy");
+    let copied = app.effects.iter().find_map(|e| match e {
+        aless::app::Effect::Copy { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(copied.as_deref(), Some("12345678901234567890"));
+    let out = path.with_file_name("big-written.json");
+    let _ = std::fs::remove_file(&out);
+    app.run_command(&format!("w {}", out.display()));
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "{\n  \"id\": 12345678901234567890,\n  \"ratio\": 1.50\n}\n"
+    );
+}

@@ -138,8 +138,12 @@ The format comes from a file\(aqs extension, or from its whole name for a
 \-\-grammar NAME (/etc/hosts), and \-k FORMAT overrides it for every input;
 inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH FORMAT
 opens a file as one. A file whose extension no format claims is read as plain
-text, an array of its lines. Map keys keep their source order. The formats,
-with the extensions that imply each:
+text, an array of its lines. Map keys keep their source order, and a number its
+source\(aqs spelling where the spelling is JSON\(aqs: the tree, search, :w and
+the copy commands give 1.0, 1e21 and an integer beyond 2\(ha53 as spelled, and
+a spelling JSON has no syntax for (0x1F, 1_000, +1) as the 64\-bit float it
+denotes, the source view (s) having the spelling. The formats, with the
+extensions that imply each:
 .TP 10
 \fBjson\fR
 json geojson har jsonld webmanifest
@@ -306,9 +310,6 @@ at most) or 2,048 bytes of names and strings a byte (256 MB at most), its
 reader repeating subtrees, and for a grammar its compiler\(aqs, 2,048 open
 rules for ABNF, 520 for EBNF and 512 for GBNF, some 500, 130 and 128 nested
 groups, and elements nested 128 deep).
-.PP
-Numbers are 64\-bit floats: the tree, :w and the copy commands give an integer
-beyond 2\(ha53 as the nearest one, and the source view (s) has the spelling.
 .SH "EXIT STATUS"
 .TP 7
 \fB0\fR

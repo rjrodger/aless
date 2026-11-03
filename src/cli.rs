@@ -493,7 +493,11 @@ const TOPICS: &[Topic] = &[
                 inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH \
                 FORMAT opens a file as one. A file whose extension no format claims is \
                 read as plain text, an array of its lines. Map keys keep their source \
-                order. The formats, with the extensions that imply each:",
+                order, and a number its source's spelling where the spelling is JSON's: \
+                the tree, search, :w and the copy commands give 1.0, 1e21 and an integer \
+                beyond 2^53 as spelled, and a spelling JSON has no syntax for (0x1F, \
+                1_000, +1) as the 64-bit float it denotes, the source view (s) having the \
+                spelling. The formats, with the extensions that imply each:",
             ),
             Block::Formats,
         ],
@@ -588,11 +592,6 @@ const TOPICS: &[Topic] = &[
                 for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
                 512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
                 128 deep).",
-            ),
-            Block::Text(
-                "Numbers are 64-bit floats: the tree, :w and the copy commands give an \
-                integer beyond 2^53 as the nearest one, and the source view (s) has the \
-                spelling.",
             ),
         ],
     },
