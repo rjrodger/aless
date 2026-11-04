@@ -18,8 +18,6 @@ struct Section {
     dir: &'static str,
     /// The navigation's name for the section.
     label: &'static str,
-    /// A page's kind, as the page heads itself.
-    kind: &'static str,
     /// The groups the section lists its pages under, in order; none for
     /// a section listed flat. A page of a grouped section names its group
     /// in its front matter.
@@ -42,14 +40,12 @@ const SECTIONS: [Section; 5] = [
     Section {
         dir: "tutorials",
         label: "Tutorials",
-        kind: "Tutorial",
         groups: &[],
         human: false,
     },
     Section {
         dir: "how-to",
         label: "How-to guides",
-        kind: "How-to guide",
         groups: &[
             Group {
                 name: "Setting up",
@@ -73,21 +69,18 @@ const SECTIONS: [Section; 5] = [
     Section {
         dir: "reference",
         label: "Reference",
-        kind: "Reference",
         groups: &[],
         human: false,
     },
     Section {
         dir: "explanation",
         label: "Explanation",
-        kind: "Explanation",
         groups: &[],
         human: false,
     },
     Section {
         dir: "why",
         label: "Why",
-        kind: "Human written",
         groups: &[],
         human: true,
     },
@@ -846,29 +839,21 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         "../".repeat(depth)
     };
     let home = page.path == "index.html";
-    // A section's index is named for its kind already: "How-to guides"
-    // needs no "How-to guide" above it.
-    let head = match page.section {
-        // A person's own page is marked as theirs, under its title.
-        Some(s) if SECTIONS[s].human => format!(
-            "<p class=\"kind\">{}</p>\n<h1>{}</h1>\n<p class=\"lede\">By {}</p>\n",
-            SECTIONS[s].kind,
+    // A person's own page names its author under its title, where any
+    // other page has its description.
+    let head = match (page.section, &page.author) {
+        (Some(_), Some(author)) => format!(
+            "<h1>{}</h1>\n<p class=\"lede\">By {}</p>\n",
             escape(&page.title),
-            escape(page.author.as_deref().unwrap())
+            escape(author)
         ),
-        Some(_) if page.is_index() => format!(
+        (Some(_), None) => format!(
             "<h1>{}</h1>\n<p class=\"lede\">{}</p>\n",
             escape(&page.title),
             escape(&page.description)
         ),
-        Some(s) => format!(
-            "<p class=\"kind\">{}</p>\n<h1>{}</h1>\n<p class=\"lede\">{}</p>\n",
-            SECTIONS[s].kind,
-            escape(&page.title),
-            escape(&page.description)
-        ),
-        None if home => String::new(),
-        None => format!("<h1>{}</h1>\n", escape(&page.title)),
+        (None, _) if home => String::new(),
+        (None, _) => format!("<h1>{}</h1>\n", escape(&page.title)),
     };
     let source = format!("{REPOSITORY}/blob/main/{}", page.origin);
     let (nav, toc, toc_inline, pager, describes) = match page.section {
@@ -1254,7 +1239,7 @@ fn twin(page: &Page, pages: &[Page]) -> String {
     };
     let mut out = format!("# {}\n\n{}\n\n", page.title, page.description);
     if let Some(author) = &page.author {
-        out.push_str(&format!("Human written, by {author}.\n\n"));
+        out.push_str(&format!("By {author}.\n\n"));
     }
     out.push_str(&body);
     if let Some(section) = page.section.filter(|_| page.is_index()) {
