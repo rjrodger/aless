@@ -48,7 +48,7 @@ A directory's entries are listed when you unfold it (`l` or `Space`), one level 
 | `-` | go up: the parent directory becomes the root, with your folds and focus kept |
 | `:cd DIR` | make DIR the root, relative to the current one |
 | `:explore DIR` | open another directory in a new tab |
-| `:set hidden` | show dot-files; `:set nohidden` hides them, `:set hidden!` toggles, and `--hidden` shows them from the start |
+| `:set nohidden` | hide dot-files, which the explorer shows; `:set hidden` shows them again, and `:set hidden!` toggles |
 | `yp` | copy the focused entry's path on disk |
 
 `m`, `%` and `s` mean nothing for a directory, and do nothing in the explorer.

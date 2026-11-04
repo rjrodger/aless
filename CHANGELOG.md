@@ -12,6 +12,9 @@ bumps the version renames `Unreleased` to the version and its date
 
 ### Changed
 
+- The explorer shows dot-files and dot-directories, such as `.github/`
+  and `.env`, where it hid them unless `--hidden` or `:set hidden` asked
+  for them. `:set nohidden` hides them.
 - A number is shown as its source spells it where the spelling is
   JSON's: `1.0`, `-0`, `1e21` and an integer beyond 2^53 keep their
   digits in the tree, a collapsed preview, search, and the JSON that `:w`
@@ -42,6 +45,10 @@ bumps the version renames `Unreleased` to the version and its date
   matches.
 - The site has a Why page, in the header's navigation: why aless was
   written, in Richard Rodger's own words, with two captures of the viewer.
+
+### Removed
+
+- `--hidden`, since the explorer shows dot-files without it.
 
 ## [0.6.0] - 2026-11-02
 

@@ -27,7 +27,6 @@ _aless() {
     '(--no-relative-line-numbers -R)--no-relative-line-numbers[do not number rows by distance]' \
     '(--no-relative-line-numbers -R)-R[do not number rows by distance]' \
     '--scrolloff=[rows kept around the focus (default 3)]:N: ' \
-    '--hidden[show dot-files in the explorer]' \
     '--ascii[draw fold markers in ASCII]' \
     '(--no-color --no-colour)--no-color[no colours (as NO_COLOR does)]' \
     '(--no-color --no-colour)--no-colour[no colours (as NO_COLOR does)]' \

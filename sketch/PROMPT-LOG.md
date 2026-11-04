@@ -266,4 +266,12 @@ Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT
 
 ```
 do not literally put human written on the actual page. I meant keep a note for yourself so that the style-guide is not applied to this text. also, remove the mini eyebrow headings entirely from the site
+## 2026-11-04 17:15 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+A follow-up to the prompt about dot-files, sent while the agent worked.
+
+```
+so --hidden is no longer needed?
 ```
