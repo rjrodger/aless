@@ -275,3 +275,11 @@ A follow-up to the prompt about dot-files, sent while the agent worked.
 ```
 so --hidden is no longer needed?
 ```
+
+## 2026-11-04 17:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+the writing rules in rjrodger/agent-info have been updated - copy the updates into this repo. then rewrite the documentation and site text, carefully following the updated rules. use adversarial review to check and correct your work
+```
