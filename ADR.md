@@ -137,6 +137,6 @@ the first time an option changes.
 detail. `man/aless.1` and `completions/` are committed output of
 `admin/scripts/generate.sh`.
 
-**Enforcement.** `every_option_in_the_table_is_read` in `src/main.rs`,
+**Enforcement.** `every_option_in_the_table_is_read` in `src/cli.rs`,
 `the_generated_files_are_current` in `tests/binary.rs`, and
 `the_reference_is_the_binarys` in `tests/site.rs`.

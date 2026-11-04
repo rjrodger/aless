@@ -1595,84 +1595,241 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// A part of the key map: what F1 shows, and the site's list of keys.
+/// Code in a note or an action is between backticks, which F1 leaves out.
+pub struct KeyGroup {
+    pub title: &'static str,
+    /// What holds for every binding in the group, or nothing.
+    pub note: &'static str,
+    /// The bindings are typed words, commands or settings, rather than
+    /// keys.
+    pub typed: bool,
+    /// Each binding: its keys, and what they do.
+    pub keys: &'static [(&'static str, &'static str)],
+}
+
+/// Every key and command of the viewer, in the order F1 lists them.
+pub const KEY_MAP: &[KeyGroup] = &[
+    KeyGroup {
+        title: "Moving",
+        note: "A count before a key repeats it: `3j` moves down three rows.",
+        typed: false,
+        keys: &[
+            ("j k  ↓ ↑  C-n C-p", "down and up a row"),
+            ("Enter Backspace", "down and up a row, as `j` and `k`"),
+            ("h  ←", "fold the focused container, or go to its parent"),
+            ("l  →", "unfold the focused container, or go to its first child"),
+            ("H", "go to the parent, leaving it unfolded"),
+            ("J K", "the next and the previous sibling, stopping at the last and the first"),
+            ("w b", "forward and back to the next row at another depth"),
+            ("0  ^", "the first sibling"),
+            ("$", "the last sibling"),
+            ("g  Home", "the first row; `Ng` goes to row N"),
+            ("G  End", "the last row; `NG` goes to row N"),
+            ("C-f C-b  PgDn PgUp", "a page down and up"),
+            ("C-d C-u", "half a page down and up; a count sets the distance, which later presses keep"),
+            ("C-e C-y", "scroll a row down and up, moving the focus only to keep it the scrolloff's rows from the edge"),
+            ("zz zt zb", "put the focused row at the centre, the top or the bottom of the screen"),
+            (". ,", "scroll a value longer than the screen a character right and left"),
+            (";", "scroll a long value to its end, and back to its start"),
+            ("Esc", "drop a count, or the first key of a two-key command"),
+        ],
+    },
+    KeyGroup {
+        title: "Folding and views",
+        note: "",
+        typed: false,
+        keys: &[
+            ("Space", "fold or unfold the focused container"),
+            ("c", "fold the focused node and its siblings"),
+            ("C", "fold the focused node and its siblings, and everything inside them"),
+            ("e", "unfold the focused node and its siblings"),
+            ("E", "unfold the focused node and its siblings, and everything inside them"),
+            ("m", "switch between data mode and line mode"),
+            ("%", "in line mode, go between a container's opening and closing brackets"),
+            ("s", "the source view, in place of the tree: the text aless read, at the focused node's line; any key but the scrolling ones, `:` and `r` goes back"),
+            ("< >", "one space less or more of indentation a level"),
+        ],
+    },
+    KeyGroup {
+        title: "Search",
+        note: "A pattern is a regular expression. It ignores case unless it holds a capital \
+               letter or ends in `/s`, and `[ ] { }` match themselves.",
+        typed: false,
+        keys: &[
+            ("/ ?", "search forward and backward; `Enter` with no pattern repeats the last one"),
+            ("n N", "the next and the previous match, round the end of the document"),
+            ("* #", "search forward and backward for the focused node's key"),
+        ],
+    },
+    KeyGroup {
+        title: "Copy and print",
+        note: "`y` and a second key copies to the clipboard; `p` and the same key prints the \
+               text on screen instead (`pP` for the path, since `pp` is the value).",
+        typed: false,
+        keys: &[
+            ("yy pp", "the value, pretty-printed as JSON"),
+            ("yv pv", "the value as JSON on one line"),
+            ("ys ps", "a string's contents, without its quotes"),
+            ("yk pk", "the key"),
+            ("yp pP", "the path, as jless writes it: `.a[0].b`"),
+            ("yb pb", "the path, every step in brackets: `[\"a\"][0][\"b\"]`"),
+            ("yq pq", "the path, as jq writes it"),
+        ],
+    },
+    KeyGroup {
+        title: "Tabs and files",
+        note: "",
+        typed: false,
+        keys: &[
+            ("Tab S-Tab", "the next and the previous tab"),
+            ("q", "close the tab; closing the last one quits"),
+            ("C-c", "quit"),
+            ("r", "read the file again now"),
+            ("W", "stop or start watching the file"),
+            ("!", "the parse error report, full size; `h` and `l` pan a long line"),
+            (":", "a command, from the list below"),
+            ("F1", "this help"),
+            ("C-z", "suspend aless, on Unix"),
+        ],
+    },
+    KeyGroup {
+        title: "The explorer",
+        note: "A directory is a tree with the same keys; `m`, `%` and `s` do nothing in it.",
+        typed: false,
+        keys: &[
+            ("Enter", "open the focused file in a new tab, or fold or unfold a directory"),
+            ("-", "go up: the parent directory becomes the root"),
+            ("yp", "copy the focused entry's path on disk"),
+            ("/", "search the entries listed so far: each row's name, size and format"),
+        ],
+    },
+    KeyGroup {
+        title: "Commands",
+        note: "Type `:` and the command, then `Enter`.",
+        typed: true,
+        keys: &[
+            (":open PATH [FORMAT]  :e", "open a file or a directory in a new tab"),
+            (":q  :close", "close the tab"),
+            (":qa  :quit  :exit", "quit"),
+            (":tab N", "go to tab N"),
+            (":tabnext  :tabprev", "the next and the previous tab"),
+            (":tabfirst  :tablast", "the first and the last tab"),
+            (":w FILE", "write the document to FILE as JSON, refusing a file that exists"),
+            (":w! FILE", "write the document to FILE as JSON, over a file that exists"),
+            (":format FORMAT", "read the tab's text again as FORMAT"),
+            (":mode data  :mode line", "data mode or line mode"),
+            (":depth N", "open the first N levels, and fold every container below them"),
+            (":expand", "unfold the focused node and its siblings, and everything inside them"),
+            (":collapse", "fold everything, and go to the first row"),
+            (":N  :line N", "go to row N"),
+            (":reload  :e!", "read the file again now"),
+            (":watch on  :watch off", "start or stop watching the file"),
+            (":source", "the source view"),
+            (":error", "the parse error report, full size"),
+            (":cd DIR", "make DIR the explorer's root, relative to the current one; in a document's tab, open DIR in a new explorer tab"),
+            (":explore [DIR]", "open DIR, or the current directory, in a new tab"),
+            (":set SETTING", "change a setting, from the list below"),
+            (":help", "this help"),
+        ],
+    },
+    KeyGroup {
+        title: "Settings",
+        note: "Each follows `:set`, and one `:set` takes several.",
+        typed: true,
+        keys: &[
+            ("number  nonumber  number!", "number the rows, or not, or toggle it; `nu` for short"),
+            ("relativenumber  norelativenumber  relativenumber!", "number each row by its distance from the focus; `rnu` for short"),
+            ("so=N", "keep N rows between the focus and the edge of the screen"),
+            ("indent=N  sw=N", "indent N spaces a level, at most 16"),
+            ("ascii  noascii", "draw the fold markers as `v` and `>`, or as `▼ ▽ ▶ ▷`"),
+            ("hidden  nohidden  hidden!", "show dot-files in the explorer, or not, or toggle it"),
+            ("watch  nowatch", "start or stop watching the file"),
+            ("mode=data  mode=line", "data mode or line mode"),
+            ("depth=N", "open the first N levels, and fold every container below them"),
+        ],
+    },
+    KeyGroup {
+        title: "Typing a command or a pattern",
+        note: "",
+        typed: false,
+        keys: &[
+            ("Enter", "run the command, or search for the pattern"),
+            ("Esc  C-c", "leave without running it"),
+            ("Backspace  C-h  Delete", "delete the character before or under the cursor"),
+            ("← →  C-b C-f", "move the cursor a character"),
+            ("Home End  C-a C-e", "move the cursor to the start or the end"),
+            ("C-u  C-k  C-w", "delete to the start, to the end, or the word before the cursor"),
+        ],
+    },
+    KeyGroup {
+        title: "This help, the error report and printed text",
+        note: "Any other key goes back to the document.",
+        typed: false,
+        keys: &[
+            ("j k  ↓ ↑", "scroll a line"),
+            ("C-d C-u  C-f C-b  PgDn PgUp", "scroll a page"),
+            ("g G  Home End", "the first and the last line"),
+            ("h l  ← →", "pan a line wider than the screen"),
+        ],
+    },
+];
+
+/// The help F1 shows: [`KEY_MAP`], a group a section, its keys in a
+/// column.
 pub fn help_lines() -> Vec<String> {
-    const HELP: &str = r#"aless — a jless-style viewer for every format the tabnas parsers read
+    const WIDTH: usize = 78;
+    let mut out = vec![format!(
+        "aless {}: every key and command",
+        env!("CARGO_PKG_VERSION")
+    )];
+    for group in KEY_MAP {
+        out.push(String::new());
+        out.push(group.title.to_uppercase());
+        if !group.note.is_empty() {
+            let note = group.note.replace('`', "");
+            out.extend(wrap(&note, WIDTH - 2).into_iter().map(|l| format!("  {l}")));
+        }
+        let column = group
+            .keys
+            .iter()
+            .map(|(keys, _)| keys.chars().count())
+            .filter(|&w| w <= 24)
+            .max()
+            .unwrap_or(0);
+        for (keys, does) in group.keys {
+            let shown = keys.chars().count();
+            let mut lines = wrap(&does.replace('`', ""), WIDTH - 4 - column).into_iter();
+            if shown > column {
+                out.push(format!("  {keys}"));
+            } else if let Some(first) = lines.next() {
+                out.push(format!("  {keys}{}  {first}", " ".repeat(column - shown)));
+            }
+            for line in lines {
+                out.push(format!("  {}  {line}", " ".repeat(column)));
+            }
+        }
+    }
+    out
+}
 
-MOVING
-  j k / ↓ ↑ / C-n C-p / Enter Backspace   down / up one row (count allowed)
-  h / ←     collapse an expanded container, else go to the parent
-  l / →     expand a collapsed container, else step to the first child
-  H         go to the parent without collapsing
-  J K       next / previous sibling
-  w b       forward / back to the next change in depth
-  0 ^ $     first / last sibling
-  g G / Home End    first / last row;  Ng NG  go to row N
-  C-f C-b / PgDn PgUp   a page down / up
-  C-d C-u   half a page down / up (a count sets the distance)
-  C-e C-y   scroll one row without leaving the focus behind
-  zz zt zb  focused row to the centre / top / bottom
-  . , ;     scroll a long value right / left / to its end and back
-  < >       less / more indentation
-
-FOLDING
-  Space     toggle the focused container
-  c C       collapse the focused node and its siblings (C: deeply)
-  e E       expand the focused node and its siblings (E: deeply)
-  m         switch between data mode and line mode
-  %         in line mode, jump between a container's brackets
-
-SEARCH  (regular expressions; smart case; add /s to force case; [ ] { } are literal)
-  /pat ?pat   search forward / backward       n N   next / previous match
-  * #         search for the focused key forward / backward
-
-COPY AND PRINT  (y copies, p prints to the screen)
-  yy pp   pretty-printed value     yv pv   one-line value    ys ps   string contents
-  yk pk   key                      yp pP   path .a[0].b      yb pb   ["a"][0]["b"]
-  yq pq   jq path
-
-EXPLORER  (aless DIR, or aless alone for the current directory)
-  the directory tree uses the same keys: l / Space expand a directory (its
-  contents are listed as you go), h collapses, / searches the listed names
-  Enter     open the file under the cursor in a new tab (toggle a directory)
-  -         go up: the parent directory becomes the root
-  :cd DIR   change the root     :explore [DIR]   open another directory tab
-  :set hidden | nohidden | hidden!   show dot-files (also --hidden)
-  yp        copy the entry's filesystem path
-
-ERRORS
-  A file that does not parse shows the parser's report: the message, the
-  source lines around the error with a caret under it, and the grammar's
-  hint. While a watched file is broken its last good document stays on
-  screen with the report docked below it, until the file parses again.
-  ! / :error   the active tab's report, full size (after a failed
-               :format, that attempt's report); h/l pan a long line
-
-TABS, FILES AND WATCHING
-  Tab / Shift-Tab   next / previous tab      :tab N   go to tab N
-  :open PATH [FORMAT]   open a file (or a directory) in a new tab (:e is an alias)
-  q / :q    close the tab (the last one closed quits)   :qa / :quit   quit
-  W / :watch on|off   toggle reloading the tab when its file changes
-  r / :reload         reload now
-  s / :source         show the raw source (the focused node's line centred);
-                      : and r work there, and any other key but the
-                      scrolling ones shows the tree again
-  :format FORMAT      parse the tab's text as another format
-  :depth N            fold everything below depth N
-  :w[!] FILE          write the document as JSON
-  :set number | nonumber | relativenumber | norelativenumber | so=N | indent=N
-  :N or :line N       go to row N
-  F1 / :help          this help
-
-  A watched tab reloads when its file changes and keeps your place: the
-  focused node is found again by path, or by its nearest surviving
-  ancestor and then the node closest to its old source line; folds that
-  still exist are kept, and the focus stays on the same screen row.
-  Formats: json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon
-  markdown feed css proto pgn c abnf ebnf gbnf expr semver text, and the
-  NAME of any --grammar (by extension or whole file name; --kind or :open
-  ... FORMAT to force; expr and semver have no extension of their own).
-"#;
-    HELP.lines().map(str::to_string).collect()
+/// `text` in lines of at most `width` characters, broken at spaces.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 #[cfg(test)]

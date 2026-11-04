@@ -1,8 +1,8 @@
 ---
 title: Choose the format aless reads
-description: Open a file whose name does not tell its format, or standard input, as the format you name.
-group: In the viewer
-order: 6
+description: Open a file whose name does not tell its format, or standard input, as the format you name, and read a tab again as another format.
+group: Files and formats
+order: 11
 ---
 aless takes a file's format from its extension, and reads a file whose extension no format claims as plain text, an array of its lines. When the name is wrong or missing, you name the format.
 
@@ -15,14 +15,22 @@ aless -k yaml deployment.conf
 aless -k jsonl events.log
 ```
 
-`-k` applies to every file on the command line. Inside aless, `:format yaml` reads the focused tab again as YAML, and `:open PATH FORMAT` opens a file as the format you name.
+`-k` applies to every file on the command line. A format's extension works as its name, so `-k yml` reads YAML too. [Formats](/reference/formats.html) lists every format and its extensions.
 
-Two formats have no extension of their own, so `-k` is the only way to read them: a semantic version, read without the line break its file ends with, and an arithmetic expression, each operation an array of its operator and its terms. Piped in, a version opens as its parts:
+## Read a tab again as another format
+
+Inside aless, `:format FORMAT` parses the focused tab's text again as FORMAT, for a file whose extension misled aless: `:format yaml` on a `.conf` file that holds YAML. `:open PATH FORMAT` opens a file as the format you name. A `:format` that fails leaves the document as it was, and `!` shows that attempt's report until the next reload or `:format`.
+
+## Read a format with no extension
+
+Two formats have no extension of their own, so a name is the only way to read them: a semantic version, and an arithmetic expression. Piped in, a version opens as its parts:
 
 ```sh
 printf '1.4.0-rc.1\n' | aless -k semver
 ```
 
+<!-- screen: printf '1.4.0-rc.1\n' | aless -k semver
+size: 80x10 -->
 ```screen
 ▼ {
     major: 1
@@ -31,8 +39,31 @@ printf '1.4.0-rc.1\n' | aless -k semver
   ▽ prerelease: [
       "rc"
       1
+    build: []
  (stdin) .                                                         semver · 1:1
 ```
+
+## Read standard input
+
+aless reads standard input when it is not a terminal, as JSON unless `-k` says otherwise, and takes its keys from the terminal:
+
+```sh
+printf 'name: aless\ntags: [viewer, terminal]\n' | aless -k yaml
+```
+
+<!-- screen: printf 'name: aless\ntags: [viewer, terminal]\n' | aless -k yaml
+size: 80x8 -->
+```screen
+▼ {
+    name: "aless"
+  ▽ tags: [
+      "viewer"
+      "terminal"
+
+ (stdin) .                                                           yaml · 1:1
+```
+
+A `-` among the files stands for standard input, so `aless notes.json -` opens both. A response piped in, as in `curl -s https://api.example/items | aless`, opens in a tab of its own, named `(stdin)`.
 
 ## Open a grammar as a document
 
@@ -42,6 +73,8 @@ A grammar in ABNF, EBNF or GBNF (`.abnf`, `.ebnf`, `.gbnf`) opens as the grammar
 aless hosts.abnf
 ```
 
+<!-- screen: aless hosts.abnf
+size: 80x14 -->
 ```screen
 ▼ {
   ▽ options: {
@@ -60,34 +93,16 @@ aless hosts.abnf
 
 To read a file with the grammar rather than read the grammar, name it with `--grammar` ([Read a format aless does not know](/how-to/grammar.html)).
 
-## Read standard input
-
-aless reads standard input when it is not a terminal, as JSON unless `-k` says otherwise, and takes its keys from the terminal:
-
-```sh
-printf 'name: aless\ntags: [viewer, cli]\n' | aless -k yaml
-```
-
-```screen
-▼ {
-    name: "aless"
-  ▽ tags: [
-      "viewer"
-      "cli"
-
- (stdin) .                                                           yaml · 1:1
-```
-
-`-` stands for standard input where a command takes files. Piped into the viewer, as in `curl -s https://api.example/items | aless`, the response opens in a tab of its own. On Windows the viewer needs a console to read keys from, so give it a file there rather than a pipe.
-
 ## When the format is wrong
 
-A file read as the wrong format opens as the parser's report, with the line and column where the parse stopped; `!` shows the whole report, and `:format yaml` reads the tab again as the right format:
+A file read as the wrong format opens as the parser's report, with the line and column where the parse stopped:
 
 ```sh
 aless --kind json bookshelf-openapi.yaml
 ```
 
+<!-- screen: aless --kind json bookshelf-openapi.yaml
+size: 80x16 -->
 ```screen
 [tabnas/unexpected]: unexpected character(s): o
   --> bookshelf-openapi.yaml:1:1
@@ -101,7 +116,10 @@ aless --kind json bookshelf-openapi.yaml
 
   --internal: tag=-; rule=val~o; token=#BD~unexpected; plugins=--
 
+
+
  bookshelf-openapi.yaml .     !1:1: unexpected character(s): o  json · watching
+bookshelf-openapi.yaml: 1:1: unexpected character(s): o
 ```
 
-The [format list](/reference/command-line.html#input-and-formats) gives every format aless reads, with the extensions that imply each one. A format it has no parser for can still be read with a grammar of your own: [Read a format aless does not know](/how-to/grammar.html).
+`:format yaml` reads the tab again as the right format. [Find out why a file does not parse](/how-to/errors.html) says how to read the report.

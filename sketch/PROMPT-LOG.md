@@ -91,3 +91,19 @@ agent-info, which now calls itself a template.
 ```
 bring up to date
 ```
+
+## 2026-11-04 11:08 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+merge; then completely review and rewrite the documentation and website
+```
+
+## 2026-11-04 11:47 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+pr, merge, deploy site when green
+```

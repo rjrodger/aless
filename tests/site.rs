@@ -48,14 +48,19 @@ const SECTIONS: [Section; 4] = [
         groups: &[
             Group {
                 name: "Setting up",
-                blurb: "aless on your machine, with its completions and its manual page, on \
-                        Linux, macOS or Windows.",
+                blurb: "aless on your machine, with its completions and its manual page, and \
+                        what each platform needs of a terminal.",
             },
             Group {
-                name: "In the viewer",
-                blurb: "A file open in a terminal: searching it, following it as it changes, \
-                        copying from it, several files at once, a directory, the format you \
-                        name, and a grammar of your own.",
+                name: "Reading a document",
+                blurb: "A document open in the viewer: finding things in it, copying from it, \
+                        how it is drawn, and writing it out as JSON.",
+            },
+            Group {
+                name: "Files and formats",
+                blurb: "What is open, and how it is read: a file that changes, several files, \
+                        a directory, the format aless reads, a file that does not parse, and \
+                        a format of your own.",
             },
         ],
     },
@@ -78,14 +83,13 @@ const SECTIONS: [Section; 4] = [
 const FIXTURES: &[&str] = &[
     "tests/fixtures/grammars/hosts.abnf",
     "tests/fixtures/grammars/hosts",
-    "tests/fixtures/records.json",
 ];
 
 const REFERENCE: usize = 2;
 
 /// A page of the site.
 struct Page {
-    /// Where it is published: `how-to/extract.html`.
+    /// Where it is published: `how-to/search.html`.
     path: String,
     title: String,
     /// One sentence: the page's meta description, and its line in lists.
@@ -156,7 +160,7 @@ fn build() -> Site {
     list_sections(&mut pages);
     for page in &mut pages {
         let (body, headings) = anchor_headings(&page.body);
-        page.body = body;
+        page.body = wrap_tables(&body);
         page.headings = headings;
     }
     let layout = read(&sources().join("layout.html"));
@@ -181,19 +185,22 @@ fn build() -> Site {
         let bytes = std::fs::read(sources().join(name)).unwrap();
         files.insert(name.to_string(), bytes);
     }
-    // The logo's dark twin: an SVG shown through <img> follows the system's
-    // colour scheme, not the header's toggle, so the dark theme is given the
-    // same drawing with its wordmark rule made unconditional.
+    // The logo for each theme, the stylesheet showing one: an SVG shown
+    // through <img> may follow the system's colour scheme rather than the
+    // header's toggle, so neither leaves its wordmark to a media query.
+    // logo.svg keeps the query, for a page that shows it on its own.
     let logo = read(&sources().join("logo.svg"));
-    let dark = logo.replace(
-        "@media (prefers-color-scheme: dark) { #aless-wordmark { fill: #f1e8cd } }",
-        "#aless-wordmark { fill: #f1e8cd }",
-    );
-    assert_ne!(
-        dark, logo,
+    let rule = "@media (prefers-color-scheme: dark) { #aless-wordmark { fill: #f1e8cd } }";
+    assert!(
+        logo.contains(rule),
         "docs/logo.svg lacks the wordmark's dark rule the build rewrites"
     );
-    files.insert("logo-dark.svg".into(), dark.into_bytes());
+    files.insert("logo-light.svg".into(), logo.replace(rule, "").into_bytes());
+    files.insert(
+        "logo-dark.svg".into(),
+        logo.replace(rule, "#aless-wordmark { fill: #f1e8cd }")
+            .into_bytes(),
+    );
     // The faces, served from the site itself: a page requests nothing
     // anywhere else.
     for entry in std::fs::read_dir(sources().join("fonts")).unwrap() {
@@ -350,20 +357,50 @@ fn front_matter(text: &str, origin: &str) -> (BTreeMap<String, String>, String) 
     (meta, body.trim_start().to_string())
 }
 
-/// Markdown as HTML, after the values a page may name are filled in.
+/// Markdown as HTML, after the values a page may name are filled in and
+/// the capture comments are taken out.
 fn markdown_html(markdown: &str) -> String {
-    let markdown = fill(markdown);
+    let markdown = strip_captures(&fill(markdown));
     screens(&tabnas_markdown::to_html(
         &markdown,
         &tabnas_markdown::DEFAULT_OPTIONS,
     ))
 }
 
+/// Some Markdown without the `<!-- screen: ... -->` comment before each
+/// `screen` block, which names the capture the block is drawn from for
+/// `the_screens_are_what_aless_draws`, and is no part of the page.
+fn strip_captures(markdown: &str) -> String {
+    let comment = Regex::new(r"(?ms)^<!-- screen:.*?-->\n").unwrap();
+    comment.replace_all(markdown, "").into_owned()
+}
+
+/// A line of Markdown as HTML, without the paragraph around it.
+fn inline_html(markdown: &str) -> String {
+    let html = tabnas_markdown::to_html(markdown, &tabnas_markdown::DEFAULT_OPTIONS);
+    let html = html.trim();
+    html.strip_prefix("<p>")
+        .and_then(|h| h.strip_suffix("</p>"))
+        .unwrap_or(html)
+        .to_string()
+}
+
+/// Each table in a box of its own that scrolls sideways when the table is
+/// wider than the page, so that the table itself stays a table.
+fn wrap_tables(html: &str) -> String {
+    let table = Regex::new(r"(?s)<table[ >].*?</table>").unwrap();
+    table
+        .replace_all(html, |c: &regex::Captures| {
+            format!("<div class=\"table-wrap\">{}</div>", &c[0])
+        })
+        .into_owned()
+}
+
 /// Each `screen` block, a capture of the viewer, marked for the
-/// stylesheet, with its status bar marked within it: the row that ends in
-/// ` · LINE:COL`, or in ` · watching` where the focused node has no
-/// position (a directory, a file that does not parse), which the viewer
-/// draws in reverse video.
+/// stylesheet, with its status bar marked: the row that ends in its line
+/// and column, or in ` · watching` where the focused node has none. The
+/// stylesheet sizes the type to the box around it, and a block too wide
+/// to fit scrolls, and takes the focus so a keyboard can scroll it.
 fn screens(html: &str) -> String {
     let block = Regex::new(r#"(?s)<pre><code class="language-screen">(.*?)</code></pre>"#).unwrap();
     let status = Regex::new(r"^(?: \S|…).* · (?:\d+:\d+|watching)$").unwrap();
@@ -377,7 +414,8 @@ fn screens(html: &str) -> String {
                 })
                 .collect();
             format!(
-                "<pre class=\"screen\"><code class=\"language-screen\">{}</code></pre>",
+                "<div class=\"screen-box\"><pre class=\"screen\" tabindex=\"0\">\
+                 <code class=\"language-screen\">{}</code></pre></div>",
                 rows.join("\n")
             )
         })
@@ -398,7 +436,7 @@ fn reference_pages() -> Vec<Page> {
          <code>man aless</code> this reference as a manual page. The same text is \
          <a href=\"/reference/command-line.txt\">plain text</a> here, as the \
          terminal shows it.</p>\n{}",
-        aless::cli::reference_html()
+        command_line_html(&aless::cli::reference_html())
     );
     vec![
         Page {
@@ -419,16 +457,16 @@ fn reference_pages() -> Vec<Page> {
         Page {
             path: "reference/keys.html".into(),
             title: "Keys".into(),
-            description: "Every key and command of the viewer, as F1 lists them inside \
-                aless."
+            description: "Every key, command and setting of the viewer, as F1 lists them \
+                inside aless."
                 .into(),
             order: 2,
             section: Some(REFERENCE),
             group: None,
-            markdown: None,
+            body: keys_html(),
+            markdown: Some(keys_markdown()),
             text: Some(aless::app::help_lines().join("\n") + "\n"),
             origin: "src/app.rs".into(),
-            body: keys_html(),
             headings: Vec::new(),
         },
     ]
@@ -437,28 +475,58 @@ fn reference_pages() -> Vec<Page> {
 /// The releases, written from `CHANGELOG.md`: every release and what
 /// changed in it, from the first release heading on. The file's own
 /// introduction, which describes the repository, stays in the repository.
+/// A release's heading is its version, linked to its release, and its
+/// date, and its `id` is the version after a `v`.
 fn releases_page() -> Page {
     let changelog = read(&root().join("CHANGELOG.md")).replace("\r\n", "\n");
     let start = changelog
         .find("\n## ")
         .expect("CHANGELOG.md has no release heading");
+    // The changelog's own links for its versions, where it gives one; a
+    // release's tag on GitHub where it does not.
+    let definition = Regex::new(r"(?m)^\[(\d+\.\d+\.\d+)\]: (\S+)$").unwrap();
+    let links: BTreeMap<String, String> = definition
+        .captures_iter(&changelog)
+        .map(|c| (c[1].to_string(), c[2].to_string()))
+        .collect();
+    let release = Regex::new(r"(?m)^## \[(\d+\.\d+\.\d+)\] - (\S+)$").unwrap();
+    let body = release.replace_all(&changelog[start + 1..], |c: &regex::Captures| {
+        let link = links
+            .get(&c[1])
+            .cloned()
+            .unwrap_or_else(|| format!("{REPOSITORY}/releases/tag/v{}", &c[1]));
+        format!("## [{}]({link}), {}", &c[1], &c[2])
+    });
+    let body = body.replace("\n## [Unreleased]\n", "\n## Unreleased, on main\n");
+    let body = match body.strip_prefix("## [Unreleased]\n") {
+        Some(rest) => format!("## Unreleased, on main\n{rest}"),
+        None => body,
+    };
     let markdown = format!(
         "The releases of aless, newest first, each with what it added, changed and \
          fixed. Every release is on [GitHub](https://github.com/rjrodger/aless/releases), \
          with its archives and installers; [Install aless](/how-to/install.html) says how \
-         to get the newest.\n\n{}",
-        &changelog[start + 1..]
+         to get the newest.\n\n{body}"
     );
+    let heading = Regex::new(r#"<h2><a href="[^"]*">(\d+\.\d+\.\d+)</a>"#).unwrap();
+    let html = heading
+        .replace_all(&markdown_html(&markdown), |c: &regex::Captures| {
+            c[0].replacen("<h2>", &format!("<h2 id=\"v{}\">", &c[1]), 1)
+        })
+        .replace(
+            "<h2>Unreleased, on main</h2>",
+            "<h2 id=\"unreleased\">Unreleased, on main</h2>",
+        );
     Page {
         path: "reference/releases.html".into(),
         title: "Releases".into(),
         description: "Every release of aless and what changed in it, newest first, from \
             the repository's changelog."
             .into(),
-        order: 3,
+        order: 4,
         section: Some(REFERENCE),
         group: None,
-        body: markdown_html(&markdown),
+        body: html,
         markdown: Some(markdown),
         text: None,
         origin: "CHANGELOG.md".into(),
@@ -466,69 +534,210 @@ fn releases_page() -> Page {
     }
 }
 
-/// The help F1 shows, a section for each of its headings.
+/// The command line's reference as `aless::cli::reference_html` writes
+/// it, made to read as a page: the examples as a table of commands and
+/// what each does, a see-also entry that is a phrase rather than a name in
+/// plain text, and each option a link to itself.
+fn command_line_html(html: &str) -> String {
+    // The examples are a command and what it does, a run of spaces apart;
+    // a command too long for its column has what it does on the next line.
+    let examples =
+        Regex::new(r#"(?s)(<h2 id="examples">.*?</h2>\n)<pre><code>(.*?)</code></pre>"#).unwrap();
+    let html = examples.replace(html, |c: &regex::Captures| {
+        let mut rows: Vec<(String, String)> = Vec::new();
+        for line in c[2].lines() {
+            match (line.starts_with(' '), rows.last_mut()) {
+                (true, Some((_, does))) => {
+                    if !does.is_empty() {
+                        does.push(' ');
+                    }
+                    does.push_str(line.trim());
+                }
+                _ => {
+                    let (command, does) = line.split_once("  ").unwrap_or((line, ""));
+                    rows.push((command.trim().to_string(), does.trim().to_string()));
+                }
+            }
+        }
+        let rows: String = rows
+            .iter()
+            .map(|(command, does)| {
+                format!("<tr><td><code>{command}</code></td><td>{does}</td></tr>\n")
+            })
+            .collect();
+        format!(
+            "{}<table class=\"examples\">\n<thead><tr><th>Command</th><th>Does</th></tr></thead>\n\
+             <tbody>\n{rows}</tbody>\n</table>",
+            &c[1]
+        )
+    });
+    // A see-also entry named in words, "the documentation", is not code.
+    let html = match html.split_once("<h2 id=\"see-also\">") {
+        Some((head, tail)) => {
+            let phrase = Regex::new(r"<dt><code>([a-z]+(?: [a-z]+)+)</code></dt>").unwrap();
+            format!(
+                "{head}<h2 id=\"see-also\">{}",
+                phrase.replace_all(tail, "<dt>$1</dt>")
+            )
+        }
+        None => html.into_owned(),
+    };
+    // Every option's term links to itself, as a heading does.
+    let term = Regex::new(r#"<dt id="(opt-[^"]+)">(.*?)</dt>"#).unwrap();
+    let tags = Regex::new(r"<[^>]*>").unwrap();
+    term.replace_all(&html, |c: &regex::Captures| {
+        format!(
+            "<dt id=\"{id}\">{term} <a class=\"heading-anchor\" href=\"#{id}\" \
+             aria-label=\"Link to {label}\">#</a></dt>",
+            id = &c[1],
+            term = &c[2],
+            label = tags.replace_all(&c[2], "").replace('"', "&quot;")
+        )
+    })
+    .into_owned()
+}
+
+/// The keys page: [`aless::app::KEY_MAP`], a section a group, its
+/// bindings in a table with a row a binding, each row's `id` named for its
+/// first key (`key-j`, `key-slash`), command (`cmd-open`) or setting
+/// (`set-number`). A key is drawn as a key, and a command or a setting,
+/// which is typed, as code.
 fn keys_html() -> String {
     let mut out = String::from(
-        "<p>The keys are jless's where jless has the key, and a count before a key \
-         repeats it (<code>3j</code>). Press <kbd>F1</kbd> or type <code>:help</code> \
-         inside aless for this list; the same text is \
-         <a href=\"/reference/keys.txt\">plain text</a> here.</p>\n",
+        "<p>Press <kbd>F1</kbd> or type <code>:help</code> inside aless for this list. The \
+         keys are jless's wherever jless has the key, and the same list is \
+         <a href=\"/reference/keys.txt\">plain text</a> here, as the terminal shows it.</p>\n",
     );
-    let mut heading: Option<(String, String)> = None;
-    let mut lines: Vec<String> = Vec::new();
-    let flush = |out: &mut String, heading: &Option<(String, String)>, lines: &mut Vec<String>| {
-        if let Some((title, note)) = heading {
-            out.push_str(&format!(
-                "<h2 id=\"{}\">{}</h2>\n",
-                slug(title),
-                escape(title)
-            ));
-            if !note.is_empty() {
-                out.push_str(&format!("<p class=\"note\">{}</p>\n", escape(note)));
-            }
-            while lines.last().is_some_and(|l| l.trim().is_empty()) {
-                lines.pop();
-            }
-            let text: Vec<&str> = lines
-                .iter()
-                .map(|l| l.strip_prefix("  ").unwrap_or(l.as_str()))
+    let mut ids = BTreeSet::new();
+    for group in aless::app::KEY_MAP {
+        out.push_str(&format!("<h2>{}</h2>\n", escape(group.title)));
+        if !group.note.is_empty() {
+            out.push_str(&format!("<p>{}</p>\n", inline_html(group.note)));
+        }
+        out.push_str(
+            "<table class=\"keys\">\n<thead><tr><th>Keys</th><th>Does</th></tr></thead>\n<tbody>\n",
+        );
+        for (keys, does) in group.keys {
+            let shown: Vec<String> = keys
+                .split("  ")
+                .map(|alt| match group.typed {
+                    true => format!("<code>{}</code>", escape(alt)),
+                    false => alt
+                        .split(' ')
+                        .map(|k| format!("<kbd>{}</kbd>", escape(k)))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                })
                 .collect();
+            let base = binding_id(keys, group.typed);
+            let (mut id, mut n) = (base.clone(), 2);
+            while !ids.insert(id.clone()) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
             out.push_str(&format!(
-                "<pre><code>{}</code></pre>\n",
-                escape(&text.join("\n"))
+                "<tr id=\"{id}\"><td>{}</td><td>{}</td></tr>\n",
+                shown.join(", "),
+                inline_html(does)
             ));
         }
-        lines.clear();
-    };
-    // The first line is the help's title; a line at the margin in capitals
-    // heads a section, with a note in parentheses after it.
-    for line in aless::app::help_lines().into_iter().skip(1) {
-        let first = line.split_whitespace().next().unwrap_or("");
-        let is_heading =
-            !line.starts_with(' ') && !first.is_empty() && first.chars().all(|c| !c.is_lowercase());
-        if is_heading {
-            flush(&mut out, &heading, &mut lines);
-            let (title, note) = match line.split_once("  (") {
-                Some((title, note)) => (title.trim(), note.trim_end_matches(')')),
-                None => (line.trim(), ""),
-            };
-            heading = Some((sentence_case(title), note.to_string()));
-        } else if heading.is_some() && !(lines.is_empty() && line.trim().is_empty()) {
-            lines.push(line);
-        }
+        out.push_str("</tbody>\n</table>\n");
     }
-    flush(&mut out, &heading, &mut lines);
     out
 }
 
-/// `TABS, FILES AND WATCHING` as a heading is written.
-fn sentence_case(text: &str) -> String {
-    let lower = text.to_lowercase();
-    let mut chars = lower.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
+/// A binding's `id` on the keys page, from its first key or word, a symbol
+/// spelled out: `key-j`, `key-C-d`, `key-slash`, `cmd-open`, `cmd-w-bang`,
+/// `set-so`.
+fn binding_id(keys: &str, typed: bool) -> String {
+    let first = keys.split_whitespace().next().unwrap_or("");
+    let prefix = match (typed, first.starts_with(':')) {
+        (false, _) => "key",
+        (true, true) => "cmd",
+        (true, false) => "set",
+    };
+    let first = match typed {
+        true => first
+            .trim_start_matches(':')
+            .split('=')
+            .next()
+            .unwrap_or(""),
+        false => first,
+    };
+    let mut name = String::new();
+    for c in first.chars() {
+        let word = match c {
+            c if c.is_ascii_alphanumeric() => {
+                name.push(c);
+                continue;
+            }
+            '-' if !name.is_empty() => {
+                name.push('-');
+                continue;
+            }
+            '/' => "slash",
+            '?' => "question",
+            '*' => "star",
+            '#' => "hash",
+            '.' => "dot",
+            ',' => "comma",
+            ';' => "semicolon",
+            ':' => "colon",
+            '<' => "lt",
+            '>' => "gt",
+            '%' => "percent",
+            '!' => "bang",
+            '$' => "dollar",
+            '^' => "caret",
+            '-' => "minus",
+            '↓' => "down",
+            '↑' => "up",
+            '←' => "left",
+            '→' => "right",
+            _ => continue,
+        };
+        if !name.is_empty() && !name.ends_with('-') {
+            name.push('-');
+        }
+        name.push_str(word);
     }
+    format!("{prefix}-{name}")
+}
+
+/// The keys page, as Markdown: [`aless::app::KEY_MAP`], a section a
+/// group, its bindings in a table.
+fn keys_markdown() -> String {
+    let mut out = String::from(
+        "Press `F1` or type `:help` inside aless for this list. The keys are jless's \
+         wherever jless has the key, and the same list is \
+         [plain text](/reference/keys.txt) here, as the terminal shows it.\n",
+    );
+    for group in aless::app::KEY_MAP {
+        out.push_str(&format!("\n## {}\n\n", group.title));
+        if !group.note.is_empty() {
+            out.push_str(&format!("{}\n\n", group.note));
+        }
+        out.push_str("| Keys | Does |\n|---|---|\n");
+        for (keys, does) in group.keys {
+            let shown: Vec<String> = keys
+                .split("  ")
+                .map(|alt| match group.typed {
+                    true => format!("`{alt}`"),
+                    false => alt
+                        .split(' ')
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                })
+                .collect();
+            out.push_str(&format!(
+                "| {} | {} |\n",
+                shown.join(", ").replace('|', "\\|"),
+                does.replace('|', "\\|")
+            ));
+        }
+    }
+    out
 }
 
 /// Each section's index page, with the list of its pages appended: one
@@ -602,7 +811,14 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         "../".repeat(depth)
     };
     let home = page.path == "index.html";
+    // A section's index is named for its kind already: "How-to guides"
+    // needs no "How-to guide" above it.
     let head = match page.section {
+        Some(_) if page.is_index() => format!(
+            "<h1>{}</h1>\n<p class=\"lede\">{}</p>\n",
+            escape(&page.title),
+            escape(&page.description)
+        ),
         Some(s) => format!(
             "<p class=\"kind\">{}</p>\n<h1>{}</h1>\n<p class=\"lede\">{}</p>\n",
             SECTIONS[s].kind,
@@ -612,18 +828,55 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         None if home => String::new(),
         None => format!("<h1>{}</h1>\n", escape(&page.title)),
     };
-    let (nav, toc, pager, describes) = match page.section {
-        Some(_) => (
-            nav(page, pages),
-            toc(page),
-            pager(page, pages),
-            format!(
-                "<p class=\"describes\">Describes aless {VERSION}. \
-                 <a href=\"/{}\">This page as Markdown</a>.</p>\n",
-                twin_path(page)
-            ),
-        ),
-        None => (String::new(), String::new(), String::new(), String::new()),
+    let source = format!("{REPOSITORY}/blob/main/{}", page.origin);
+    let (nav, toc, toc_inline, pager, describes) = match page.section {
+        Some(_) => {
+            let items = toc_items(page);
+            // A page written in Markdown here can be edited; one written
+            // from the binary or the changelog names what it comes from.
+            let edit = match page.origin.starts_with("docs/") {
+                true => format!("<a href=\"{source}\">Edit this page</a>"),
+                false => format!("Written from <a href=\"{source}\">{}</a>", page.origin),
+            };
+            (
+                nav(page, pages),
+                items
+                    .as_ref()
+                    .map(|items| {
+                        format!(
+                            "<nav class=\"toc\" aria-label=\"On this page\">\n\
+                             <p class=\"toc-head\">On this page</p>\n{items}</nav>\n"
+                        )
+                    })
+                    .unwrap_or_default(),
+                items
+                    .map(|items| {
+                        format!(
+                            "<nav class=\"toc-inline\" aria-label=\"On this page\">\n<details>\n\
+                             <summary>On this page</summary>\n{items}</details>\n</nav>\n"
+                        )
+                    })
+                    .unwrap_or_default(),
+                pager(page, pages),
+                format!(
+                    "<p class=\"describes\">Describes aless {VERSION}. {edit} · \
+                     <a href=\"/{}\">This page as Markdown</a></p>\n",
+                    twin_path(page)
+                ),
+            )
+        }
+        None => Default::default(),
+    };
+    // On the home page, the capture after the introduction stands beside
+    // it where the screen is wide enough.
+    let body = match home {
+        true => Regex::new(
+            r#"(?s)<section class="intro">.*?</section>\s*<div class="screen-box">.*?</div>"#,
+        )
+        .unwrap()
+        .replacen(&page.body, 1, "<div class=\"hero\">\n$0\n</div>")
+        .into_owned(),
+        false => page.body.clone(),
     };
     let head_title = if home {
         format!("aless: {}", page.title)
@@ -641,24 +894,61 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         .replace("{{canonical}}", &url(&page.path))
         .replace("{{twin}}", &format!("/{}", twin_path(page)))
         .replace("{{body_class}}", &body_class)
+        .replace("{{sections}}", &sections(page, pages))
         .replace("{{page_head}}", &head)
+        .replace("{{toc_inline}}", &toc_inline)
         .replace("{{nav}}", &nav)
         .replace("{{toc}}", &toc)
         .replace("{{pager}}", &pager)
         .replace("{{describes}}", &describes)
         .replace("{{version}}", VERSION)
         .replace("{{tagline}}", &escape(aless::cli::TAGLINE))
-        .replace(
-            "{{source}}",
-            &format!("{REPOSITORY}/blob/main/{}", page.origin),
-        )
+        .replace("{{source}}", &source)
         .replace("{{root}}", "/");
     assert!(
         !html.replace("{{content}}", "").contains("{{"),
         "layout.html names a value the build does not fill"
     );
-    html = html.replace("{{content}}", &page.body);
+    html = html.replace("{{content}}", &body);
     relative(&html, &root)
+}
+
+/// The header's sections, the page's own marked; under it, on a narrow
+/// screen where the menu holds them, the section's pages.
+fn sections(page: &Page, pages: &[Page]) -> String {
+    let mut out = String::new();
+    for (i, section) in SECTIONS.iter().enumerate() {
+        let index = format!("{}/index.html", section.dir);
+        let current = match (page.section == Some(i), page.path == index) {
+            (true, true) => " aria-current=\"page\"",
+            (true, false) => " aria-current=\"true\"",
+            (false, _) => "",
+        };
+        out.push_str(&format!(
+            "<a class=\"nav-link\" href=\"/{index}\"{current}>{}</a>\n",
+            section.label
+        ));
+        if page.section != Some(i) {
+            continue;
+        }
+        out.push_str(&format!(
+            "<ul class=\"menu-pages\" aria-label=\"{}\">\n",
+            section.label
+        ));
+        for member in members(pages, i) {
+            out.push_str(&format!(
+                "<li><a href=\"/{}\"{}>{}</a></li>\n",
+                member.path,
+                match member.path == page.path {
+                    true => " aria-current=\"page\"",
+                    false => "",
+                },
+                escape(&member.title)
+            ));
+        }
+        out.push_str("<li class=\"menu-all\"><a href=\"#site-pages\">Every page</a></li>\n</ul>\n");
+    }
+    out
 }
 
 /// The sidebar: every section and its pages, grouped as the section is,
@@ -679,7 +969,8 @@ fn nav(page: &Page, pages: &[Page]) -> String {
             escape(&member.title)
         )
     };
-    let mut out = String::from("<nav class=\"sidebar\" aria-label=\"Documentation\">\n");
+    let mut out =
+        String::from("<nav class=\"sidebar\" id=\"site-pages\" aria-label=\"Documentation\">\n");
     for (i, section) in SECTIONS.iter().enumerate() {
         let index = format!("{}/index.html", section.dir);
         out.push_str(&format!(
@@ -711,17 +1002,16 @@ fn nav(page: &Page, pages: &[Page]) -> String {
     out
 }
 
-/// The page's own contents: its h2 and h3 headings, when it has two or
-/// more.
-fn toc(page: &Page) -> String {
+/// The page's own contents, when it has more than one heading: its h2 and
+/// h3 headings as a list of links, or its h2 headings alone where both
+/// would make a list longer than a screen.
+fn toc_items(page: &Page) -> Option<String> {
     if page.headings.len() < 2 {
-        return String::new();
+        return None;
     }
-    let mut out = String::from(
-        "<nav class=\"toc\" aria-label=\"On this page\">\n<p class=\"toc-head\">On this \
-         page</p>\n<ul>\n",
-    );
-    for heading in &page.headings {
+    let deep = page.headings.len() <= 24;
+    let mut out = String::from("<ul>\n");
+    for heading in page.headings.iter().filter(|h| deep || h.level == 2) {
         out.push_str(&format!(
             "<li{}><a href=\"#{}\">{}</a></li>\n",
             if heading.level == 3 {
@@ -733,8 +1023,8 @@ fn toc(page: &Page) -> String {
             heading.text
         ));
     }
-    out.push_str("</ul>\n</nav>\n");
-    out
+    out.push_str("</ul>\n");
+    Some(out)
 }
 
 /// The previous and the next page of the section: its index first, then
@@ -768,8 +1058,8 @@ fn pager(page: &Page, pages: &[Page]) -> String {
     format!("<nav class=\"pager\" aria-label=\"Previous and next\">\n{prev}\n{next}\n</nav>\n")
 }
 
-/// Links from the site's root (`/how-to/extract.html`) made relative to a
-/// page `root` above it (`../how-to/extract.html`), so that the site reads
+/// Links from the site's root (`/how-to/search.html`) made relative to a
+/// page `root` above it (`../how-to/search.html`), so that the site reads
 /// the same from a directory on disk as from its domain.
 fn relative(html: &str, root: &str) -> String {
     let link = Regex::new(r#"(href|src)="/([^"/][^"]*)?""#).unwrap();
@@ -790,14 +1080,26 @@ fn relative(html: &str, root: &str) -> String {
 }
 
 /// Every `<h2>` to `<h4>` given an `id` and a link to itself, and the
-/// h2 and h3 headings listed, for the page's contents.
+/// h2 and h3 headings listed, for the page's contents. The heading is
+/// named by its own text, not the link's, and a heading inside a link (a
+/// card on the home page) is given no link of its own, since a link holds
+/// no other.
 fn anchor_headings(html: &str) -> (String, Vec<Heading>) {
     let heading = Regex::new(r#"<h([2-4])(?: id="([^"]*)")?>(.*?)</h[2-4]>"#).unwrap();
     let tags = Regex::new(r"<[^>]*>").unwrap();
+    let links = Regex::new(r"<a[\s>]|</a>").unwrap();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut headings = Vec::new();
     let body = heading
         .replace_all(html, |c: &regex::Captures| {
+            let start = c.get(0).unwrap().start();
+            let in_link = links
+                .find_iter(&html[..start])
+                .fold(0i32, |open, m| match m.as_str() {
+                    "</a>" => open - 1,
+                    _ => open + 1,
+                })
+                > 0;
             let level: u8 = c[1].parse().unwrap();
             let text = &c[3];
             let mut id = c
@@ -810,17 +1112,23 @@ fn anchor_headings(html: &str) -> (String, Vec<Heading>) {
                 id = format!("{base}-{n}");
                 n += 1;
             }
+            let plain = tags.replace_all(text, "").into_owned();
             if level < 4 {
                 headings.push(Heading {
                     level,
                     id: id.clone(),
-                    text: tags.replace_all(text, "").into_owned(),
+                    text: plain.clone(),
                 });
             }
-            format!(
-                "<h{level} id=\"{id}\">{text} <a class=\"heading-anchor\" href=\"#{id}\" \
-                 aria-label=\"Link to this section\">#</a></h{level}>"
-            )
+            match in_link {
+                true => format!("<h{level} id=\"{id}\">{text}</h{level}>"),
+                false => format!(
+                    "<h{level} id=\"{id}\" aria-labelledby=\"{id}--text\">\
+                     <span id=\"{id}--text\">{text}</span> <a class=\"heading-anchor\" \
+                     href=\"#{id}\" aria-label=\"Link to {}\">#</a></h{level}>",
+                    plain.replace('"', "&quot;")
+                ),
+            }
         })
         .into_owned();
     (body, headings)
@@ -874,7 +1182,7 @@ fn twin_path(page: &Page) -> String {
 /// for every page.
 fn twin(page: &Page, pages: &[Page]) -> String {
     let body = match (&page.markdown, &page.text) {
-        (Some(markdown), _) => fill(markdown)
+        (Some(markdown), _) => strip_captures(&fill(markdown))
             .replace("](/", &format!("]({HOMEPAGE}/"))
             .replace("src=\"/", &format!("src=\"{HOMEPAGE}/")),
         (None, Some(text)) => {
@@ -929,8 +1237,9 @@ fn listing(pages: &[Page], section: usize, heading: &str) -> String {
 /// `llms.txt`: what the site is, and every page, for a language model.
 fn llms(pages: &[Page]) -> String {
     let mut out = format!(
-        "# aless\n\n> {}.\n\nThe documentation of aless {VERSION}, in Diátaxis's four \
-         kinds. Every page has a Markdown version at its address with .md for .html, \
+        "# aless\n\n> {}.\n\nThe documentation of aless {VERSION}, in four kinds: \
+         tutorials, how-to guides, reference and explanation. Every page has a Markdown \
+         version at its address with .md for .html, \
          and the reference is also plain text, as aless --help and F1 print it.\n",
         aless::cli::TAGLINE
     );
@@ -1028,7 +1337,9 @@ fn fences(markdown: &str) -> (Vec<Fence>, String) {
 fn the_site_builds_and_its_links_hold() {
     let site = site();
     let href = Regex::new(r#"(?:href|src)="([^"]*)""#).unwrap();
+    let pre = Regex::new(r"(?s)<pre[ >].*?</pre>").unwrap();
     let mut broken = Vec::new();
+    let mut stray = Vec::new();
     for page in &site.pages {
         let html = String::from_utf8_lossy(&site.files[&page.path]).to_string();
         assert!(
@@ -1036,6 +1347,13 @@ fn the_site_builds_and_its_links_hold() {
             "{}: a value is not filled in",
             page.path
         );
+        // Markdown the renderer left as text: a heading run into the raw
+        // HTML before it shows its `#`s.
+        for line in pre.replace_all(&html, "").lines() {
+            if line.trim_start().starts_with('#') {
+                stray.push(format!("{}: {}", page.origin, line.trim()));
+            }
+        }
         let dir = match page.path.rsplit_once('/') {
             Some((dir, _)) => format!("{dir}/"),
             None => String::new(),
@@ -1080,10 +1398,25 @@ fn the_site_builds_and_its_links_hold() {
         }
     }
     assert!(
+        stray.is_empty(),
+        "lines of Markdown left as text, outside any code block (a heading needs a \
+         blank line between it and raw HTML before it):\n{}",
+        stray.join("\n")
+    );
+    assert!(
         broken.is_empty(),
         "links that reach nothing:\n{}",
         broken.join("\n")
     );
+    // The comment a capture is drawn from is the build's, not the reader's.
+    for (path, bytes) in &site.files {
+        if path.ends_with(".html") || path.ends_with(".md") {
+            assert!(
+                !String::from_utf8_lossy(bytes).contains("<!-- screen"),
+                "{path}: a screen block's capture comment is published"
+            );
+        }
+    }
     let cname = String::from_utf8_lossy(&site.files["CNAME"])
         .trim()
         .to_string();
@@ -1135,17 +1468,21 @@ fn the_reference_is_the_binarys() {
         assert!(command_line.contains(&id), "{}", opt.long);
     }
     let keys = page("reference/keys.html");
-    for line in aless::app::help_lines().into_iter().skip(1) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let shown = escape(line);
-        let heading = sentence_case(line.split("  (").next().unwrap_or(line));
+    for group in aless::app::KEY_MAP {
         assert!(
-            keys.contains(&shown) || keys.contains(&escape(&heading)),
-            "the keys page leaves out {line:?}"
+            keys.contains(&escape(group.title)),
+            "the keys page leaves out {}",
+            group.title
         );
+        for (_, does) in group.keys {
+            let words = does
+                .split(|c: char| !c.is_alphanumeric())
+                .find(|w| w.len() > 3);
+            assert!(
+                words.is_none_or(|w| keys.contains(w)),
+                "the keys page leaves out {does:?}"
+            );
+        }
     }
     // The versions the changelog records, read from the changelog itself,
     // each on the releases page's own body: the rendered page names this
@@ -1174,6 +1511,35 @@ fn the_reference_is_the_binarys() {
         versions.contains(&VERSION),
         "CHANGELOG.md has no section for {VERSION}, this build's version"
     );
+}
+
+/// The formats page has a row for every format aless reads, naming each
+/// extension that implies it.
+#[test]
+fn the_formats_page_is_the_binarys() {
+    let page = site()
+        .pages
+        .iter()
+        .find(|p| p.path == "reference/formats.html")
+        .expect("no reference/formats.html");
+    let row = Regex::new(r"(?s)<tr>(.*?)</tr>").unwrap();
+    let rows: Vec<String> = row
+        .captures_iter(&page.body)
+        .map(|c| c[1].trim().to_string())
+        .collect();
+    for format in aless::load::Format::ALL {
+        let head = format!("<td><code>{}</code></td>", format.name());
+        let Some(row) = rows.iter().find(|r| r.starts_with(&head)) else {
+            panic!("the formats page has no row for {}", format.name());
+        };
+        for ext in format.extensions() {
+            assert!(
+                row.contains(&format!("<code>{ext}</code>")),
+                "the formats page's {} row leaves out {ext}",
+                format.name()
+            );
+        }
+    }
 }
 
 /// Every command line on the pages names options aless takes.
@@ -1306,5 +1672,362 @@ fn the_console_examples_print_what_the_pages_say() {
         "site: ran {ran} console examples, {} printed something else",
         wrong.len()
     );
+    assert!(wrong.is_empty(), "\n{}", wrong.join("\n\n"));
+}
+
+/// What a `screen` block on a page was captured from, read from the
+/// comment before it: `<!-- screen: COMMAND -->`, with `keys:`, `size:`,
+/// `rows:`, `edit:` and `cwd:` lines after the command where they apply
+/// (`docs/contributing/site.md`).
+struct Capture {
+    command: String,
+    keys: Vec<String>,
+    size: (u16, u16),
+    rows: Option<(usize, usize)>,
+    edit: Option<(String, String, String)>,
+    cwd: String,
+}
+
+fn capture_spec(comment: &str) -> Result<Capture, String> {
+    let mut lines = comment.trim().lines();
+    let command = lines.next().unwrap_or("").trim().to_string();
+    let mut spec = Capture {
+        command,
+        keys: Vec::new(),
+        size: (80, 12),
+        rows: None,
+        edit: None,
+        cwd: ".".into(),
+    };
+    for line in lines {
+        let (field, value) = line
+            .split_once(':')
+            .map(|(f, v)| (f.trim(), v.trim()))
+            .ok_or_else(|| format!("not a field: {line:?}"))?;
+        match field {
+            "keys" => spec.keys = value.split_whitespace().map(str::to_string).collect(),
+            "size" => {
+                let (w, h) = value.split_once('x').ok_or("size is COLSxROWS")?;
+                spec.size = (
+                    w.parse().map_err(|_| "size is COLSxROWS")?,
+                    h.parse().map_err(|_| "size is COLSxROWS")?,
+                );
+            }
+            "rows" => {
+                let (a, b) = value.split_once('-').unwrap_or((value, value));
+                let a: usize = a.trim().parse().map_err(|_| "rows is N or N-M")?;
+                let b: usize = b.trim().parse().map_err(|_| "rows is N or N-M")?;
+                spec.rows = Some((a, b));
+            }
+            "edit" => {
+                let (file, change) = value.split_once(": ").ok_or("edit is FILE: OLD => NEW")?;
+                let (old, new) = change
+                    .split_once(" => ")
+                    .ok_or("edit is FILE: OLD => NEW")?;
+                spec.edit = Some((file.into(), old.into(), new.into()));
+            }
+            "cwd" => spec.cwd = value.into(),
+            other => return Err(format!("no field {other}")),
+        }
+    }
+    Ok(spec)
+}
+
+/// A command's words, as `sh` splits them: single quotes hold spaces.
+fn words(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut any = false;
+    for c in command.chars() {
+        match c {
+            '\'' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any {
+                    out.push(std::mem::take(&mut word));
+                    any = false;
+                }
+            }
+            c => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        out.push(word);
+    }
+    out
+}
+
+/// A key as a capture names it: `Enter`, `S-Tab`, `C-d`, `F1`; any other
+/// word is typed as it is spelled.
+fn named_key(name: &str) -> Option<aless::app::Key> {
+    use aless::app::{Key, KeyCode};
+    let code = match name {
+        "Enter" => KeyCode::Enter,
+        "Esc" => KeyCode::Esc,
+        "Tab" => KeyCode::Tab,
+        "S-Tab" => KeyCode::BackTab,
+        "Backspace" => KeyCode::Backspace,
+        "Space" => KeyCode::Char(' '),
+        "Up" => KeyCode::Up,
+        "Down" => KeyCode::Down,
+        "Left" => KeyCode::Left,
+        "Right" => KeyCode::Right,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        "PgUp" => KeyCode::PageUp,
+        "PgDn" => KeyCode::PageDown,
+        _ => {
+            if let Some(c) = name.strip_prefix("C-").filter(|c| c.chars().count() == 1) {
+                return Some(Key::ctrl(c.chars().next().unwrap()));
+            }
+            let n = name.strip_prefix('F')?.parse().ok()?;
+            KeyCode::F(n)
+        }
+    };
+    Some(Key::code(code))
+}
+
+/// Run a capture in `dir`, a directory of the files the site publishes
+/// under `/examples/`, and return the screen aless draws.
+fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
+    use aless::app::{App, Input, Key, RELOAD_DEBOUNCE};
+    let here = match spec.cwd.as_str() {
+        "." => dir.to_path_buf(),
+        cwd => dir.join(cwd),
+    };
+    // `printf 'TEXT' | aless ...` pipes TEXT into standard input.
+    let (stdin, command) = match spec.command.split_once(" | ") {
+        Some((printf, rest)) => {
+            let text = words(printf);
+            if text.len() != 2 || text[0] != "printf" {
+                return Err(format!("only printf pipes into a capture: {printf}"));
+            }
+            (
+                Some(text[1].replace("\\n", "\n").replace("\\t", "\t")),
+                rest,
+            )
+        }
+        None => (None, spec.command.as_str()),
+    };
+    let argv = words(command);
+    if argv.first().map(String::as_str) != Some("aless") {
+        return Err(format!("a capture runs aless: {command}"));
+    }
+    // A capture runs in the test's own directory, the repository's.
+    if spec
+        .keys
+        .windows(2)
+        .any(|k| k[0] == ":" && k[1].starts_with('w'))
+    {
+        return Err("a capture never writes a file, and :w would".into());
+    }
+    let mut args = match aless::cli::parse_args(argv[1..].iter().map(std::ffi::OsString::from))? {
+        aless::cli::Parsed::Run(args) => *args,
+        aless::cli::Parsed::Print(_) => return Err("a capture runs the viewer".into()),
+    };
+    // The paths the command names, as `sh` in `here` would find them.
+    for def in &mut args.grammars {
+        if let aless::grammar::Source::File(path) = &mut def.source {
+            *path = here.join(&*path);
+        }
+    }
+    args.prepare()?;
+    let mut app = App::new(args.opts, spec.size.0, spec.size.1);
+    for file in &args.files {
+        app.open_path(&here.join(file), args.kind);
+    }
+    if let Some(text) = stdin {
+        let format = args.kind.unwrap_or(aless::load::Format::Json);
+        app.open_source("(stdin)", text, format);
+    }
+    if app.tabs.is_empty() {
+        app.open_explorer(&here);
+    }
+    app.active = 0;
+    for name in &spec.keys {
+        match named_key(name) {
+            Some(key) => app.handle(Input::Key(key)),
+            None => {
+                for c in name.chars() {
+                    app.handle(Input::Key(Key::ch(c)));
+                }
+            }
+        }
+    }
+    if let Some((file, old, new)) = &spec.edit {
+        let path = here.join(file);
+        let text = read(&path);
+        if !text.contains(old.as_str()) {
+            return Err(format!("{file} does not hold {old:?}"));
+        }
+        std::fs::write(&path, text.replacen(old.as_str(), new, 1)).map_err(|e| e.to_string())?;
+        app.handle(Input::FileChanged(path));
+        app.handle(Input::Tick(std::time::Instant::now() + RELOAD_DEBOUNCE * 2));
+    }
+    let text = aless::render::screen(&mut app).text();
+    let mut rows: Vec<&str> = text.lines().collect();
+    if let Some((a, b)) = spec.rows {
+        if a == 0 || b < a || b > rows.len() {
+            return Err(format!("rows {a}-{b} of a screen of {}", rows.len()));
+        }
+        rows = rows[a - 1..b].to_vec();
+    }
+    while rows.last().is_some_and(|r| r.is_empty()) {
+        rows.pop();
+    }
+    // A file named as `sh` in `here` would find it is named so on screen.
+    let mut screen = rows.join("\n");
+    for file in args.files.iter().filter(|f| f.is_relative()) {
+        let full = here.join(file);
+        if full.is_file() {
+            screen = screen.replace(&full.display().to_string(), &file.display().to_string());
+        }
+    }
+    Ok(screen)
+}
+
+/// `from` replaced by `to` in a captured screen, the widest run of
+/// spaces inside a row taking up the difference, so a status bar keeps
+/// its width.
+fn substitute(screen: &str, from: &str, to: &str) -> String {
+    let gap = Regex::new(r" {2,}").unwrap();
+    screen
+        .lines()
+        .map(|row| {
+            let new = row.replace(from, to);
+            let grow = row.chars().count() as isize - new.chars().count() as isize;
+            let widest = gap
+                .find_iter(&new)
+                .filter(|m| m.start() > 0 && m.end() < new.len())
+                .max_by_key(|m| m.len());
+            match widest {
+                Some(m) if grow != 0 => {
+                    let len = (m.len() as isize + grow).max(2) as usize;
+                    format!(
+                        "{}{}{}",
+                        &new[..m.start()],
+                        " ".repeat(len),
+                        &new[m.end()..]
+                    )
+                }
+                _ => new,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every `screen` block on a page is what aless draws for the capture the
+/// comment before it names, run in a directory of the files the site
+/// publishes under `/examples/`, which the pages show as
+/// `/home/user/bookshelf`. With `ALESS_SCREENS=write` set, the blocks are
+/// written from their captures instead.
+#[test]
+fn the_screens_are_what_aless_draws() {
+    let write = std::env::var_os("ALESS_SCREENS").is_some_and(|v| v == "write");
+    let block =
+        Regex::new(r"(?ms)^(?:<!-- screen:(?P<spec>.*?)-->\n)?```screen\n(?P<body>.*?)^```$")
+            .unwrap();
+    // A short directory, so that a path the viewer shows fits its status bar.
+    let base = match cfg!(unix) {
+        true => PathBuf::from("/tmp"),
+        false => std::env::temp_dir(),
+    };
+    let work = base.join(format!("aless-screens-{}", std::process::id()));
+    let mut pages = vec![root().join("README.md")];
+    let mut dirs = vec![sources()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() && !path.ends_with("contributing") {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                pages.push(path);
+            }
+        }
+    }
+    pages.sort();
+    let tidy = |s: &str| {
+        let mut rows: Vec<&str> = s.lines().map(str::trim_end).collect();
+        while rows.last().is_some_and(|r| r.is_empty()) {
+            rows.pop();
+        }
+        rows.join("\n")
+    };
+    let (mut wrong, mut ran, mut skipped) = (Vec::new(), 0, 0);
+    for source in &pages {
+        let text = read(source).replace("\r\n", "\n");
+        let name = source.strip_prefix(root()).unwrap().display().to_string();
+        let mut written = String::new();
+        let mut last = 0;
+        for c in block.captures_iter(&text) {
+            let body = c.name("body").unwrap();
+            let Some(spec) = c.name("spec") else {
+                wrong.push(format!(
+                    "{name}: a screen block with no capture comment before it"
+                ));
+                continue;
+            };
+            ran += 1;
+            let dir = work.join(ran.to_string());
+            let shelf = dir.join("bookshelf");
+            std::fs::create_dir_all(&shelf).unwrap();
+            for (path, bytes) in &site().files {
+                if let Some(file) = path.strip_prefix("examples/") {
+                    std::fs::write(shelf.join(file), bytes).unwrap();
+                }
+            }
+            let got = match capture_spec(spec.as_str()).and_then(|s| capture(&s, &shelf)) {
+                Ok(got) => got,
+                Err(e) => {
+                    wrong.push(format!("{name}: {}: {e}", spec.as_str().trim()));
+                    continue;
+                }
+            };
+            // The canonical form first, since it can hold the other.
+            let shown: Vec<String> = [std::fs::canonicalize(&dir).unwrap(), dir.clone()]
+                .iter()
+                .map(|d| d.display().to_string())
+                .collect();
+            // A Windows path is not the page's /home/user, and Windows may
+            // spell the directory another way (`RUNNER~1`), so look for its
+            // name.
+            let name = work.file_name().unwrap().to_string_lossy().into_owned();
+            if cfg!(windows) && got.contains(name.as_str()) {
+                skipped += 1;
+                continue;
+            }
+            let got = shown
+                .iter()
+                .fold(got, |s, d| substitute(&s, d, "/home/user"));
+            if tidy(&got) != tidy(body.as_str()) {
+                if write {
+                    written.push_str(&text[last..body.start()]);
+                    written.push_str(&tidy(&got));
+                    written.push('\n');
+                    last = body.end();
+                } else {
+                    wrong.push(format!(
+                        "{name}: {}\n--- the page shows:\n{}\n--- aless draws:\n{}",
+                        spec.as_str().trim(),
+                        tidy(body.as_str()),
+                        tidy(&got)
+                    ));
+                }
+            }
+        }
+        if write && last > 0 {
+            written.push_str(&text[last..]);
+            std::fs::write(source, written).unwrap();
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    println!("site: drew {ran} screens, {skipped} skipped on this platform");
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n\n"));
 }

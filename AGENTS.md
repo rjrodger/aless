@@ -77,7 +77,8 @@ Each `index.md`, `docs/index.md` and `docs/404.md` are navigation. The
 pages under `docs/contributing/`, `README.md`, `RELEASING.md` and
 `PACKAGING.md` are contributor pages. `CHANGELOG.md` is published as the
 releases page. `tests/site.rs` is the harness for examples: it runs every
-`console` fence ([site.md](docs/contributing/site.md)).
+`console` fence, and draws every `screen` fence from the capture in the
+comment before it ([site.md](docs/contributing/site.md)).
 
 ## Terms
 
@@ -102,4 +103,6 @@ releases page. `tests/site.rs` is the harness for examples: it runs every
 - A feature that runs without a terminal does not belong here (ADR-001).
 - An agent has no terminal to run aless in. To see what aless reads from
   a file, load it through `aless::load::load_str` in a throwaway test,
-  and delete the test after.
+  and delete the test after. To see what it draws, write a `screen`
+  capture on a page and run `ALESS_SCREENS=write cargo test --test site
+  the_screens`: never paste a screen by hand.

@@ -49,12 +49,14 @@
       decoration alone: it does not meet 4.5:1 on parchment. */
 :root {
   --bg: var(--parch-100);
-  --gradient-stops: var(--parch-200), var(--parch-50);
+  /* The gradient ends on the page's own colour, leaving no edge where
+     it stops. */
+  --gradient-stops: var(--parch-200), var(--parch-100);
   --surface: var(--parch-50);
   --surface-2: var(--parch-200);
   --ink: var(--green-800);
   --ink-soft: #3a4a3f;
-  --ink-mute: #6a7269;
+  --ink-mute: #5f675e; /* 5:1 on parch-200, the gradient's top */
 
   --primary: var(--green-700);
   --primary-hover: var(--green-900);
@@ -202,13 +204,15 @@
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-/* 4. The page. */
+/* 4. The page. The footer sits at the foot of the window on a short page. */
 *, *::before, *::after { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: 5rem; }
 
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
   background: var(--bg);
   background-image: linear-gradient(180deg, var(--gradient-stops));
   background-repeat: no-repeat;
@@ -225,6 +229,10 @@ a:hover { color: var(--primary-hover); }
 strong, b { font-weight: 700; }
 img { max-width: 100%; height: auto; }
 
+/* One focus ring for everything a keyboard reaches, in the primary green,
+   which is 8.6:1 on parchment and 6.6:1 on the dark green. */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
 .skip { position: absolute; left: -999rem; }
 .skip:focus {
   left: 1rem; top: 1rem; z-index: 60;
@@ -232,7 +240,7 @@ img { max-width: 100%; height: auto; }
   padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px;
 }
 
-/* The wordmark, in the header, the footer and the home page. */
+/* The wordmark, in the footer. */
 .word {
   font-family: var(--font-display);
   color: var(--primary);
@@ -243,26 +251,35 @@ img { max-width: 100%; height: auto; }
 /* 5. The header: sticky, translucent over the page, the sections as
       links, the one for this page's section marked. */
 .site-header {
-  position: sticky; top: 0; z-index: 50;
+  position: sticky; top: 0; z-index: 50; flex: none;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(8px);
   border-bottom: 1px solid var(--border);
 }
 .bar {
-  max-width: 76rem; margin: 0 auto; padding: 0.55rem 1.25rem;
+  max-width: 77rem; margin: 0 auto; padding: 0.55rem 1.25rem;
   display: flex; align-items: center; gap: 1rem;
 }
 .brand {
   display: inline-flex; align-items: center; gap: 0.6rem;
   text-decoration: none; color: var(--ink);
 }
-/* The logo, one file for each theme: an SVG shown through <img> follows
-   the system's colour scheme, not the toggle's choice, so the dark theme
-   shows logo-dark.svg, the same drawing with its wordmark in parchment. */
 .brand img { display: block; height: 2.5rem; width: auto; }
-img.logo-dark { display: none; }
-:root[data-theme="dark"] img.logo-light { display: none; }
-:root[data-theme="dark"] img.logo-dark { display: block; }
+
+/* The logo, one file for each theme, and the toggle's icon for the theme
+   shown: chosen with the toggle, or else the system's. */
+img.logo-dark, .theme-toggle .i-moon { display: none; }
+:root[data-theme="dark"] img.logo-light,
+:root[data-theme="dark"] .theme-toggle .i-sun { display: none; }
+:root[data-theme="dark"] img.logo-dark,
+:root[data-theme="dark"] .theme-toggle .i-moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) img.logo-light,
+  :root:not([data-theme="light"]) .theme-toggle .i-sun { display: none; }
+  :root:not([data-theme="light"]) img.logo-dark,
+  :root:not([data-theme="light"]) .theme-toggle .i-moon { display: block; }
+}
+
 .nav {
   margin-left: auto;
   display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end;
@@ -270,17 +287,18 @@ img.logo-dark { display: none; }
 }
 .nav-link {
   font-size: 0.98rem; color: var(--ink-soft); text-decoration: none;
-  padding: 0.45rem 0.7rem; border-radius: 8px;
-  border-bottom: 2px solid transparent; white-space: nowrap;
+  padding: 0.45rem 0.7rem; border-radius: 8px; white-space: nowrap;
 }
 .nav-link:hover { color: var(--ink); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
-body.section-tutorials .nav-link[data-section="tutorials"],
-body.section-how-to .nav-link[data-section="how-to"],
-body.section-reference .nav-link[data-section="reference"],
-body.section-explanation .nav-link[data-section="explanation"] {
-  color: var(--primary); border-bottom-color: var(--accent-strong);
+/* This page's section: green, underlined in the gold accent, which is
+   3.8:1 on parchment where the lighter gold would be 2.3:1. */
+.nav-link[aria-current] {
+  color: var(--primary);
+  text-decoration: underline 2px var(--accent); text-underline-offset: 0.5em;
 }
-.actions { display: flex; align-items: center; gap: 0.25rem; margin-left: 0.4rem; }
+/* The section's pages, in the menu on a narrow screen alone. */
+.menu-pages { display: none; }
+.nav .actions { display: flex; align-items: center; gap: 0.25rem; margin-left: 0.4rem; }
 .icon-link {
   display: inline-flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; border-radius: 9px;
@@ -288,9 +306,6 @@ body.section-explanation .nav-link[data-section="explanation"] {
   text-decoration: none; padding: 0;
 }
 .icon-link:hover { color: var(--primary); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
-.theme-toggle .i-moon { display: none; }
-:root[data-theme="dark"] .theme-toggle .i-sun { display: none; }
-:root[data-theme="dark"] .theme-toggle .i-moon { display: block; }
 
 .menu-btn {
   display: none; margin-left: auto;
@@ -300,60 +315,84 @@ body.section-explanation .nav-link[data-section="explanation"] {
 }
 .menu-btn span { display: block; width: 18px; height: 2px; background: var(--ink); border-radius: 2px; }
 
-/* 6. The shell of a documentation page: the sidebar, the page, and the
-      page's own headings. */
+/* 6. The shell of a documentation page: the page, its contents, and the
+      sidebar, which follows them in the document and stands to their left
+      on a wide screen. */
 .page {
-  max-width: 76rem; margin: 0 auto; padding: 2rem 1.25rem 1rem;
-  display: grid; grid-template-columns: 14rem minmax(0, 1fr) 12rem; gap: 2.5rem;
+  flex: 1 0 auto; width: 100%;
+  max-width: 77rem; margin: 0 auto; padding: 2rem 1.25rem 1rem;
+  display: grid; grid-template-columns: 15rem minmax(0, 1fr) 12rem; gap: 2.5rem;
   align-items: start;
 }
+.page > main { grid-column: 2; grid-row: 1; }
+.page > .toc { grid-column: 3; grid-row: 1; }
+.page > .sidebar { grid-column: 1; grid-row: 1; }
 body.home .page, body.plain .page { display: block; }
 body.home .page { max-width: 72rem; }
 body.plain .page { max-width: 48rem; }
 
 .sidebar {
-  position: sticky; top: 4.5rem; max-height: calc(100vh - 5rem); overflow-y: auto;
-  font-size: 0.95rem;
+  position: sticky; top: 4.5rem; max-height: calc(100vh - 5.5rem); overflow-y: auto;
+  overscroll-behavior: contain; font-size: 0.95rem;
 }
 .sidebar .group { margin-bottom: 1.25rem; }
 .sidebar .group-head {
   font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase;
-  letter-spacing: 0.12em; color: var(--ink-mute); margin: 0 0 0.5rem;
+  letter-spacing: 0.12em; color: var(--ink-mute); margin: 0 0 0.4rem;
 }
 .sidebar .group-head a { color: inherit; text-decoration: none; }
 .sidebar .group-head a:hover, .sidebar .group-head a[aria-current="page"] { color: var(--primary); }
 .sidebar .subgroup {
-  font-family: var(--font-heading); font-style: italic; font-size: 0.95rem;
-  color: var(--ink-mute); margin: 0.6rem 0 0.15rem 0.6rem;
+  font-family: var(--font-heading); font-style: italic; font-weight: 600; font-size: 1.05rem;
+  color: var(--ink-soft); margin: 0.55rem 0 0.1rem 0.6rem; line-height: 1.3;
 }
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar li { margin: 0; }
 .side-link {
-  display: block; padding: 0.3rem 0.6rem;
+  display: block; padding: 0.22rem 0.6rem; line-height: 1.45;
   border-radius: 0 7px 7px 0; border-left: 2px solid transparent;
   color: var(--ink-soft); text-decoration: none;
 }
 .side-link:hover { color: var(--ink); background: color-mix(in srgb, var(--accent-strong) 10%, transparent); }
-.side-link[aria-current="page"] { color: var(--primary); border-left-color: var(--primary); font-weight: 600; }
+.side-link[aria-current="page"] { color: var(--primary); border-left-color: var(--primary); font-weight: 700; }
 
 main { min-width: 0; }
 article { max-width: 48rem; }
 body.home article { max-width: none; }
 
-.toc { position: sticky; top: 4.5rem; font-size: 0.88rem; }
-.toc .toc-head {
+.toc {
+  position: sticky; top: 4.5rem; max-height: calc(100vh - 5.5rem); overflow-y: auto;
+  overscroll-behavior: contain; font-size: 0.88rem;
+}
+.toc .toc-head, .toc-inline summary {
   font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase;
   letter-spacing: 0.12em; color: var(--ink-mute); margin: 0 0 0.5rem;
 }
-.toc ul { list-style: none; margin: 0; padding: 0; }
-.toc li { margin: 0.2rem 0; }
-.toc li.sub { padding-left: 0.9rem; }
-.toc a { color: var(--ink-soft); text-decoration: none; }
-.toc a:hover { color: var(--primary); }
+.toc ul, .toc-inline ul { list-style: none; margin: 0; padding: 0; }
+.toc li, .toc-inline li { margin: 0.2rem 0; line-height: 1.4; }
+.toc li.sub, .toc-inline li.sub { padding-left: 0.9rem; }
+.toc a, .toc-inline a { color: var(--ink-soft); text-decoration: none; }
+.toc a:hover, .toc-inline a:hover { color: var(--primary); }
+
+/* The contents at the head of the page, where the column beside it is gone. */
+.toc-inline { display: none; margin: 0 0 1.75rem; }
+.toc-inline details {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.toc-inline summary { cursor: pointer; padding: 0.7rem 1rem; margin: 0; color: var(--ink-soft); }
+.toc-inline ul { padding: 0 1rem 0.85rem; font-size: 0.95rem; }
+.toc-inline li { margin: 0.35rem 0; }
+
+.describes {
+  margin: 3rem 0 0; padding-top: 1.25rem; border-top: 1px solid var(--border);
+  font-size: 0.85rem; color: var(--ink-mute); max-width: 48rem;
+}
+.describes a { color: var(--ink-soft); }
+.describes a:hover { color: var(--primary); }
 
 .pager {
   display: flex; justify-content: space-between; gap: 1rem;
-  margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
-  max-width: 48rem;
+  margin-top: 1.25rem; max-width: 48rem;
 }
 .pg {
   display: flex; flex-direction: column; gap: 0.15rem; text-decoration: none;
@@ -364,13 +403,11 @@ body.home article { max-width: none; }
 .pg.next { text-align: right; margin-left: auto; }
 .pg:hover { border-color: var(--border-strong); color: var(--ink); }
 
-.describes { margin-top: 1.5rem; font-size: 0.82rem; color: var(--ink-mute); max-width: 48rem; }
-.describes code { font-size: 0.8rem; }
-
-/* 7. The prose. */
+/* 7. The prose. html's scroll-padding keeps a heading, a term or a row
+      jumped to clear of the header. */
 h1, h2, h3, h4 {
   font-family: var(--font-heading); font-weight: 700; line-height: 1.2;
-  color: var(--ink); scroll-margin-top: 5rem;
+  color: var(--ink);
 }
 h1 { font-size: 2.5rem; margin: 0.2rem 0 0.6rem; }
 h2 { font-size: 1.85rem; margin: 2.25rem 0 0.75rem; }
@@ -378,14 +415,16 @@ h3 { font-size: 1.4rem; margin: 1.6rem 0 0.5rem; }
 h4 { font-size: 1.15rem; margin: 1.4rem 0 0.4rem; }
 p { margin: 0 0 1em; }
 
-/* Every heading is linkable; the link shows on hover and on focus. */
+/* Every heading and option is linkable; the link shows on hover and on
+   focus. */
 .heading-anchor {
   margin-left: 0.4em; font-family: var(--font-mono); font-size: 0.7em; font-weight: 400;
   color: var(--accent); text-decoration: none; opacity: 0;
   transition: opacity 0.15s ease-in-out;
 }
-:is(h2, h3, h4):hover > .heading-anchor, .heading-anchor:focus-visible { opacity: 1; }
+:is(h2, h3, h4, dt):hover > .heading-anchor, .heading-anchor:focus-visible { opacity: 1; }
 .heading-anchor:hover { text-decoration: underline; }
+dt > .heading-anchor { font-size: 0.85em; }
 @media (prefers-reduced-motion: reduce) {
   .heading-anchor { transition: none; }
   .site-header { backdrop-filter: none; }
@@ -401,37 +440,83 @@ p { margin: 0 0 1em; }
 .lede { margin-top: 0; font-size: 1.12rem; color: var(--ink-soft); }
 .note { margin-top: -0.4rem; color: var(--ink-mute); font-style: italic; }
 
+/* Code in a line breaks only where it must, and never inside a name a
+   table, a term or a link shows: --max-size stays one word. */
 code, pre, kbd { font-family: var(--font-mono); }
 :not(pre) > code {
   font-size: 0.88em; padding: 0.1em 0.3em; border-radius: 4px;
-  background: var(--code-bg); color: var(--code-ink); overflow-wrap: anywhere;
+  background: var(--code-bg); color: var(--code-ink); overflow-wrap: break-word;
 }
+td code, th code, dt code, a > code { white-space: nowrap; }
 pre {
   background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 1rem 1.15rem; overflow-x: auto; line-height: 1.5; margin: 1rem 0;
 }
 pre code { font-size: 0.86rem; color: var(--code-ink); }
 kbd {
-  font-size: 0.85em; padding: 0 0.3em;
-  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px;
-  background: var(--surface);
+  font-size: 0.85em; padding: 0.05em 0.35em; white-space: nowrap;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+  background: var(--surface); color: var(--code-ink);
 }
 
-/* 80 columns of the viewer fit the page's column at this size. */
-pre.screen { background: var(--screen-bg); color: var(--screen-ink); border-color: var(--screen-border); }
-pre.screen code { font-size: 0.8rem; line-height: 1.3; color: var(--screen-ink); }
+/* A capture of the viewer: its type sized so that its 80 columns fit the
+   column it is in, down to a floor below which the box scrolls instead,
+   and the box as wide as the terminal's 80 columns, a capture of a few
+   rows too. The divisor is 80 columns of a monospaced face, each about
+   0.6em, with a little to spare. */
+.screen-box { container-type: inline-size; margin: 1rem 0; }
+pre.screen {
+  --pad: 1rem;
+  width: calc(80ch + 2 * var(--pad) + 2px); max-width: 100%;
+  margin: 0; padding: 0.9rem var(--pad);
+  font-size: 0.8rem;
+  font-size: clamp(0.4375rem, calc((100cqi - 2 * var(--pad) - 2px) / 48.5), 0.8rem);
+  line-height: 1.3;
+  background: var(--screen-bg); color: var(--screen-ink); border-color: var(--screen-border);
+}
+pre.screen code { font-size: 1em; line-height: inherit; color: var(--screen-ink); }
 pre.screen .status { background: var(--screen-ink); color: var(--screen-bg); }
 
-table { border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; display: block; overflow-x: auto; }
+/* A block wider than its column fades at its right edge until it is
+   scrolled to the end (layout.html marks it). */
+pre.scrolls, .table-wrap.scrolls {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+}
+
+.table-wrap { overflow-x: auto; margin: 1rem 0; max-width: 100%; }
+table { border-collapse: collapse; margin: 1rem 0; font-size: 0.95rem; }
+.table-wrap > table { margin: 0; }
 th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: left; vertical-align: top; }
 th { background: var(--surface-2); }
+
+/* The keys: each binding's keys on one line, the column as narrow as the
+   widest of them. */
+table.keys { width: 100%; }
+table.keys td:first-child { white-space: nowrap; width: 1%; }
+table.keys td { line-height: 1.75; }
+tr:target > td, dt:target {
+  background: color-mix(in srgb, var(--accent-strong) 18%, transparent);
+}
 
 ul, ol { padding-left: 1.4rem; }
 li { margin: 0.25rem 0; }
 
-dl dt { margin-top: 0.9rem; font-weight: 600; }
-dl dd { margin: 0.2rem 0 0 1.25rem; }
-dl dd > p:first-child { margin-top: 0; }
+/* A list of terms: the term and what it means side by side, and an
+   option, whose meaning is long, above its meaning. */
+dl:not(.options) {
+  display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr);
+  gap: 0.55rem 1.25rem; margin: 1rem 0; align-items: baseline;
+}
+dl:not(.options) > dt { margin: 0; font-weight: 600; }
+dl:not(.options) > dd { margin: 0; }
+dl.options > dt { margin-top: 1.4rem; font-weight: 600; }
+dl.options > dt:first-child { margin-top: 0.6rem; }
+dl.options > dd {
+  margin: 0.4rem 0 0 0.15rem; padding-left: 1rem; border-left: 2px solid var(--border);
+}
+dd > p:first-child { margin-top: 0; }
+dd > p:last-child { margin-bottom: 0; }
 
 blockquote {
   margin: 1.25rem 0; padding: 0.1rem 0 0.1rem 1.1rem;
@@ -439,7 +524,7 @@ blockquote {
 }
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 
-/* A section's list of its pages: one card a page, under its group. */
+/* A section's list of its pages: one row a page, under its group. */
 .group-blurb { color: var(--ink-mute); max-width: 46rem; margin: 0 0 1rem; font-size: 0.95rem; }
 .list { list-style: none; margin: 0 0 1.5rem; padding: 0; display: grid; gap: 0.6rem; }
 .list li { margin: 0; }
@@ -448,7 +533,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
   padding: 0.85rem 1rem; background: var(--surface); text-decoration: none; color: inherit;
 }
 .row:hover { border-color: var(--border-strong); color: inherit; }
-.row-title { display: block; color: var(--primary); font-weight: 600; }
+.row-title { display: block; color: var(--primary); font-weight: 700; }
 .row-desc { display: block; color: var(--ink-soft); font-size: 0.92rem; margin-top: 0.15rem; }
 
 /* Chips: the formats, and other short lists of names. */
@@ -462,30 +547,47 @@ hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
   color: var(--ink-soft); border: 1px solid var(--border); border-radius: 999px;
   padding: 0.25rem 0.7rem; background: var(--surface);
 }
-a.chip:hover { color: var(--primary); border-color: var(--border-strong); }
+a.chip { color: var(--primary); border-color: var(--border-strong); }
+a.chip:hover { color: var(--primary-hover); text-decoration: underline; }
 
-/* Cards: the four kinds of documentation, and the project. */
+/* Cards: the four kinds of documentation, each a link as a whole, and the
+   project. */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; margin: 1.25rem 0; }
 .card {
   display: block; border: 1px solid var(--border); border-radius: 12px;
   padding: 1.25rem; background: var(--surface); text-decoration: none; color: inherit;
 }
-.card h3 { font-size: 1.25rem; margin: 0 0 0.4rem; }
+.card h3 { font-size: 1.3rem; margin: 0 0 0.4rem; }
 .card p { margin: 0; color: var(--ink-soft); font-size: 0.95rem; }
 .card p + p { margin-top: 0.6rem; }
+a.card h3 { color: var(--primary); }
+a.card h3::after { content: " →"; font-family: var(--font-body); font-size: 0.8em; }
 a.card:hover { border-color: var(--border-strong); color: inherit; }
+a.card:hover h3 { text-decoration: underline; text-underline-offset: 0.15em; }
+
+/* Buttons: a link that is the page's next step. */
+.button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 2.75rem; padding: 0.55rem 1.25rem; border-radius: 999px;
+  border: 1px solid var(--primary); background: var(--surface); color: var(--primary);
+  font-weight: 700; line-height: 1.2; text-decoration: none;
+}
+.button:hover { color: var(--primary-hover); border-color: var(--primary-hover); }
+.button.primary { background: var(--primary); color: var(--on-primary); }
+.button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--on-primary); }
 
 /* 8. The footer. */
 .site-footer {
+  flex: none;
   margin-top: 4rem; border-top: 1px solid var(--border); color: var(--ink-soft);
   background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent-strong) 6%, transparent));
 }
-.site-footer .inner { max-width: 76rem; margin: 0 auto; padding: 3rem 1.25rem 3.5rem; }
-.site-footer .cols { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 2rem; }
+.site-footer .inner { max-width: 77rem; margin: 0 auto; padding: 3rem 1.25rem 3.5rem; }
+.site-footer .cols { display: grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 2rem; }
 .site-footer .about .word { font-size: 1.9rem; }
 .site-footer .motto {
-  font-family: var(--font-heading); font-style: italic; color: var(--ink-mute);
-  margin: 0.4rem 0 0.5rem; max-width: 34ch; font-size: 1.05rem;
+  font-family: var(--font-heading); font-style: italic; font-weight: 500; color: var(--ink-soft);
+  margin: 0.4rem 0 0.5rem; max-width: 34ch; font-size: 1.12rem; line-height: 1.45;
 }
 .site-footer .byline { font-size: 0.9rem; color: var(--ink-soft); margin: 0 0 1rem; }
 .site-footer .byline a { color: var(--ink-soft); }
@@ -505,57 +607,91 @@ a.card:hover { border-color: var(--border-strong); color: inherit; }
 .site-footer .legal a { color: var(--ink-mute); }
 .site-footer .legal a:hover { color: var(--primary); }
 
-/* 9. The home page. */
-.intro { text-align: center; padding: 2rem 0 2.5rem; }
-.intro .logo { width: 100%; max-width: 28rem; height: auto; margin: 0 auto 1rem; }
+/* 9. The home page: the introduction and a capture, beside each other
+      where the screen is wide, then the prose in lines of a readable
+      length. */
+.hero { display: grid; gap: 1.5rem; margin: 0 0 1.5rem; }
+.hero .screen-box { margin: 0; }
+.hero pre.screen { margin: 0 auto; }
+.intro { text-align: center; padding: 1.5rem 0 0.5rem; }
+.intro img.logo-light { display: block; }
+.intro .logo { width: 100%; max-width: 18rem; height: auto; margin: 0 auto 1.25rem; }
 .intro h1 {
-  font-size: clamp(1.8rem, 4vw, 2.5rem); line-height: 1.12; text-wrap: balance;
-  max-width: 34ch; margin: 0 auto 0.9rem;
+  font-size: clamp(1.8rem, 3.6vw, 2.5rem); line-height: 1.12; text-wrap: balance;
+  max-width: 30ch; margin: 0 auto 0.9rem;
 }
-.intro .lede { max-width: 62ch; margin: 0 auto; }
-.intro .meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-mute); margin-top: 1.5rem; }
-
-
+.intro .lede { max-width: 60ch; margin: 0 auto; }
+.intro .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin: 1.5rem 0 0; }
+.intro .meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-mute); margin: 1.25rem 0 0; }
+body.home article > p:not(.chips), body.home article > ul { max-width: 70ch; }
 .home h2 { font-size: clamp(1.5rem, 3vw, 2rem); }
-.sec-note { color: var(--ink-soft); font-size: 0.98rem; max-width: 68ch; }
+@media (min-width: 1100px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 3rem;
+    align-items: center; margin-bottom: 2.5rem;
+  }
+  .hero .intro { text-align: left; padding: 1rem 0; }
+  .hero .intro .logo { max-width: 15rem; margin: 0 0 1.25rem; }
+  .hero .intro h1, .hero .intro .lede { margin-left: 0; margin-right: 0; }
+  .hero .intro .actions { justify-content: flex-start; }
+  .hero pre.screen { margin: 0 0 0 auto; }
+}
 
-table.install { width: 100%; font-size: 0.95rem; }
-table.install code { white-space: nowrap; }
-table.install td:first-child { white-space: nowrap; }
-
-/* 10. Narrow screens. The sidebar and the contents give way to the page
-       itself, and the header folds into a menu. */
+/* 10. Narrow screens. The contents move to the head of the page, then the
+       sidebar to its foot and the header into a menu, which holds the
+       section's pages. */
 @media (max-width: 1080px) {
-  .page { grid-template-columns: 14rem minmax(0, 1fr); }
-  .toc { display: none; }
+  .page { grid-template-columns: 15rem minmax(0, 1fr); }
+  .page > .toc { display: none; }
+  .toc-inline { display: block; }
 }
 @media (max-width: 1000px) {
+  .page { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 1.5rem 1rem 1rem; }
+  .page > main, .page > .sidebar { grid-column: 1; grid-row: auto; }
+  .sidebar {
+    position: static; max-height: none; overflow: visible;
+    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  }
   .menu-btn { display: flex; }
   .nav {
     position: absolute; left: 0; right: 0; top: 100%;
     flex-direction: column; align-items: stretch; flex-wrap: nowrap; justify-content: flex-start;
     gap: 0.15rem; background: var(--surface); border-bottom: 1px solid var(--border);
     padding: 0.75rem 1.25rem 1rem; box-shadow: var(--shadow); display: none;
+    max-height: calc(100vh - 4rem); overflow-y: auto; overscroll-behavior: contain;
   }
   .nav.open { display: flex; }
   .nav-link { padding: 0.6rem 0.5rem; }
-  .actions { margin: 0.4rem 0 0; }
+  .nav.open .menu-pages {
+    display: block; list-style: none; margin: 0 0 0.4rem 0.5rem; padding: 0 0 0 0.75rem;
+    border-left: 2px solid var(--border);
+  }
+  .menu-pages li { margin: 0; }
+  .menu-pages a {
+    display: block; padding: 0.4rem 0.5rem; color: var(--ink-soft);
+    text-decoration: none; font-size: 0.95rem; line-height: 1.4;
+  }
+  .menu-pages a:hover { color: var(--primary); }
+  .menu-pages a[aria-current="page"] { color: var(--primary); font-weight: 700; }
+  .menu-pages .menu-all a { color: var(--ink-mute); font-size: 0.85rem; }
+  .nav .actions { margin: 0.4rem 0 0; }
 }
 @media (max-width: 900px) {
   .site-footer .cols { grid-template-columns: 1fr 1fr; gap: 1.75rem; }
-  .faces { grid-template-columns: minmax(0, 1fr); }
+  .site-footer .about { grid-column: 1 / -1; }
 }
 @media (max-width: 760px) {
-  .page { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 1.5rem 1rem 1rem; }
-  .sidebar {
-    position: static; max-height: none; overflow: visible; order: 2;
-    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
-  }
-  main { order: 1; }
   h1 { font-size: 2rem; }
   .pager { flex-direction: column; }
   .pg { max-width: none; }
   .pg.next { margin-left: 0; }
+}
+@media (max-width: 560px) {
+  pre.screen { --pad: 0.55rem; padding: 0.6rem var(--pad); }
+  table.keys td:first-child { white-space: normal; }
+  dl:not(.options) { display: block; }
+  dl:not(.options) > dt { margin-top: 0.9rem; }
+  dl:not(.options) > dd { margin: 0.2rem 0 0 1.25rem; }
 }
 @media (max-width: 680px) {
   .site-footer .cols { grid-template-columns: 1fr; }

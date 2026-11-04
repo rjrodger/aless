@@ -396,7 +396,7 @@ fn settle(outcome: Result<Result<Compiled, String>, String>) -> Result<Compiled,
 /// A registered grammar.
 pub struct Grammar {
     pub name: &'static str,
-    /// Every name, lower-cased by Unicode's rules (the README's "in any case").
+    /// Every name, lower-cased by Unicode's rules (`--help`'s "in any case").
     pub matches: Vec<String>,
     pub source: String,
     pub origin: Source,
