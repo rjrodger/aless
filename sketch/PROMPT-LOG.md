@@ -306,3 +306,15 @@ fixes and the consistency pass not run.
 ```
 Continue
 ```
+
+## 2026-11-04 22:58 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The answer to the agent's offer to merge #113 (the writing rules, with
+the documentation and the binary's text rewritten to them), whose CI had
+passed, and so deploy the site.
+
+```
+Merge and deploy
+```
