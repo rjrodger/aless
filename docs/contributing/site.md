@@ -19,8 +19,8 @@ from start to end), `how-to/` (one task each), `reference/` and
 name; these predate that layout, so a page's kind is its directory.
 
 `why/` is none of the four. Its one page, `why/index.md`, is Richard
-Rodger's own account of why aless exists, and the site marks it "Human
-written" above its title, with a byline below. It names its `author` in its front
+Rodger's own account of why aless exists, human written, with a byline
+under its title. It names its `author` in its front
 matter, which a page of any other section may not, and it sits outside
 the style guide: `admin/scripts/prose-gate.json` names each directory
 it gates rather than all of `docs/`, leaving `why/` out, and

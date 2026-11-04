@@ -259,3 +259,11 @@ it.
 ```
 is aless hiding . prefix files and folders? this is a developer tool - show them
 ```
+
+## 2026-11-04 17:22 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+do not literally put human written on the actual page. I meant keep a note for yourself so that the style-guide is not applied to this text. also, remove the mini eyebrow headings entirely from the site
+```
