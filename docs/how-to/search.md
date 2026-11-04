@@ -1,14 +1,16 @@
 ---
 title: Search a document
-description: Find a value, a key or a pattern with a regular expression, move between the matches, and know which text the search reads.
+description: Find a value, a key, or a pattern with a regular expression, move between the matches, and learn which text the search reads.
 group: Reading a document
 order: 4
 ---
-`/` starts a search, as it does in less, vim and jless. The pattern is a regular expression, and aless unfolds whatever hides a match. The examples open [`books.json`](/examples/books.json).
+`/` starts a search, as it does in less, vim, and jless. The pattern is a regular expression. A fold hides nothing from the search: aless reads the rows inside a fold. When a match sits inside a fold, aless unfolds whatever hides the match.
+
+The examples on this page open [`books.json`](/examples/books.json).
 
 ## Search forward and back
 
-Press `/`, type a pattern and press `Enter`:
+Press `/`, type a pattern, and press `Enter`:
 
 <!-- screen: aless books.json
 keys: / Index Enter
@@ -30,28 +32,36 @@ size: 80x14 -->
 /Index  [1/1]
 ```
 
-The focus moves to the first match after it, and the status bar gives the match's path and its line and column in the file. The row below shows the pattern, and which match this is of how many. `n` goes to the next match and `N` to the previous one, round the end of the document either way, and the count shows `W` after a wrap. `?` searches backward from the focus, and `n` and `N` then keep that direction. `/` and `Enter` with no pattern searches for the last one again, and `Esc` leaves the prompt without searching.
+The focus moves to the first match after it. The status bar gives the match's path, its line, and its column in the file. The status line shows the pattern and the count: the current match's number out of the number of matches, here `[1/1]`.
+
+`n` goes to the next match, and `N` to the previous one. Both wrap round the end of the document, so `n` on the last match goes to the first match. The count shows `W` after a wrap. `?` searches backward from the focus. `n` and `N` then keep that direction: `n` goes backward, and `N` forward.
+
+To search for the last pattern again, press `/` and then `Enter`, with no pattern between them. `Esc` leaves the prompt without searching.
 
 ## Search for the key under the focus
 
-With the focus on a key, `*` searches forward for the next node with the same key, and `#` searches backward. The next `year` is one key away, however deep in the document it sits.
+With the focus on a key, `*` searches forward for the next node with the same key. `#` searches backward for the same key. The next `year` is one keystroke away, however deep in the document it sits.
 
 ## Write a pattern
 
-A pattern is a regular expression in the syntax of Rust's [regex crate](https://docs.rs/regex/latest/regex/#syntax), with three rules that suit a document:
+A pattern is a regular expression in the syntax of the `regex` crate for Rust. For more information, see the [`regex` syntax reference](https://docs.rs/regex/latest/regex/#syntax) on `docs.rs`. When aless reads a pattern, it applies three rules that suit a document:
 
-| Rule | Example |
-|---|---|
-| A pattern with no capital letter ignores case, and one with a capital letter minds it. `/s` at the end minds case either way. | `/index` finds `Index`; `/Index` finds only `Index`; `/index/s` finds `index` and not `Index` |
-| `[ ] { }` match themselves, since documents are full of them. Escape one for a character class or a count. | `/[]` finds an empty array and `/{}` an empty object; `/\[bch\]at` finds `bat`, `cat` and `hat`; `/(ha)\{2,3\}` finds `haha` and `hahaha` |
-| A single `/` at the end of a pattern is dropped. To find a `/` at the end, write two. | `/s/` searches for `s`; `/a//` finds `a/` |
+- A pattern with no capital letter ignores case, so `/index` finds `Index`. A pattern with a capital letter minds case, so `/Index` finds only `Index`. `/s` at the end of a pattern minds case either way, so `/index/s` finds `index` and not `Index`.
+- `[`, `]`, `{`, and `}` match themselves, because documents are full of them. So `/[]` finds an empty array, and `/{}` finds an empty object. Escape one to write a character class or a count: `/\[bch\]at` finds `bat`, `cat`, and `hat`. `/(ha)\{2,3\}` finds `haha` and `hahaha`.
+- aless drops a single `/` at the end of a pattern, so `/s/` searches for `s`. To find a `/` at the end, write two: `/a//` finds `a/`.
 
-A pattern the regex engine refuses, such as an unclosed group, shows its message on the status line and finds nothing.
+When the regular-expression engine refuses a pattern, such as one with an unclosed group, the search finds nothing. The status line shows the engine's message.
 
-## What the search reads
+## Match a row's text
 
-The search reads each row's text as [line mode](/how-to/display.html#data-mode-and-line-mode) shows it: the key in quotes, a colon, and the value. So `/"year": 2012` finds the second book, and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, `"tags": [`, and an empty container's row its brackets, `"tags": []`. What a fold hides is searched all the same, and unfolded when it matches.
+The search reads each row's text as [line mode](/how-to/display.html#data-mode-and-line-mode) shows it: the key in quotes, a colon, and the value. So `/"year": 2012` finds the second book, and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, as in `"tags": [`. An empty container's row is its key and both brackets, as in `"tags": []`.
 
-A row holds one node, so a pattern cannot span two rows. Search for a value, a key, or a key with its value, not for two elements of an array at once.
+The search reads the rows inside a fold as well. When a match sits inside a fold, aless unfolds whatever hides the match.
 
-In the [file explorer](/how-to/explore.html), `/` searches the entries listed so far, each row's name, size and format. The [keys](/reference/keys.html#search) list every search key, and [aless and jless](/explanation/jless.html) says how this search differs from jless's, which reads the whole document as one line.
+A row holds one node, so a pattern can't span two rows. Search for a value, a key, or a key with its value. A pattern that needs two elements of an array at once matches no row.
+
+In the [explorer](/how-to/explore.html), `/` searches the entries listed so far. There the search reads each row's name, size, and format.
+
+The reference lists every search key. For more information, see [Keys](/reference/keys.html#search).
+
+The search in jless reads the whole document as one line. The search in aless reads each row on its own. For more information, see [aless and jless](/explanation/jless.html).

@@ -5,19 +5,19 @@
 
 _aless() {
   _arguments -S \
-    '(--kind --format -k)--kind=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
-    '(--kind --format -k)--format=[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
-    '(--kind --format -k)-k[parse every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
-    '*--grammar=[a format of your own, from an ABNF grammar]:NAME=FILE:_files' \
-    '*--grammar-expr=[the same, the grammar on the command line]:NAME=ABNF: ' \
+    '(--kind --format -k)--kind=[read every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
+    '(--kind --format -k)--format=[read every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
+    '(--kind --format -k)-k[read every input as FORMAT]:FORMAT:(json jsonl jsonic jsonc json5 yaml toml ini csv tsv xml zon markdown feed css proto pgn c abnf ebnf gbnf expr semver text)' \
+    '*--grammar=[read your own format, from an ABNF grammar]:NAME=FILE:_files' \
+    '*--grammar-expr=[read your own format, from command-line ABNF]:NAME=ABNF: ' \
     '--max-size=[refuse an input over SIZE (default 64M)]:SIZE: ' \
     '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
-    '--no-watch[do not reload files when they change]' \
-    '--watch[reload files when they change (the default)]' \
+    '--no-watch[do not reload a file when it changes]' \
+    '--watch[reload a file when it changes (the default)]' \
     '(--mode -m)--mode=[start in data (default) or line mode]:MODE:(data line)' \
     '(--mode -m)-m[start in data (default) or line mode]:MODE:(data line)' \
     '--depth=[open only the first N levels]:N: ' \
-    '--indent=[indentation per level (default 2)]:N: ' \
+    '--indent=[indent N spaces a level (default 2)]:N: ' \
     '(--line-numbers -n)--line-numbers[number the rows]' \
     '(--line-numbers -n)-n[number the rows]' \
     '(--no-line-numbers -N)--no-line-numbers[do not number the rows]' \
@@ -26,16 +26,16 @@ _aless() {
     '(--relative-line-numbers -r)-r[number rows by distance from the focus]' \
     '(--no-relative-line-numbers -R)--no-relative-line-numbers[do not number rows by distance]' \
     '(--no-relative-line-numbers -R)-R[do not number rows by distance]' \
-    '--scrolloff=[rows kept around the focus (default 3)]:N: ' \
+    '--scrolloff=[keep N rows around the focus (default 3)]:N: ' \
     '--ascii[draw fold markers in ASCII]' \
-    '(--no-color --no-colour)--no-color[no colours (as NO_COLOR does)]' \
-    '(--no-color --no-colour)--no-colour[no colours (as NO_COLOR does)]' \
-    '--no-mouse[do not capture the mouse]' \
-    '(--help -h)--help[the options (-h), or the whole reference]' \
-    '(--help -h)-h[the options (-h), or the whole reference]' \
-    '(--version -V)--version[the version]' \
-    '(--version -V)-V[the version]' \
-    '--generate=[a man page or a shell'\''s completions]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell)' \
+    '(--no-color --no-colour)--no-color[draw without colour, as NO_COLOR does]' \
+    '(--no-color --no-colour)--no-colour[draw without colour, as NO_COLOR does]' \
+    '--no-mouse[leave the mouse to the terminal]' \
+    '(--help -h)--help[print the options (-h) or the reference]' \
+    '(--help -h)-h[print the options (-h) or the reference]' \
+    '(--version -V)--version[print the version]' \
+    '(--version -V)-V[print the version]' \
+    '--generate=[print the man page or a shell'\''s completions]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell)' \
     '*:file:_files'
 }
 

@@ -5,46 +5,61 @@ Every notable change to aless, newest first. The format is
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 A release's notes on GitHub are its section here: the pull request that
-bumps the version renames `Unreleased` to the version and its date
-([RELEASING.md](RELEASING.md)).
+bumps the version renames `Unreleased` to the version and its date.
+For more information, see [Releasing aless](RELEASING.md).
 
 ## [Unreleased]
 
 ### Changed
 
 - The explorer shows dot-files and dot-directories, such as `.github/`
-  and `.env`, where it hid them unless `--hidden` or `:set hidden` asked
-  for them. `:set nohidden` hides them.
-- A number is shown as its source spells it where the spelling is
-  JSON's: `1.0`, `-0`, `1e21` and an integer beyond 2^53 keep their
-  digits in the tree, a collapsed preview, search, and the JSON that `:w`
-  and the copy commands write, where they were given as the nearest
-  64-bit float in its shortest form (`1`, `0`, `1e+21`). A spelling JSON
-  has no syntax for (`0x1F` in JSON5, `1_000` in TOML) is still given as
-  the value it denotes, and the source view has the spelling.
-- `--help`, the man page and the line aless prints when it cannot start
-  describe aless alone.
-- F1 lists every key, command and setting, grouped as the documentation
-  site's Keys page groups them: the prompt's editing keys, the keys of
-  the help and the error report, `:tabfirst`, `:tablast`, `:e!`,
-  `:expand`, `:collapse` and the whole of `:set` among them. The page is
-  written from the same table.
-- `--help` and the man page are rewritten in shorter sentences. They
-  number the rows with `-n` and `-r` where they said line numbers, give
-  `--depth N` as the first N levels open, which is what it does, and
-  give each format's nesting limit as aless reads it: Markdown's tree
-  stops at 205 levels without an error, and ABNF, EBNF and GBNF nest
-  groups 127 deep.
-- `--help`, `-h`, F1 and aless's messages use no em dash: `aless 0.6.0:`
-  heads the help, and a failed `:format` or reload ends `(! shows the
-  report)`.
+  and `.env`. Before, it hid them unless `--hidden` or `:set hidden`
+  asked for them. `:set nohidden` hides them.
+- aless shows a number as its source spells it where the spelling is
+  JSON's. Numbers such as `1.0`, `-0`, `1e21`, and an integer beyond
+  2^53 keep their digits in the tree, in a folded preview, in search,
+  and in the JSON that `:w` and the copy commands write. Before, aless
+  gave these numbers as the nearest 64-bit float in its shortest form:
+  `1`, `0`, and `1e+21`. For a spelling that JSON has no syntax for,
+  aless still gives the value the spelling denotes. Two such spellings
+  are `0x1F` in JSON5 and `1_000` in TOML. The source view shows the
+  spelling.
+- `--help` describes aless alone. So do the man page and the line aless
+  prints when it cannot start.
+- `F1` lists every key, command, and setting. Among them are the
+  prompt's editing keys, the keys of the help and of the error report,
+  `:tabfirst`, `:tablast`, `:e!`, `:expand`, `:collapse`, and the whole
+  of `:set`. `F1` groups the keys, commands, and settings as the
+  documentation site's Keys page does. The site's build writes the Keys
+  page from the table `F1` shows.
+- `--help` and the man page are rewritten in shorter sentences. They say
+  that `-n` and `-r` number the rows. Before, `--help` and the man page
+  said that `-n` and `-r` show line numbers. They give `--depth N` as
+  the first N levels open, because that description matches what the
+  option does. They give each format's nesting limit as aless reads that
+  format. For example, Markdown's tree stops at 205 levels without an
+  error. For ABNF, EBNF, and GBNF, the limit is 127 levels of nested
+  groups.
+- `--help`, `-h`, `F1`, and the messages aless shows use no em dash. For
+  example, `aless 0.6.0:` heads the help. As a second example, the
+  message of a failed `:format` or reload ends with
+  `(! shows the report)`.
 - The documentation site is rewritten. It gains a Formats reference
-  page, and how-to guides to saving a document as JSON and to a file
-  that does not parse. Every capture of the viewer on it is drawn by
-  aless when the site is built, and the build fails when one no longer
-  matches.
-- The site has a Why page, in the header's navigation: why aless was
-  written, in Richard Rodger's own words, with two captures of the viewer.
+  page, a how-to guide to saving a document as JSON, and a how-to guide
+  to a file that does not parse. aless draws every capture of the viewer
+  on the site when the site is built. The build fails when a capture no
+  longer matches what aless draws.
+- The navigation in the site's header gains a Why page. The page tells
+  why aless was written, in Richard Rodger's own words. It shows two
+  captures of the viewer.
+- The messages aless shows say what went wrong and what to do next. For
+  example, an option aless does not know gives
+  `--nope is not an option. aless --help lists the options.`
+- `--help`, `F1`, and the man page name a key as the key is printed,
+  such as `Ctrl+D` and `Shift+Tab`. Before, they wrote `C-d` and
+  `S-Tab`.
+- The documentation site and the text aless prints are rewritten in
+  shorter sentences, each with one claim.
 
 ### Removed
 

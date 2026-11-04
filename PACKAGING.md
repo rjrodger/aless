@@ -1,31 +1,36 @@
 # Packaging aless
 
-For anyone packaging aless for a package manager or a distribution, and
-for the owner submitting it to one. How a release is made is in
-[RELEASING.md](RELEASING.md).
+This page is for anyone packaging aless for a package manager or a
+distribution, and for the owner submitting it to one. For more
+information about making a release, see [Releasing aless](RELEASING.md).
 
 ## Building
 
-- It needs Rust 1.88 or newer (`rust-version` in `Cargo.toml`, checked in
-  CI).
-- It builds with `cargo build --release --locked`. `Cargo.lock` pins every
-  dependency, and every one comes from crates.io: there are no git or path
-  dependencies. For an offline build, run `cargo fetch --locked` first,
-  then `cargo build --release --frozen`.
-- It needs no C compiler and no system libraries. aless and everything it
-  depends on are Rust. The clipboard speaks X11 and Wayland itself, with
-  neither libxcb nor libwayland. A static `*-unknown-linux-musl` build
-  needs nothing extra.
-- It has one feature, `clipboard`, on by default, which gives the yank commands
-  the system clipboard (through arboard). `--no-default-features` drops
-  it, and yank then copies through the terminal (OSC 52) instead.
+A packager needs these facts:
+
+- The build needs Rust 1.88 or newer. `Cargo.toml` records that version
+  as `rust-version`. CI checks the build against that version.
+- The build command is `cargo build --release --locked`. `Cargo.lock`
+  pins every dependency. Every dependency comes from crates.io, so there
+  are no git or path dependencies. For an offline build, run
+  `cargo fetch --locked` first, and then `cargo build --release --frozen`.
+- The build needs no C compiler and no system libraries, because aless
+  and everything it depends on are Rust. The clipboard speaks X11 and
+  Wayland itself, so it needs neither libxcb nor libwayland. A static
+  `*-unknown-linux-musl` build needs nothing extra.
+- The build has one feature, `clipboard`, and the feature is on by
+  default. With it, the copy commands copy to the system clipboard.
+  The copy goes through arboard. `--no-default-features` drops the
+  feature, and the copy commands then copy through the terminal instead.
+  That copy uses OSC 52.
 - A package installs these files:
-  - the binary, `target/release/aless` (`aless.exe` on Windows);
-  - `LICENSE` (MIT) and `THIRD_PARTY_NOTICES.md` (jless's MIT notice)
-    as its licence files;
-  - `README.md` as its documentation;
-  - the man page and the shells' completions, where each system keeps
-    them:
+  - The binary is `target/release/aless`, or `aless.exe` on Windows.
+  - The licence files are `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+    `LICENSE` is the MIT licence. `THIRD_PARTY_NOTICES.md` is the MIT
+    notice from jless.
+  - The documentation is `README.md`.
+  - The man page and the shells' completions go where each system
+    keeps them:
 
     | File | Installed as, on Linux |
     |---|---|
@@ -33,77 +38,102 @@ for the owner submitting it to one. How a release is made is in
     | `completions/aless.bash` | `share/bash-completion/completions/aless` |
     | `completions/_aless` | `share/zsh/site-functions/_aless` |
     | `completions/aless.fish` | `share/fish/vendor_completions.d/aless.fish` |
-    | `completions/_aless.ps1` | PowerShell's: a user adds it to `$PROFILE` |
+    | `completions/_aless.ps1` | Where PowerShell keeps it. A user adds it to `$PROFILE`. |
 
-  The source and the crate carry those files as they are committed. The
-  built binary writes each of them too, with `aless --generate man`,
-  `complete-bash`, `complete-zsh`, `complete-fish` or
-  `complete-powershell`, the names ripgrep uses, so a Homebrew formula
-  takes them as it takes ripgrep's:
+  The source and the crate carry the committed man page and
+  completions. The built binary writes each of them too, with
+  `aless --generate man`, `complete-bash`, `complete-zsh`,
+  `complete-fish`, or `complete-powershell`. Those are the names ripgrep
+  uses, so a Homebrew formula takes them as the ripgrep formula does:
 
   ```ruby
   generate_completions_from_executable(bin/"aless", "--generate", shell_parameter_format: "complete-")
   (man1/"aless.1").write Utils.safe_popen_read(bin/"aless", "--generate", "man")
   ```
-- The name is free: on 2026-10-08 no package called `aless` was found in any
-  repository Repology tracks, nor in Homebrew, Arch Linux, the AUR or
-  crates.io.
+- The name is free. On 8 October 2026, a search found no package called
+  `aless` in any repository Repology tracks, nor in Homebrew, Arch
+  Linux, the Arch User Repository (AUR), or crates.io.
 
 ## Testing
 
-- No test needs the network, so a sandboxed build runs the whole suite:
+A package build can run these checks:
+
+- The whole test suite. No test needs the network, so a sandboxed build
+  runs it all:
 
   ```bash
   cargo test --locked
   ```
 
-- On Unix, `python3 admin/scripts/pty-smoke.py target/release/aless`
-  drives the built binary in a pseudo-terminal.
+- A smoke test of the built binary in a pseudo-terminal. On Unix,
+  `python3 admin/scripts/pty-smoke.py target/release/aless` runs that
+  smoke test.
 
 ## Sources and binaries
 
-Every release is a GitHub Release named `v<version>`. It carries:
-- the source as `source.tar.gz`, the same as GitHub's
-  `archive/refs/tags/v<version>.tar.gz`;
-- prebuilt archives for Linux (x86_64 and aarch64, glibc 2.35 or newer,
-  or static musl), macOS (x86_64 and aarch64) and Windows (x86_64 and
-  aarch64);
-- a `.sha256` for each file, and `sha256.sum` for all of them;
-- a CycloneDX SBOM;
-- build-provenance attestations, checked with
-  `gh attestation verify FILE --repo rjrodger/aless`.
+Every release is a GitHub Release named `vX.Y.Z`, where `X.Y.Z` is the
+version. Each release carries:
+
+- The source, as `source.tar.gz`. It is the same as the GitHub
+  archive `archive/refs/tags/vX.Y.Z.tar.gz`.
+- Prebuilt archives for Linux, macOS, and Windows, each for x86_64 and
+  aarch64. The Linux archives come in two kinds: one for glibc 2.35 or
+  newer, and one static, with musl.
+- A `.sha256` for each file, and `sha256.sum` for all of them.
+- A CycloneDX software bill of materials (SBOM).
+- Build-provenance attestations.
+  `gh attestation verify FILE --repo rjrodger/aless` checks one, where
+  `FILE` is a file from the release.
 
 The crate on crates.io holds the same source, without the tests.
 
 ## Channels
 
-| Channel | How aless gets there | Who keeps it current |
-|---|---|---|
-| GitHub Releases, shell and PowerShell installers | `release.yml` | the release workflow |
-| Homebrew tap: `brew install rjrodger/tap/aless` | `release.yml` pushes the formula through `publish-homebrew.yml`: dist's, which installs the prebuilt binary, with the man page and the bash, zsh, fish and PowerShell completions installed where Homebrew's own formulas put theirs, and a `brew test` | the release workflow |
-| crates.io: `cargo install --locked aless` | the first version by hand, then `publish-crates.yml` | the release workflow |
-| cargo-binstall: `cargo binstall aless` | finds the release archives by their names; no metadata needed | nobody |
-| homebrew-core: `brew install aless` | a pull request once aless meets Homebrew's [acceptance policy](https://docs.brew.sh/Package-Acceptance-Policy): built from source with `depends_on "rust" => :build` and `cargo install *std_cargo_args`, the man page and the completions from `--generate` (above); a description of at most 80 characters that does not start with an article (`Cargo.toml`'s is one); and enough GitHub stars, forks or watchers | Homebrew |
-| MacPorts: `sudo port install aless` | a Portfile using the `cargo` portgroup (its crate list from `cargo2port`), sent as a pull request to macports-ports | a MacPorts maintainer |
-| Arch Linux: AUR | `aless`, built from source, and/or `aless-bin`, from the release archives; the official repositories are the Arch packagers' choice | whoever adopts it |
-| Void Linux: `sudo xbps-install aless` | a void-packages template with `build_style=cargo` | Void maintainers |
-| NetBSD pkgsrc: `pkgin install aless` | pkgsrc-wip first, using `cargo-depends.mk` | pkgsrc developers |
-| FreeBSD: `pkg install aless` | a port with `USES=cargo` (`make cargo-crates` lists the crates), sent through Bugzilla | a FreeBSD committer |
-| nixpkgs | `pkgs/by-name/al/aless/package.nix`, built with `rustPlatform.buildRustPackage` | nixpkgs maintainers |
-| winget | a first manifest from `komac` or `wingetcreate` (portable zip), as a pull request to microsoft/winget-pkgs; later ones can be automated from `release.yml` | the release workflow, once added |
-| Scoop | a bucket of aless's own with the Windows zip; the main bucket asks for more popularity | the release workflow, once added |
-| Debian, Ubuntu, Fedora | each packages every crate separately, the tabnas crates among them, so these follow the distributions' Rust teams | their Rust teams |
+These are the channels, their install commands, how aless gets to each,
+and who keeps it current there:
+
+| Channel | Install command | How aless gets there | Who keeps it current |
+|---|---|---|---|
+| GitHub Releases, with the shell and PowerShell installers | | `release.yml` | The release workflow |
+| Homebrew tap | `brew install rjrodger/tap/aless` | `release.yml` pushes the formula from dist through `publish-homebrew.yml`. | The release workflow |
+| crates.io | `cargo install --locked aless` | The first version by hand, and then `publish-crates.yml` | The release workflow |
+| cargo-binstall | `cargo binstall aless` | cargo-binstall finds the release archives by their names, so it needs no metadata. | Nobody |
+| homebrew-core | `brew install aless` | A pull request, once aless meets the Homebrew [acceptance policy](https://docs.brew.sh/Package-Acceptance-Policy) | Homebrew |
+| MacPorts | `sudo port install aless` | A Portfile with the `cargo` portgroup, sent as a pull request to macports-ports. The Portfile's crate list comes from `cargo2port`. | A MacPorts maintainer |
+| Arch Linux: AUR | | `aless`, built from source, or `aless-bin`, from the release archives, or both. The official repositories are the Arch packagers' choice. | Whoever adopts it |
+| Void Linux | `sudo xbps-install aless` | A void-packages template with `build_style=cargo` | Void maintainers |
+| NetBSD pkgsrc | `pkgin install aless` | pkgsrc-wip first, with `cargo-depends.mk` | pkgsrc developers |
+| FreeBSD | `pkg install aless` | A port with `USES=cargo`, sent through Bugzilla. `make cargo-crates` lists the crates. | A FreeBSD committer |
+| nixpkgs | | `pkgs/by-name/al/aless/package.nix`, built with `rustPlatform.buildRustPackage` | nixpkgs maintainers |
+| winget | | A first manifest from `komac` or `wingetcreate`, as a portable zip, sent as a pull request to microsoft/winget-pkgs. `release.yml` can automate later ones. | The release workflow, once added |
+| Scoop | | A separate bucket for aless, with the Windows zip. The main bucket asks for more popularity. | The release workflow, once added |
+| Debian, Ubuntu, and Fedora | | Each packages every crate separately, so these channels follow the distributions' Rust teams. The tabnas crates are among those crates. | Their Rust teams |
+
+The tap's formula is the one dist writes. That formula installs the
+prebuilt binary. The man page and the bash, zsh, fish, and PowerShell
+completions go where the formulas in Homebrew itself put theirs. The
+formula also has a `brew test`.
+
+For homebrew-core, the Homebrew acceptance policy asks for the following:
+
+- A formula built from source, with `depends_on "rust" => :build` and
+  `cargo install *std_cargo_args`. The man page and the completions come
+  from `--generate`, as in [Building](#building).
+- A description of at most 80 characters that does not start with an
+  article. The description in `Cargo.toml` meets that rule.
+- Enough GitHub stars, forks, or watchers.
 
 ## Starting points
 
-For the channels the owner submits to, once a release exists. Each is a
-first draft to check with the channel's own tools before it goes up, and
-lives in that channel's repository, not this one.
+These starting points are for the channels the owner submits to, once a
+release exists. Each is a first draft, so check it with the channel's
+own tools before you submit it. Each starting point lives in that
+channel's repository, not in this one.
 
 ### AUR, from source
 
 The package `aless` builds from the tag's source archive, so that
-`check()` runs the tests a sandbox can:
+`check()` runs the tests that a sandbox can run:
 
 ```bash
 pkgname=aless
@@ -150,8 +180,9 @@ package() {
 
 ### AUR, prebuilt
 
-The package `aless-bin` has the same `package()`, but for the binary's
-path, which is `aless` at the top of the archive's directory, with:
+The package `aless-bin` has the same `package()`, except for the
+binary's path. That path is `aless` at the top of the archive's
+directory. `aless-bin` has these lines of its own:
 
 ```bash
 pkgname=aless-bin
@@ -164,16 +195,21 @@ sha256sums_aarch64=('SKIP')
 # and in package(): cd "aless-$CARCH-unknown-linux-gnu"
 ```
 
-Run `updpkgsums`, `makepkg -s` and `namcap` on each, then
-`makepkg --printsrcinfo > .SRCINFO`, before the first push to the AUR.
+Before the first push to the AUR, run these commands on each package:
+
+1. Run `updpkgsums`.
+2. Run `makepkg -s`.
+3. Run `namcap`.
+4. Run `makepkg --printsrcinfo > .SRCINFO`.
 
 ### Scoop
 
-The manifest goes in a bucket of the owner's own
-(`rjrodger/scoop-bucket`, made from the [bucket
-template](https://github.com/ScoopInstaller/BucketTemplate), whose
-workflow keeps the manifest current through `checkver` and
-`autoupdate`). The Windows zips hold `aless.exe` at their top:
+The manifest goes in a bucket of the owner's own, `rjrodger/scoop-bucket`.
+The bucket starts from the [bucket
+template](https://github.com/ScoopInstaller/BucketTemplate) on GitHub.
+The template's workflow keeps the manifest current through `checkver`
+and `autoupdate`. The Windows zips hold `aless.exe` at their top, so
+the manifest's `bin` names it without a directory:
 
 ```json
 {
@@ -209,16 +245,21 @@ workflow keeps the manifest current through `checkver` and
 }
 ```
 
-`scoop install ./aless.json` tries it before the push.
+Before the push, try the manifest with `scoop install ./aless.json`.
 
 ### winget
 
-The first manifest is made by
-[komac](https://github.com/russellbanks/Komac) (`komac new`) or
-`wingetcreate new` from the two Windows zip URLs, as a portable
-installer (`InstallerType: zip`, `NestedInstallerType: portable`,
-`aless.exe`), with the identifier `rjrodger.aless`, and goes to
-microsoft/winget-pkgs as a pull request. Later versions are
+`komac new` or `wingetcreate new` makes the first manifest from the
+two Windows zip URLs. [komac](https://github.com/russellbanks/Komac)
+is on GitHub. The manifest describes a portable installer, with
+`InstallerType: zip`, `NestedInstallerType: portable`, and `aless.exe`.
+Its identifier is `rjrodger.aless`. The manifest goes to
+microsoft/winget-pkgs as a pull request.
+
+To submit a later version, run
 `komac update rjrodger.aless --version X.Y.Z --urls URL URL --submit`,
-which a job in `publish-jobs` can run with a token of the owner's
-(RELEASING.md says why there, and not on a `release` event).
+where `X.Y.Z` is the version and each `URL` is one of the two Windows
+zip URLs. A job in `publish-jobs` can run that command with a token of
+the owner's. For more information about why that job goes in
+`publish-jobs`, and not on a `release` event, see
+[Releasing aless](RELEASING.md).

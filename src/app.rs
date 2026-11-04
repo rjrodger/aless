@@ -511,10 +511,10 @@ impl App {
         let text = format!(
             r#"{{"aless": "a jless-style viewer for every format the tabnas parsers read",
 "version": "{}",
-"open": ":open <path> [format]   opens a file in a new tab",
+"open": ":open PATH [FORMAT]   opens a file in a new tab",
 "formats": {},
-"keys": "F1 or :help shows the key map; q quits",
-"watch": "opened files reload when they change, keeping your place"}}"#,
+"keys": "F1 or :help lists every key and command, and q quits",
+"watch": "an open file reloads when it changes, and keeps your place"}}"#,
             env!("CARGO_PKG_VERSION"),
             serde_json::to_string(&Format::known_names()).unwrap_or_default()
         );
@@ -751,7 +751,7 @@ impl App {
         let capped = tab.explorer.as_ref().is_some_and(|ex| ex.capped);
         if capped {
             self.error(format!(
-                "Listing stopped at {} directories; collapse some to go on",
+                "Listing stopped at {} directories. Fold some to list more.",
                 crate::explorer::MAX_LISTED
             ));
         }
@@ -779,11 +779,15 @@ impl App {
             Some(crate::explorer::EntryKind::File) => self.open_path(&fs_path, None),
             Some(crate::explorer::EntryKind::Symlink(_)) => match std::fs::metadata(&fs_path) {
                 Ok(m) if m.is_file() || m.is_dir() => self.open_path(&fs_path, None),
-                _ => self.error(format!("{}: dangling link", fs_path.display())),
+                _ => self.error(format!(
+                    "{} is a link to nothing aless can read, so aless cannot open it",
+                    fs_path.display()
+                )),
             },
-            Some(crate::explorer::EntryKind::Other) => {
-                self.error(format!("{}: not a regular file", fs_path.display()))
-            }
+            Some(crate::explorer::EntryKind::Other) => self.error(format!(
+                "{} is not a regular file, so aless cannot open it",
+                fs_path.display()
+            )),
             None => {}
         }
     }
@@ -799,7 +803,7 @@ impl App {
                 let parent = parent.to_path_buf();
                 self.reroot_active(&parent);
             }
-            None => self.error("Already at the top of the filesystem"),
+            None => self.error("This directory is the top of the filesystem, so it has no parent"),
         }
     }
 
@@ -831,7 +835,10 @@ impl App {
         };
         let target = root.join(dir);
         if !target.is_dir() {
-            self.error(format!("{}: not a directory", target.display()));
+            self.error(format!(
+                "{} is not a directory, so aless cannot change to it",
+                target.display()
+            ));
             return;
         }
         self.reroot_active(&target);
@@ -909,7 +916,12 @@ impl App {
                 },
                 YankTarget::Str => match &n.kind {
                     Kind::Str(s) => s.to_string(),
-                    _ => return Err("Focused entry is a directory".to_string()),
+                    _ => {
+                        return Err(
+                            "The focused entry is a directory, so it has no string contents"
+                                .to_string(),
+                        )
+                    }
                 },
                 _ => ex.fs_path(&doc.path(node)).display().to_string(),
             });
@@ -919,7 +931,12 @@ impl App {
             YankTarget::Line => fmt::to_json_line(doc, node),
             YankTarget::Str => match &n.kind {
                 Kind::Str(s) => s.to_string(),
-                _ => return Err("Focused value is not a string".to_string()),
+                _ => {
+                    return Err(
+                        "The focused value is not a string, so there are no string contents to copy or print"
+                            .to_string(),
+                    )
+                }
             },
             YankTarget::Key => match n.key.name() {
                 Some(k) => {
@@ -929,7 +946,7 @@ impl App {
                         fmt::quote(k)
                     }
                 }
-                None => return Err("Focused node has no key".to_string()),
+                None => return Err("The focused node has no key to copy or print".to_string()),
             },
             YankTarget::PathDot => fmt::path_dot(&doc.path(node)),
             YankTarget::PathBracket => fmt::path_bracket(&doc.path(node)),
@@ -944,7 +961,7 @@ impl App {
                     let lines = text.lines().map(str::to_string).collect();
                     self.overlay = Some(Overlay::new(
                         format!(
-                            "{}: j/k scroll, h/l pan, any other key returns",
+                            "{}: j and k scroll, h and l pan, and any other key returns",
                             target.describe()
                         ),
                         lines,
@@ -1085,7 +1102,7 @@ impl App {
         let tab = self.tab();
         let node = tab.focused_node();
         let Some(key) = tab.doc.node(node).key.name().map(str::to_string) else {
-            self.error("Focused node has no key");
+            self.error("The focused node has no key to search for");
             return;
         };
         let pattern = search::key_pattern(&key);
@@ -1136,7 +1153,7 @@ impl App {
             "tab" | "tabn" | "tabnext" | "next" | "n" if !rest.is_empty() => {
                 match rest.parse::<usize>() {
                     Ok(n) if n >= 1 => self.goto_tab(n - 1),
-                    _ => self.error(format!("Not a tab number: {rest}")),
+                    _ => self.error(format!(":{cmd} needs a tab number, not {rest}")),
                 }
             }
             "tabn" | "tabnext" | "next" | "n" => self.next_tab(1),
@@ -1149,7 +1166,7 @@ impl App {
             "watch" => match rest {
                 "" | "on" | "true" | "1" => self.toggle_watch(Some(true)),
                 "off" | "false" | "0" => self.toggle_watch(Some(false)),
-                _ => self.error("usage: :watch [on|off]"),
+                _ => self.error(":watch takes on or off, or no word at all"),
             },
             "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
@@ -1157,14 +1174,18 @@ impl App {
                     Ok(()) => self.info(format!("Parsed as {f}")),
                     Err(e) => self.error(format!("{f}: {e} (! shows the report)")),
                 },
+                None if rest.is_empty() => self.error(format!(
+                    ":{cmd} needs a format. The formats are {}.",
+                    Format::known_names().join(", ")
+                )),
                 None => self.error(format!(
-                    "Unknown format: {rest} (one of {})",
+                    "{rest} is not a format. The formats are {}.",
                     Format::known_names().join(", ")
                 )),
             },
             "depth" | "fold" => match rest.parse::<u32>() {
                 Ok(d) => self.tab().expand_to_depth(d, view),
-                Err(_) => self.error("usage: :depth <n>"),
+                Err(_) => self.error(":depth takes the number of levels to open, as in :depth 2"),
             },
             "expand" | "expandall" => self.tab().fold_siblings(true, true, view),
             "collapse" | "collapseall" => {
@@ -1174,20 +1195,22 @@ impl App {
             }
             "line" | "goto" => match rest.parse::<usize>() {
                 Ok(n) => self.tab().goto_row(n, view),
-                Err(_) => self.error("usage: :line <n>"),
+                Err(_) => self.error(":line takes a row number, as in :line 12"),
             },
             "source" | "src" => self.show_source(),
             "explore" | "explorer" | "browse" | "files" => {
                 let dir = if rest.is_empty() { "." } else { rest };
                 if !Path::new(dir).is_dir() {
-                    self.error(format!("{dir}: not a directory"));
+                    self.error(format!(
+                        "{dir} is not a directory, so aless cannot explore it"
+                    ));
                 } else {
                     self.open_explorer(Path::new(dir));
                 }
             }
             "cd" => {
                 if rest.is_empty() {
-                    self.error("usage: :cd <dir>");
+                    self.error(":cd takes a directory, as in :cd src");
                 } else {
                     self.explorer_cd(rest);
                 }
@@ -1203,16 +1226,18 @@ impl App {
                         self.tab().toggle_mode(view);
                     }
                 }
-                _ => self.error("usage: :mode data|line"),
+                _ => self.error(":mode takes data or line"),
             },
             "yank" | "y" => self.yank(YankTarget::Pretty, false),
-            _ => self.error(format!("Unknown command: {cmd}")),
+            _ => self.error(format!(
+                ":{cmd} is not a command. F1 or :help lists every command."
+            )),
         }
     }
 
     fn set_option(&mut self, rest: &str) {
         if rest.is_empty() {
-            self.error("usage: :set <option>");
+            self.error(":set takes a setting, as in :set number. F1 lists every setting.");
             return;
         }
         for word in rest.split_whitespace() {
@@ -1245,22 +1270,22 @@ impl App {
                 }
                 ("scrolloff" | "so", Some(v)) => match v.parse() {
                     Ok(n) => self.opts.scrolloff = n,
-                    Err(_) => self.error(format!("Not a number: {v}")),
+                    Err(_) => self.error(format!(":set {name} needs a number, not {v}")),
                 },
                 ("indent" | "shiftwidth" | "sw", Some(v)) => match v.parse::<usize>() {
                     Ok(n) => self.opts.indent = n.min(16),
-                    Err(_) => self.error(format!("Not a number: {v}")),
+                    Err(_) => self.error(format!(":set {name} needs a number, not {v}")),
                 },
                 ("mode", Some(v)) => self.run_command(&format!("mode {v}")),
                 ("depth", Some(v)) => self.run_command(&format!("depth {v}")),
-                _ => self.error(format!("Unknown option: {word}")),
+                _ => self.error(format!("{word} is not a setting. F1 lists every setting.")),
             }
         }
     }
 
     fn cmd_open(&mut self, rest: &str) {
         if rest.is_empty() {
-            self.error("usage: :open <path> [format]");
+            self.error(":open needs a path. A format can follow the path.");
             return;
         }
         // The path may contain spaces; a trailing word that names a format
@@ -1276,12 +1301,12 @@ impl App {
 
     fn write_file(&mut self, rest: &str, bang: bool) {
         if rest.is_empty() {
-            self.error("usage: :w[!] <file>  (writes the document as JSON)");
+            self.error(":w needs a file name. :w FILE writes the document to FILE as JSON.");
             return;
         }
         let path = Path::new(rest);
         if path.exists() && !bang {
-            self.error(format!("{rest} exists; use :w! to overwrite"));
+            self.error(format!("{rest} exists. :w! {rest} writes over it."));
             return;
         }
         let text = {
@@ -1290,7 +1315,7 @@ impl App {
         };
         match std::fs::write(path, text + "\n") {
             Ok(()) => self.info(format!("Wrote {rest}")),
-            Err(e) => self.error(format!("{rest}: {e}")),
+            Err(e) => self.error(format!("Could not write {rest}: {e}")),
         }
     }
 
@@ -1331,7 +1356,7 @@ impl App {
         if i < self.tabs.len() {
             self.active = i;
         } else {
-            self.error(format!("No tab {}", i + 1));
+            self.error(format!("There is no tab {}", i + 1));
         }
     }
 
@@ -1340,7 +1365,7 @@ impl App {
     fn toggle_watch(&mut self, want: Option<bool>) {
         let tab = self.tab();
         if !tab.watchable() {
-            self.error("Nothing to watch: this tab has no file");
+            self.error("This tab has no file, so there is nothing to watch");
             return;
         }
         let on = want.unwrap_or(!tab.watch);
@@ -1352,11 +1377,11 @@ impl App {
         if on {
             tab.stamp = crate::tab::Stamp::of(&path);
             self.effects.push(Effect::Watch(path));
-            self.info("Watching");
+            self.info("Watching the file");
         } else {
             tab.reload_due = None;
             self.effects.push(Effect::Unwatch(path));
-            self.info("Not watching");
+            self.info("Not watching the file");
         }
     }
 
@@ -1364,7 +1389,7 @@ impl App {
         let view = self.view();
         let tab = self.tab();
         if !tab.watchable() {
-            self.error("Nothing to reload: this tab has no file");
+            self.error("This tab has no file, so there is nothing to reload");
             return;
         }
         tab.reload(view);
@@ -1377,7 +1402,7 @@ impl App {
             (t.title.clone(), t.error.clone(), t.gone, t.doc.len())
         };
         match err {
-            Some(e) if gone => self.error(format!("{title}: file gone ({e})")),
+            Some(e) if gone => self.error(format!("{title}: the file is gone ({e})")),
             Some(e) => self.error(format!("{title}: {e} (! shows the report)")),
             None => self.info(format!(
                 "Reloaded {title} ({} nodes)",
@@ -1422,7 +1447,7 @@ impl App {
 
     pub fn show_help(&mut self) {
         self.overlay = Some(Overlay::new(
-            "aless help: j/k scroll, h/l pan, any other key returns".to_string(),
+            "aless help: j and k scroll, h and l pan, and any other key returns".to_string(),
             help_lines(),
             false,
         ));
@@ -1441,12 +1466,13 @@ impl App {
             (None, Some(e)) => (tab.title.clone(), e),
             (None, None) => {
                 let title = tab.title.clone();
-                self.info(format!("{title}: no error"));
+                self.info(format!("{title} has no error report"));
                 return;
             }
         };
         let lines = err.report.lines().map(str::to_string).collect();
-        let title = format!("{what}, error report: j/k scroll, h/l pan, any other key returns");
+        let title =
+            format!("{what}, error report: j and k scroll, h and l pan, and any other key returns");
         self.overlay = Some(Overlay::new(title, lines, true));
         self.mode = Mode::Overlay;
     }
@@ -1616,24 +1642,24 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "A count before a key repeats it: `3j` moves down three rows.",
         typed: false,
         keys: &[
-            ("j k  ↓ ↑  C-n C-p", "down and up a row"),
-            ("Enter Backspace", "down and up a row, as `j` and `k`"),
-            ("h  ←", "fold the focused container, or go to its parent"),
-            ("l  →", "unfold the focused container, or go to its first child"),
-            ("H", "go to the parent, leaving it unfolded"),
-            ("J K", "the next and the previous sibling, stopping at the last and the first"),
-            ("w b", "forward and back to the next row at another depth"),
-            ("0  ^", "the first sibling"),
-            ("$", "the last sibling"),
-            ("g  Home", "the first row; `Ng` goes to row N"),
-            ("G  End", "the last row; `NG` goes to row N"),
-            ("C-f C-b  PgDn PgUp", "a page down and up"),
-            ("C-d C-u", "half a page down and up; a count sets the distance, which later presses keep"),
-            ("C-e C-y", "scroll a row down and up, moving the focus only to keep it the scrolloff's rows from the edge"),
-            ("zz zt zb", "put the focused row at the centre, the top or the bottom of the screen"),
-            (". ,", "scroll a value longer than the screen a character right and left"),
-            (";", "scroll a long value to its end, and back to its start"),
-            ("Esc", "drop a count, or the first key of a two-key command"),
+            ("j k  ↓ ↑  Ctrl+N Ctrl+P", "Move down and up a row."),
+            ("Enter Backspace", "Move down and up a row, as `j` and `k` do."),
+            ("h  ←", "Fold the focused container, or go to its parent."),
+            ("l  →", "Unfold the focused container, or go to its first child."),
+            ("H", "Go to the parent, and leave it unfolded."),
+            ("J K", "Go to the next and the previous sibling, and stop at the last and the first."),
+            ("w b", "Go forward and back to the next row at another depth."),
+            ("0  ^", "Go to the first sibling."),
+            ("$", "Go to the last sibling."),
+            ("g  Home", "Go to the first row. `Ng` goes to row N."),
+            ("G  End", "Go to the last row. `NG` goes to row N."),
+            ("Ctrl+F Ctrl+B  PgDn PgUp", "Move a page down and up."),
+            ("Ctrl+D Ctrl+U", "Move half a page down and up. A count sets the distance, and later presses keep it."),
+            ("Ctrl+E Ctrl+Y", "Scroll a row down and up. The focus moves only to keep `scrolloff` rows between it and the edge."),
+            ("zz zt zb", "Put the focused row at the centre, the top, or the bottom of the screen."),
+            (". ,", "Scroll a value longer than the screen a character right and left."),
+            (";", "Scroll a long value to its end, and back to its start."),
+            ("Esc", "Drop a count, or the first key of a two-key command."),
         ],
     },
     KeyGroup {
@@ -1641,41 +1667,42 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "",
         typed: false,
         keys: &[
-            ("Space", "fold or unfold the focused container"),
-            ("c", "fold the focused node and its siblings"),
-            ("C", "fold the focused node and its siblings, and everything inside them"),
-            ("e", "unfold the focused node and its siblings"),
-            ("E", "unfold the focused node and its siblings, and everything inside them"),
-            ("m", "switch between data mode and line mode"),
-            ("%", "in line mode, go between a container's opening and closing brackets"),
-            ("s", "the source view, in place of the tree: the text aless read, at the focused node's line; any key but the scrolling ones, `:` and `r` goes back"),
-            ("< >", "one space less or more of indentation a level"),
+            ("Space", "Fold or unfold the focused container."),
+            ("c", "Fold the focused node and its siblings."),
+            ("C", "Fold the focused node and its siblings, and everything inside them."),
+            ("e", "Unfold the focused node and its siblings."),
+            ("E", "Unfold the focused node and its siblings, and everything inside them."),
+            ("m", "Switch between data mode and line mode."),
+            ("%", "Go between a container's opening and closing brackets, in line mode."),
+            ("s", "Show the source view in place of the tree: the text aless read, at the focused node's line. Any key but the scrolling ones, `:`, and `r` goes back."),
+            ("< >", "Indent each level one space less or more."),
         ],
     },
     KeyGroup {
         title: "Search",
         note: "A pattern is a regular expression. It ignores case unless it holds a capital \
-               letter or ends in `/s`, and `[ ] { }` match themselves.",
+               letter or ends in `/s`. The characters `[ ] { }` match themselves.",
         typed: false,
         keys: &[
-            ("/ ?", "search forward and backward; `Enter` with no pattern repeats the last one"),
-            ("n N", "the next and the previous match, round the end of the document"),
-            ("* #", "search forward and backward for the focused node's key"),
+            ("/ ?", "Search forward and backward. `Enter` with no pattern searches for the last pattern again."),
+            ("n N", "Go to the next and the previous match, round the end of the document."),
+            ("* #", "Search forward and backward for the focused node's key."),
         ],
     },
     KeyGroup {
         title: "Copy and print",
-        note: "`y` and a second key copies to the clipboard; `p` and the same key prints the \
-               text on screen instead (`pP` for the path, since `pp` is the value).",
+        note: "`y` and a second key copy the text to the clipboard. `p` and the same second \
+               key print it on screen instead. `pP` prints the path, because `pp` prints \
+               the value.",
         typed: false,
         keys: &[
-            ("yy pp", "the value, pretty-printed as JSON"),
-            ("yv pv", "the value as JSON on one line"),
-            ("ys ps", "a string's contents, without its quotes"),
-            ("yk pk", "the key"),
-            ("yp pP", "the path, as jless writes it: `.a[0].b`"),
-            ("yb pb", "the path, every step in brackets: `[\"a\"][0][\"b\"]`"),
-            ("yq pq", "the path, as jq writes it"),
+            ("yy pp", "The value, pretty-printed as JSON"),
+            ("yv pv", "The value as JSON on one line"),
+            ("ys ps", "A string's contents, without its quotes"),
+            ("yk pk", "The key"),
+            ("yp pP", "The path, as jless writes it: `.a[0].b`"),
+            ("yb pb", "The path, with every step in brackets: `[\"a\"][0][\"b\"]`"),
+            ("yq pq", "The path, as jq writes it"),
         ],
     },
     KeyGroup {
@@ -1683,26 +1710,26 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "",
         typed: false,
         keys: &[
-            ("Tab S-Tab", "the next and the previous tab"),
-            ("q", "close the tab; closing the last one quits"),
-            ("C-c", "quit"),
-            ("r", "read the file again now"),
-            ("W", "stop or start watching the file"),
-            ("!", "the parse error report, full size; `h` and `l` pan a long line"),
-            (":", "a command, from the list below"),
-            ("F1", "this help"),
-            ("C-z", "suspend aless, on Unix"),
+            ("Tab Shift+Tab", "Go to the next and the previous tab."),
+            ("q", "Close the tab. Closing the last tab quits."),
+            ("Ctrl+C", "Quit."),
+            ("r", "Read the file again now."),
+            ("W", "Stop or start watching the file."),
+            ("!", "Show the parse error report full size. `h` and `l` pan a long line."),
+            (":", "Start a command, from the Commands list."),
+            ("F1", "Show this help."),
+            ("Ctrl+Z", "Suspend aless, on Unix."),
         ],
     },
     KeyGroup {
         title: "The explorer",
-        note: "A directory is a tree with the same keys; `m`, `%` and `s` do nothing in it.",
+        note: "A directory is a tree with the same keys. `m`, `%`, and `s` do nothing in it.",
         typed: false,
         keys: &[
-            ("Enter", "open the focused file in a new tab, or fold or unfold a directory"),
-            ("-", "go up: the parent directory becomes the root"),
-            ("yp", "copy the focused entry's path on disk"),
-            ("/", "search the entries listed so far: each row's name, size and format"),
+            ("Enter", "Open the focused file in a new tab, or fold or unfold a directory."),
+            ("-", "Go up: the parent directory becomes the root."),
+            ("yp", "Copy the focused entry's path on disk."),
+            ("/", "Search the entries listed so far: each row's name, size, and format."),
         ],
     },
     KeyGroup {
@@ -1710,28 +1737,28 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "Type `:` and the command, then `Enter`.",
         typed: true,
         keys: &[
-            (":open PATH [FORMAT]  :e", "open a file or a directory in a new tab"),
-            (":q  :close", "close the tab"),
-            (":qa  :quit  :exit", "quit"),
-            (":tab N", "go to tab N"),
-            (":tabnext  :tabprev", "the next and the previous tab"),
-            (":tabfirst  :tablast", "the first and the last tab"),
-            (":w FILE", "write the document to FILE as JSON, refusing a file that exists"),
-            (":w! FILE", "write the document to FILE as JSON, over a file that exists"),
-            (":format FORMAT", "read the tab's text again as FORMAT"),
-            (":mode data  :mode line", "data mode or line mode"),
-            (":depth N", "open the first N levels, and fold every container below them"),
-            (":expand", "unfold the focused node and its siblings, and everything inside them"),
-            (":collapse", "fold everything, and go to the first row"),
-            (":N  :line N", "go to row N"),
-            (":reload  :e!", "read the file again now"),
-            (":watch on  :watch off", "start or stop watching the file"),
-            (":source", "the source view"),
-            (":error", "the parse error report, full size"),
-            (":cd DIR", "make DIR the explorer's root, relative to the current one; in a document's tab, open DIR in a new explorer tab"),
-            (":explore [DIR]", "open DIR, or the current directory, in a new tab"),
-            (":set SETTING", "change a setting, from the list below"),
-            (":help", "this help"),
+            (":open PATH [FORMAT]  :e", "Open a file or a directory in a new tab."),
+            (":q  :close", "Close the tab."),
+            (":qa  :quit  :exit", "Quit."),
+            (":tab N", "Go to tab N."),
+            (":tabnext  :tabprev", "Go to the next and the previous tab."),
+            (":tabfirst  :tablast", "Go to the first and the last tab."),
+            (":w FILE", "Write the document to FILE as JSON, but not over a file that exists."),
+            (":w! FILE", "Write the document to FILE as JSON, over a file that exists."),
+            (":format FORMAT", "Read the tab's text again as FORMAT."),
+            (":mode data  :mode line", "Switch to data mode or line mode."),
+            (":depth N", "Open the first N levels, and fold every container below them."),
+            (":expand", "Unfold the focused node and its siblings, and everything inside them."),
+            (":collapse", "Fold everything, and go to the first row."),
+            (":N  :line N", "Go to row N."),
+            (":reload  :e!", "Read the file again now."),
+            (":watch on  :watch off", "Start or stop watching the file."),
+            (":source", "Show the source view."),
+            (":error", "Show the parse error report full size."),
+            (":cd DIR", "Make DIR the explorer's root. DIR is relative to the current root. In a document's tab, open DIR in a new explorer tab."),
+            (":explore [DIR]", "Open DIR, or the current directory, in a new explorer tab."),
+            (":set SETTING", "Change a setting, from the Settings list."),
+            (":help", "Show this help."),
         ],
     },
     KeyGroup {
@@ -1739,15 +1766,15 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "Each follows `:set`, and one `:set` takes several.",
         typed: true,
         keys: &[
-            ("number  nonumber  number!", "number the rows, or not, or toggle it; `nu` for short"),
-            ("relativenumber  norelativenumber  relativenumber!", "number each row by its distance from the focus; `rnu` for short"),
-            ("so=N", "keep N rows between the focus and the edge of the screen"),
-            ("indent=N  sw=N", "indent N spaces a level, at most 16"),
-            ("ascii  noascii", "draw the fold markers as `v` and `>`, or as `▼ ▽ ▶ ▷`"),
-            ("hidden  nohidden  hidden!", "show dot-files in the explorer, or not, or toggle it"),
-            ("watch  nowatch", "start or stop watching the file"),
-            ("mode=data  mode=line", "data mode or line mode"),
-            ("depth=N", "open the first N levels, and fold every container below them"),
+            ("number  nonumber  number!", "Number the rows, or stop, or switch between the two. `nu` is the short form."),
+            ("relativenumber  norelativenumber  relativenumber!", "Number each row by its distance from the focus, or stop, or switch between the two. `rnu` is the short form."),
+            ("so=N", "Keep N rows between the focus and the edge of the screen."),
+            ("indent=N  sw=N", "Indent N spaces a level, at most 16."),
+            ("ascii  noascii", "Draw the fold markers as `v` and `>`, or as `▼ ▽ ▶ ▷`."),
+            ("hidden  nohidden  hidden!", "Show dot-files in the explorer, or hide them, or switch between the two."),
+            ("watch  nowatch", "Start or stop watching the file."),
+            ("mode=data  mode=line", "Switch to data mode or line mode."),
+            ("depth=N", "Open the first N levels, and fold every container below them."),
         ],
     },
     KeyGroup {
@@ -1755,23 +1782,23 @@ pub const KEY_MAP: &[KeyGroup] = &[
         note: "",
         typed: false,
         keys: &[
-            ("Enter", "run the command, or search for the pattern"),
-            ("Esc  C-c", "leave without running it"),
-            ("Backspace  C-h  Delete", "delete the character before or under the cursor"),
-            ("← →  C-b C-f", "move the cursor a character"),
-            ("Home End  C-a C-e", "move the cursor to the start or the end"),
-            ("C-u  C-k  C-w", "delete to the start, to the end, or the word before the cursor"),
+            ("Enter", "Run the command, or search for the pattern."),
+            ("Esc  Ctrl+C", "Leave without running the command or the search."),
+            ("Backspace  Ctrl+H  Delete", "Delete the character before or under the cursor."),
+            ("← →  Ctrl+B Ctrl+F", "Move the cursor a character."),
+            ("Home End  Ctrl+A Ctrl+E", "Move the cursor to the start or the end."),
+            ("Ctrl+U  Ctrl+K  Ctrl+W", "Delete to the start, to the end, or the word before the cursor."),
         ],
     },
     KeyGroup {
-        title: "This help, the error report and printed text",
+        title: "This help, the error report, and printed text",
         note: "Any other key goes back to the document.",
         typed: false,
         keys: &[
-            ("j k  ↓ ↑", "scroll a line"),
-            ("C-d C-u  C-f C-b  PgDn PgUp", "scroll a page"),
-            ("g G  Home End", "the first and the last line"),
-            ("h l  ← →", "pan a line wider than the screen"),
+            ("j k  ↓ ↑", "Scroll a line."),
+            ("Ctrl+D Ctrl+U  Ctrl+F Ctrl+B  PgDn PgUp", "Scroll a page."),
+            ("g G  Home End", "Go to the first and the last line."),
+            ("h l  ← →", "Pan a line wider than the screen."),
         ],
     },
 ];
@@ -1927,7 +1954,7 @@ mod tests {
         keys(&mut app, "ys");
         assert_eq!(
             app.message.as_ref().unwrap().text,
-            "Focused value is not a string"
+            "The focused value is not a string, so there are no string contents to copy or print"
         );
         keys(&mut app, "yk");
         assert_eq!(
@@ -2014,7 +2041,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .text
-            .starts_with("Unknown command"));
+            .starts_with(":bogus is not a command"));
         app.run_command("format text");
         assert_eq!(app.tab().format, Format::Text);
         app.run_command("help");
@@ -2310,7 +2337,12 @@ mod tests {
         assert_eq!(app.error_panel_rows(), 0);
         app.run_command("error");
         assert_eq!(app.mode, Mode::Browse);
-        assert!(app.message.as_ref().unwrap().text.ends_with("no error"));
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .ends_with("no error report"));
     }
 
     #[test]
@@ -2337,7 +2369,12 @@ mod tests {
         // A reload drops it...
         keys(&mut app, "r");
         app.run_command("error");
-        assert!(app.message.as_ref().unwrap().text.ends_with("no error"));
+        assert!(app
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .ends_with("no error report"));
         // ...and so does a :format that works.
         app.run_command("format toml");
         assert!(app.tab().format_error.is_some());

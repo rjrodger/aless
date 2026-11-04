@@ -275,3 +275,46 @@ A follow-up to the prompt about dot-files, sent while the agent worked.
 ```
 so --hidden is no longer needed?
 ```
+
+## 2026-11-04 17:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+the writing rules in rjrodger/agent-info have been updated - copy the updates into this repo. then rewrite the documentation and site text, carefully following the updated rules. use adversarial review to check and correct your work
+```
+
+## 2026-11-04 17:57 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The answer to the agent's question whether to merge #111 (dot-files
+shown, --hidden removed) and #112 (no eyebrow labels), both green.
+
+```
+merge both
+```
+
+## 2026-11-04 20:46 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+Sent after the rewrite workflow stopped short, its usage credits spent,
+with every page rewritten and reviewed once but later reviews, some
+fixes and the consistency pass not run.
+
+```
+Continue
+```
+
+## 2026-11-04 22:58 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The answer to the agent's offer to merge #113 (the writing rules, with
+the documentation and the binary's text rewritten to them), whose CI had
+passed, and so deploy the site.
+
+```
+Merge and deploy
+```

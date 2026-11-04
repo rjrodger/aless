@@ -1,24 +1,26 @@
 ---
 title: Where each value came from
-description: How aless knows the line and column of every value without most grammars recording them, where that is exact, and where it is a best effort.
+description: How aless finds the line and column of every value when almost no grammar records them, where the position is exact, and where it is a best effort.
 order: 2
 ---
-The status bar shows the line and column where the focused node starts, the [source view](/how-to/display.html#data-mode-and-line-mode) opens there, and a reload falls back on them to find your place. Almost no grammar records them. aless works them out after the parse.
+The status bar shows the line and column where the focused node starts. The [source view](/how-to/display.html#data-mode-and-line-mode) opens at that line and column. A reload falls back on that position to find your place when the node you were reading has gone from the new document. Almost no grammar records a position. Instead, aless finds every position after the parse.
 
 ## Matching the tokens to the tree
 
-The parsing engine reports every token it reads, with the token's position, as it reads it, and the parse produces the tree. aless walks the two side by side: the keys and the leaf values of the tree, in document order, against the tokens that carry a value, in source order. Where a key or a value matches the next such token, it takes that token's position. The match looks a bounded distance ahead, so a token the tree has no node for does not throw the rest off.
+The parsing engine reports every token as the engine reads it. Each report includes the token's position. The parse itself produces the tree. aless walks the two side by side: the keys and the leaf values of the tree, in document order, against the tokens that carry a value, in source order. Where a key or a value matches the next such token, the node takes that token's position. The match looks a bounded distance ahead, so a token the tree has no node for does not misplace the nodes after it.
 
-So position is a property of every format at once, a grammar written on the command line included. No grammar has to remember to build it.
+Position is therefore a property of every format at once. A custom grammar written on the command line gets positions like any built-in grammar. No grammar has to build them.
 
-## Exact, and best effort
+## Placing a node exactly, or as a best effort
 
-The match is exact wherever the tree's values are the tokens' values: the JSON family, TOML, INI, CSV, TSV and ZON. It is a best effort where a grammar builds values the source does not spell out. Markdown's syntax tree, XML's element records, the trees of CSS and PGN, an expression's operators and parts of YAML hold nodes whose text is no one token's text, and a value put together from several tokens matches none of them.
+The match is exact wherever the tree's values are the tokens' values. The tree's values are the tokens' values in the JSON family, TOML, INI, CSV, TSV, and ZON. The match is a best effort where a grammar builds values the source does not spell out. Markdown's syntax tree, XML's element records, the trees of CSS and PGN, an expression's operators, and parts of YAML hold nodes whose text is no one token's text. A value built from several tokens matches none of them.
 
-Two formats take another route. A `.proto` file's descriptor is derived from the file rather than read from it, its statements regrouped and its labels, types and indexes made by the reader, so only its first values, the imports, are placed reliably. A C syntax tree is the one tree that records where each of its tokens is, so aless reads the places from the tree itself, exactly, each time the tree repeats a token. A grammar's spec is written by its compiler, which keeps no places, so none of its nodes has one.
+Two formats are exceptions. For a `.proto` file, aless derives the descriptor rather than reading it from the file: aless regroups the file's statements and makes the labels, the types, and the indexes itself. So only the descriptor's first values get a reliable position. Those first values are the imports. A C syntax tree is the one tree that records where each of its tokens is. Each time the tree repeats a token, aless reads that token's exact position from the tree itself.
 
-A node that cannot be placed has no position, and says so: the status bar shows none for it. It does not borrow its parent's, since a wrong position is worse than none for a source view that opens at it. [Formats](/reference/formats.html#source-positions) lists how exact each format is.
+A grammar's spec comes from its compiler. The compiler keeps no positions, so none of the spec's nodes has a position.
 
-## The other direction
+A node that aless cannot place has no position. The status bar shows none for it. The node does not borrow its parent's position, because a wrong position is worse than none for a source view that opens at that position. For more information about how exact each format's positions are, see [Formats](/reference/formats.html#source-positions).
 
-A reload asks the opposite question: which node is at a position? When the node you were reading is gone from the new document, aless looks within its nearest surviving ancestor for the node closest to the old line, so that a renamed key or a reordered entry keeps your place. The positions are one half of that; [How a reload keeps your place](/explanation/reloading.html) tells the other.
+## Finding the node at a position
+
+A reload asks the opposite question: which node is at a position? When the node you were reading is gone from the new document, aless looks within that node's nearest surviving ancestor for the node closest to the old line. A renamed key or a reordered entry therefore keeps your place. The positions are one half of that answer. For more information about the other half, see [How a reload keeps your place](/explanation/reloading.html).
