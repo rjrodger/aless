@@ -283,3 +283,26 @@ Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT
 ```
 the writing rules in rjrodger/agent-info have been updated - copy the updates into this repo. then rewrite the documentation and site text, carefully following the updated rules. use adversarial review to check and correct your work
 ```
+
+## 2026-11-04 17:57 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The answer to the agent's question whether to merge #111 (dot-files
+shown, --hidden removed) and #112 (no eyebrow labels), both green.
+
+```
+merge both
+```
+
+## 2026-11-04 20:46 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+Sent after the rewrite workflow stopped short, its usage credits spent,
+with every page rewritten and reviewed once but later reviews, some
+fixes and the consistency pass not run.
+
+```
+Continue
+```

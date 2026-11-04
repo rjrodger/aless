@@ -49,19 +49,19 @@ const SECTIONS: [Section; 5] = [
         groups: &[
             Group {
                 name: "Setting up",
-                blurb: "aless on your machine, with its completions and its manual page, and \
-                        what each platform needs of a terminal.",
+                blurb: "Install aless on your machine, set up its completions and its man \
+                        page, and learn what each platform needs of a terminal.",
             },
             Group {
                 name: "Reading a document",
-                blurb: "A document open in the viewer: finding things in it, copying from it, \
-                        how it is drawn, and writing it out as JSON.",
+                blurb: "Once a document is open in the viewer, search it, copy from it, choose \
+                        how the viewer draws it, and write it out as JSON.",
             },
             Group {
                 name: "Files and formats",
-                blurb: "What is open, and how it is read: a file that changes, several files, \
-                        a directory, the format aless reads, a file that does not parse, and \
-                        a format of your own.",
+                blurb: "Follow a file as it changes, open several files, browse a directory, \
+                        choose the format aless reads, find out why a file does not parse, \
+                        and read a format of your own.",
             },
         ],
         human: false,
@@ -452,19 +452,20 @@ fn fill(text: &str) -> String {
 /// The reference's pages written from the binary's own tables.
 fn reference_pages() -> Vec<Page> {
     let command_line = format!(
-        "<p>The reference <code>aless --help</code> prints, for aless {VERSION}. \
-         <code>aless -h</code> prints a summary of the options, and \
-         <code>man aless</code> this reference as a manual page. The same text is \
-         <a href=\"/reference/command-line.txt\">plain text</a> here, as the \
-         terminal shows it.</p>\n{}",
+        "<p>This page is the reference that <code>aless --help</code> prints for aless \
+         {VERSION}. <code>aless -h</code> prints a summary of the options. \
+         <code>man aless</code> prints this reference as a man page. The same text is \
+         also in the plain-text file \
+         <a href=\"/reference/command-line.txt\"><code>command-line.txt</code></a>, \
+         as the terminal shows it.</p>\n{}",
         command_line_html(&aless::cli::reference_html())
     );
     vec![
         Page {
             path: "reference/command-line.html".into(),
             title: "Command line".into(),
-            description: "Every option, the formats, the keys used most, the limits and the \
-                exit statuses: the whole reference aless --help prints."
+            description: "Every option, the formats, the keys used most, the limits, and the \
+                exit statuses, as aless --help prints them in full."
                 .into(),
             order: 1,
             section: Some(REFERENCE),
@@ -479,7 +480,7 @@ fn reference_pages() -> Vec<Page> {
         Page {
             path: "reference/keys.html".into(),
             title: "Keys".into(),
-            description: "Every key, command and setting of the viewer, as F1 lists them \
+            description: "Every key, command, and setting of the viewer, as F1 lists them \
                 inside aless."
                 .into(),
             order: 2,
@@ -526,10 +527,10 @@ fn releases_page() -> Page {
         None => body,
     };
     let markdown = format!(
-        "The releases of aless, newest first, each with what it added, changed and \
-         fixed. Every release is on [GitHub](https://github.com/rjrodger/aless/releases), \
-         with its archives and installers; [Install aless](/how-to/install.html) says how \
-         to get the newest.\n\n{body}"
+        "This page lists the releases of aless, newest first. Each entry says what the \
+         release added, changed, and fixed. The archives and installers of every release \
+         are on [GitHub](https://github.com/rjrodger/aless/releases). For more information \
+         about getting the newest release, see [Install aless](/how-to/install.html).\n\n{body}"
     );
     let heading = Regex::new(r#"<h2><a href="[^"]*">(\d+\.\d+\.\d+)</a>"#).unwrap();
     let html = heading
@@ -628,9 +629,11 @@ fn command_line_html(html: &str) -> String {
 /// which is typed, as code.
 fn keys_html() -> String {
     let mut out = String::from(
-        "<p>Press <kbd>F1</kbd> or type <code>:help</code> inside aless for this list. The \
-         keys are jless's wherever jless has the key, and the same list is \
-         <a href=\"/reference/keys.txt\">plain text</a> here, as the terminal shows it.</p>\n",
+        "<p>To see this list inside aless, press <kbd>F1</kbd> or type <code>:help</code>. \
+         Where jless has a key for an action, aless uses the same key. The same list is \
+         also in the plain-text file \
+         <a href=\"/reference/keys.txt\"><code>keys.txt</code></a>, as the terminal shows \
+         it.</p>\n",
     );
     let mut ids = BTreeSet::new();
     for group in aless::app::KEY_MAP {
@@ -671,7 +674,7 @@ fn keys_html() -> String {
 }
 
 /// A binding's `id` on the keys page, from its first key or word, a symbol
-/// spelled out: `key-j`, `key-C-d`, `key-slash`, `cmd-open`, `cmd-w-bang`,
+/// spelled out: `key-j`, `key-Ctrl-D`, `key-slash`, `cmd-open`, `cmd-w-bang`,
 /// `set-so`.
 fn binding_id(keys: &str, typed: bool) -> String {
     let first = keys.split_whitespace().next().unwrap_or("");
@@ -695,7 +698,7 @@ fn binding_id(keys: &str, typed: bool) -> String {
                 name.push(c);
                 continue;
             }
-            '-' if !name.is_empty() => {
+            '-' | '+' if !name.is_empty() => {
                 name.push('-');
                 continue;
             }
@@ -732,9 +735,9 @@ fn binding_id(keys: &str, typed: bool) -> String {
 /// group, its bindings in a table.
 fn keys_markdown() -> String {
     let mut out = String::from(
-        "Press `F1` or type `:help` inside aless for this list. The keys are jless's \
-         wherever jless has the key, and the same list is \
-         [plain text](/reference/keys.txt) here, as the terminal shows it.\n",
+        "To see this list inside aless, press `F1` or type `:help`. Where jless has a key \
+         for an action, aless uses the same key. The same list is also in the plain-text \
+         file [`keys.txt`](/reference/keys.txt), as the terminal shows it.\n",
     );
     for group in aless::app::KEY_MAP {
         out.push_str(&format!("\n## {}\n\n", group.title));
@@ -863,7 +866,10 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
             // from the binary or the changelog names what it comes from.
             let edit = match page.origin.starts_with("docs/") {
                 true => format!("<a href=\"{source}\">Edit this page</a>"),
-                false => format!("Written from <a href=\"{source}\">{}</a>", page.origin),
+                false => format!(
+                    "Written from <a href=\"{source}\"><code>{}</code></a>",
+                    page.origin
+                ),
             };
             (
                 nav(page, pages),
@@ -890,7 +896,7 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
                      <a href=\"/{}\">This page as Markdown</a></p>\n",
                     match page.author {
                         Some(_) => String::new(),
-                        None => format!("Describes aless {VERSION}. "),
+                        None => format!("This page describes aless {VERSION}. "),
                     },
                     twin_path(page)
                 ),
@@ -1283,11 +1289,11 @@ fn listing(pages: &[Page], section: usize, heading: &str) -> String {
 /// `llms.txt`: what the site is, and every page, for a language model.
 fn llms(pages: &[Page]) -> String {
     let mut out = format!(
-        "# aless\n\n> {}.\n\nThe documentation of aless {VERSION}, in four kinds: \
-         tutorials, how-to guides, reference and explanation, and why aless was written, \
-         in its author's words. Every page has a Markdown \
-         version at its address with .md for .html, \
-         and the reference is also plain text, as aless --help and F1 print it.\n",
+        "# aless\n\n> {}.\n\nThe documentation of aless {VERSION} is in four kinds of page: \
+         tutorials, how-to guides, reference, and explanation. The Why section is the \
+         author's own account of why aless exists. Every page has a Markdown version at \
+         its address, with `.md` in place of `.html`. The reference is also plain text, \
+         as `aless --help` and `F1` print it.\n",
         aless::cli::TAGLINE
     );
     for (i, section) in SECTIONS.iter().enumerate() {
@@ -1320,8 +1326,8 @@ fn llms(pages: &[Page]) -> String {
         }
     }
     out.push_str(&format!(
-        "\n## Optional\n\n- [Source]({REPOSITORY}): the code, the changelog and the \
-         releases\n"
+        "\n## Optional\n\n- [Repository]({REPOSITORY}): The code, the changelog, and the \
+         releases.\n"
     ));
     out
 }

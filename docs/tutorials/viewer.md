@@ -1,30 +1,32 @@
 ---
 title: Look around a file in the viewer
-description: Open an API description in aless, move through it, fold it, search it and copy a path, then change it on disk and watch aless keep your place.
+description: Open an API description in aless, move through it, fold it, search it, copy a path, and then change the file on disk and watch aless keep your place.
 order: 1
 ---
-In this tutorial we open an API description in aless and find our way around it with the keyboard. It takes about ten minutes. You need aless installed ([Install aless](/how-to/install.html)) and a terminal at least 80 columns wide.
+In this tutorial we open an API description in aless and look around it with the keyboard. The walk takes about 10 minutes.
+
+You need aless installed. For more information, see [Install aless](/how-to/install.html). You also need a terminal at least 80 columns wide.
 
 ## Get the file
 
-The file is a small OpenAPI document in YAML, written for these pages. Download it into an empty directory:
+The file is a small OpenAPI document in YAML. It was written for these pages. Download it into an empty directory:
 
-<!-- test: skip it downloads the file the site publishes, which the captures below read from examples/ -->
+<!-- test: skip it downloads the file the site publishes, which the screens on this page read from examples/ -->
 ```sh
 curl -LO https://aless.tabnas.dev/examples/bookshelf-openapi.yaml
 ```
 
-Saving [the file](/examples/bookshelf-openapi.yaml) from a browser does as well.
+Or open [`bookshelf-openapi.yaml`](/examples/bookshelf-openapi.yaml) in your browser and save it into the same directory.
 
-## Open it
+## Open the file
 
-Give aless the file's name:
+To open the file, give aless the file's name:
 
 ```sh
 aless bookshelf-openapi.yaml
 ```
 
-aless reads the file and shows it as a tree, with every container unfolded:
+aless reads the file and draws it as a tree. Every container starts unfolded:
 
 <!-- screen: aless bookshelf-openapi.yaml
 size: 80x14 -->
@@ -44,13 +46,19 @@ size: 80x14 -->
  bookshelf-openapi.yaml .                                 yaml · watching · 1:1
 ```
 
-The reversed row at the foot of the screen is the status bar, and the row below it, empty here, holds messages and the search. The status bar names the file, then the path of the focused node (`.`, the root of the document), the format, `watching`, and the line and column where the focused node starts in the file. The focused row's marker is solid (`▼`), and the others are hollow (`▽`).
+The reversed row at the foot of the screen is the status bar. From left to right, the status bar names the file, the path of the focused node, the format, `watching`, and the line and column where the focused node starts in the file. The path here is `.`, the root of the document.
+
+The row below the status bar is the status line. It holds messages and the search. The status line is empty for now.
+
+The focused row's marker is the solid `▼`. The other markers are the hollow `▽`, so the solid marker shows you where the focus is.
 
 ## Move and fold
 
-The keys are those of [jless](https://jless.io), by Paul Julius Martinez, the viewer aless is modelled on. If you know jless, you know them already.
+The keys are those of [jless](https://jless.io), because aless is modelled on it, so if you know jless, you know the keys already. The link goes to the jless site, outside this documentation. Paul Julius Martinez wrote the jless viewer.
 
-Press `j` twice. The focus moves down two rows to `info`, and the status bar follows it: `.info`, at line 2, column 1. Now press `h`, and `info` folds into one row, with a preview of what it holds:
+To move down two rows, press `j` twice. The focus lands on `info`. The status bar follows the focus: `.info`, at line 2, column 1.
+
+To fold `info`, press `h`. `info` folds into one row. The row shows a preview of what `info` holds:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h
@@ -59,7 +67,11 @@ rows: 3 -->
   ▶ info: (4) {title: "Bookshelf demo API", version: "1.0.0", …}
 ```
 
-`(4)` is how many members `info` has. `l` unfolds it again, and `Space` toggles it either way. Press `c`, which folds the focused node and every sibling it has, and the whole document fits on the screen:
+In the folded row, `(4)` is how many members `info` has: `title`, `version`, `description`, and `license`.
+
+`l` unfolds `info` again. `Space` toggles the fold, so one key does both.
+
+`c` folds the focused node and every sibling it has. Press `c`, and the whole document fits on the screen:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c
@@ -76,7 +88,7 @@ size: 80x10 -->
  bookshelf-openapi.yaml .info                             yaml · watching · 2:1
 ```
 
-`J` and `K` move from sibling to sibling. Press `J` three times to reach `paths`, then `l` to unfold it:
+`J` and `K` move from sibling to sibling. To reach `paths`, press `J` three times. To unfold `paths`, press `l`:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l
@@ -97,11 +109,13 @@ size: 80x14 -->
  bookshelf-openapi.yaml .paths                           yaml · watching · 18:1
 ```
 
-`j` and `k` move a row at a time, and `g` and `G` go to the first and the last row.
+The status bar now says `.paths`, at line 18.
+
+`j` and `k` move a row at a time. `g` and `G` go to the first and the last row.
 
 ## Search
 
-Press `/`, type `listBooks`, and press `Enter`. aless unfolds whatever hides the first match, and moves the focus to it:
+To find `listBooks`, press `/`, type `listBooks`, and press `Enter`. aless unfolds whatever hides the first match and moves the focus to it:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter
@@ -123,17 +137,21 @@ size: 80x14 -->
 /listBooks  [1/1]
 ```
 
-The path is too long for the status bar, so it is cut at the left. The row below it shows the pattern, and that this is the first of one match. `n` and `N` go to the next and the previous match. The pattern is a regular expression, and it ignores case unless it holds a capital letter, as this one does.
+The path is too long for the status bar, so aless cuts the path at the left. The status line shows the pattern and the count, `[1/1]`: the first of one match. `n` and `N` go to the next and the previous match.
+
+The pattern is a regular expression. It ignores case unless it holds a capital letter, as `listBooks` does.
 
 ## Copy the path
 
-Press `y`, then `p`. aless copies the focused node's path, `.paths["/api/shelf/{shelf_id}/book"].get.operationId`, and the status line says where it put it: `Copied path to the clipboard`.
+To copy the focused node's path, press `y`, then `p`. The path, `.paths["/api/shelf/{shelf_id}/book"].get.operationId`, goes to the clipboard. The status line names where the path went: `Copied path to the clipboard`.
 
-The path is in jless's syntax. `yq` copies it as jq writes it, ready for a jq filter, and `yy` copies the value instead of its path. Over SSH, where no clipboard can be reached, aless copies through the terminal, and the status line names `the terminal clipboard (OSC 52)`.
+aless writes the path as jless does. `yq` copies the path as jq writes it, ready for a jq filter. `yy` copies the value rather than its path.
 
-## Two more ways to look
+Over SSH, where aless can reach no clipboard, aless copies through the terminal instead. The status line then names `the terminal clipboard (OSC 52)`.
 
-Press `m` for [line mode](/how-to/display.html#data-mode-and-line-mode), which shows the document as JSON prints it, with its quotes, commas and closing brackets:
+## Try line mode and the source view
+
+To switch to [line mode](/how-to/display.html#data-mode-and-line-mode), press `m`. Line mode shows the document as JSON prints it, with its quotes, commas, and closing brackets:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter m
@@ -155,7 +173,9 @@ size: 80x14 -->
 /listBooks  [1/1]
 ```
 
-Press `m` again to go back. Now press `s` for the [source view](/how-to/display.html#data-mode-and-line-mode), the text aless read from the file, with the focused node's line marked:
+To go back, press `m` again.
+
+To switch to the [source view](/how-to/display.html#data-mode-and-line-mode), press `s`. The source view shows the text aless read from the file. The focused node's line carries a marker:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter s
@@ -177,11 +197,19 @@ size: 80x14 -->
 /listBooks  [1/1]
 ```
 
-Press `s` again to go back to the tree.
+The marker is on line 104, where the status bar says the focused node starts. To go back to the tree, press `s` again.
 
 ## Change the file
 
-aless watches every file it shows. Leave it open, and open the file in your editor in a second terminal. Change `The books on a shelf` to `Every book on a shelf, in order`, and save. Within a second, aless reads the file again:
+aless watches every file it shows. When the file changes, aless reloads it.
+
+To see the reload, leave aless open. In a second terminal, edit the file:
+
+1. Open `bookshelf-openapi.yaml` in your editor.
+2. Change `The books on a shelf` to `Every book on a shelf, in order`.
+3. Save the file.
+
+Within a second, aless reloads the file:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter
@@ -204,10 +232,17 @@ size: 80x14 -->
 Reloaded bookshelf-openapi.yaml (328 nodes)
 ```
 
-The new summary is there, and the focus is still on `listBooks`. aless found the node again by its path, so an edit above it or around it does not move you. That is the whole loop: you read, something rewrites the file, and you go on reading where you were!
+The new summary is there. The focus is still on `listBooks`, because aless found the node again by its path. An edit above the node or around it doesn't move you. That's the whole loop: you read, something rewrites the file, and you go on reading where you were!
 
-Press `q` to quit.
+To quit, press `q`.
 
-## Next
+## Go further
 
-[Keys](/reference/keys.html) lists every key, as `F1` shows them inside aless. The how-to guides go further on each part of this walk: [Search a document](/how-to/search.html), [Copy a value or its path](/how-to/copy.html), [Choose how the viewer draws a document](/how-to/display.html) and [Follow a file as it changes](/how-to/watch.html). [One tree for every format](/explanation/one-tree.html) says why the same keys work on a TOML file or a CSV file.
+For more information about every key, see [Keys](/reference/keys.html). `F1` shows the same keys inside aless. The how-to guides go further on each part of this walk:
+
+- [Search a document](/how-to/search.html)
+- [Copy a value or its path](/how-to/copy.html)
+- [Choose how the viewer draws a document](/how-to/display.html)
+- [Follow a file as it changes](/how-to/watch.html)
+
+For more information about why the same keys work on a TOML file or a CSV file, see [One tree for every format](/explanation/one-tree.html).

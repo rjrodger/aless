@@ -81,13 +81,13 @@ fn help_describes_the_viewer() {
         "KEYS:",
         "CUSTOM GRAMMARS:",
         "LARGE INPUTS AND LIMITS:",
-        "EXIT STATUS: 0 the viewer was quit 1 the viewer failed while it ran",
-        "2 the viewer could not start",
+        "EXIT STATUS: 0 You quit the viewer. 1 The viewer failed while it ran",
+        "2 The viewer could not start",
         "TERM dumb: a terminal that cannot draw the viewer",
         "-k, --kind, --format <FORMAT>",
         "--format is another name for this option",
-        "--watch Reload a file when it changes, keeping your place (the default)",
-        "(2.5, 90s, 2m; default none; 0 for no limit)",
+        "--watch Reload a file when it changes, and keep your place in it. Reloading is the default.",
+        "SECONDS is a number of seconds (2.5, 90s) or of minutes (2m). The default is none, and 0 is no limit.",
         "--generate <WHAT>",
         "NO_COLOR set and not empty",
     ] {
@@ -162,15 +162,15 @@ fn usage_errors_are_one_line_with_status_2() {
     for (args, said) in [
         (
             &["--nope"][..],
-            "aless: unknown option: --nope (see aless --help)",
+            "aless: --nope is not an option. aless --help lists the options",
         ),
         (
             &["--frob", "x.json"],
-            "aless: unknown option: --frob (see aless --help)",
+            "aless: --frob is not an option. aless --help lists the options",
         ),
         (
             &["--mode", "nope"],
-            "aless: unknown mode: nope (data or line)",
+            "aless: --mode takes data or line, not nope",
         ),
         (&["--depth", "x"], "aless: --depth needs a number, not x"),
         (&["--grammar", "hosts"], "aless: --grammar needs NAME=FILE"),

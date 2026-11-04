@@ -1,7 +1,7 @@
 ---
 title: How-to guides
-description: Recipes for tasks you already have in mind, each one task from start to finish, from installing aless to a grammar of your own.
+description: Recipes for tasks you already have in mind, each covering one task from start to finish, from installing aless to using a grammar of your own.
 ---
-Each guide solves one task. It assumes aless is installed and that you know your way around a terminal, and it links to the [command line reference](/reference/command-line.html) for the options it uses and to the [keys](/reference/keys.html) for the keys.
+Each guide solves one task. It assumes that aless is installed and that you can use a terminal. Each guide links to the [Command line](/reference/command-line.html) page for the options the guide uses, and to the [Keys](/reference/keys.html) page for the keys the guide names.
 
-The guides are in three groups: setting aless up, reading a document once it is open, and the files and formats aless reads. If you have not used aless before, the [tutorial](/tutorials/index.html) comes first.
+The guides are in three groups: setting aless up, reading a document once it is open, and working with the files and formats aless reads. If you have not used aless before, start with the [Tutorials](/tutorials/index.html) page.

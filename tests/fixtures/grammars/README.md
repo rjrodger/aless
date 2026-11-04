@@ -170,9 +170,9 @@ minimal grammar and what happened.
   `1*word`) compiles to a loop that re-enters its rule in one frame, so
   a hosts file of any length costs the rule depth of one line and runs
   under the same 3,000-rule cap as the built-in grammars. What bounds a
-  long file is memory and time, about 9 KB and 80 µs a line (300,000
-  lines: 25 to 45 s and 2.7 GB in a release build, as busy as the
-  machine was), and `--timeout` and `--max-size` are the controls.
+  long file is memory and time, about 2 KB and 60 µs a line (300,000
+  lines: 18 s and 0.5 GB in a release build), and `--timeout` and
+  `--max-size` are the controls.
   Until tabnas/bnf#80 the compiler spelled a repetition as a rule
   calling itself once per item (`H = inner H / ε`), which reached the
   cap at 1,500 lines, and aless allowed a grammar from the command line
