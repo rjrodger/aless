@@ -12,7 +12,7 @@ Type `:w`, a space and a filename, such as `:w bookshelf.json`, then press `Ente
 
 aless writes the whole document, whichever node has the focus, pretty-printed with two spaces a level and its keys in source order. A relative name is taken from the directory aless was started in. `:w` refuses a file that exists, so that a slip of the keyboard does not overwrite one; `:w!` writes over it.
 
-Line mode (`m`) shows the same JSON, with its folds ([Choose how the viewer draws a document](/how-to/display.html)).
+[Line mode](/how-to/display.html#data-mode-and-line-mode) (`m`) shows the same JSON, with its folds.
 
 ## What the JSON holds
 

@@ -81,7 +81,7 @@ for an integer saturates rather than failing to parse. Measured in a
 release build when the bounds were set: `10000000"a"` reached 5 GB,
 `1*1000"a"` compiles in about a second and `1*5000"a"` in about 35;
 1,000 rules compile in under half a second, and 3,000 add about 20
-seconds to each parse. Real grammars stay in the hundreds: RFC 3986's URI
+seconds to each parse. Grammars in use stay in the hundreds: RFC 3986's URI
 grammar writes 113 rules.
 
 A panic inside the compiler, as inside a parse, is reported as a
@@ -127,7 +127,7 @@ A number keeps its source's spelling where the spelling is JSON's.
 `fmt::spelling` decides, `prov::TokVal::Num` carries the spelling in a
 thin box (so a token stays the size it is without one), and
 `take_spelling` hands it to the node placed at the token only when the
-node holds that very number, bit for bit. `Doc::spellings` holds them
+node holds that same number, bit for bit. `Doc::spellings` holds them
 by node, empty for most documents, and `fmt::value_text` is where every
 written value goes: the row, the preview, search and the JSON `:w` and
 the copy keys write. Under a best-effort alignment (YAML, XML, Markdown)

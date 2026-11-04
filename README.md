@@ -7,7 +7,8 @@ RSS and Atom feeds, CSS, `.proto` files, PGN chess games, C source,
 grammars in ABNF, EBNF and GBNF, expressions and semantic versions, and
 any text format you describe with an ABNF grammar. Every format is read
 into one tree, which you fold, search and copy from with jless's keys.
-Several files open in tabs, a directory opens as an explorer, and when a
+Several files open in tabs, a directory opens as an
+[explorer](https://aless.tabnas.dev/how-to/explore.html), and when a
 file changes on disk aless reads it again and keeps your place.
 
 aless is a viewer: it draws on a terminal and reads keys from it, and
@@ -17,6 +18,9 @@ Linux, macOS and Windows.
 **The documentation is at [aless.tabnas.dev](https://aless.tabnas.dev)**:
 a tutorial, how-to guides, the whole reference, and the reasons behind
 the design.
+
+Here is an OpenAPI document in YAML, opened with only its first two
+levels unfolded:
 
 <!-- screen: aless --depth 2 bookshelf-openapi.yaml
 size: 80x18 -->
@@ -46,7 +50,7 @@ aless is inspired by [jless](https://jless.io), Paul Julius Martinez's
 terminal viewer for JSON and YAML ([its
 source](https://github.com/PaulJuliusMartinez/jless)). jless set out how
 a large document reads in a terminal: a tree you fold and unfold with
-vim's keys, a data mode that drops the punctuation, a preview of what a
+vim's keys, a [data mode](https://aless.tabnas.dev/how-to/display.html#data-mode-and-line-mode) that drops the punctuation, a preview of what a
 folded node holds, and a path copied in two keystrokes. aless keeps that
 interface whole, and carries it to every format the tabnas parsers read,
 adding tabs, a file explorer, and a reload that keeps your place.
@@ -73,6 +77,8 @@ shell complete aless's options.
 
 ## Use it
 
+A few ways to start it:
+
 ```sh
 aless data.json                          # one file
 aless config.toml deploy.yaml data.csv   # several files, a tab each
@@ -96,14 +102,16 @@ minutes, and `aless --help` prints the whole command line reference.
 - The search matches each node's own line-mode text (`"key": value`),
   so a pattern cannot span two rows; jless searches the whole document
   as one line.
-- Row numbers count the rows on screen, in data mode as in line mode;
+- Row numbers count the rows on screen, in data mode as in [line
+  mode](https://aless.tabnas.dev/how-to/display.html#data-mode-and-line-mode);
   jless numbers the lines of the pretty-printed document.
 - `J` and `K` stop at the last sibling, rather than tracking a depth
   asked for earlier.
 - A file's format comes from its extension or from `--kind`, where
   jless's `--json` and `--yaml` name it.
 
-Everything aless adds (tabs, watching, the explorer, the source view)
+Everything aless adds (tabs, watching, the explorer, the [source
+view](https://aless.tabnas.dev/how-to/display.html#data-mode-and-line-mode))
 is on a key jless leaves free.
 
 ## Develop it

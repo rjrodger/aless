@@ -10,6 +10,7 @@ aless takes a file's format from its extension, and reads a file whose extension
 
 Give `-k` (or `--kind`, or `--format`) a format:
 
+<!-- test: skip deployment.conf and events.log stand for files of your own -->
 ```sh
 aless -k yaml deployment.conf
 aless -k jsonl events.log

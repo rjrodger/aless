@@ -19,7 +19,7 @@ Everything above the parser is written once. There is one key map, one way to se
 
 A model every format fits in holds only what they have in common. Comments are not part of it, nor are YAML's anchors and tags, and neither is a number's type.
 
-Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. aless keeps a number's spelling beside its value, from the token it was read from, so the viewer, the search, `:w` and the copy commands give `1.0`, `1e21` and a long integer as the source spells them, as jless does. The spelling is kept only where it is also JSON's, since `:w` and the copy commands write JSON. `0x1F` in JSON5 and `1_000` in TOML are given as the values they stand for, `31` and `1000`, and the source view shows the spelling.
+Numbers are the loss you are most likely to meet. The model's numbers are 64-bit floats, as JavaScript's are, so an integer beyond 2^53 is held as the nearest float, and `1.0` and `1` are the same value. aless keeps a number's spelling beside its value, from the token it was read from, so the viewer, the search, `:w` and the copy commands give `1.0`, `1e21` and a long integer as the source spells them, as jless does. The spelling is kept only where it is also JSON's, since `:w` and the copy commands write JSON. `0x1F` in JSON5 and `1_000` in TOML are given as the values they stand for, `31` and `1000`, and the [source view](/how-to/display.html#data-mode-and-line-mode) shows the spelling.
 
 ## Why one engine
 

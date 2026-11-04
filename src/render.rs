@@ -853,7 +853,7 @@ fn explorer_row(
     }
 }
 
-/// `(3) src/, Cargo.toml, README.md` — the names inside a collapsed
+/// `(3) src/, Cargo.toml, README.md`: the names inside a collapsed
 /// directory, as many as fit.
 fn explorer_preview(doc: &crate::doc::Doc, id: crate::doc::NodeId, budget: usize) -> String {
     let node = doc.node(id);

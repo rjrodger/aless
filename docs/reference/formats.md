@@ -49,7 +49,7 @@ An expression is jsonic with arithmetic, so `1+2*3` is `["+", 1, ["*", 2, 3]]`. 
 
 ## Numbers
 
-A number in the tree is a 64-bit float, and keeps its source's spelling wherever JSON spells it the same way. `1.0`, `1e21` and an integer beyond 2^53 are shown, searched, copied and written by `:w` as the source writes them. A spelling JSON has no syntax for, such as `0x1F` in JSON5, `1_000` in TOML or `+1`, gives the value it stands for, `31`, `1000` and `1`, and the source view (`s`) shows the spelling.
+A number in the tree is a 64-bit float, and keeps its source's spelling wherever JSON spells it the same way. `1.0`, `1e21` and an integer beyond 2^53 are shown, searched, copied and written by `:w` as the source writes them. A spelling JSON has no syntax for, such as `0x1F` in JSON5, `1_000` in TOML or `+1`, gives the value it stands for, `31`, `1000` and `1`, and the [source view](/how-to/display.html#data-mode-and-line-mode) (`s`) shows the spelling.
 
 ## Source positions
 

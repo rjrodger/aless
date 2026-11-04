@@ -613,6 +613,7 @@ a.card:hover h3 { text-decoration: underline; text-underline-offset: 0.15em; }
 .hero { display: grid; gap: 1.5rem; margin: 0 0 1.5rem; }
 .hero .screen-box { margin: 0; }
 .hero pre.screen { margin: 0 auto; }
+.hero-shot > p { font-size: 0.9rem; color: var(--ink-soft); margin: 0 0 0.6rem; }
 .intro { text-align: center; padding: 1.5rem 0 0.5rem; }
 .intro img.logo-light { display: block; }
 .intro .logo { width: 100%; max-width: 18rem; height: auto; margin: 0 auto 1.25rem; }

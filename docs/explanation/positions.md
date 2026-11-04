@@ -3,7 +3,7 @@ title: Where each value came from
 description: How aless knows the line and column of every value without most grammars recording them, where that is exact, and where it is a best effort.
 order: 2
 ---
-The status bar shows the line and column where the focused node starts, the source view opens there, and a reload falls back on them to find your place. Almost no grammar records them. aless works them out after the parse.
+The status bar shows the line and column where the focused node starts, the [source view](/how-to/display.html#data-mode-and-line-mode) opens there, and a reload falls back on them to find your place. Almost no grammar records them. aless works them out after the parse.
 
 ## Matching the tokens to the tree
 

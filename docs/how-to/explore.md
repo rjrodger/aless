@@ -10,6 +10,7 @@ A directory opens in the viewer as a tree of what it holds, which you move throu
 
 Name it, or name nothing for the current directory:
 
+<!-- test: skip it names directories of your own -->
 ```sh
 aless ~/projects
 aless

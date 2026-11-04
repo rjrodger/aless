@@ -5,10 +5,12 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown and more as o
 <section class="intro">
 <img class="logo logo-light" src="/logo-light.svg" alt="aless" width="1490" height="430" loading="lazy"><img class="logo logo-dark" src="/logo-dark.svg" alt="aless" width="1490" height="430" loading="lazy">
 <h1>Every format as one tree, in a viewer for the terminal</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, Markdown and many formats more into one kind of tree, and shows it in your terminal with the keys of jless. Several files open in tabs, and a directory opens as an explorer. When a file changes on disk, aless reads it again and keeps your place.</p>
+<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, Markdown and many formats more into one kind of tree, and shows it in your terminal with the keys of jless. Several files open in tabs, and a directory opens as an <a href="/how-to/explore.html">explorer</a>. When a file changes on disk, aless reads it again and keeps your place.</p>
 <p class="actions"><a class="button primary" href="/tutorials/viewer.html">Take the tutorial</a> <a class="button" href="/how-to/install.html">Install aless</a></p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
+
+An OpenAPI document in YAML, opened with `aless --depth 2 bookshelf-openapi.yaml` so that only its first two levels start open:
 
 <!-- screen: aless --depth 2 bookshelf-openapi.yaml
 size: 80x18 -->
@@ -32,7 +34,7 @@ size: 80x18 -->
  bookshelf-openapi.yaml .                                 yaml · watching · 1:1
 ```
 
-An OpenAPI document in YAML, opened with `aless --depth 2 bookshelf-openapi.yaml`, so that only its first two levels start open. The [tutorial](/tutorials/viewer.html) walks through it in ten minutes.
+The [tutorial](/tutorials/viewer.html) walks through that document in ten minutes.
 
 ## Install
 
@@ -94,7 +96,7 @@ Every format is read into the same tree, so the keys, the search, the paths you 
 </div>
 <div class="card">
 <h3>What it owes jless</h3>
-<p>aless is inspired by <a href="https://jless.io">jless</a>, by Paul Julius Martinez, and its interface is jless's: the key map, the data and line modes, the folded previews, the search and the copy commands. aless is an independent implementation, its <a href="https://github.com/rjrodger/aless/blob/main/THIRD_PARTY_NOTICES.md">notices</a> credit jless as the design it follows, and <a href="/explanation/jless.html">aless and jless</a> says where the two differ.</p>
+<p>aless is inspired by <a href="https://jless.io">jless</a>, by Paul Julius Martinez, and its interface is jless's: the key map, the <a href="/how-to/display.html#data-mode-and-line-mode">data and line modes</a>, the folded previews, the search and the copy commands. aless is an independent implementation, its <a href="https://github.com/rjrodger/aless/blob/main/THIRD_PARTY_NOTICES.md">notices</a> credit jless as the design it follows, and <a href="/explanation/jless.html">aless and jless</a> says where the two differ.</p>
 </div>
 <div class="card">
 <h3>Licence and source</h3>

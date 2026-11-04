@@ -10,6 +10,7 @@ aless watches every file it opens, and reads it again when it changes on disk. T
 
 Open it as usual:
 
+<!-- test: skip build/report.json stands for a file your build writes -->
 ```sh
 aless build/report.json
 ```
@@ -49,7 +50,7 @@ size: 80x24 -->
 
   …
  books.json .          !5:18: unexpected character(s): ,  json · watching · 1:1
-books.json: 5:18: unexpected character(s): , — ! shows the report
+books.json: 5:18: unexpected character(s): , (! shows the report)
 ```
 
 The status bar carries the short form, a `!`, the line and column, and the message, and with several tabs open, the tab's name in the strip is marked `!`. Press `!` to see the report full size, where `h` and `l` pan a line wider than the screen. The next save that parses clears it. [Find out why a file does not parse](/how-to/errors.html) says how to read the report.
@@ -61,7 +62,15 @@ A file that is deleted keeps its document on screen, the status bar says `file g
 `W`, or `:watch off`, stops watching the focused tab, and `W` again, or `:watch on`, starts. `r`, or `:reload`, reads the file again now, watched or not. To open files without watching any of them:
 
 ```sh
-aless --no-watch big.json
+aless --no-watch books.json
 ```
 
-A large file holds the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often. [Large inputs and limits](/explanation/large-inputs.html) says what a parse costs.
+<!-- screen: aless --no-watch books.json
+size: 80x4 -->
+```screen
+▼ [
+  ▽ {
+ books.json .                                                        json · 1:1
+```
+
+The status bar no longer says `watching`. A large file holds the viewer while it parses, on every reload, so `--no-watch` suits a big file that changes often. [Large inputs and limits](/explanation/large-inputs.html) says what a parse costs.

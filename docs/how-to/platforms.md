@@ -11,7 +11,20 @@ aless runs on Linux, macOS and Windows, and its tests run on all three. It needs
 The viewer draws a container's state with `▼ ▽ ▶ ▷`, and a font without those glyphs shows boxes in their place. `--ascii` draws `v` and `>` instead:
 
 ```sh
-aless --ascii data.json
+aless --ascii books.json
+```
+
+<!-- screen: aless --ascii books.json
+keys: j h
+size: 80x8 -->
+```screen
+v [
+  > (4) {title: "A Book of Examples", author: "A. N. Author", year: 1999, …}
+  v {
+      title: "Shelves and How to Fill Them"
+      author: "B. Bookworm"
+      year: 2012
+ books.json [0]                                           json · watching · 2:3
 ```
 
 `:set ascii` does the same inside aless, and `:set noascii` goes back.

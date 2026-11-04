@@ -3,13 +3,13 @@ title: aless and jless
 description: What aless takes from jless, the viewer it is modelled on, what it adds, and where the two behave differently, on purpose.
 order: 5
 ---
-[jless](https://jless.io), by Paul Julius Martinez, is the inspiration for aless. It is a terminal viewer for JSON and YAML ([its source](https://github.com/PaulJuliusMartinez/jless)), and it set out how a large document reads in a terminal: a tree folded and unfolded with vim's keys, a data mode without the punctuation, a preview of what a folded node holds, and a path copied in two keystrokes. aless keeps that interface whole: the key map, the data and line modes, the folded previews, the regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
+[jless](https://jless.io), by Paul Julius Martinez, is the inspiration for aless. It is a terminal viewer for JSON and YAML ([its source](https://github.com/PaulJuliusMartinez/jless)), and it set out how a large document reads in a terminal: a tree folded and unfolded with vim's keys, a [data mode](/how-to/display.html#data-mode-and-line-mode) without the punctuation, a preview of what a folded node holds, and a path copied in two keystrokes. aless keeps that interface whole: the key map, the data and [line modes](/how-to/display.html#data-mode-and-line-mode), the folded previews, the regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
 
 aless is an independent implementation, not a fork. Its tree, its drawing and its parsers are its own, and it reads every format through the [tabnas](https://tabnas.dev) engine rather than through a JSON or YAML library. Its notices credit jless, with jless's licence, as the design aless follows.
 
 ## What aless adds
 
-aless reads every format the tabnas parsers read, and any format an ABNF grammar describes, where jless reads JSON and YAML. It opens several files at once, in tabs, and a directory as a file explorer. It watches every file it shows, and when one changes, reads it again and keeps your place. It has a source view, and knows the line and column of every node.
+aless reads every format the tabnas parsers read, and any format an ABNF grammar describes, where jless reads JSON and YAML. It opens several files at once, in tabs, and a directory as a [file explorer](/how-to/explore.html). It watches every file it shows, and when one changes, reads it again and keeps your place. It has a [source view](/how-to/display.html#data-mode-and-line-mode), and knows the line and column of every node.
 
 Each of those is on a key jless leaves free, so none of jless's keys means something else in aless.
 

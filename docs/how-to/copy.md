@@ -30,7 +30,7 @@ Each copy command has a `p` twin that shows the text on screen instead of copyin
 keys: j p p
 size: 80x12 -->
 ```screen
- pretty-printed value — j/k scroll, h/l pan, any other key returns
+ pretty-printed value: j/k scroll, h/l pan, any other key returns
 {
   "title": "A Book of Examples",
   "author": "A. N. Author",
