@@ -50,7 +50,7 @@ A pattern the regex engine refuses, such as an unclosed group, shows its message
 
 ## What the search reads
 
-The search reads each row's text as line mode shows it: the key in quotes, a colon, and the value. So `/"year": 2012` finds the second book, and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, `"tags": [`, and an empty container's row its brackets, `"tags": []`. What a fold hides is searched all the same, and unfolded when it matches.
+The search reads each row's text as [line mode](/how-to/display.html#data-mode-and-line-mode) shows it: the key in quotes, a colon, and the value. So `/"year": 2012` finds the second book, and `/year: 2012` finds nothing. A container's row is its key and its opening bracket, `"tags": [`, and an empty container's row its brackets, `"tags": []`. What a fold hides is searched all the same, and unfolded when it matches.
 
 A row holds one node, so a pattern cannot span two rows. Search for a value, a key, or a key with its value, not for two elements of an array at once.
 

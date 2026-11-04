@@ -6,19 +6,20 @@ for the owner submitting it to one. How a release is made is in
 
 ## Building
 
-- **Rust 1.88 or newer** (`rust-version` in `Cargo.toml`, checked in CI).
-- **`cargo build --release --locked`.** `Cargo.lock` pins every
+- It needs Rust 1.88 or newer (`rust-version` in `Cargo.toml`, checked in
+  CI).
+- It builds with `cargo build --release --locked`. `Cargo.lock` pins every
   dependency, and every one comes from crates.io: there are no git or path
   dependencies. For an offline build, run `cargo fetch --locked` first,
   then `cargo build --release --frozen`.
-- **No C compiler and no system libraries.** aless and everything it
+- It needs no C compiler and no system libraries. aless and everything it
   depends on are Rust. The clipboard speaks X11 and Wayland itself, with
   neither libxcb nor libwayland. A static `*-unknown-linux-musl` build
   needs nothing extra.
-- **One feature, `clipboard`, on by default.** It gives the yank commands
+- It has one feature, `clipboard`, on by default, which gives the yank commands
   the system clipboard (through arboard). `--no-default-features` drops
   it, and yank then copies through the terminal (OSC 52) instead.
-- **What to install:**
+- A package installs these files:
   - the binary, `target/release/aless` (`aless.exe` on Windows);
   - `LICENSE` (MIT) and `THIRD_PARTY_NOTICES.md` (jless's MIT notice)
     as its licence files;
@@ -44,21 +45,20 @@ for the owner submitting it to one. How a release is made is in
   generate_completions_from_executable(bin/"aless", "--generate", shell_parameter_format: "complete-")
   (man1/"aless.1").write Utils.safe_popen_read(bin/"aless", "--generate", "man")
   ```
-- **The name.** On 2026-10-08 no package called `aless` was found in any
+- The name is free: on 2026-10-08 no package called `aless` was found in any
   repository Repology tracks, nor in Homebrew, Arch Linux, the AUR or
   crates.io.
 
 ## Testing
 
-- **No test needs the network.** A sandboxed build runs the whole suite:
+- No test needs the network, so a sandboxed build runs the whole suite:
 
   ```bash
   cargo test --locked
   ```
 
-- **The viewer in a terminal.** On Unix,
-  `python3 admin/scripts/pty-smoke.py target/release/aless` drives the built
-  binary in a pseudo-terminal.
+- On Unix, `python3 admin/scripts/pty-smoke.py target/release/aless`
+  drives the built binary in a pseudo-terminal.
 
 ## Sources and binaries
 
@@ -100,7 +100,9 @@ For the channels the owner submits to, once a release exists. Each is a
 first draft to check with the channel's own tools before it goes up, and
 lives in that channel's repository, not this one.
 
-**AUR, from source** (`aless`), from the tag's source archive, so that
+### AUR, from source
+
+The package `aless` builds from the tag's source archive, so that
 `check()` runs the tests a sandbox can:
 
 ```bash
@@ -146,9 +148,10 @@ package() {
 }
 ```
 
-**AUR, prebuilt** (`aless-bin`): the same `package()`, but for the
-binary's path, which is `aless` at the top of the archive's directory,
-with:
+### AUR, prebuilt
+
+The package `aless-bin` has the same `package()`, but for the binary's
+path, which is `aless` at the top of the archive's directory, with:
 
 ```bash
 pkgname=aless-bin
@@ -164,9 +167,12 @@ sha256sums_aarch64=('SKIP')
 Run `updpkgsums`, `makepkg -s` and `namcap` on each, then
 `makepkg --printsrcinfo > .SRCINFO`, before the first push to the AUR.
 
-**Scoop**, in a bucket of the owner's own (`rjrodger/scoop-bucket`, made
-from the [bucket template](https://github.com/ScoopInstaller/BucketTemplate),
-whose workflow keeps the manifest current through `checkver` and
+### Scoop
+
+The manifest goes in a bucket of the owner's own
+(`rjrodger/scoop-bucket`, made from the [bucket
+template](https://github.com/ScoopInstaller/BucketTemplate), whose
+workflow keeps the manifest current through `checkver` and
 `autoupdate`). The Windows zips hold `aless.exe` at their top:
 
 ```json
@@ -205,7 +211,9 @@ whose workflow keeps the manifest current through `checkver` and
 
 `scoop install ./aless.json` tries it before the push.
 
-**winget**: the first manifest is made by
+### winget
+
+The first manifest is made by
 [komac](https://github.com/russellbanks/Komac) (`komac new`) or
 `wingetcreate new` from the two Windows zip URLs, as a portable
 installer (`InstallerType: zip`, `NestedInstallerType: portable`,

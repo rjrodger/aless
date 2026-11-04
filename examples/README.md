@@ -9,6 +9,8 @@ under `/examples/`, and its pages open them.
 | [`books.json`](books.json) | Three made-up book records, for the guides to search, copy from and break |
 | [`broken.json`](broken.json) | A JSON document with a comma too many, for the guide to a file that does not parse |
 
+Open them from the repository's root:
+
 ```sh
 aless examples/bookshelf-openapi.yaml
 aless examples            # browse them in the explorer

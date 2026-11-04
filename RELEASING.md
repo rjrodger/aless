@@ -8,7 +8,7 @@ Every pull request runs `dist plan`, which fails when the two disagree.
 
 ## What a release publishes
 
-- **A GitHub Release, `v<version>`.** The run creates it, and with it the
+- A GitHub Release, `v<version>`, which the run creates, and with it the
   tag, at the commit it was dispatched on, with every file attached at
   once:
   - an archive per target, holding `aless` (or `aless.exe`), `LICENSE`,
@@ -35,14 +35,14 @@ Every pull request runs `dist plan`, which fails when the two disagree.
 
   Each binary embeds its dependency tree (cargo-auditable), so
   `cargo audit bin "$(command -v aless)"` audits an installed copy.
-- **The Homebrew formula,** pushed to
+- The Homebrew formula, pushed to
   [rjrodger/homebrew-tap](https://github.com/rjrodger/homebrew-tap) by
   [`publish-homebrew.yml`](.github/workflows/publish-homebrew.yml):
   `brew install rjrodger/tap/aless`. It is the formula dist writes, with
   the man page and the bash, zsh, fish and PowerShell completions
   installed where Homebrew's own formulas put theirs, and a test for
   `brew test`.
-- **The crate on crates.io,** by trusted publishing
+- The crate on crates.io, by trusted publishing
   ([`publish-crates.yml`](.github/workflows/publish-crates.yml)), or
   nothing when that version is there already.
 
@@ -50,14 +50,14 @@ Every pull request runs `dist plan`, which fails when the two disagree.
 
 These need the owner's accounts, so an automated session cannot do them.
 
-1. **The Homebrew tap.** On GitHub, create the public repository
+1. Make the Homebrew tap. On GitHub, create the public repository
    `rjrodger/homebrew-tap`, with a README so that it has a first commit.
    Homebrew reads `rjrodger/tap` as that repository, which is what makes
    `brew install rjrodger/tap/aless` work. Create a fine-grained personal
    access token whose only repository is `rjrodger/homebrew-tap`, with
    *Contents: Read and write*. Store it in this repository as the Actions
    secret `HOMEBREW_TAP_TOKEN`.
-2. **The first crates.io version, by hand.** crates.io accepts a trusted
+2. Publish the first crates.io version by hand. crates.io accepts a trusted
    publisher only for a crate that exists, so the first version goes up
    with a token:
    1. On crates.io, create an API token with the `publish-new` and
@@ -72,7 +72,7 @@ These need the owner's accounts, so an automated session cannot do them.
 
    The workflow named is `release.yml`, not `publish-crates.yml`: in a
    called workflow, the OIDC token names the caller.
-3. **The homepage, `https://aless.tabnas.dev`.** `Cargo.toml`'s
+3. Set up the homepage, `https://aless.tabnas.dev`. `Cargo.toml`'s
    `homepage` names it, and crates.io and the Homebrew formula link to it,
    so it should answer before the first release.
    [`pages.yml`](.github/workflows/pages.yml) builds the site from `docs/`
@@ -104,9 +104,9 @@ These need the owner's accounts, so an automated session cannot do them.
    6. Once the DNS check on *Settings → Pages* passes, tick *Enforce
       HTTPS*. The option can take up to a day to appear, while the
       certificate is issued.
-4. **Recommended:** turn on release immutability (*Settings → General →
-   Releases*). A published release can then never be changed, and its tag
-   never moved or reused.
+4. Turn on release immutability (*Settings → General → Releases*), which
+   is recommended rather than required. A published release can then never
+   be changed, and its tag never moved or reused.
 
    The `release` environment has no required reviewer, by the maintainer's
    choice: crates.io publishes as soon as the GitHub Release exists, with
@@ -117,7 +117,7 @@ These need the owner's accounts, so an automated session cannot do them.
 
 ## Each release
 
-1. **The version.** In a pull request:
+1. Set the version, in a pull request:
    - set `version` in `Cargo.toml`;
    - run `cargo update --workspace`, which moves only aless's own entry
      in `Cargo.lock`, since CI builds with `--locked`;
@@ -130,11 +130,11 @@ These need the owner's accounts, so an automated session cannot do them.
      which the published crate carries as a packager's starting point.
 
    Merge it once CI is green.
-2. **A dry run.** *Actions → release → Run workflow*, on `main`, leaving the
-   tag as `dry-run`. Every target builds, and nothing is published.
-3. **The release.** The same, with the tag `vX.Y.Z`, which must equal
+2. Make a dry run: *Actions → release → Run workflow*, on `main`, leaving
+   the tag as `dry-run`. Every target builds, and nothing is published.
+3. Make the release the same way, with the tag `vX.Y.Z`, which must equal
    `Cargo.toml`'s version.
-4. **Check it.**
+4. Check it, with the GitHub CLI, Homebrew and Cargo:
 
    ```bash
    gh release view vX.Y.Z --repo rjrodger/aless
@@ -147,13 +147,15 @@ These need the owner's accounts, so an automated session cannot do them.
 
 ## When a run fails
 
-- **Before the Release exists** (`plan`, a build, or `host` failed),
-  nothing is published and no tag exists. Fix the cause and dispatch again.
-- **After it** (the formula or crates.io failed), the Release and tag stand.
+- A run that fails before the Release exists (in `plan`, a build, or
+  `host`) publishes nothing and makes no tag. Fix the cause and dispatch
+  again.
+- A run that fails after it (in the formula or crates.io) leaves the
+  Release and the tag standing.
   Fix the cause, such as the secret or the trusted publisher, and re-run
   the failed jobs of the same run. A new dispatch would fail on the
   existing Release.
-- **Never delete a published release to retry it.** Release a new patch
+- Never delete a published release to retry it. Release a new patch
   version instead. Under release immutability its tag can never be reused,
   and crates.io versions can only be yanked.
 

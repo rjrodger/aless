@@ -6,6 +6,7 @@ order: 13
 ---
 A text format aless has no parser for can be read with a grammar you write in [ABNF](https://github.com/tabnas/abnf), the notation of RFC 5234. You name the grammar on the command line, and aless reads with it every file whose extension, or whole name, is that name. This guide reads `/etc/hosts`. Download the grammar and a sample hosts file:
 
+<!-- test: skip it downloads the files the site publishes, which the capture below reads from tests/fixtures/grammars/ -->
 ```sh
 curl -LO https://aless.tabnas.dev/examples/hosts.abnf
 curl -LO https://aless.tabnas.dev/examples/hosts
@@ -62,7 +63,7 @@ The comments `; @array` and `; @object address names` say what each rule builds:
 
 ## Use it as any format
 
-Once named, the grammar is a format like any other. `aless --grammar hosts=hosts.abnf /etc/hosts` opens the real file, and everything the viewer does works on it: folding, search, the copy keys and the source view. The status bar gives each node's line and column in the file, and a change to the file reloads the tab with your place kept ([Follow a file as it changes](/how-to/watch.html)).
+Once named, the grammar is a format like any other. `aless --grammar hosts=hosts.abnf /etc/hosts` opens the real file, and everything the viewer does works on it: folding, search, the copy keys and the [source view](/how-to/display.html#data-mode-and-line-mode). The status bar gives each node's line and column in the file, and a change to the file reloads the tab with your place kept ([Follow a file as it changes](/how-to/watch.html)).
 
 `NAME,NAME2=FILE` gives a grammar two names, `--grammar` repeats for several grammars, and `--grammar-expr NAME=ABNF` takes the grammar's text on the command line instead of from a file. Standard input has no name, so give it `-k NAME`: `crontab -l | aless --grammar crontab=crontab-user.abnf -k crontab`.
 

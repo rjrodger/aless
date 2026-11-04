@@ -367,11 +367,12 @@ fn markdown_html(markdown: &str) -> String {
     ))
 }
 
-/// Some Markdown without the `<!-- screen: ... -->` comment before each
-/// `screen` block, which names the capture the block is drawn from for
-/// `the_screens_are_what_aless_draws`, and is no part of the page.
+/// Some Markdown without the comments the tests read: `<!-- screen: ...
+/// -->` before a `screen` block, which names the capture it is drawn from,
+/// and `<!-- test: skip REASON -->` before an example no test runs. Neither
+/// is any part of the page.
 fn strip_captures(markdown: &str) -> String {
-    let comment = Regex::new(r"(?ms)^<!-- screen:.*?-->\n").unwrap();
+    let comment = Regex::new(r"(?ms)^<!-- (?:screen|test):.*?-->\n").unwrap();
     comment.replace_all(markdown, "").into_owned()
 }
 
@@ -867,14 +868,19 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
         }
         None => Default::default(),
     };
-    // On the home page, the capture after the introduction stands beside
-    // it where the screen is wide enough.
+    // On the home page, the capture after the introduction, with the
+    // sentence that introduces it, stands beside it where the screen is
+    // wide enough.
     let body = match home {
         true => Regex::new(
-            r#"(?s)<section class="intro">.*?</section>\s*<div class="screen-box">.*?</div>"#,
+            r#"(?s)(<section class="intro">.*?</section>)\s*(<p>.*?</p>\s*<div class="screen-box">.*?</div>)"#,
         )
         .unwrap()
-        .replacen(&page.body, 1, "<div class=\"hero\">\n$0\n</div>")
+        .replacen(
+            &page.body,
+            1,
+            "<div class=\"hero\">\n$1\n<div class=\"hero-shot\">\n$2\n</div>\n</div>",
+        )
         .into_owned(),
         false => page.body.clone(),
     };
@@ -1408,12 +1414,13 @@ fn the_site_builds_and_its_links_hold() {
         "links that reach nothing:\n{}",
         broken.join("\n")
     );
-    // The comment a capture is drawn from is the build's, not the reader's.
+    // The comments the tests read are the build's, not the reader's.
     for (path, bytes) in &site.files {
         if path.ends_with(".html") || path.ends_with(".md") {
+            let text = String::from_utf8_lossy(bytes);
             assert!(
-                !String::from_utf8_lossy(bytes).contains("<!-- screen"),
-                "{path}: a screen block's capture comment is published"
+                !text.contains("<!-- screen") && !text.contains("<!-- test:"),
+                "{path}: a comment for the tests is published"
             );
         }
     }
@@ -1540,6 +1547,61 @@ fn the_formats_page_is_the_binarys() {
             );
         }
     }
+}
+
+/// Every example in a tutorial, a how-to guide or a reference page is run
+/// by a test, or says why not. A `console` block runs, and a `screen`
+/// block is drawn; any other block is followed by the capture of one of
+/// its commands, or carries `<!-- test: skip REASON -->` before it.
+#[test]
+fn every_example_is_run_or_says_why_not() {
+    let block = Regex::new(
+        r"(?ms)^(?:<!-- (?P<comment>(?:screen|test):.*?)-->\n)?```(?P<info>[^\n]*)\n(?P<body>.*?)^```$",
+    )
+    .unwrap();
+    let mut unrun = Vec::new();
+    for dir in ["tutorials", "how-to", "reference"] {
+        for entry in std::fs::read_dir(sources().join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let text = read(&path).replace("\r\n", "\n");
+            let blocks: Vec<regex::Captures> = block.captures_iter(&text).collect();
+            for (i, c) in blocks.iter().enumerate() {
+                let info = c["info"].trim();
+                if matches!(info, "console" | "screen") {
+                    continue;
+                }
+                let comment = c.name("comment").map_or("", |m| m.as_str()).trim();
+                if let Some(reason) = comment.strip_prefix("test: skip") {
+                    if reason.trim().is_empty() {
+                        unrun.push(format!("{}: a skip gives no reason", path.display()));
+                    }
+                    continue;
+                }
+                // The next block, a capture of one of this block's commands.
+                let captured = blocks.get(i + 1).is_some_and(|next| {
+                    let command = next
+                        .name("comment")
+                        .and_then(|m| m.as_str().strip_prefix("screen:"))
+                        .and_then(|s| s.trim().lines().next())
+                        .unwrap_or("");
+                    &next["info"] == "screen"
+                        && c["body"].lines().any(|l| l.trim() == command.trim())
+                });
+                if !captured {
+                    let first = c["body"].lines().next().unwrap_or("");
+                    unrun.push(format!("{}: ```{info} {first}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(
+        unrun.is_empty(),
+        "examples no test runs, with no <!-- test: skip REASON --> before them:\n{}",
+        unrun.join("\n")
+    );
 }
 
 /// Every command line on the pages names options aless takes.

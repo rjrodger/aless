@@ -77,8 +77,10 @@ Each `index.md`, `docs/index.md` and `docs/404.md` are navigation. The
 pages under `docs/contributing/`, `README.md`, `RELEASING.md` and
 `PACKAGING.md` are contributor pages. `CHANGELOG.md` is published as the
 releases page. `tests/site.rs` is the harness for examples: it runs every
-`console` fence, and draws every `screen` fence from the capture in the
-comment before it ([site.md](docs/contributing/site.md)).
+`console` fence, draws every `screen` fence from the capture in the
+comment before it, and fails on any other example that neither a capture
+covers nor a `<!-- test: skip REASON -->` excuses
+([site.md](docs/contributing/site.md)).
 
 ## Terms
 

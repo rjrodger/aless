@@ -9,6 +9,7 @@ In this tutorial we open an API description in aless and find our way around it 
 
 The file is a small OpenAPI document in YAML, written for these pages. Download it into an empty directory:
 
+<!-- test: skip it downloads the file the site publishes, which the captures below read from examples/ -->
 ```sh
 curl -LO https://aless.tabnas.dev/examples/bookshelf-openapi.yaml
 ```
@@ -132,7 +133,7 @@ The path is in jless's syntax. `yq` copies it as jq writes it, ready for a jq fi
 
 ## Two more ways to look
 
-Press `m` for line mode, which shows the document as JSON prints it, with its quotes, commas and closing brackets:
+Press `m` for [line mode](/how-to/display.html#data-mode-and-line-mode), which shows the document as JSON prints it, with its quotes, commas and closing brackets:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter m
@@ -154,7 +155,7 @@ size: 80x14 -->
 /listBooks  [1/1]
 ```
 
-Press `m` again to go back. Now press `s` for the source view, the text aless read from the file, with the focused node's line marked:
+Press `m` again to go back. Now press `s` for the [source view](/how-to/display.html#data-mode-and-line-mode), the text aless read from the file, with the focused node's line marked:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter s

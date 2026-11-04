@@ -32,6 +32,9 @@ bumps the version renames `Unreleased` to the version and its date
   give each format's nesting limit as aless reads it: Markdown's tree
   stops at 205 levels without an error, and ABNF, EBNF and GBNF nest
   groups 127 deep.
+- `--help`, `-h`, F1 and aless's messages use no em dash: `aless 0.6.0:`
+  heads the help, and a failed `:format` or reload ends `(! shows the
+  report)`.
 - The documentation site is rewritten. It gains a Formats reference
   page, and how-to guides to saving a document as JSON and to a file
   that does not parse. Every capture of the viewer on it is drawn by

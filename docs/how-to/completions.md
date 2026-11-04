@@ -14,6 +14,7 @@ The formula puts each file where Homebrew keeps them, so what is left is for you
 
 Add one line to your shell's startup file:
 
+<!-- test: skip it changes your shell startup files; tests/binary.rs checks what --generate prints -->
 ```sh
 eval "$(aless --generate complete-bash)"     # ~/.bashrc
 eval "$(aless --generate complete-zsh)"      # ~/.zshrc, after compinit
@@ -22,6 +23,7 @@ aless --generate complete-fish | source      # ~/.config/fish/config.fish
 
 In PowerShell, add them to your profile once:
 
+<!-- test: skip it changes your PowerShell profile -->
 ```powershell
 aless --generate complete-powershell | Add-Content $PROFILE
 ```
@@ -32,6 +34,7 @@ The completions know every option and the values each one takes: the formats `--
 
 Write each file once instead:
 
+<!-- test: skip it writes into your home directory; tests/binary.rs checks what --generate prints -->
 ```sh
 aless --generate complete-bash > ~/.local/share/bash-completion/completions/aless
 aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
@@ -44,6 +47,7 @@ The shell then reads a saved file without running aless as it starts. Write the 
 
 Save it where `man` looks for your own pages:
 
+<!-- test: skip it writes into your home directory; tests/binary.rs checks the man page --generate prints -->
 ```sh
 mkdir -p ~/.local/share/man/man1
 aless --generate man > ~/.local/share/man/man1/aless.1

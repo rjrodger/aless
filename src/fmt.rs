@@ -333,7 +333,7 @@ fn serialize(doc: &Doc, root: NodeId, layout: Layout) -> String {
     out
 }
 
-/// `.foo[3].bar` — jless's dot path. Keys that are not identifiers are
+/// `.foo[3].bar`, jless's dot path. Keys that are not identifiers are
 /// written as `["weird key"]`.
 pub fn path_dot(path: &[Key]) -> String {
     let mut out = String::new();
@@ -356,7 +356,7 @@ pub fn path_dot(path: &[Key]) -> String {
     out
 }
 
-/// `["foo"][3]["bar"]` — every segment in brackets.
+/// `["foo"][3]["bar"]`: every segment in brackets.
 pub fn path_bracket(path: &[Key]) -> String {
     let mut out = String::new();
     for k in path {

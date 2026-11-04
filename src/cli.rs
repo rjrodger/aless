@@ -861,7 +861,7 @@ fn options_in(section: Section) -> impl Iterator<Item = &'static Opt> {
 /// What `--help` prints: the whole reference.
 pub fn reference() -> String {
     let mut out = String::new();
-    push_filled(&mut out, &format!("aless {VERSION} — {TAGLINE}"), 0);
+    push_filled(&mut out, &format!("aless {VERSION}: {TAGLINE}"), 0);
     for topic in TOPICS {
         out.push('\n');
         match topic.note {
@@ -905,7 +905,7 @@ pub fn reference() -> String {
 pub fn summary() -> String {
     const NAMES: usize = WIDTH - 4 - 2 - SUMMARY_WIDTH;
     let mut out = String::new();
-    push_filled(&mut out, &format!("aless {VERSION} — {TAGLINE}"), 0);
+    push_filled(&mut out, &format!("aless {VERSION}: {TAGLINE}"), 0);
     out.push_str("\nUSAGE:\n");
     if let Some(Block::Terms(terms)) = TOPICS[0].blocks.first() {
         push_terms(&mut out, &static_terms(terms), 4);

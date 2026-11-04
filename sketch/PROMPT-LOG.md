@@ -107,3 +107,23 @@ Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT
 ```
 pr, merge, deploy site when green
 ```
+
+## 2026-11-04 12:14 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+is the style guide applied? does the text passs?
+```
+
+## 2026-11-04 12:18 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The answer to the agent's offer to close the style guide's gaps it had
+listed: the untested fences, the unlinked terms, the code with no colon
+sentence before it, and the em dashes in aless's own output.
+
+```
+yes fix it all
+```

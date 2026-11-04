@@ -1,5 +1,5 @@
 //! The application: tabs, modes, the key map and the command line. Pure
-//! state — the terminal is driven from `main.rs`, which feeds [`Input`]s in
+//! state: the terminal is driven from `main.rs`, which feeds [`Input`]s in
 //! and paints what [`crate::render`] draws from the state.
 
 use std::collections::HashSet;
@@ -943,7 +943,7 @@ impl App {
                     let lines = text.lines().map(str::to_string).collect();
                     self.overlay = Some(Overlay::new(
                         format!(
-                            "{} — j/k scroll, h/l pan, any other key returns",
+                            "{}: j/k scroll, h/l pan, any other key returns",
                             target.describe()
                         ),
                         lines,
@@ -1154,7 +1154,7 @@ impl App {
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
                 Some(f) => match self.tab().reformat(f, view) {
                     Ok(()) => self.info(format!("Parsed as {f}")),
-                    Err(e) => self.error(format!("{f}: {e} — ! shows the report")),
+                    Err(e) => self.error(format!("{f}: {e} (! shows the report)")),
                 },
                 None => self.error(format!(
                     "Unknown format: {rest} (one of {})",
@@ -1377,7 +1377,7 @@ impl App {
         };
         match err {
             Some(e) if gone => self.error(format!("{title}: file gone ({e})")),
-            Some(e) => self.error(format!("{title}: {e} — ! shows the report")),
+            Some(e) => self.error(format!("{title}: {e} (! shows the report)")),
             None => self.info(format!(
                 "Reloaded {title} ({} nodes)",
                 nodes.saturating_sub(1)
@@ -1421,7 +1421,7 @@ impl App {
 
     pub fn show_help(&mut self) {
         self.overlay = Some(Overlay::new(
-            "aless help — j/k scroll, h/l pan, any other key returns".to_string(),
+            "aless help: j/k scroll, h/l pan, any other key returns".to_string(),
             help_lines(),
             false,
         ));
@@ -1445,7 +1445,7 @@ impl App {
             }
         };
         let lines = err.report.lines().map(str::to_string).collect();
-        let title = format!("{what}: error report — j/k scroll, h/l pan, any other key returns");
+        let title = format!("{what}, error report: j/k scroll, h/l pan, any other key returns");
         self.overlay = Some(Overlay::new(title, lines, true));
         self.mode = Mode::Overlay;
     }
@@ -1835,6 +1835,19 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What aless prints of itself follows the documentation's style: no
+    /// em dash in the key map, `--help` or `-h`.
+    #[test]
+    fn its_own_text_has_no_em_dash() {
+        for (what, text) in [
+            ("F1", help_lines().join("\n")),
+            ("--help", crate::cli::reference()),
+            ("-h", crate::cli::summary()),
+        ] {
+            assert!(!text.contains('\u{2014}'), "{what} has an em dash");
+        }
+    }
 
     fn write_temp(name: &str, contents: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aless-app-tests-{}", std::process::id()));
@@ -2305,7 +2318,7 @@ mod tests {
         app.open_path(&p, None);
         app.run_command("format toml");
         let m = app.message.clone().unwrap();
-        assert!(m.error && m.text.ends_with("! shows the report"), "{m:?}");
+        assert!(m.error && m.text.ends_with("(! shows the report)"), "{m:?}");
         // The document still parses as JSON: nothing is docked or marked.
         assert!(app.tab().error.is_none());
         assert_eq!(app.error_panel_rows(), 0);
@@ -2313,7 +2326,7 @@ mod tests {
         assert_eq!(app.mode, Mode::Overlay);
         let o = app.overlay.as_ref().unwrap();
         assert!(
-            o.title.starts_with("fmt.json as toml: error report"),
+            o.title.starts_with("fmt.json as toml, error report"),
             "{}",
             o.title
         );

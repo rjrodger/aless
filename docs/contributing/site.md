@@ -108,6 +108,19 @@ ALESS_SCREENS=write cargo test --test site the_screens
 and read the diff before committing it. A screen block with no comment
 before it fails the test.
 
+Every other example in a tutorial, a how-to guide or a reference page
+is run too, or says why not: `every_example_is_run_or_says_why_not`
+fails on a block that is neither followed by the capture of one of its
+commands nor preceded by the style guide's skip:
+
+```markdown
+<!-- test: skip it installs aless from crates.io -->
+```
+
+The reason is for the reviewer, so it names what keeps the test away:
+an install, a download, a change to the reader's own files. The build
+strips both kinds of comment from the pages it publishes.
+
 ## Style
 
 Every page, the README and the changelog follow `STYLE-GUIDE.md`, and
