@@ -283,6 +283,7 @@ const INTERNAL = [
   [/\bsketch\//g, 'a working note'],
   [/\bdesign note\b/gi, 'a design note'],
   [/\b[Dd]ecisions? \d+\b/g, 'a numbered decision'],
+  [/\bDi[aá]taxis\b/gi, 'the documentation framework'],
   [/(?<![\w./-])(?:\.\.\/)*admin\//g, 'an admin note'],
   [/\]\([^)]*\b(?:AGENTS|CLAUDE|DEV-PROCESS|STYLE-GUIDE)\.md[^)]*\)/g,
     'a link to a contributor guide'],

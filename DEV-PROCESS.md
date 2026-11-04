@@ -44,7 +44,7 @@ tests of what changed.
 
 ## Writing documentation
 
-[`STYLE-GUIDE.md`](https://github.com/rjrodger/agent-info/blob/main/STYLE-GUIDE.md) is normative for every published
+[`STYLE-GUIDE.md`](STYLE-GUIDE.md) is normative for every published
 page. Read it before editing a page.
 
 - The style guide names the gates that hold a page to it, and a change

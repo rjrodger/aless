@@ -35,8 +35,8 @@ Read them before a change that bends one.
 .
 ├── ADR.md          # the decision record
 ├── AGENTS.md       # this file (CLAUDE.md links to it)
-├── DEV-PROCESS.md  # how work is done, kept identical across projects
-├── STYLE-GUIDE.md  # how documentation is written, kept identical too
+├── DEV-PROCESS.md  # how work is done, copied from agent-info
+├── STYLE-GUIDE.md  # how documentation is written, copied from agent-info
 ├── src/            # the crate: the library, and main.rs, the terminal side
 ├── tests/          # integration tests, the site build, fixtures
 ├── docs/           # the documentation site, and docs/contributing/
