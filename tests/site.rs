@@ -1995,8 +1995,11 @@ fn the_screens_are_what_aless_draws() {
                 .iter()
                 .map(|d| d.display().to_string())
                 .collect();
-            if cfg!(windows) && shown.iter().any(|d| got.contains(d.as_str())) {
-                // A Windows path is not the page's /home/user.
+            // A Windows path is not the page's /home/user, and Windows may
+            // spell the directory another way (`RUNNER~1`), so look for its
+            // name.
+            let name = work.file_name().unwrap().to_string_lossy().into_owned();
+            if cfg!(windows) && got.contains(name.as_str()) {
                 skipped += 1;
                 continue;
             }
