@@ -44,7 +44,6 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         [System.Management.Automation.CompletionResult]::new('--no-relative-line-numbers', '--no-relative-line-numbers', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not number rows by distance')
         [System.Management.Automation.CompletionResult]::new('-R', '-R', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not number rows by distance')
         [System.Management.Automation.CompletionResult]::new('--scrolloff', '--scrolloff', [System.Management.Automation.CompletionResultType]::ParameterName, 'rows kept around the focus (default 3)')
-        [System.Management.Automation.CompletionResult]::new('--hidden', '--hidden', [System.Management.Automation.CompletionResultType]::ParameterName, 'show dot-files in the explorer')
         [System.Management.Automation.CompletionResult]::new('--ascii', '--ascii', [System.Management.Automation.CompletionResultType]::ParameterName, 'draw fold markers in ASCII')
         [System.Management.Automation.CompletionResult]::new('--no-color', '--no-color', [System.Management.Automation.CompletionResultType]::ParameterName, 'no colours (as NO_COLOR does)')
         [System.Management.Automation.CompletionResult]::new('--no-colour', '--no-colour', [System.Management.Automation.CompletionResultType]::ParameterName, 'no colours (as NO_COLOR does)')

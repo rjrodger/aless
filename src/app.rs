@@ -211,7 +211,8 @@ pub struct Options {
     /// Fold new documents to this depth (`None`: everything expanded).
     pub depth: Option<u32>,
     pub color: bool,
-    /// The explorer shows dot-files.
+    /// The explorer shows dot-files, as it does unless `:set nohidden`
+    /// hides them.
     pub show_hidden: bool,
 }
 
@@ -227,7 +228,7 @@ impl Default for Options {
             indent: 2,
             depth: None,
             color: true,
-            show_hidden: false,
+            show_hidden: true,
         }
     }
 }
@@ -2158,19 +2159,19 @@ mod tests {
             app.tab().title,
             format!("{}/", dir.file_name().unwrap().to_string_lossy())
         );
-        // root, sub (collapsed), a.json
-        assert_eq!(app.tab().row_count(), 3);
+        // root, sub (collapsed), .hidden.json, a.json: dot-files show
+        assert_eq!(app.tab().row_count(), 4);
         keys(&mut app, "j");
         assert_eq!(path(&mut app), ".sub");
         keys(&mut app, "l"); // expand: deep gets listed for its preview
-        assert_eq!(app.tab().row_count(), 5);
+        assert_eq!(app.tab().row_count(), 6);
         let ex = app.tab().explorer.as_ref().unwrap();
         assert!(ex.is_listed(&ex.root.join("sub").join("deep")));
         keys(&mut app, "j");
         assert_eq!(path(&mut app), ".sub.deep");
         app.handle(Input::Key(Key::code(KeyCode::Enter))); // toggle a directory
         assert_eq!(path(&mut app), ".sub.deep");
-        assert_eq!(app.tab().row_count(), 6);
+        assert_eq!(app.tab().row_count(), 7);
         // Search finds a listed name; Enter on the file opens it in a new tab.
         keys(&mut app, "/x.txt");
         app.handle(Input::Key(Key::code(KeyCode::Enter)));
@@ -2189,11 +2190,12 @@ mod tests {
             }
             e => panic!("{e:?}"),
         }
-        // :set hidden shows the dot-file; nohidden hides it again.
-        app.run_command("set hidden");
+        // :set nohidden hides the dot-file; hidden shows it again.
         assert_eq!(app.tab().doc.root().children, 3);
         app.run_command("set nohidden");
         assert_eq!(app.tab().doc.root().children, 2);
+        app.run_command("set hidden");
+        assert_eq!(app.tab().doc.root().children, 3);
     }
 
     #[test]
