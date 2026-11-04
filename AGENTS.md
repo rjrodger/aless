@@ -73,7 +73,9 @@ says what each gate covers.
 The site's pages predate the style guide's file names, so a page's kind
 is its directory: `docs/tutorials/` tutorials, `docs/how-to/` how-to
 guides, `docs/reference/` reference, `docs/explanation/` explanation.
-Each `index.md`, `docs/index.md` and `docs/404.md` are navigation. The
+Each `index.md`, `docs/index.md` and `docs/404.md` are navigation, apart
+from `docs/why/index.md`: Richard Rodger's own account of why aless
+exists, human written, and outside the style guide and its gates. The
 pages under `docs/contributing/`, `README.md`, `RELEASING.md` and
 `PACKAGING.md` are contributor pages. `CHANGELOG.md` is published as the
 releases page. `tests/site.rs` is the harness for examples: it runs every
@@ -103,6 +105,9 @@ covers nor a `<!-- test: skip REASON -->` excuses
 - The prompt log, `sketch/PROMPT-LOG.md`, is kept to the rules in
   `DEV-PROCESS.md`: every prompt is appended before its work starts.
 - A feature that runs without a terminal does not belong here (ADR-001).
+- `docs/why/` is human written. An agent does not edit its text, or hold
+  it to the style guide, unless its author asks; its captures are
+  redrawn like any other.
 - An agent has no terminal to run aless in. To see what aless reads from
   a file, load it through `aless::load::load_str` in a throwaway test,
   and delete the test after. To see what it draws, write a `screen`

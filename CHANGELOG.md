@@ -40,6 +40,8 @@ bumps the version renames `Unreleased` to the version and its date
   that does not parse. Every capture of the viewer on it is drawn by
   aless when the site is built, and the build fails when one no longer
   matches.
+- The site has a Why page, in the header's navigation: why aless was
+  written, in Richard Rodger's own words, with two captures of the viewer.
 
 ## [0.6.0] - 2026-11-02
 
