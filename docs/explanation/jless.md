@@ -3,7 +3,7 @@ title: aless and jless
 description: What aless takes from jless, what it adds, and where the two behave differently, on purpose.
 order: 5
 ---
-[jless](https://jless.io) is a terminal viewer for JSON and YAML, by Paul Julius Martinez. aless reproduces its interface: the key map, data and line modes, collapsed previews, regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
+[jless](https://jless.io), by Paul Julius Martinez, is the inspiration for aless. It is a terminal viewer for JSON and YAML ([its source](https://github.com/PaulJuliusMartinez/jless)), and it set out how a large document reads in a terminal: a tree folded and unfolded with vim's keys, a data mode without the punctuation, previews of folded nodes, and paths copied in two keystrokes. aless reproduces that interface: the key map, data and line modes, collapsed previews, regular expression search and the copy commands. Someone who knows jless's keys knows aless's.
 
 aless is an independent implementation, not a fork. Its tree, its rendering and its parsers are its own, and it reads every format through the [tabnas](https://tabnas.dev) engine rather than through a JSON or YAML library. jless is credited, with its licence, in aless's notices, as the design aless follows.
 
@@ -22,6 +22,6 @@ Each extension to the viewer is on a key jless leaves free, so none of jless's k
 - Search matches each node's own `"key": value` text, so a pattern cannot span rows, where jless searches the whole document as one line ([Search a document](/how-to/search.html)).
 - Line numbers count the rows on screen, in data mode as in line mode, where jless numbers the lines of the pretty-printed document; the status bar gives the focused node's line and column in the source file ([Choose how the viewer draws a document](/how-to/display.html)).
 - `J` and `K` stop at the last sibling, rather than tracking a depth you asked for earlier.
-- jless's `--json` and `--yaml` name the input's format. In aless the format comes from the extension or `--kind`, and there is no `--json`.
+- jless's `--json` and `--yaml` name the input's format. In aless the format comes from the extension or `--kind`.
 
 If you only read JSON and YAML, in one window, jless is smaller and faster at what it does, with parsers built for those two formats alone. aless is for when the files are of many formats, or change while you read them.

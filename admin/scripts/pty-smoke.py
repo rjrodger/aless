@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive the aless binary in a pseudo-terminal and check what it draws.
 
-Usage: scripts/pty-smoke.py [path/to/aless]
+Usage: admin/scripts/pty-smoke.py [path/to/aless]
 
 Opens two fixture copies in a scratch directory, walks the tree, opens
 the help, switches tabs, edits a file behind the viewer's back and waits
@@ -22,7 +22,7 @@ import time
 import codecs
 import unicodedata
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "target", "debug", "aless")
 
 
@@ -357,7 +357,7 @@ def no_terminal_scenario(work):
             code = "hung"
         if child.stdin:
             child.stdin.close()
-        # Keep our end of the slave open until the output is read: on macOS
+        # Keep this end of the slave open until the output is read: on macOS
         # the last close of a pty's slave discards what is still unread.
         drawn = bytearray()
         while select.select([master], [], [], 0.2)[0]:

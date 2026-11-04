@@ -1,15 +1,8 @@
-//! Drawing: the whole screen as ratatui widgets, computed from the
-//! application state. Terminal-free: [`draw`] renders into a ratatui
-//! `Frame`, whatever backend holds it. `main.rs` hands it the terminal's,
-//! and [`screen`] an in-memory one, so tests read what a user would see.
-//! The pane area draws the active tab as a tree, or as its text in the
-//! source view.
-//!
-//! Every width here is measured the way ratatui's buffer places text: by
-//! grapheme cluster, each taking the cells [`CellWidth`] gives it. A line
-//! fitted to the pane's width then fills exactly that many cells, whether
-//! it holds CJK, an emoji sequence, a combining mark or a halfwidth sound
-//! mark.
+//! Drawing: the whole screen as ratatui widgets, computed from the app state.
+//! [`draw`] renders into any backend's `Frame`, and [`screen`] into an
+//! in-memory one, so tests read what a user would see. Every width is measured
+//! as ratatui's buffer places text, by grapheme cluster at the cells
+//! [`CellWidth`] gives it, so a fitted line fills exactly its width.
 
 use std::borrow::Cow;
 use std::ops::ControlFlow;
@@ -161,12 +154,10 @@ fn clean(text: &str) -> Cow<'_, str> {
     }
 }
 
-/// Walk the grapheme clusters of clean `text` in order, each with its
-/// length in bytes and the cells it takes as ratatui's buffer counts
-/// them (a zero-width cluster takes none, and the buffer draws it
-/// nowhere), until `each` breaks. Nothing is held per cluster, and each
-/// measure below stops once it has its answer, so a value of millions of
-/// characters is clipped holding no more than what the clip returns.
+/// Walk the grapheme clusters of clean `text` in order, each with its length
+/// in bytes and the cells ratatui's buffer gives it (none for a zero-width
+/// cluster), until `each` breaks. Nothing is held per cluster, so a huge value
+/// is clipped holding no more than what the clip returns.
 fn walk(text: &str, mut each: impl FnMut(usize, usize) -> ControlFlow<()>) {
     let span = Span::raw(text);
     let mut at = 0;
@@ -345,12 +336,9 @@ fn apply_sgr(mut style: Style, params: &str) -> Style {
     style
 }
 
-/// Fit `text` into `avail` columns, scrolled right by `xoff`: an ellipsis
-/// marks a cut at either end. Returns the text and whether it was cut on
-/// the right.
-///
-/// Each measure walks the text only as far as the answer needs: a
-/// screenful past the offset, or to the end for the tail.
+/// Fit `text` into `avail` columns, scrolled right by `xoff`, an ellipsis
+/// marking a cut at either end; true when cut on the right. Each measure walks
+/// only as far as the answer needs: a screenful past the offset, or the tail.
 pub fn clip(text: &str, xoff: usize, avail: usize) -> (String, bool) {
     let text = clean(text);
     if avail == 0 {
@@ -415,7 +403,7 @@ impl Widget for Rows {
 }
 
 /// Draw the whole screen into `frame`, a widget in its own rows for each
-/// part: the tab strip, the pane (the tree and its error panel, the
+/// part: the tab strip, the main area (the tree and its error panel, the
 /// source view, or an overlay), the status bar and the prompt. While a
 /// prompt is edited, the terminal cursor goes to its insertion point,
 /// which is returned.
@@ -552,7 +540,7 @@ fn tab_strip(app: &App, width: usize) -> Line<'static> {
     line
 }
 
-/// The pane: the active tab's text in the source view, else its tree.
+/// The main area: the active tab's text in the source view, else its tree.
 fn draw_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.tabs.is_empty() {
         return;
@@ -566,9 +554,8 @@ fn draw_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// The tree pane: the document's rows and, while a reload fails, the
-/// error panel under them; a tab that never loaded shows its report in
-/// the whole pane.
+/// The tree: the document's rows and, while a reload fails, the error panel
+/// under them; a tab that never loaded shows its report in their place.
 fn draw_tree_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     let (width, pane_h) = (usize::from(area.width), usize::from(area.height));
     let numbers = app.opts.numbers;
@@ -1028,23 +1015,19 @@ fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>
     out
 }
 
-/// A line of a pane's text with its runs coloured, shown as the plain
-/// view shows it: a tab as four spaces, another control character below
-/// a space as `·` and any other as `\u{fffd}`, and cut to `avail`
-/// columns with `…` as [`clip`] cuts. Each grapheme cluster takes the
-/// style of its first character, so a style never splits what the
-/// terminal draws as one. The line is read only until what shows is
-/// settled, so a long one costs a screenful.
+/// A line of the source view's text with its runs coloured, shown and cut to
+/// `avail` columns as the plain view does. Each grapheme cluster takes its
+/// first character's style, so a style never splits what the terminal draws
+/// as one, and the line is read only until what shows is settled.
 pub fn coloured(text: &str, runs: &[Run], avail: usize) -> Line<'static> {
     let mut line = Line::default();
     if avail == 0 {
         return line;
     }
-    // The text as shown, clean, and where each style starts in it, read a
-    // chunk at a time until the clusters that show, and whether the line
-    // is cut, no longer depend on what follows. Each chunk is twice the
-    // last, so a line that never fills the window, all zero-width marks,
-    // is measured a few times over rather than once a chunk.
+    // Read a chunk at a time until the clusters that show, and whether the
+    // line is cut, cannot depend on what follows. Each chunk doubles the last,
+    // so a line that never fills the window, all zero-width marks, is
+    // measured a few times over rather than once a chunk.
     let mut shown = String::new();
     let mut marks: Vec<(usize, Style)> = Vec::new();
     let mut chars = text.char_indices().peekable();
@@ -1126,7 +1109,7 @@ fn overflows(text: &str, avail: usize) -> bool {
     over
 }
 
-/// How a token is coloured in a pane's text, as the tree colours values:
+/// How a token is coloured in the source view, as the tree colours values:
 /// strings green, numbers magenta, keywords (`true`, `null`, a language's
 /// own) yellow, keys and names blue, comments grey, punctuation plain.
 fn token_style(kind: TokenType) -> Style {
@@ -1567,8 +1550,7 @@ mod tests {
     }
 
     /// A line that never fills the window, all marks of no width, is
-    /// measured a few times over, not once a chunk: coloured in a moment,
-    /// not the minutes a rescan per chunk took.
+    /// measured a few times over, not once a chunk.
     #[test]
     fn a_line_of_marks_of_no_width_is_coloured_at_once() {
         let marks = format!("e{}", "\u{301}".repeat(200_000));
@@ -1818,10 +1800,9 @@ mod tests {
         assert!(text.contains("MOVING"));
     }
 
-    /// An overlay pans as far as its widest line's end as the screen
-    /// measures it. A halfwidth kana with its sound mark takes two cells,
-    /// where the string width counts one, so a pan limited by that count
-    /// stopped short and the line's tail could not be reached.
+    /// An overlay pans as far as its widest line's end as the screen measures
+    /// it: a halfwidth kana with its sound mark is wider there than its
+    /// string width.
     #[test]
     fn an_overlay_pans_to_the_end_of_what_the_screen_shows() {
         let mut a = app(&format!(r#"{{"k": "{}end"}}"#, "ﾊﾟ".repeat(30)), 40, 8);
@@ -1832,8 +1813,8 @@ mod tests {
         for _ in 0..200 {
             a.handle(Input::Key(Key::code(crate::app::KeyCode::Right)));
         }
-        // Thirty kana, three letters and two quotes take 65 cells: 25
-        // past a 40-column screen.
+        // Thirty double-width kana, `end` and its quotes are 65 wide: 25 past a
+        // 40-column screen.
         assert_eq!(a.overlay.as_ref().unwrap().xoff, 25);
         let s = screen(&mut a);
         let row = s.row(1);
@@ -1851,9 +1832,9 @@ mod tests {
     #[test]
     fn wide_and_joined_characters_take_the_columns_the_terminal_gives_them() {
         let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
-        // CJK two cells each; an emoji two; a family joined by zero-width
-        // joiners two, not six; a flag two; a letter and its combining
-        // accent one; a halfwidth kana and its sound mark two, not one.
+        // CJK, an emoji, a family joined by zero-width joiners, a flag and a
+        // halfwidth kana with its sound mark are each double width; a letter
+        // with its combining accent is single.
         for (text, cells) in [
             ("日本語", 6),
             ("\u{1f600}", 2),
@@ -1876,16 +1857,15 @@ mod tests {
         for y in 0..s.height {
             assert_eq!(cols(&s.row(y)), 24, "row {y}: {:?}", s.row(y));
         }
-        // Four families take eight cells, so the value fits beside its key.
+        // The family value fits beside its key.
         let row = s.row(1);
         assert!(
             row.trim_end()
                 .ends_with(&format!("\"{}\"", family.repeat(4))),
             "{row:?}"
         );
-        // Twelve kana with their marks take 24 cells: the ellipsis follows
-        // the last whole one, a column short of the edge, since the next
-        // needs two.
+        // The kana overflow: the ellipsis follows the last whole one, a column
+        // short of the edge, since the next is double.
         let row = s.row(2);
         assert!(row.contains(&format!("\"{}…", "ﾊﾟ".repeat(7))), "{row:?}");
         assert_eq!(cols(row.trim_end()), 23, "{row:?}");

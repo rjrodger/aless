@@ -1,11 +1,6 @@
-//! Custom grammars, through the library the viewer is built on: every
-//! fixture grammar reads its sample to the JSON its expected file holds,
-//! a grammar reads files of thousands of lines, may shadow a built-in
-//! format, is read at the bytes its path has, and is refused with a usage
-//! error when it does not compile.
-//!
-//! The registry is one per process, and these tests share it, so each
-//! registers grammars under names of its own, or under the fixtures'.
+//! Custom grammars, through the library the viewer is built on. The grammar
+//! registry is one per process and these tests share it, so each registers
+//! grammars under names of its own, or under the fixtures'.
 
 use std::path::{Path, PathBuf};
 
@@ -17,8 +12,7 @@ use aless::load::{self, Format, Limits};
 
 const GRAMMARS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/grammars");
 
-/// The document as JSON: pretty-printed as `:w` writes it, with the final
-/// line break, and as a value.
+/// The document as `:w` writes it, final line break included, and as a value.
 fn json_of(doc: &aless::doc::Doc) -> (String, Value) {
     let pretty = format!("{}\n", fmt::to_json_pretty(doc, 0, 2));
     let value: Value = serde_json::from_str(&fmt::to_json_compact(doc, 0)).unwrap();
@@ -31,20 +25,16 @@ fn register(option: &str, value: &str) -> Format {
     Format::Custom(id)
 }
 
-/// One fixture grammar: its name, its file, the samples it reads
-/// (`NAME.sample`, and `NAME` when the fixture has the real file too), and
-/// the JSON they must parse to.
+/// One fixture grammar: its samples are `NAME.sample`, and `NAME` when the real file is there too.
 struct GrammarFixture {
     name: String,
     file: PathBuf,
     samples: Vec<PathBuf>,
     expected: Value,
-    /// The expected file's text: the document pretty-printed, byte for byte.
     expected_text: String,
 }
 
-/// Every `NAME.abnf` under the grammars directory. A grammar without its
-/// `NAME.expected.json`, or without a sample, fails the test that reads it.
+/// Every `NAME.abnf` fixture; one without `NAME.expected.json` or a sample fails the test.
 fn grammar_fixtures() -> Vec<GrammarFixture> {
     let dir = Path::new(GRAMMARS);
     let mut grammars: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -80,11 +70,8 @@ fn grammar_fixtures() -> Vec<GrammarFixture> {
         .collect()
 }
 
-/// Every fixture grammar reads its sample to exactly the JSON its expected
-/// file holds (the value, and the file's bytes pretty-printed, as the
-/// library's README says of it), from the grammar file and from the same
-/// text inline, and a sample named as the real file is detected by that
-/// name.
+/// Every fixture grammar reads each sample to its expected JSON, as a value and
+/// byte for byte, from the grammar file and from the same text inline.
 #[test]
 fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
     let fixtures = grammar_fixtures();
@@ -97,8 +84,7 @@ fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
         let format = register("--grammar", &format!("{}={}", f.name, f.file.display()));
         assert_eq!(format.name(), f.name);
         for sample in &f.samples {
-            // A sample named as the real file (`hosts`) is read by that
-            // name; a `.sample` needs the format named, as -k names it.
+            // `hosts` is detected by its name; a `.sample` needs the format, as `-k` gives it.
             let by_name = sample.file_name().is_some_and(|n| n == f.name.as_str());
             let named = if by_name { None } else { Some(format) };
             let loaded = load::load_path(sample, named)
@@ -122,10 +108,8 @@ fn every_fixture_grammar_parses_its_sample_to_the_expected_json() {
     }
 }
 
-/// A grammar reads a file of thousands of lines at a constant rule depth
-/// (a repetition is a replace loop, never a push chain), and a value
-/// nested past the cap is `too_deep`, found once the parse is done, so
-/// without a position.
+/// A long file reads at a constant rule depth, and a value nested past
+/// the cap is `too_deep`, found once the parse is done, so without a position.
 #[test]
 fn custom_grammars_read_files_of_thousands_of_lines() {
     let dir = std::env::temp_dir().join(format!("aless-long-{}", std::process::id()));
@@ -191,9 +175,8 @@ fn a_custom_grammar_may_shadow_a_built_in() {
     assert!(load::load_str("hello world\n".into(), Format::Json).is_err());
 }
 
-/// A grammar that does not compile is a usage error, naming the option,
-/// the grammar and the compiler's complaint, and the file when it came
-/// from one.
+/// A grammar that does not compile is a usage error naming the option, the
+/// grammar, the compiler's complaint and the file it came from, if any.
 #[test]
 fn a_grammar_that_does_not_compile_is_a_usage_error() {
     let def = Definition::parse("--grammar-expr", "bad=doc = nope\n").unwrap();
@@ -211,8 +194,7 @@ fn a_grammar_that_does_not_compile_is_a_usage_error() {
     assert!(e.is_usage(), "{e}");
     assert_eq!(e.file, Some(bad.display().to_string()));
     assert!(e.to_string().starts_with("--grammar bad: abnf"), "{e}");
-    // A grammar file that cannot be read is not a usage error, but is
-    // refused all the same.
+    // A grammar file that cannot be read is refused, though not as a usage error.
     let def = Definition::parse("--grammar", "gone=no/such/grammar.abnf").unwrap();
     let e = grammar::register(def, Limits::DEFAULT).expect_err("no such file");
     assert!(!e.is_usage(), "{e}");
@@ -237,8 +219,8 @@ fn a_grammar_file_whose_path_is_not_utf8_is_read_where_it_is() {
     }
     let file = raw.join("hosts.abnf");
     std::fs::copy(format!("{GRAMMARS}/hosts.abnf"), &file).unwrap();
-    // A different grammar at the lossy spelling: reading it would be a
-    // silent wrong answer, not just a missing file.
+    // A different grammar at the lossy spelling, so reading it there is a wrong
+    // answer rather than a missing file.
     let lossy = dir.join("g\u{fffd}");
     std::fs::create_dir_all(&lossy).unwrap();
     std::fs::write(lossy.join("hosts.abnf"), "doc = *TX\n").unwrap();

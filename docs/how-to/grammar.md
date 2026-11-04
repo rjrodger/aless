@@ -4,7 +4,7 @@ description: Describe a line-oriented text format in ABNF, and open its files in
 group: In the viewer
 order: 8
 ---
-A text format aless has no parser for can be read with a grammar you write in [ABNF](https://github.com/tabnas/abnf), the notation of RFC 5234. You name the grammar on the command line, and aless reads with it the files whose extension, or whole file name, is that name. This guide uses `/etc/hosts`; download the grammar and a sample hosts file:
+A text format aless has no parser for can be read with a grammar you write in [ABNF](https://github.com/tabnas/abnf), the notation of RFC 5234. You name the grammar on the command line, and aless reads with it the files whose extension, or whole filename, is that name. This guide uses `/etc/hosts`; download the grammar and a sample hosts file:
 
 ```sh
 curl -LO https://aless.tabnas.dev/examples/hosts.abnf

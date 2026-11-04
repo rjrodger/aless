@@ -3,7 +3,7 @@ title: Large inputs and limits
 description: What aless costs in time and memory, and the limits that keep a large or hostile input in check.
 order: 4
 ---
-aless parses with a general rule engine, and that sets its costs. They are worth knowing before you point it at a large file, or let it read input you did not write.
+aless parses with a general rule engine, and that sets its costs. Know them before you point it at a large file, or let it read input you did not write.
 
 ## A whole document at a time
 

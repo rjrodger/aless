@@ -19,6 +19,8 @@ bumps the version renames `Unreleased` to the version and its date
   64-bit float in its shortest form (`1`, `0`, `1e+21`). A spelling JSON
   has no syntax for (`0x1F` in JSON5, `1_000` in TOML) is still given as
   the value it denotes, and the source view has the spelling.
+- `--help`, the man page and the line aless prints when it cannot start
+  describe aless alone.
 
 ## [0.6.0] - 2026-11-02
 
@@ -270,7 +272,7 @@ bumps the version renames `Unreleased` to the version and its date
 
 - C source (`.c`, `.h`, tabnas-c 0.5.14), read as its concrete syntax
   tree, preprocessor directives parsed into it, and written by
-  `--render c` (admin ADR-27, phase 4's second batch). The tree is the
+  `--render c`. The tree is the
   one tabnas-c realizes from its arena on the parse's thread: each node
   its `kind`, `span`, `children` and `trivia`, each token its `tname`,
   `src` and `span`, and the members a node names its parts by (`operand`,
@@ -297,7 +299,7 @@ bumps the version renames `Unreleased` to the version and its date
   tabnas-ebnf 0.1.18) and GBNF (`.gbnf`, tabnas-gbnf 0.1.19), each read
   as the grammar spec its compiler writes, `options` and `rule`s with
   the rules the compiler adds, and written by `--render abnf`, `ebnf` and
-  `gbnf` (admin ADR-27, phase 4's second batch). The three write one
+  `gbnf`. The three write one
   schema, so a grammar in one notation is written in another; any other
   document is the `usage` error that names the program route, and a spec
   the target notation cannot say (an action, a terminal none of its
@@ -356,7 +358,7 @@ bumps the version renames `Unreleased` to the version and its date
 ### Added
 
 - Five formats more, read by the crates that carry their translation
-  parts (admin ADR-27): CSS (`.css`, tabnas-css), Protocol Buffers'
+  parts: CSS (`.css`, tabnas-css), Protocol Buffers'
   `.proto` files (`.proto`, tabnas-proto, read as their
   FileDescriptorProto in the JSON form protoc writes), PGN chess games
   (`.pgn`, tabnas-chess, named `pgn` as its manifest names it),
@@ -408,8 +410,8 @@ bumps the version renames `Unreleased` to the version and its date
 
 ### Changed
 
-- `--render` composes every conversion through alchemy's `translate`
-  (admin ADR-27), from the parts each format's crate declares: what a
+- `--render` composes every conversion through alchemy's `translate`,
+  from the parts each format's crate declares: what a
   format cannot hold is written by the convention its manifest declares,
   never refused. A null in TOML is left out; NaN and the infinities are
   `null` in `--render json`, as in `--json`, and their names in CSV; a

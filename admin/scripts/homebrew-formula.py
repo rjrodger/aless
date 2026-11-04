@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """homebrew-formula.py: aless's Homebrew formula, from the one dist writes.
 
-    python3 scripts/homebrew-formula.py aless.rb > Formula/aless.rb
+    python3 admin/scripts/homebrew-formula.py aless.rb > Formula/aless.rb
 
 dist's formula installs the binary and puts every other file of the
 archive in $(brew --prefix)/share/aless, the man page and the shells'
@@ -20,9 +20,9 @@ without them: a new dist's formula needs this read again.
 """
 import sys
 
-# dist's install method ends by linking the binary's aliases, then moving
-# whatever is left of the archive to pkgshare. The extras go between the
-# two, so that what they install is no longer left over.
+# dist's install method links the binary's aliases, then moves what is
+# left of the archive to pkgshare: the extras go between the two, so what
+# they install is not among what is left.
 ANCHOR = "    install_binary_aliases!\n"
 
 EXTRAS = """

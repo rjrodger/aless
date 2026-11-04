@@ -1,9 +1,6 @@
-//! aless — a jless-style terminal viewer for every format the tabnas
-//! parsers read, with tabs and a watch mode that reloads a changed file
-//! while keeping your place.
-//!
-//! The binary in `main.rs` owns the terminal; everything here is
-//! terminal-free and unit tested.
+//! aless, a jless-style terminal viewer for every format the tabnas
+//! parsers read. The binary in `src/main.rs` owns the terminal; everything
+//! here is terminal-free and unit tested.
 
 pub mod app;
 pub mod cli;

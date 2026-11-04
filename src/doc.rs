@@ -1,14 +1,7 @@
 //! The document model: a parsed value flattened into a pre-order arena of
-//! nodes, plus the visible-row projection the viewer scrolls through.
-//!
-//! Every node knows its parent, its key within that parent, its depth, its
-//! direct child count and the size of its subtree (itself included). In
-//! pre-order the first child of node `i` is `i + 1`, and the next sibling
-//! of a node `c` is `c + size(c)`, so the tree needs no child vectors.
-//!
-//! Containers carry an `expanded` flag. The visible rows are rebuilt from
-//! those flags with [`Doc::rows`]; in line mode every expanded non-empty
-//! container also yields a closing-bracket row, as jless does.
+//! nodes, and the visible rows the viewer scrolls through. Each node holds its
+//! subtree's size, so the first child of `i` is `i + 1` and the next sibling
+//! of `c` is `c + size(c)`, and the tree needs no child vectors.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,7 +73,7 @@ impl Node {
     }
 }
 
-/// One visible line of the tree pane.
+/// One visible line of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Row {
     pub node: NodeId,
@@ -91,11 +84,9 @@ pub struct Row {
 #[derive(Clone, Debug, Default)]
 pub struct Doc {
     pub nodes: Vec<Node>,
-    /// The source's spelling of each number node whose source spells it
-    /// otherwise than [`crate::fmt::number`] writes its value, in JSON's
-    /// syntax ([`crate::fmt::spelling`]): `1.0`, `-0`, `1e21`, an integer
-    /// past 2^53. Filled in by the alignment ([`crate::prov`]); most
-    /// documents have none.
+    /// The source's spelling of each number that the source spells otherwise
+    /// than [`crate::fmt::number`] writes it, such as `1.0` or `1e21`; filled
+    /// in by the alignment in [`crate::prov`].
     pub spellings: HashMap<NodeId, Box<str>>,
 }
 
@@ -356,8 +347,6 @@ impl Doc {
         }
     }
 
-    // ----- folding ---------------------------------------------------------
-
     pub fn set_expanded(&mut self, id: NodeId, expanded: bool) {
         let n = &mut self.nodes[id as usize];
         if n.is_foldable() {
@@ -455,8 +444,6 @@ impl Doc {
         best
     }
 
-    // ----- rows ------------------------------------------------------------
-
     /// The visible rows in document order. In line mode every expanded,
     /// non-empty container is followed (after its subtree) by a closing
     /// row.
@@ -503,8 +490,6 @@ impl Doc {
         }
         rows
     }
-
-    // ----- provenance ------------------------------------------------------
 
     /// The source line of `id`, or the first known line in its subtree.
     pub fn line_of(&self, id: NodeId) -> Option<u32> {
@@ -559,9 +544,7 @@ impl Iterator for Children<'_> {
 
 /// Find the row whose open line shows `node` (`None` when hidden).
 pub fn row_of(rows: &[Row], node: NodeId) -> Option<usize> {
-    // Open rows are in ascending node order, so a binary search over them
-    // would work, but close rows interleave; a scan is simple and rows are
-    // rebuilt rarely.
+    // Close rows interleave the open rows, so a scan rather than a binary search.
     rows.iter().position(|r| r.node == node && !r.close)
 }
 
@@ -683,17 +666,15 @@ mod tests {
 
     #[test]
     fn deep_nesting_does_not_recurse() {
-        // Build straight from a hand-made value: the parser has its own
-        // depth policy, the arena must not.
+        // A hand-made value, since every parser caps depth and the arena must not.
         const DEPTH: usize = 4000;
         let mut v = Value::Array(Arc::new(vec![]));
         for _ in 0..DEPTH {
             v = Value::Array(Arc::new(vec![v]));
         }
         let d = Doc::from_value(&v);
-        // Dropping the value would recurse DEPTH frames deep, which the
-        // Windows test-thread stack does not have; the parsers cap nesting
-        // long before this, so only this hand-made value is at risk.
+        // Dropping the value recurses `DEPTH` frames deep, past the Windows
+        // test-thread stack; a parsed value is capped long before that.
         std::mem::forget(v);
         assert_eq!(d.len(), DEPTH + 1);
         assert_eq!(d.node(DEPTH as NodeId).depth, DEPTH as u32);

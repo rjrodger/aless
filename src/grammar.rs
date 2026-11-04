@@ -1,22 +1,7 @@
-//! Custom grammars: ABNF text given on the command line (`--grammar
-//! NAME=FILE`, `--grammar-expr NAME=ABNF`), compiled once at startup by the
-//! tabnas ABNF compiler and kept in a process-wide registry that
-//! [`Format::Custom`](crate::load::Format::Custom) indexes.
-//!
-//! A registered grammar is a format like any built-in one: it has a name,
-//! it is detected from a file's extension or whole file name (`x.hosts`,
-//! `/etc/hosts`), `-k NAME` selects it, and its parser is made afresh for
-//! every parse from the compiled spec, as the built-in grammars' are. What
-//! a parse builds is whatever the grammar says: with `; @object` and
-//! `; @array` annotations a JSON value of strings, without them the
-//! compiler's `{rule, src, kids}` tree. Either is a value the document
-//! model takes as it takes any grammar's, so the viewer works on it
-//! unchanged.
-//!
-//! The registry is filled from the command line before any load, and
-//! looked up by name from then on. It only grows: a name registered twice
-//! resolves to the later grammar, as a repeated option would be expected
-//! to. Tests register grammars of their own under names of their own.
+//! Custom grammars: ABNF from `--grammar` and `--grammar-expr`, compiled once
+//! at startup into a process-wide registry that
+//! [`Format::Custom`](crate::load::Format::Custom) indexes. The registry only
+//! grows, so tests register grammars under names of their own.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -30,22 +15,18 @@ use tabnas_abnf::{AbnfConvertOptions, Element, GrammarSpec, Kind};
 
 use crate::load::{self, Limits, LoadError};
 
-/// The index of a custom grammar in the registry: what `Format::Custom`
-/// carries. Only [`register`] makes one, so every id names a grammar.
+/// Only [`register`] makes one, so every id names a grammar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CustomId(u16);
 
 /// Where a grammar's text came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// `--grammar NAME=FILE`: the file, as given.
     File(PathBuf),
-    /// `--grammar-expr NAME=ABNF`: the text itself.
     Inline(String),
 }
 
 impl Source {
-    /// The option that gives a grammar this way.
     pub fn option(&self) -> &'static str {
         match self {
             Source::File(_) => "--grammar",
@@ -53,7 +34,6 @@ impl Source {
         }
     }
 
-    /// The file, as a report names it; `None` for inline text.
     pub fn file(&self) -> Option<String> {
         match self {
             Source::File(p) => Some(p.display().to_string()),
@@ -65,17 +45,14 @@ impl Source {
 /// A grammar as the command line defines it, before it is compiled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Definition {
-    /// The names a file must match, as given; the first is the format's
-    /// name. Matching is case-insensitive.
+    /// The first is the format's name; matching is case-insensitive.
     pub names: Vec<String>,
     pub source: Source,
 }
 
 impl Definition {
-    /// Read an option's value: `NAME[,NAME…]=FILE` for `--grammar`,
-    /// `NAME[,NAME…]=ABNF` for `--grammar-expr`. The first `=` separates
-    /// the names from the rest, which for `--grammar-expr` is the grammar
-    /// text and contains `=` itself.
+    /// `NAME[,NAME…]=FILE` or `NAME[,NAME…]=ABNF`: the first `=` ends the
+    /// names, as ABNF text contains `=` itself.
     pub fn parse(option: &str, value: &str) -> Result<Definition, String> {
         let inline = option == "--grammar-expr";
         let what = if inline { "ABNF" } else { "FILE" };
@@ -122,9 +99,7 @@ impl Definition {
         })
     }
 
-    /// [`Definition::parse`] for a value as the command line gives it:
-    /// the names and ABNF text are read as text, and FILE, a path, keeps
-    /// bytes that are not UTF-8, as an input path does.
+    /// [`Definition::parse`], with FILE keeping bytes that are not UTF-8.
     pub fn parse_os(option: &str, value: &OsStr) -> Result<Definition, String> {
         let mut def = Definition::parse(option, &value.to_string_lossy())?;
         if let Source::File(path) = &mut def.source {
@@ -134,44 +109,22 @@ impl Definition {
     }
 }
 
-/// What follows the first `=` of a command-line value, with its bytes as
-/// given. `=` is ASCII, so the raw value and its lossy text cut at the
-/// same `=`, and what follows it is not re-encoded.
+/// What follows the first `=`, bytes as given: `=` is ASCII, so the raw value
+/// and its lossy text cut at the same place.
 pub fn after_eq(raw: &OsStr) -> OsString {
     let bytes = raw.as_encoded_bytes();
     let at = bytes
         .iter()
         .position(|&b| b == b'=')
         .map_or(bytes.len(), |i| i + 1);
-    // SAFETY: the cut is just after an ASCII `=`, which the encoding
-    // allows (`OsStr::from_encoded_bytes_unchecked`: split before or after
-    // any non-empty valid UTF-8 substring).
+    // SAFETY: the cut is just after an ASCII `=`, and the encoding allows a
+    // split before or after any non-empty valid UTF-8 substring.
     unsafe { OsStr::from_encoded_bytes_unchecked(&bytes[at..]) }.to_owned()
 }
 
-/// The engine's options for a grammar of plain text, merged into the
-/// compiled spec's `options` before it is installed.
-///
-/// The compiler emits the tokens the grammar names and nothing else, and a
-/// fresh engine's defaults for everything else are JSON's: `{ } [ ] : ,`
-/// are tokens, `//` and `/* */` open comments, digits make numbers, quotes
-/// make strings and `true` `false` `null` are values. Every one of those
-/// breaks plain text (`::1` would be three tokens, `//server/share` a
-/// comment, `0` a number where the grammar asked for a word), so they are
-/// turned off, and the grammar's own tokens define the language: a word
-/// (`TX`) runs to a space, tab, newline, `#` or one of the grammar's
-/// literals, and a literal the grammar names is a token whatever it is
-/// (`":"` splits `root:x:0:0`). What stays: `#` comments to the end of the
-/// line, since every format this is for has them, and the number, string
-/// and value lexers where the grammar names `NR`, `ST` or `VL`. A carriage
-/// return becomes a space character, so a CRLF file parses as an LF file
-/// does: the lexer skips the `\r` and reaches the `\n`, which the grammar
-/// takes as its `%x0A` token (a fixed token is tried before a line end is
-/// skipped, which is why a grammar needs no option to see its newlines).
-/// Measured against tabnas-abnf 0.4.16 with the fixture grammars under
-/// `tests/fixtures/grammars/`, whose README explains each setting.
+/// Turn off the engine's JSON lexing defaults for a grammar of plain text, as
+/// "What aless sets" in tests/fixtures/grammars/README.md lists them.
 pub(crate) fn plain_text_options(spec: &mut GrammarSpec) {
-    /// The object at `key`, made one if it is missing or something else.
     fn object<'a>(map: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
         let value = map.entry(key).or_insert_with(|| json!({}));
         if !value.is_object() {
@@ -179,9 +132,7 @@ pub(crate) fn plain_text_options(spec: &mut GrammarSpec) {
         }
         value.as_object_mut().expect("made an object above")
     }
-    // The token names the grammar uses, wherever they appear in the
-    // emitted document (an alternate's `s`, a token set): `"#NR"` says the
-    // grammar wants numbers.
+    // A token the grammar names appears quoted anywhere in its spec (`"#NR"`).
     let document = spec.to_value().to_string();
     let names = |token: &str| document.contains(&format!("\"#{token}\""));
     let options = &mut spec.options;
@@ -202,8 +153,7 @@ pub(crate) fn plain_text_options(spec: &mut GrammarSpec) {
     object(options, "space").insert("chars".into(), json!(" \t\r"));
 }
 
-/// A grammar's text, compiled: what [`register`] keeps, and what a test of
-/// a grammar file checks without registering it.
+/// A grammar's text, compiled, which a test can check without registering it.
 pub struct Compiled {
     spec: GrammarSpec,
 }
@@ -223,47 +173,21 @@ impl Compiled {
     }
 }
 
-/// The largest count a repetition may carry (`1024"a"`, `1*1024word`).
-/// The compiler writes out every copy: `min` copies of the element, then
-/// one nested optional rule per copy up to `max`, so a count in the
-/// millions takes gigabytes and minutes before any input is read
-/// (`10000000"a"` reached 5 GB; `99999999999999999999999"a"` saturates to
-/// 2^64 copies). Measured: `1*1000"a"` compiles in 1 s, `1*5000"a"` in
-/// 35 s. Real grammars stay in the hundreds (`1*255`). Counts within it
-/// can still add up to more than aless compiles: [`MAX_REPEAT_TOTAL`].
+/// The largest count a repetition may carry (`1*1024word`). The compiler writes
+/// out every copy, so a count in the millions takes gigabytes and minutes.
 pub const MAX_REPEAT: usize = 1024;
 
-/// The most rules a grammar's repetitions may have the compiler write,
-/// counted as [`repeat_rules`] counts them: the rules the compiler writes
-/// for the copies a repetition may make, wherever it writes them. The
-/// compile's time, and the time the engine takes to assemble the grammar
-/// at the start of every parse, grow much faster than the rules do:
-/// measured in a release build, 1,000 rules compile in under half a
-/// second and add about 1 s to each parse, 2,000 add 9 s, 3,000 add 20 s.
-/// Real grammars write tens (RFC 3986's URI grammar, 113); `1*255`
-/// writes 509.
-///
-/// This bounds what repetitions cost and nothing else: a grammar's other
-/// shapes cost time too (a rule is copied into every alternative that
-/// starts with it, so rules of several alternatives that start with each
-/// other multiply), and only `--timeout` bounds a compile.
+/// The most rules a grammar's repetitions may have the compiler write, as
+/// [`repeat_rules`] counts them. Only `--timeout` bounds the cost of other shapes.
 pub const MAX_REPEAT_TOTAL: usize = 1024;
 
-/// The deepest element nesting the compiler walks: tabnas-bnf's
-/// `MAX_ELEMENT_DEPTH`, which tabnas-abnf does not re-export. The compiler
-/// refuses a deeper grammar before it rewrites one, so [`repeat_rules`]
-/// does not rewrite one either.
+/// The element nesting the compiler walks (tabnas-bnf's MAX_ELEMENT_DEPTH, which
+/// tabnas-abnf does not re-export); [`repeat_rules`] rewrites no deeper grammar.
 const COMPILER_ELEMENT_DEPTH: usize = 128;
 
-/// Compile ABNF text: the compiler's parse, a check of the repetition
-/// counts against [`MAX_REPEAT`] each and of the rules they write against
-/// [`MAX_REPEAT_TOTAL`], then its conversion, with the start rule its
-/// default (the grammar's first production) and `word_keywords` on, so a
-/// quoted keyword (`"nameserver"`) matches whole words and not the front
-/// of a longer one; then the engine options of [`plain_text_options`]; the
-/// result installed once on a fresh engine to be sure it takes. The error
-/// is the compiler's own message, or the engine's, on one line and without
-/// its colour codes.
+/// Compile ABNF text, bounding its repetitions first and installing the result
+/// once to be sure it takes. `word_keywords` makes `"nameserver"` match whole
+/// words only, not the front of a longer one.
 pub fn compile(source: &str) -> Result<Compiled, String> {
     let options = AbnfConvertOptions {
         word_keywords: true,
@@ -279,20 +203,14 @@ pub fn compile(source: &str) -> Result<Compiled, String> {
     Ok(Compiled { spec })
 }
 
-/// A compiler's message as a report carries it: the engine colours its
-/// diagnostics and the regex crate's run to several lines, where a
-/// `message` is one line of plain text. Escapes are stripped, control
-/// characters shown escaped (`\n`).
+/// The engine colours its diagnostics and the regex crate's run to several lines.
 fn one_line(message: &str) -> String {
     load::escape_controls(&load::strip_ansi(message))
 }
 
-/// Refuse a repetition count over [`MAX_REPEAT`], or repetitions that
-/// would have the compiler write more than [`MAX_REPEAT_TOTAL`] rules,
-/// before it writes any. A count over the limit is named first, wherever
-/// it is. The elements are walked with a stack of their own, and their
-/// nesting measured for [`repeat_rules`]; the compiler bounds it itself,
-/// later.
+/// Refuse a count over [`MAX_REPEAT`], named first wherever it is, or more than
+/// [`MAX_REPEAT_TOTAL`] rules in all. The walk keeps its own stack, as the
+/// nesting is unbounded until the compiler checks it.
 fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
     let mut stack: Vec<(&Element, usize)> = grammar
         .productions
@@ -339,17 +257,10 @@ fn check_repeats(grammar: &tabnas_abnf::Grammar) -> Result<(), String> {
     Ok(())
 }
 
-/// About how many rules the compiler writes for a grammar's repetitions,
-/// counted where it writes them. Its first rewrite, which removes left
-/// recursion, copies every rule an alternative starts with into that
-/// alternative, once for each of the rule's alternatives, with the rest
-/// of the alternative after each copy; that rewrite is the compiler's own
-/// (`eliminate_left_recursion`), run here on the grammar, and the rules
-/// are counted on what it gives. A later rewrite writes the rest of an
-/// alternative twice after an optional prefix that it cannot tell from
-/// what follows (`[ userinfo "@" ] host`); [`alternative_repeat_rules`]
-/// counts that. A grammar nested deeper than the compiler walks is
-/// counted as written: the compiler refuses it.
+/// About how many rules the compiler writes for the repetitions, counted on
+/// its own left-recursion rewrite (`eliminate_left_recursion`), which copies a
+/// rule an alternative starts with into it once per alternative of that rule.
+/// A grammar deeper than [`COMPILER_ELEMENT_DEPTH`] is counted as written.
 fn repeat_rules(grammar: &tabnas_abnf::Grammar, deepest: usize) -> usize {
     let rules: std::collections::HashSet<&str> = grammar
         .productions
@@ -370,10 +281,8 @@ fn repeat_rules(grammar: &tabnas_abnf::Grammar, deepest: usize) -> usize {
         })
 }
 
-/// The rules an alternative's repetitions write: each element's, and the
-/// rest of the alternative twice after an optional group that ends in a
-/// terminal (`[ X "@" ] Y`), which the compiler may write as two branches
-/// (`X "@" Y` and `Y`) when it cannot tell X from Y by their first tokens.
+/// Counts the rest of an alternative twice after an optional group ending in a
+/// terminal (`[ X "@" ] Y`), which the compiler may split into `X "@" Y` and Y.
 fn alternative_repeat_rules(alt: &[Element], rules: &std::collections::HashSet<&str>) -> usize {
     let probe_prefix = |el: &Element| match &el.kind {
         Kind::Opt { inner } => matches!(&inner.kind, Kind::Group { alts }
@@ -392,12 +301,9 @@ fn alternative_repeat_rules(alt: &[Element], rules: &std::collections::HashSet<&
     total
 }
 
-/// The rules an element's repetitions write, as the compiler's desugaring
-/// writes them: for `m*nX`, one rule for the repetition, two for each copy
-/// past `m` (an optional and its group, nested), and, when X is a rule or
-/// a group rather than a terminal, one more for every copy (the step that
-/// follows it); `m*X` writes one rule for its tail. X itself is written
-/// once, however many copies refer to it, so nesting adds.
+/// As the compiler desugars `m*nX`: one rule, two for each copy past `m` (an
+/// optional and its group), and a step for every copy when X is not a
+/// terminal; `m*X` writes one for its tail. X is written once, so nesting adds.
 fn element_repeat_rules(el: &Element, rules: &std::collections::HashSet<&str>) -> usize {
     let terminal = |el: &Element| match &el.kind {
         Kind::Term { .. } | Kind::Regex { .. } | Kind::Token { .. } | Kind::Prose { .. } => true,
@@ -438,10 +344,8 @@ fn element_repeat_rules(el: &Element, rules: &std::collections::HashSet<&str>) -
     total
 }
 
-/// [`compile`] on a thread of its own, within `timeout`. A compile cannot
-/// be interrupted, so past the deadline the thread is left to itself (the
-/// process exits on the error, which ends it) and the error says so. A
-/// panic in the compiler is a `grammar` error, as one in a parse is.
+/// [`compile`] on a thread of its own, within `timeout`. A compile cannot be
+/// interrupted, so past the deadline the thread is left to the process's exit.
 fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, LoadError> {
     let (tx, rx) = mpsc::channel();
     let text = source.to_string();
@@ -461,16 +365,13 @@ fn compile_within(source: &str, timeout: Option<Duration>) -> Result<Compiled, L
                 .recv()
                 .map_err(|_| LoadError::tagged("grammar", "the compiler gave no answer"))?,
         },
-        // No thread to be had: compile on this one, timed.
         Err(_) => return compile_here(source, timeout),
     };
     settle(outcome)
 }
 
-/// [`compile`] on this thread, for when no other can be had. It cannot be
-/// stopped, so it is timed: one that ends past `timeout`, with a grammar
-/// or an error, is a `timeout`, as it is when a thread waits on it, and
-/// its hint says the compile ran to its end.
+/// [`compile`] on this thread, when no other can be had. It cannot be stopped,
+/// so it is timed: one ending past `timeout`, even with an error, is a `timeout`.
 fn compile_here(source: &str, timeout: Option<Duration>) -> Result<Compiled, LoadError> {
     let start = Instant::now();
     let outcome = load::catch_grammar(|| compile(source));
@@ -481,7 +382,6 @@ fn compile_here(source: &str, timeout: Option<Duration>) -> Result<Compiled, Loa
     settle(outcome)
 }
 
-/// A compile's outcome as [`compile_within`] reports it.
 fn settle(outcome: Result<Result<Compiled, String>, String>) -> Result<Compiled, LoadError> {
     match outcome {
         Ok(Ok(compiled)) => Ok(compiled),
@@ -495,26 +395,19 @@ fn settle(outcome: Result<Result<Compiled, String>, String>) -> Result<Compiled,
 
 /// A registered grammar.
 pub struct Grammar {
-    /// The format's name: the first name given.
     pub name: &'static str,
-    /// Every name given, lower-cased (Unicode, as the documented "in any
-    /// case" says): what a file's extension or whole name is compared
-    /// with.
+    /// Every name, lower-cased by Unicode's rules (the README's "in any case").
     pub matches: Vec<String>,
-    /// The ABNF text.
     pub source: String,
     pub origin: Source,
     pub compiled: Compiled,
 }
 
 impl Grammar {
-    /// A fresh engine with the grammar installed, as every parse gets one.
     pub fn parser(&self) -> Result<Tabnas, String> {
         self.compiled.parser()
     }
 
-    /// Whether `name` (an extension, or a whole file name) is one of this
-    /// grammar's, case-insensitively.
     pub fn matches(&self, name: &str) -> bool {
         self.matches.contains(&name.to_lowercase())
     }
@@ -523,26 +416,18 @@ impl Grammar {
 /// Why a grammar could not be registered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GrammarError {
-    /// The option that named the grammar.
     pub option: &'static str,
-    /// The format's name.
     pub grammar: String,
-    /// The grammar file, as given; `None` for `--grammar-expr`.
     pub file: Option<String>,
-    /// What went wrong: reading the file (`io`, `too_large`), the compile
-    /// running past its time (`timeout`), or the compiler's refusal
-    /// (`grammar`), which is a mistake in the command.
+    /// Reading the file (`io`, `too_large`), the compile's time (`timeout`), or
+    /// the compiler's refusal (`grammar`), which is a mistake in the command.
     pub error: LoadError,
-    /// The grammar file's size, when it is a regular file.
     pub size: Option<u64>,
-    /// The limits the grammar was read and compiled under.
     pub limits: Limits,
 }
 
 impl GrammarError {
-    /// Whether the command asked for what cannot be done (the grammar does
-    /// not compile), as against the file not being readable or the compile
-    /// not finishing in time.
+    /// The grammar does not compile, as against an unreadable file or a slow compile.
     pub fn is_usage(&self) -> bool {
         !self.error.is_io() && !self.error.is_too_large() && !self.error.is_timeout()
     }
@@ -560,20 +445,16 @@ impl fmt::Display for GrammarError {
 
 impl std::error::Error for GrammarError {}
 
-/// The grammars registered so far. Each is leaked once, so the name a
-/// [`Format`](crate::load::Format) reports can be `&'static str` as the
-/// built-in names are.
+/// Each grammar is leaked once, so its name can be `&'static str` as the
+/// built-in [`Format`](crate::load::Format) names are.
 static REGISTRY: RwLock<Vec<&'static Grammar>> = RwLock::new(Vec::new());
 
 fn registry() -> std::sync::RwLockReadGuard<'static, Vec<&'static Grammar>> {
     REGISTRY.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Register a grammar: read its file (within the size limit, as any input
-/// is), compile it (within the time limit, as any parse runs), and give it
-/// a place in the registry. A later grammar with one of the same names is
-/// the one that name resolves to. (The error is boxed: it carries a whole
-/// report.)
+/// Read within the size limit and compile within the time limit, as any input.
+/// The error is boxed: it carries a whole report.
 pub fn register(def: Definition, limits: Limits) -> Result<CustomId, Box<GrammarError>> {
     let name = def.names.first().cloned().unwrap_or_default();
     let size = match &def.source {
@@ -626,7 +507,6 @@ pub fn register(def: Definition, limits: Limits) -> Result<CustomId, Box<Grammar
     Ok(CustomId(id))
 }
 
-/// Register every definition in turn, stopping at the first that fails.
 pub fn register_all(
     defs: impl IntoIterator<Item = Definition>,
     limits: Limits,
@@ -634,13 +514,11 @@ pub fn register_all(
     defs.into_iter().map(|d| register(d, limits)).collect()
 }
 
-/// The grammar an id names.
 pub fn get(id: CustomId) -> Option<&'static Grammar> {
     registry().get(usize::from(id.0)).copied()
 }
 
-/// The grammar a name (a format name, a file's extension or its whole
-/// name) selects, case-insensitively: the last registered that has it.
+/// The last registered grammar a name, an extension or a whole file name selects.
 pub fn lookup(name: &str) -> Option<CustomId> {
     let name = name.trim();
     if name.is_empty() {
@@ -652,7 +530,6 @@ pub fn lookup(name: &str) -> Option<CustomId> {
         .map(|i| CustomId(i as u16))
 }
 
-/// Every registered grammar, in registration order.
 pub fn registered() -> Vec<(CustomId, &'static Grammar)> {
     registry()
         .iter()
@@ -661,7 +538,6 @@ pub fn registered() -> Vec<(CustomId, &'static Grammar)> {
         .collect()
 }
 
-/// The format names of the registered grammars, in registration order.
 pub fn names() -> Vec<&'static str> {
     registry().iter().map(|g| g.name).collect()
 }
@@ -671,8 +547,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::load::Format;
 
-    /// `key = value` lines, one object each; `#` comments are the engine's
-    /// and are skipped.
+    /// `key = value` lines; `#` comments are the engine's, and skipped.
     pub(crate) const KV: &str = "\
 settings = *entry            ; @array
 entry    = key \"=\" val      ; @object key val
@@ -689,7 +564,6 @@ val      = ( TX / NR )
         assert_eq!(d.names, ["hosts"]);
         let file = PathBuf::from(OsString::from_vec(b"g\xff/x=y.abnf".to_vec()));
         assert_eq!(d.source, Source::File(file));
-        // Inline text is text, as `parse` reads it.
         let d = Definition::parse_os("--grammar-expr", OsStr::new("kv=doc = *TX\n")).unwrap();
         assert_eq!(d.source, Source::Inline("doc = *TX\n".into()));
         // The attached form cuts at the argument's first `=`.
@@ -725,7 +599,6 @@ val      = ( TX / NR )
         let d = Definition::parse("--grammar", "Ärger,ÄRGER=x.abnf").unwrap();
         assert_eq!(d.names, ["Ärger"], "in any case, not only ASCII");
 
-        // Everything after the first `=` is the text, `=` included.
         let d = Definition::parse("--grammar-expr", "kv=doc = *TX\n").unwrap();
         assert_eq!(d.names, ["kv"]);
         assert_eq!(d.source, Source::Inline("doc = *TX\n".to_string()));
@@ -748,10 +621,7 @@ val      = ( TX / NR )
         assert!(e.contains("NAME=ABNF"), "{e}");
     }
 
-    /// The engine's JSON defaults are off for a grammar of plain text: its
-    /// punctuation, its `//` comments, and the number, string and value
-    /// tokens the grammar does not name. `#` comments stay. (Measured, so a
-    /// change in the compiler or the engine shows up here.)
+    /// Measured: a change in the compiler's or the engine's lexing shows here.
     #[test]
     fn plain_text_has_the_grammars_tokens_only() {
         const WORDS: &str = "doc = *word   ; @array\nword = ( TX )\n";
@@ -773,8 +643,6 @@ val      = ( TX / NR )
                 "'r'"
             ])
         );
-        // The classes come back when the grammar names them: a quoted string
-        // is one token, quotes and spaces included.
         const TYPED: &str = "\
 doc  = *( word / num / str / val )   ; @array
 word = ( TX )
@@ -790,12 +658,10 @@ val  = ( VL )
             .unwrap()
             .to_json();
         assert_eq!(value, json!(["a", "17", "\"q r\"", "true"]));
-        // A literal the grammar names is a token, and cuts a word.
         const FIELDS: &str = "doc = a \":\" b   ; @object a b\na = ( TX )\nb = ( TX )\n";
         let c = compile(FIELDS).unwrap();
         let value = c.parser().unwrap().parse("root:x").unwrap().to_json();
         assert_eq!(value, json!({"a": "root", "b": "x"}));
-        // A keyword matches whole words only.
         const KW: &str = "doc = 1*( kw / word )   ; @array\nkw = \"default\" %x20\nword = ( TX )\n";
         let c = compile(KW).unwrap();
         let value = c
@@ -807,9 +673,6 @@ val  = ( VL )
         assert_eq!(value, json!(["default ", "defaults"]));
     }
 
-    /// A line-oriented grammar: the newline it names is a token, so a
-    /// repetition stops at the line's end, blank lines and comments cost
-    /// nothing, and a CRLF file reads as an LF file.
     #[test]
     fn line_oriented_grammars_read_lf_and_crlf_alike() {
         const HOSTS: &str = "\
@@ -834,9 +697,8 @@ word    = ( TX )
                 .unwrap_or_else(|e| panic!("{src:?}: {e}"));
             assert_eq!(value.to_json(), want, "{src:?}");
         }
-        // Without the carriage return as a space, the lexer skips `\r\n`
-        // whole as a line end before the grammar's `\n` is tried, and the
-        // first line never ends.
+        // With `\r` not a space, the lexer skips `\r\n` whole as a line end
+        // before the grammar's `\n` is tried, and the first line never ends.
         let mut spec = tabnas_abnf::abnf_convert(HOSTS, None).unwrap();
         plain_text_options(&mut spec);
         spec.options.insert("space".into(), json!({"chars": " \t"}));
@@ -859,7 +721,6 @@ word    = ( TX )
                 {"key": "c", "val": "3"}
             ])
         );
-        // Without annotations, the compiler's tree.
         let id = register(inline("impl-tree-a", "pair = TX \"=\" TX\n"), Limits::NONE).unwrap();
         let v = parse_json(id, "a=b");
         assert_eq!(v["rule"], "pair");
@@ -875,7 +736,6 @@ word    = ( TX )
         assert_eq!(lookup(" impl-hosts-a "), Some(first));
         assert_eq!(lookup("impl-nope-a"), None);
         assert_eq!(lookup(""), None);
-        // In any case means Unicode case, as the README says.
         let umlaut = register(inline("Impl-Ärger-a", KV), Limits::NONE).unwrap();
         assert_eq!(lookup("impl-ärger-a"), Some(umlaut));
         assert_eq!(lookup("IMPL-ÄRGER-A"), Some(umlaut));
@@ -907,7 +767,6 @@ word    = ( TX )
         assert_eq!(dup(&names()), 2);
         assert_eq!(dup(&Format::known_names()), 1);
 
-        // Through Format: the name, the extension, the whole file name.
         assert_eq!(
             Format::from_name("impl-hosts-a"),
             Some(Format::Custom(first))
@@ -946,7 +805,6 @@ word    = ( TX )
             Format::detect(std::path::Path::new("app.webmanifest")),
             Format::Custom(id)
         );
-        // The built-ins are untouched.
         assert_eq!(Format::from_name("json"), Some(Format::Json));
         assert!(!Format::ALL.iter().any(|f| matches!(f, Format::Custom(_))));
     }
@@ -965,7 +823,6 @@ word    = ( TX )
             "{e}"
         );
         assert_eq!(lookup("impl-bad-a"), None, "nothing is registered");
-        // A grammar file that cannot be read is an io error.
         let d = Definition::parse("--grammar", "impl-missing-a=/nonexistent/x.abnf").unwrap();
         let e = register(d, Limits::NONE).unwrap_err();
         assert_eq!(e.option, "--grammar");
@@ -977,7 +834,6 @@ word    = ( TX )
                 .starts_with("--grammar impl-missing-a: /nonexistent/x.abnf: "),
             "{e}"
         );
-        // Or too large for --max-size.
         let dir = std::env::temp_dir().join(format!("aless-grammar-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("big.abnf");
@@ -988,7 +844,6 @@ word    = ( TX )
             Limits {
                 max_size: Some(8),
                 timeout: None,
-                started: None,
             },
         )
         .unwrap_err();
@@ -1015,13 +870,11 @@ word    = ( TX )
             "{}",
             e.error.plain_report()
         );
-        // And within it, a file registers.
         let id = register(
             d,
             Limits {
                 max_size: Some(1 << 20),
                 timeout: None,
-                started: None,
             },
         )
         .unwrap();
@@ -1030,10 +883,7 @@ word    = ( TX )
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A repetition count the compiler would write out in the millions is
-    /// refused before it starts, as the command's mistake; one within
-    /// [`MAX_REPEAT`] compiles. A count too large for the grammar's
-    /// number type saturates, and is refused the same way.
+    /// A count too large for the grammar's number type saturates, and is refused too.
     #[test]
     fn repetition_counts_are_bounded() {
         for (text, count) in [
@@ -1071,18 +921,9 @@ word    = ( TX )
         );
     }
 
-    /// Repetitions within [`MAX_REPEAT`] each still add up, and they are
-    /// counted where the compiler writes them: a rule's again in every
-    /// alternative that starts with that rule, a repeated rule or group
-    /// with a step for every copy, the rest of an alternative twice after
-    /// a prefix the compiler may branch on. Over [`MAX_REPEAT_TOTAL`]
-    /// rules is the command's mistake; copies of a terminal up to the
-    /// minimum write none.
     #[test]
     fn repetition_rules_are_bounded_in_total() {
-        // Sixteen `1*1024` took 153 s and 870 MB before the total was
-        // checked. Registered under a time limit, so that a regression
-        // fails in seconds, as a `timeout`, rather than holding the suite.
+        // Under a time limit, so that an unbounded compile fails in seconds.
         let many = inline(
             "impl-rep-total",
             &format!("doc ={}\n", " 1*1024\"a\"".repeat(16)),
@@ -1090,7 +931,6 @@ word    = ( TX )
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_secs(10)),
-            started: None,
         };
         let e = register(many, limits).unwrap_err();
         assert!(
@@ -1112,10 +952,7 @@ word    = ( TX )
             e.error.message
         );
         assert_eq!(lookup("impl-rep-total"), None);
-        // A rule an alternative starts with is written again into it, so
-        // a chain of such rules writes `1*300` once per rule: 3 x 599.
-        // Counted once, as a rule named once, it was 599, and a chain of
-        // seven wrapping `1*1024` held the compiler for minutes.
+        // A rule an alternative starts with is written into it, once per rule: 3 x 599.
         let e = compile("doc = s \"x\"\ns = r \"x\"\nr = 1*300\"q\"\n").unwrap_err();
         assert!(e.contains("write 1797 rules"), "{e}");
         // Named alone, or after the start of an alternative, it is not.
@@ -1125,33 +962,25 @@ word    = ( TX )
         ] {
             compile(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
         }
-        // The rest of an alternative starting with a rule is written once
-        // per alternative of that rule.
+        // The rest is written once per alternative of the rule it starts with.
         let e = compile("doc = r 1*300\"x\"\nr = \"a\" / \"b\"\n").unwrap_err();
         assert!(e.contains("write 1198 rules"), "{e}");
-        // A repeated group is written once, with a step for every copy:
-        // 599 inside, 1 + 2 x 299 + 300 outside.
+        // 599 inside the group, and 1 + 2 x 299 + 300 outside: a step per copy.
         let e = compile("doc = 1*300(1*300\"a\" \"x\")\n").unwrap_err();
         assert!(e.contains("write 1498 rules"), "{e}");
-        // What follows an optional prefix the compiler may branch on is
-        // written twice.
+        // What follows an optional prefix the compiler may branch on is doubled.
         let e = compile("doc = [\"a\" \"@\"] 1*300\"a\"\n").unwrap_err();
         assert!(e.contains("write 1198 rules"), "{e}");
-        // One count over the limit is named as such, wherever it is.
         let e = compile("doc = 1024\"a\" 1024\"a\" 5000\"a\"\n").unwrap_err();
         assert!(e.contains("a repetition count of 5000"), "{e}");
         let e = compile("doc = 5000\"a\" 1024\"a\" 1024\"a\"\n").unwrap_err();
         assert!(e.contains("a repetition count of 5000"), "{e}");
-        // Copies of a terminal up to the minimum are one sequence, and
-        // write no rules however many there are.
+        // Copies of a terminal up to the minimum write no rules.
         compile("doc = 1024\"a\" 1024\"b\" 1024\"c\"\n").unwrap();
     }
 
-    /// What [`repeat_rules`] counts is what the compiler writes, for each
-    /// way it has of writing a repetition: it counts no more, and the
-    /// compiler writes no more than a few rules of the grammar's own
-    /// besides. (Measured, so a compiler that writes a repetition some
-    /// other way shows up here.)
+    /// [`repeat_rules`] against what the compiler writes, for each way it writes
+    /// a repetition: the compiler adds at most a few rules of the grammar's own.
     #[test]
     fn repetition_rules_are_counted_as_the_compiler_writes_them() {
         for text in [
@@ -1180,8 +1009,6 @@ word    = ( TX )
                 "{text:?}: counted {counted}, the compiler wrote {written}"
             );
         }
-        // A grammar nested deeper than the compiler walks is counted as
-        // written, and the compiler refuses it.
         let chain =
             tabnas_abnf::parse_abnf("doc = s \"x\"\ns = r \"x\"\nr = 1*300\"q\"\n").unwrap();
         assert_eq!(repeat_rules(&chain, 1), 1797);
@@ -1195,18 +1022,13 @@ word    = ( TX )
         assert!(e.contains("more than 128 deep"), "{e}");
     }
 
-    /// The compile runs within the time limit a parse would, on a thread
-    /// of its own: past it, the grammar is a `timeout` error, and the
-    /// compiler is left to finish on its own.
     #[test]
     fn a_compile_past_the_time_limit_is_a_timeout() {
-        // Some 300 nested optionals take the compiler well over a
-        // millisecond (`1*1000"a"` takes about a second in a release build).
+        // `1*300"a"` takes the compiler well over a millisecond.
         let slow = inline("impl-slow-a", "doc = 1*300\"a\"\n");
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_millis(1)),
-            started: None,
         };
         let e = register(slow, limits).unwrap_err();
         assert!(!e.is_usage());
@@ -1221,8 +1043,6 @@ word    = ( TX )
             "{}",
             e.error.hint
         );
-        // On a thread of its own, the compile is left running: aless
-        // stopped waiting for it.
         assert!(
             e.error
                 .hint
@@ -1232,18 +1052,13 @@ word    = ( TX )
         );
         assert!(e.error.plain_report().starts_with("[aless/timeout]"));
         assert_eq!(lookup("impl-slow-a"), None);
-        // With time enough, a grammar registers under a limit.
         let limits = Limits {
             max_size: None,
             timeout: Some(Duration::from_secs(600)),
-            started: None,
         };
         assert!(register(inline("impl-slow-b", "doc = 1*20\"a\"\n"), limits).is_ok());
     }
 
-    /// With no thread to be had, the compile runs on the caller's and
-    /// cannot be stopped, but its time is still measured: a grammar
-    /// compiled past the limit is a `timeout`, not registered.
     #[test]
     fn a_compile_on_this_thread_past_the_time_limit_is_a_timeout() {
         let slow = "doc = 1*300\"a\"\n";
@@ -1255,8 +1070,6 @@ word    = ( TX )
             e.message,
             "timeout: the grammar took longer than 0.001 s to compile"
         );
-        // The hint says what happened: the compile ran to its end, on
-        // aless's own thread, and was refused for its time.
         assert!(
             e.hint.starts_with(
                 "No thread could be started for the compiler, so it ran to its end on \
@@ -1272,7 +1085,6 @@ word    = ( TX )
             .err()
             .unwrap();
         assert!(e.is_timeout(), "{}", e.message);
-        // Within the limit, or with none, it compiles as on a thread.
         assert!(compile_here("doc = 1*20\"a\"\n", Some(Duration::from_secs(600))).is_ok());
         assert!(compile_here("doc = 1*20\"a\"\n", None).is_ok());
         let e = compile_here("doc = \"a\n", Some(Duration::from_secs(600)))
@@ -1281,9 +1093,6 @@ word    = ( TX )
         assert_eq!(e.code, "grammar");
     }
 
-    /// A compiler message is one line of plain text: the engine's colour
-    /// codes are stripped and control characters shown escaped, as a
-    /// report's `message` is for a parse error.
     #[test]
     fn compiler_messages_are_one_plain_line() {
         for text in ["doc = *\n", "doc = \"a\u{1}b\"\n", "doc = %x7E-21\n"] {

@@ -1,0 +1,15 @@
+{
+  "source": {
+    ".rs": "c",
+    ".py": "hash",
+    ".sh": "hash"
+  },
+  "fixtures": [
+    "tests/fixtures"
+  ],
+  "skip": [
+    "target",
+    "node_modules",
+    ".git"
+  ]
+}

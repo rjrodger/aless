@@ -75,7 +75,7 @@ These need the owner's accounts, so an automated session cannot do them.
 3. **The homepage, `https://aless.tabnas.dev`.** `Cargo.toml`'s
    `homepage` names it, and crates.io and the Homebrew formula link to it,
    so it should answer before the first release.
-   [`pages.yml`](.github/workflows/pages.yml) builds the site from `site/`
+   [`pages.yml`](.github/workflows/pages.yml) builds the site from `docs/`
    on every push to `main`, and deploys it once Pages is set up; until
    then it builds and checks the site and skips the deploy with a notice.
    1. Verify `aless.tabnas.dev` for your account first, as GitHub
@@ -123,7 +123,7 @@ These need the owner's accounts, so an automated session cannot do them.
      in `Cargo.lock`, since CI builds with `--locked`;
    - rename `## Unreleased` in [CHANGELOG.md](CHANGELOG.md) to
      `## [X.Y.Z] - YYYY-MM-DD`, which is what becomes the Release's notes;
-   - run `scripts/generate.sh`: the man page names the version, and the
+   - run `admin/scripts/generate.sh`: the man page names the version, and the
      date the changelog gives it, and CI fails until it does;
    - set the version in [PACKAGING.md](PACKAGING.md)'s AUR recipe
      (`pkgver`) and Scoop manifest (`version` and the two download URLs),
@@ -174,13 +174,13 @@ read the diff. Then re-pin the actions in `[dist.github-action-commits]` to
 the majors the new workflow uses, at their latest releases.
 
 [`publish-homebrew.yml`](.github/workflows/publish-homebrew.yml) and
-[`scripts/homebrew-formula.py`](scripts/homebrew-formula.py) are this
+[`admin/scripts/homebrew-formula.py`](admin/scripts/homebrew-formula.py) are this
 repository's own, not dist's: the script adds the man page, the
 completions and a test to the formula dist writes, after its
 `install_binary_aliases!` line, and refuses a formula without one. A dry
 run does not publish, so it does not run them: after a dist upgrade, take
 `aless.rb` from a dry run's `artifacts-build-global` artifact and check
-that `python3 scripts/homebrew-formula.py aless.rb` still writes the
+that `python3 admin/scripts/homebrew-formula.py aless.rb` still writes the
 formula.
 
 A release made with `GITHUB_TOKEN` starts no other workflow. So any

@@ -1,0 +1,18 @@
+# The part of Google's word list that holds for every page, carried as a
+# house rule so that it can sit at error level.
+#
+# Google's own word-list rules stay where the project's evidence puts
+# them (.vale.ini): they map `touch` to `tap`, a mobile-UI rule, and
+# `above` and `below` to `preceding` and `following`, which a reference
+# page uses as ordinary cross-references. What is kept here is the one
+# substitution with no such collision.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+link: 'https://developers.google.com/style/word-list'
+level: error
+ignorecase: true
+action:
+  name: replace
+swap:
+  file name: filename
+  file names: filenames

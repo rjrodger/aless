@@ -1,6 +1,5 @@
-//! The terminal side of aless: command-line arguments, raw-mode setup,
-//! the event loop, painting, and the side effects the application asks
-//! for (watching files, copying, suspending).
+//! The terminal side of aless: arguments, raw mode, the event loop,
+//! painting, and the effects the application asks for.
 
 use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
@@ -29,7 +28,6 @@ use aless::load::Format;
 use aless::render;
 use aless::watch::FileWatcher;
 
-/// What the command line asks for.
 enum Parsed {
     /// The viewer.
     Run(Box<Args>),
@@ -54,10 +52,8 @@ struct Args {
     timeout: Option<std::time::Duration>,
 }
 
-/// Read the command line, `argv` without the program's name. Every option
-/// is one [`cli::OPTIONS`] lists, which the help, the man page and the
-/// completions are written from: an option the table does not list is no
-/// option.
+/// Read `argv`, without the program's name. An option [`cli::OPTIONS`]
+/// does not list is refused (ADR-006).
 fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String> {
     let mut args = Args {
         files: Vec::new(),
@@ -157,13 +153,10 @@ fn parse_mode(v: &str) -> Result<bool, String> {
     }
 }
 
-/// The exit status of a run that could not start: the command line asks
-/// for what cannot be done, or there is no terminal to show it on.
+/// The exit status of a run that could not start (ADR-001).
 const USAGE: i32 = 2;
 
-/// Why there is no screen to draw on, when there is none: standard output
-/// is not a terminal (a pipe, a file), or it is one that cannot draw the
-/// viewer (`TERM=dumb`).
+/// Why there is no screen to draw on, when there is none.
 fn no_screen() -> Option<&'static str> {
     if !io::stdout().is_terminal() {
         Some("standard output is not a terminal")
@@ -174,8 +167,7 @@ fn no_screen() -> Option<&'static str> {
     }
 }
 
-/// Say that the command line asks for what cannot be done, as a line on
-/// standard error, and exit with status 2.
+/// One line on standard error, then the exit status 2.
 fn refuse_usage(e: &str) -> ! {
     eprintln!("aless: {e}");
     std::process::exit(USAGE);
@@ -191,23 +183,20 @@ fn main() {
         }
         Err(e) => refuse_usage(&e),
     };
-    // Before any input is read, grammar files included: input that never
-    // ends (a pipe left open, a FIFO) would otherwise keep a viewer that
-    // cannot start waiting.
+    // Before any input is read, grammar files included: a pipe left open
+    // or a FIFO would otherwise keep a viewer that cannot start waiting.
     if let Some(why) = no_screen() {
         refuse_viewer(why);
     }
     if let Err(e) = key_terminal() {
         refuse_viewer(&format!("no terminal to read keys from ({e})"));
     }
-    // The grammars come first: -k may name one, and so may a file's
-    // extension. A grammar file is read within --max-size as any input is,
-    // and compiled within --timeout as any parse runs.
+    // Grammars first, since -k or a file's extension may name one; a
+    // grammar file is held to --max-size and --timeout as any input is.
     let grammars = std::mem::take(&mut args.grammars);
     let limits = aless::load::Limits {
         max_size: args.max_size,
         timeout: args.timeout,
-        started: None,
     };
     if let Err(e) = grammar::register_all(grammars, limits) {
         refuse_usage(&e.to_string());
@@ -249,7 +238,6 @@ fn main() {
         open_stdin(&mut app, read, stdin_format);
     }
     if app.tabs.is_empty() {
-        // Nothing named and nothing piped: explore the current directory.
         app.open_explorer(std::path::Path::new("."));
     }
     // The first tab is the one asked for first.
@@ -267,8 +255,7 @@ fn main() {
     }
 }
 
-/// Open what standard input held in a tab, or the reason it could not be
-/// read (too large, say) as a failed one.
+/// Standard input's document in a tab, or a failed tab saying why not.
 fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, format: Format) {
     match read {
         Ok(bytes) => {
@@ -282,20 +269,17 @@ fn open_stdin(app: &mut App, read: Result<Vec<u8>, aless::load::LoadError>, form
     }
 }
 
-/// Say that the viewer cannot start, and why, then exit with status 2.
-/// Nothing has been drawn, so there is nothing to restore, and nothing is
-/// written to standard output: aless is a viewer, and without a terminal
-/// it has nothing to say there.
+/// Say why the viewer cannot start, then exit with status 2. Nothing has
+/// been drawn, so nothing needs restoring.
 fn refuse_viewer(why: &str) -> ! {
     refuse_usage(&format!(
         "cannot start the viewer, which needs a terminal to draw on and read keys from: {why} \
-         (aless --help says what aless does; dmog reads and writes these formats in a script)"
+         (aless --help says what aless does)"
     ))
 }
 
-/// Check that the viewer will have a terminal to read keys from: the one
-/// crossterm takes, standard input when it is a terminal, else `/dev/tty`,
-/// which opens only for a process with a controlling terminal.
+/// Whether the viewer will have a terminal to read keys from: standard
+/// input when it is one, else `/dev/tty`, which needs a controlling one.
 #[cfg(unix)]
 fn key_terminal() -> io::Result<()> {
     if io::stdin().is_terminal() {
@@ -308,18 +292,15 @@ fn key_terminal() -> io::Result<()> {
         .map(drop)
 }
 
-/// A console process whose output is a console has one to read keys from;
-/// crossterm opens it when the viewer starts.
+/// A console process whose output is a console can read keys from it.
 #[cfg(not(unix))]
 fn key_terminal() -> io::Result<()> {
     Ok(())
 }
 
-/// When the document came through a pipe, point standard input at the
-/// terminal before the viewer starts, opened by the device's own name
-/// (standard output's). crossterm would otherwise read keys from
-/// `/dev/tty`, which macOS cannot watch (kqueue rejects it: crossterm
-/// issue 500), and the viewer would draw and then never hear a key.
+/// With the document piped in, point standard input at the terminal, by
+/// standard output's device name: crossterm would otherwise read keys from
+/// `/dev/tty`, which kqueue on macOS cannot watch, and never hear one.
 #[cfg(unix)]
 fn attach_stdin_to_terminal() {
     use std::ffi::CStr;
@@ -354,15 +335,13 @@ fn attach_stdin_to_terminal() {
 #[cfg(not(unix))]
 fn attach_stdin_to_terminal() {}
 
-/// Why the viewer stopped: it never started (no terminal), or something
-/// failed while it ran.
+/// Why the viewer stopped: it never started, or it failed while it ran.
 enum Failed {
     Setup(io::Error),
     Running(io::Error),
 }
 
-/// Take the terminal over. On failure, whatever was done is undone, so
-/// the caller has nothing to restore.
+/// Take the terminal over; on failure, whatever was done is undone.
 fn setup_terminal(mouse: bool) -> io::Result<()> {
     terminal::enable_raw_mode()?;
     let mut out = io::stdout();
@@ -427,8 +406,6 @@ fn event_loop(mut app: App, mouse: bool) -> io::Result<()> {
         if app.quit {
             break;
         }
-        // ratatui compares the frame with the last one and writes only the
-        // cells that changed; the terminal shows the update all at once.
         queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
         terminal.draw(|frame| {
             render::draw(frame, &mut app);
@@ -444,7 +421,6 @@ fn event_loop(mut app: App, mouse: bool) -> io::Result<()> {
             Err(mpsc::RecvTimeoutError::Timeout) => app.handle(Input::Tick(Instant::now())),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        // Drain whatever else is queued before painting again.
         while let Ok(input) = rx.try_recv() {
             app.handle(input);
         }
@@ -452,8 +428,7 @@ fn event_loop(mut app: App, mouse: bool) -> io::Result<()> {
     restore_terminal(mouse)
 }
 
-/// Carry out the application's requests. Returns whether the terminal
-/// contents must be repainted from scratch.
+/// Carry out the application's requests; true when the screen is to be redrawn whole.
 fn apply_effects(
     app: &mut App,
     watcher: &mut Option<FileWatcher>,
@@ -490,7 +465,7 @@ fn apply_effects(
 #[cfg(unix)]
 fn suspend(mouse: bool) -> io::Result<()> {
     restore_terminal(mouse)?;
-    // SAFETY: raising SIGTSTP on our own process has no preconditions.
+    // SAFETY: raising SIGTSTP on this process has no preconditions.
     unsafe {
         libc::raise(libc::SIGTSTP);
     }
@@ -559,7 +534,6 @@ mod tests {
         parse_args(argv.iter().map(OsString::from))
     }
 
-    /// A value the option takes.
     fn sample(long: &str, value: Value) -> &'static str {
         match (long, value) {
             (_, Value::Words(words)) => words[0],
@@ -597,7 +571,7 @@ mod tests {
 
     #[test]
     fn an_option_the_table_does_not_list_is_refused() {
-        for argv in [&["--nope"][..], &["-x"], &["--Json"], &["-kjson"]] {
+        for argv in [&["--nope"][..], &["-x"], &["--Kind"], &["-kjson"]] {
             match parse(argv) {
                 Err(e) => assert!(e.starts_with("unknown option: "), "{argv:?}: {e}"),
                 Ok(_) => panic!("{argv:?} was read"),

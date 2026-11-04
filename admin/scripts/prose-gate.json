@@ -1,0 +1,46 @@
+{
+  "pages": [
+    "README.md",
+    "CHANGELOG.md",
+    "RELEASING.md",
+    "PACKAGING.md",
+    "examples/README.md",
+    "docs/**/*.md"
+  ],
+  "tutorials": [
+    "docs/tutorials/viewer.md"
+  ],
+  "contributor": [
+    "README.md",
+    "RELEASING.md",
+    "PACKAGING.md",
+    "docs/contributing/*.md"
+  ],
+  "links": [
+    "README.md",
+    "CHANGELOG.md",
+    "AGENTS.md",
+    "ADR.md",
+    "DEV-PROCESS.md",
+    "STYLE-GUIDE.md",
+    "RELEASING.md",
+    "PACKAGING.md",
+    "THIRD_PARTY_NOTICES.md",
+    "examples/README.md",
+    "docs/contributing/*.md",
+    "admin/**/*.md"
+  ],
+  "skip": [
+    "target",
+    "node_modules",
+    ".git",
+    "sketch",
+    "tests/fixtures"
+  ],
+  "names": [
+    { "pattern": "\\bAless\\b", "spelled": "aless" },
+    { "pattern": "\\bJless\\b", "spelled": "jless" },
+    { "pattern": "\\bTabnas\\b", "spelled": "tabnas" }
+  ],
+  "internal": []
+}

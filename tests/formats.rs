@@ -27,7 +27,7 @@ fn every_fixture_loads() {
     for entry in std::fs::read_dir(fixture("")).unwrap() {
         let path = entry.unwrap().path();
         if !path.is_file() {
-            // The grammars have their own tests (`grammars.rs`, below).
+            // The grammars, read by `every_fixture_grammar_compiles` and tests/grammars.rs.
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -46,8 +46,8 @@ fn every_fixture_loads() {
         }
         let loaded = result.unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(loaded.doc.len() > 1, "{name}: only a root");
-        // A grammar reads as the spec its compiler writes, which places
-        // nothing, and says so: no node has a position.
+        // A notation reads as the spec its compiler writes, which places
+        // nothing: no node has a position.
         assert_eq!(
             loaded.doc.nodes.iter().any(|n| n.line > 0),
             !loaded.format.is_notation(),
@@ -91,9 +91,8 @@ fn every_fixture_loads() {
     );
 }
 
-/// Every fixture grammar compiles, as the option that names it would
-/// compile it at startup; the values they parse to are checked in
-/// `grammars.rs`.
+/// Every fixture grammar compiles as `--grammar` compiles it at startup;
+/// tests/grammars.rs checks what they parse to.
 #[test]
 fn every_fixture_grammar_compiles() {
     let mut count = 0;
@@ -176,13 +175,11 @@ fn other_grammars_place_values() {
     assert_eq!(text.node(2).line, 2);
 }
 
-/// The trees the newer grammars build are placed as well as their values
-/// follow the source: a stylesheet's declarations, a game's tags, an
-/// expression's terms, a version's parts, and the start of a .proto
-/// file's descriptor, whose later members are derived and regrouped, so
-/// best effort there, its package among them.
+/// A stylesheet's declarations, a game's tags, an expression's terms and a
+/// version's parts are placed where the source has them; a .proto descriptor
+/// only best effort, since its later members are derived and regrouped.
 #[test]
-fn the_newer_grammars_place_values() {
+fn css_proto_pgn_expr_and_semver_place_values() {
     let line = |name: &str, format: Option<Format>, path: &[Key]| {
         let doc = load::load_path(&fixture(name), format).unwrap().doc;
         let node = doc
@@ -225,10 +222,8 @@ fn the_newer_grammars_place_values() {
         line("sample.semver", Some(Format::Semver), &[name("patch")]),
         1
     );
-    // The descriptor holds its lists first, and what a statement places
-    // (the syntax, the package) after them in the statements' order: the
-    // imports are placed, and the package, which the alignment has passed
-    // when it comes to it, has no position rather than a wrong one.
+    // The descriptor holds its lists before the package, so the alignment has
+    // passed the package by then: no position rather than a wrong one.
     assert_eq!(
         line("sample.proto", None, &[name("dependency"), Key::Index(0)]),
         line_of("sample.proto", "timestamp.proto")
@@ -240,11 +235,9 @@ fn the_newer_grammars_place_values() {
     assert_eq!(line("sample.proto", None, &[name("package")]), 0);
 }
 
-/// A C file's tokens are placed where its syntax tree says, which the
-/// reader records for each: every token's text starts at its node's line
-/// and column, the nodes the tree repeats under `operand` and the like
-/// included, and nothing the reader made up (a node's kind, a token's name,
-/// a span's numbers) has a place.
+/// A C file's tokens are placed where its syntax tree says: each token's text
+/// starts at its node's line and column, nodes repeated under `operand` and the
+/// like included, and what the reader adds (a kind, a token name, a span) has no place.
 #[test]
 fn c_tokens_are_where_the_tree_says() {
     let text = std::fs::read_to_string(fixture("sample.c")).unwrap();

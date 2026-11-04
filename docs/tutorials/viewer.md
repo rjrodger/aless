@@ -45,6 +45,8 @@ The last row is the status bar. It names the file, then the path of the focused 
 
 ## Move and fold
 
+The keys are those of [jless](https://jless.io), by Paul Julius Martinez, the viewer aless is modelled on: if you know jless, you know them already.
+
 Press `j` twice. The focus moves down two rows to `info`, and the status bar follows it: `.info`, which starts at line 2, column 1.
 
 Press `h`. `info` folds into one row, with a preview of what it holds:

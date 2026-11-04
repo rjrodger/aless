@@ -1,8 +1,6 @@
-//! The file explorer: a directory tree shown through the same machinery as
-//! a document. Directories are containers, listed lazily as they are
-//! expanded and one level ahead of that (so a collapsed directory's
-//! preview can show its count and first names); files are leaves showing
-//! size and format. `Enter` on a file opens it in a new tab.
+//! The file explorer: a directory tree shown as a document. A directory is
+//! listed as it is expanded and one level ahead of that, so a collapsed one's
+//! preview can show its count and first names.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -13,14 +11,11 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::doc::{Doc, Key, Kind, Node, NodeId, NO_NODE};
 use crate::load::Format;
 
-/// Directories listed at most, per explorer, so a deep expansion of a
-/// huge tree stays bounded.
+/// Directories listed at most per explorer, so a deep expansion stays bounded.
 pub const MAX_LISTED: usize = 2000;
 
 /// How long after a directory's last change another change can leave its
-/// modification time as it was. A file system's clock ticks as coarsely
-/// as two seconds (FAT), a second (ext3, HFS+) or the system timer's
-/// 16 ms or so (NTFS), and two changes within one tick get one time.
+/// modification time as it was: the coarsest file system clock tick, FAT's.
 const RACY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,15 +29,12 @@ pub enum EntryKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
-    /// The name as shown and used as the node key (lossy for a name that
-    /// is not valid UTF-8).
+    /// The name as shown and keyed, lossy for a name that is not valid UTF-8.
     pub name: String,
     /// The name as the filesystem has it, for every path operation.
     pub os_name: OsString,
     pub kind: EntryKind,
     pub size: u64,
-    /// The format the file's extension or whole name implies, when a
-    /// grammar handles it.
     pub format: Option<Format>,
 }
 
@@ -51,7 +43,6 @@ impl Entry {
         self.kind == EntryKind::Dir
     }
 
-    /// The leaf text of a non-directory entry.
     pub fn describe(&self) -> String {
         match &self.kind {
             EntryKind::Dir => String::new(),
@@ -65,7 +56,6 @@ impl Entry {
     }
 }
 
-/// `273 B`, `1.2 KB`, `40 MB`, `3.1 GB`.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes < 1024 {
@@ -89,17 +79,13 @@ pub struct Listing {
     pub entries: Vec<Entry>,
     pub mtime: Option<SystemTime>,
     pub error: Option<String>,
-    /// Until when, by this machine's own steady clock, the listing is read
-    /// again and compared rather than taken at its time's word, with one
-    /// last reading once it has passed: `None` once that last reading is
-    /// made, or for a directory without a time.
+    /// Until when, by the steady clock, the listing is read again and compared
+    /// rather than taken at its time's word; `None` once its last reading is made.
     pub racy_until: Option<Instant>,
 }
 
-/// Read `dir` again, as `old` listed it before. A reading whose time is
-/// the one `old` had keeps `old`'s window, which runs from the first
-/// reading of that change, so neither a check nor a refresh of the whole
-/// explorer renews it.
+/// Read `dir` again. A reading with `old`'s time keeps `old`'s window, so
+/// neither a check nor a refresh of the whole explorer renews it.
 fn read_again(dir: &Path, old: &Listing) -> Listing {
     let mut again = read_listing(dir);
     if again.mtime == old.mtime {
@@ -108,15 +94,9 @@ fn read_again(dir: &Path, old: &Listing) -> Listing {
     again
 }
 
-/// Until when a directory whose time is `mtime`, read at `now`, is to be
-/// read again: [`RACY`] from this reading, whatever the time says. The
-/// tick of the file system's clock that gave the directory its time ends
-/// within [`RACY`] of any reading of that time, but the time cannot say
-/// how long ago that was: it is stamped by the file system's clock, which
-/// on a network share is its server's and may run behind this machine's
-/// or ahead of it, as a restored archive's dates do. Timed by the steady
-/// clock, so the window is as long for any date and ends as any other
-/// does, not when the clocks meet.
+/// Until when a directory read at `now` is read again: [`RACY`] by the steady
+/// clock, whatever `mtime` says, since a network share's clock or a restored
+/// archive's dates can run behind or ahead of this machine's.
 fn racy_until(mtime: Option<SystemTime>, now: Instant) -> Option<Instant> {
     mtime.and(now.checked_add(RACY))
 }
@@ -127,7 +107,7 @@ pub struct Explorer {
     pub show_hidden: bool,
     /// Listed directories, by absolute path.
     listed: HashMap<PathBuf, Listing>,
-    /// Listing stopped at [`MAX_LISTED`] directories.
+    /// Listing stopped at [`MAX_LISTED`].
     pub capped: bool,
 }
 
@@ -191,10 +171,8 @@ fn read_listing(dir: &Path) -> Listing {
     }
 }
 
-/// Strip the Windows verbatim prefix `canonicalize` produces (`\\?\C:\x`
-/// becomes `C:\x`, `\\?\UNC\srv\share` becomes `\\srv\share`), so paths
-/// read, copy and join the way a user writes them. Other paths pass
-/// through unchanged.
+/// Strip the Windows verbatim prefix `canonicalize` adds, so paths read, copy
+/// and join the way a user writes them.
 pub fn simplify(path: PathBuf) -> PathBuf {
     let Some(text) = path.to_str() else {
         return path;
@@ -208,8 +186,7 @@ pub fn simplify(path: PathBuf) -> PathBuf {
     path
 }
 
-/// The tab title for a directory: its name with a slash, or the path
-/// itself at a filesystem root.
+/// The tab title for a directory: its name with a slash, or a root's path.
 pub fn title_of(dir: &Path) -> String {
     match dir.file_name() {
         Some(n) => format!("{}/", n.to_string_lossy()),
@@ -218,7 +195,6 @@ pub fn title_of(dir: &Path) -> String {
 }
 
 impl Explorer {
-    /// Open a directory: it and its immediate subdirectories are listed.
     pub fn open(dir: &Path, show_hidden: bool) -> Explorer {
         let root = std::fs::canonicalize(dir)
             .map(simplify)
@@ -241,9 +217,8 @@ impl Explorer {
         self.listed.get(dir)
     }
 
-    /// Take over another explorer's listings that lie under this root (a
-    /// re-root keeps what was already read and can still be shown; the
-    /// rest would only cost cap and spurious refreshes).
+    /// Take over another explorer's listings under this root; the rest would
+    /// only cost cap and spurious refreshes.
     pub fn adopt_listings(&mut self, other: Explorer) {
         for (dir, listing) in other.listed {
             if dir.starts_with(&self.root) {
@@ -265,8 +240,8 @@ impl Explorer {
         true
     }
 
-    /// List `dir` and its subdirectories, so every child a viewer can see
-    /// after expanding `dir` has a preview. True when anything was read.
+    /// List `dir` and its subdirectories, so each child shown on expanding it
+    /// has a preview. True when anything was read.
     pub fn ensure_children_listed(&mut self, dir: &Path) -> bool {
         let mut changed = self.list(dir);
         let subdirs: Vec<PathBuf> = self
@@ -286,25 +261,17 @@ impl Explorer {
         changed
     }
 
-    /// Re-read every listed directory, each keeping its window for as long
-    /// as its time is what it was (see [`read_again`]).
+    /// Re-read every listed directory, keeping windows as [`read_again`] does.
     pub fn relist_all(&mut self) {
         for (dir, listing) in &mut self.listed {
             *listing = read_again(dir, listing);
         }
     }
 
-    /// Has any listed directory changed on disk since it was read? A
-    /// change within its file system's clock tick leaves the directory's
-    /// time as it was, so for [`RACY`] after the reading that first finds
-    /// a time, by the steady clock, the directory is read again and
-    /// compared on each check (see [`racy_until`]); from then on its time
-    /// answers. A reading that finds nothing new takes the old one's place
-    /// and keeps its window, so the directory is read again for [`RACY`]
-    /// at most after its change is first seen, whatever its date. The
-    /// first check after the window reads it once more, since a change
-    /// late in the window may have come after the last reading in it, and
-    /// closes it.
+    /// Has any listed directory changed since it was read? A change within its
+    /// clock's tick leaves its time as it was, so within its window (see
+    /// [`racy_until`]) a directory is read again and compared. The first check
+    /// past the window reads it once more, for a change late in it, and closes it.
     pub fn changed(&mut self) -> bool {
         for (dir, listing) in &mut self.listed {
             let mtime = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
@@ -330,10 +297,8 @@ impl Explorer {
         self.show_hidden || !entry.name.starts_with('.')
     }
 
-    /// The filesystem path of a node path. Keys are the displayed names;
-    /// each is mapped back to the name the filesystem has through the
-    /// listing it came from, so a name that is not valid UTF-8 still
-    /// resolves. A segment no listing knows is used as typed.
+    /// The filesystem path of a node path, each key mapped back through its
+    /// listing to the name on disk, which may not be valid UTF-8.
     pub fn fs_path(&self, path: &[Key]) -> PathBuf {
         let mut out = self.root.clone();
         for k in path {
@@ -352,7 +317,6 @@ impl Explorer {
         out
     }
 
-    /// The entry a node path names, if it is a listed directory's entry.
     pub fn entry(&self, path: &[Key]) -> Option<&Entry> {
         let (last, parents) = path.split_last()?;
         let name = last.name()?;
@@ -364,8 +328,7 @@ impl Explorer {
             .find(|e| e.name == name)
     }
 
-    /// The whole listed tree as a document: the root expanded, every other
-    /// directory collapsed (the tab restores the folds it had).
+    /// The listed tree as a document, only the root expanded: the tab restores its folds.
     pub fn build(&self) -> Doc {
         let mut nodes: Vec<Node> = Vec::new();
         self.push_dir(&mut nodes, &self.root.clone(), NO_NODE, Key::Root, 0, true);
@@ -405,8 +368,7 @@ impl Explorer {
             col: 0,
         };
         let Some(listing) = self.listed.get(dir) else {
-            // Not read yet: one placeholder keeps the directory foldable, so
-            // expanding it lists it.
+            // Not read yet: a placeholder keeps it foldable, so expanding lists it.
             nodes.push(leaf(id, "…", "(not listed yet)".to_string()));
             nodes[id as usize].children = 1;
             return;
@@ -501,7 +463,6 @@ mod tests {
         assert_eq!(doc.root().children, 5);
         ex.show_hidden = false;
         assert_eq!(ex.build().root().children, 4);
-        // Expanding sub lists deep.
         assert!(ex.ensure_children_listed(&ex.root.join("sub")));
         assert!(ex.is_listed(&ex.root.join("sub").join("deep")));
         assert!(
@@ -534,19 +495,13 @@ mod tests {
         assert!(!ex.changed());
         std::thread::sleep(std::time::Duration::from_millis(30));
         std::fs::write(dir.join("new.csv"), "a,b\n").unwrap();
-        // A coarse filesystem clock may not move the directory mtime; the
-        // relist must show the file either way.
+        // A coarse clock may not move the directory's time; a relist shows it anyway.
         ex.relist_all();
         let doc = ex.build();
         assert!(doc.resolve(&[Key::Name("new.csv".into())]).is_some());
         assert!(!ex.changed());
     }
 
-    /// A change within the tick of the file system's clock that gave the
-    /// directory its time leaves the time as it was. A listing is read
-    /// again and compared for a window after the reading that finds its
-    /// time, so the change is seen all the same; after the window it is
-    /// taken at its time's word, and not read again.
     #[test]
     fn a_change_the_clock_does_not_show_is_still_seen() {
         let dir = tree("racy");
@@ -568,16 +523,12 @@ mod tests {
         assert!(window.is_some());
         assert!(!ex.changed());
         assert_eq!(ex.listed[&root].racy_until, window, "the window kept");
-        // Past its window, one last reading closes it, and the directory is
-        // taken at its time's word from then on.
+        // Past its window, one last reading closes it.
         ex.listed.get_mut(&root).unwrap().racy_until = Some(Instant::now());
         assert!(!ex.changed());
         assert_eq!(ex.listed[&root].racy_until, None, "closed");
     }
 
-    /// A change late in the window, after its last reading in it and within
-    /// the same tick of the clock, is still seen: the first check after the
-    /// window reads the directory once more before closing it.
     #[test]
     fn a_change_late_in_the_window_is_seen_by_its_last_reading() {
         let dir = tree("late");
@@ -592,10 +543,6 @@ mod tests {
         assert!(ex.changed(), "read once more after the window");
     }
 
-    /// A refresh of the whole explorer, as a change anywhere in it brings,
-    /// keeps each window whose directory's time is as it was, and a closed
-    /// one closed: a directory is not read again for as long as another
-    /// keeps changing.
     #[test]
     fn a_refresh_keeps_each_window() {
         let dir = tree("refresh-window");
@@ -611,10 +558,6 @@ mod tests {
         assert_eq!(ex.listed[&root].racy_until, None, "closed stays closed");
     }
 
-    /// The window to read a directory again is [`RACY`] from the reading,
-    /// by the steady clock, whatever the directory's date: a file system
-    /// whose clock is behind this machine's dates a change made just now
-    /// long ago, and one ahead of it dates it in the future.
     #[test]
     fn the_window_to_read_again_is_timed_here() {
         let (at, now) = (SystemTime::now(), Instant::now());
@@ -629,10 +572,7 @@ mod tests {
         }
     }
 
-    /// A directory dated an hour behind, as a network share whose server's
-    /// clock is behind this machine's dates a change made just now, is
-    /// read again for its window all the same: its date cannot say the
-    /// tick of that clock is over.
+    /// As a network share whose server's clock runs behind dates a change now.
     #[cfg(unix)]
     #[test]
     fn a_directory_dated_behind_is_read_again_all_the_same() {
@@ -654,9 +594,7 @@ mod tests {
         assert!(ex.changed(), "the change seen");
     }
 
-    /// A directory dated an hour ahead is read again for two seconds, as
-    /// any other just changed, and its window is kept, not renewed, by the
-    /// readings in it: not for the hour until the clocks meet.
+    /// Read again for its window, not until the clocks meet.
     #[cfg(unix)]
     #[test]
     fn a_directory_dated_ahead_is_read_again_only_for_its_window() {
@@ -687,8 +625,7 @@ mod tests {
         let dir = tree("nonutf8");
         let raw = std::ffi::OsStr::from_bytes(b"caf\xe9.json");
         if let Err(e) = std::fs::write(dir.join(raw), "1") {
-            // APFS on macOS, among others, refuses names that are not
-            // valid UTF-8; there is nothing to test on such a filesystem.
+            // APFS, among others, refuses names that are not valid UTF-8.
             eprintln!("skipping: this filesystem refuses non-UTF-8 names ({e})");
             return;
         }

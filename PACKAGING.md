@@ -57,7 +57,7 @@ for the owner submitting it to one. How a release is made is in
   ```
 
 - **The viewer in a terminal.** On Unix,
-  `python3 scripts/pty-smoke.py target/release/aless` drives the built
+  `python3 admin/scripts/pty-smoke.py target/release/aless` drives the built
   binary in a pseudo-terminal.
 
 ## Sources and binaries
@@ -91,7 +91,7 @@ The crate on crates.io holds the same source, without the tests.
 | FreeBSD: `pkg install aless` | a port with `USES=cargo` (`make cargo-crates` lists the crates), sent through Bugzilla | a FreeBSD committer |
 | nixpkgs | `pkgs/by-name/al/aless/package.nix`, built with `rustPlatform.buildRustPackage` | nixpkgs maintainers |
 | winget | a first manifest from `komac` or `wingetcreate` (portable zip), as a pull request to microsoft/winget-pkgs; later ones can be automated from `release.yml` | the release workflow, once added |
-| Scoop | a bucket of our own with the Windows zip; the main bucket asks for more popularity | the release workflow, once added |
+| Scoop | a bucket of aless's own with the Windows zip; the main bucket asks for more popularity | the release workflow, once added |
 | Debian, Ubuntu, Fedora | each packages every crate separately, the 21 tabnas crates among them, so these follow the distributions' Rust teams | their Rust teams |
 
 ## Starting points

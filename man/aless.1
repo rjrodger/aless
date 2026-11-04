@@ -20,21 +20,18 @@ one tree, and shows it in a jless\-style viewer in the terminal, with tabs,
 search, a source view and a watch mode that reloads a changed file and keeps
 your place.
 .SS "The viewer"
-aless is a viewer: it draws on a terminal and reads keys from it, and does
-nothing else. Each FILE opens in a tab of its own, watched and reloaded when it
-changes, keeping your place; a directory opens in the file explorer, where
-Enter opens a file; and without a FILE, aless reads standard input when it is
-not a terminal, and otherwise explores the current directory. A file that does
-not parse opens as a tab showing the parser\(aqs report, with the line and
-column it stopped at, and the tab reloads when the file is fixed.
+aless is a viewer: it draws on a terminal and reads keys from it. Each FILE
+opens in a tab of its own, watched and reloaded when it changes, keeping your
+place; a directory opens in the file explorer, where Enter opens a file; and
+without a FILE, aless reads standard input when it is not a terminal, and
+otherwise explores the current directory. A file that does not parse opens as a
+tab showing the parser\(aqs report, with the line and column it stopped at, and
+the tab reloads when the file is fixed.
 .PP
 Without a terminal to draw on and read keys from (standard output a pipe or a
 file, no terminal to open, or TERM=dumb) aless refuses to start, at once and
 before reading any input, with a line on standard error and the status 2.
-Nothing but \-h, \-\-help, \-V and \-\-generate writes to standard output. To
-read one of these formats in a script, or write a document as another format,
-use dmog (https://github.com/tabnas/dmog), which translates any format aless
-reads into any other.
+Nothing but \-h, \-\-help, \-V and \-\-generate writes to standard output.
 .SH OPTIONS
 .SS "Input options"
 .TP 7
@@ -390,7 +387,3 @@ the code, its README and the releases: https://github.com/rjrodger/aless
 \fBtabnas/abnf\fR
 the ABNF compiler \-\-grammar uses, and its annotations:
 https://github.com/tabnas/abnf
-.TP 18
-\fBdmog\fR
-the command that reads these formats in a script, writes a document as another
-format and runs a program over one: https://github.com/tabnas/dmog

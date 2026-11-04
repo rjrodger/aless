@@ -49,4 +49,4 @@ The strip numbers the tabs and names their files, with the active tab bright. A 
 
 ## Write a tab's document out
 
-`:w FILE` writes the tab's document to FILE as JSON, whatever format it was read from, with the numbers as their values; it refuses a file that exists, and `:w! FILE` writes over one. So a YAML or TOML file becomes JSON in one command without leaving the viewer, and `yy` copies one value of it as JSON ([Copy a value or its path](/how-to/copy.html)). The [keys](/reference/keys.html#tabs-files-and-watching) list every tab command.
+`:w FILE` writes the tab's document to FILE as JSON, whatever format it was read from; it refuses a file that exists, and `:w! FILE` writes over one. So a YAML or TOML file becomes JSON in one command without leaving the viewer, and `yy` copies one value of it as JSON ([Copy a value or its path](/how-to/copy.html)). The [keys](/reference/keys.html#tabs-files-and-watching) list every tab command.
