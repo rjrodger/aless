@@ -122,7 +122,7 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Input,
         repeats: false,
         summary: "parse every input as FORMAT",
-        detail: "Parse every input as FORMAT instead of by its extension: a format's \
+        detail: "Read every input as FORMAT, whatever its extension says: a format's \
             name ({formats}), one of its extensions (yml, md, ndjson), or a --grammar \
             NAME. Standard input is read as JSON unless this says otherwise. --format is \
             another name for this option.",
@@ -135,12 +135,11 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Input,
         repeats: true,
         summary: "a format of your own, from an ABNF grammar",
-        detail: "Read a file whose extension or whole name is NAME, in any case \
-            (x.hosts, /etc/hosts), with the ABNF grammar in FILE, which is read within \
-            --max-size and compiled within --timeout before any input is read. NAME is \
-            then a format, as -k and :format take it and the status bar shows it; \
-            NAME,NAME2=FILE gives it two names, and the option repeats. See CUSTOM \
-            GRAMMARS.",
+        detail: "Read every file whose extension or whole name is NAME, in any case \
+            (x.hosts, /etc/hosts), with the ABNF grammar in FILE. NAME is then a format, \
+            which -k and :format take and the status bar shows; NAME,NAME2=FILE gives it \
+            two names, and the option repeats. FILE is read within --max-size and \
+            compiled within --timeout, before any input is read. See CUSTOM GRAMMARS.",
     },
     Opt {
         short: None,
@@ -150,7 +149,7 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Input,
         repeats: true,
         summary: "the same, the grammar on the command line",
-        detail: "--grammar, with the grammar's text on the command line: everything \
+        detail: "As --grammar, with the grammar's text on the command line: everything \
             after the first =.",
     },
     Opt {
@@ -161,11 +160,11 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Input,
         repeats: false,
         summary: "refuse an input over SIZE (default 64M)",
-        detail: "Refuse an input larger than SIZE (default 64M; 0 for no limit), and a \
-            --grammar file too: a parse takes about 40 bytes of memory per byte of \
-            input. A file over the limit opens as a tab that says so, and names the size \
-            that would read it; a grammar file over it is a usage error. SIZE is bytes, \
-            or a whole number with K, M or G (1024s).",
+        detail: "Refuse an input larger than SIZE, a --grammar file included (default \
+            64M; 0 for no limit). SIZE is bytes, or a whole number with K, M or G, in \
+            1024s. A file over the limit opens in a tab that says so and names the size \
+            that would read it; a grammar file over it is a usage error. A parse needs \
+            about 40 bytes of memory for each byte of input.",
     },
     Opt {
         short: None,
@@ -176,9 +175,10 @@ pub const OPTIONS: &[Opt] = &[
         repeats: false,
         summary: "stop a parse past SECONDS (default none)",
         detail: "Stop a parse, or a --grammar compile, that runs longer than SECONDS \
-            (2.5, 90s, 2m; default none; 0 for no limit). A parse stopped opens as a tab \
-            that says how far it got; a compile stopped is a usage error. A parse runs \
-            at about a megabyte a second. See LARGE INPUTS AND LIMITS.",
+            (2.5, 90s, 2m; default none; 0 for no limit). A parse that is stopped opens \
+            in a tab that says how far it got; a compile that is stopped is a usage \
+            error. A parse runs at about a megabyte a second. See LARGE INPUTS AND \
+            LIMITS.",
     },
     Opt {
         short: None,
@@ -188,7 +188,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "do not reload files when they change",
-        detail: "Do not reload a file when it changes.",
+        detail: "Do not reload a file when it changes on disk. W or :watch on starts \
+            watching a tab inside aless.",
     },
     Opt {
         short: None,
@@ -208,8 +209,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "start in data (default) or line mode",
-        detail: "Start in data mode (the default), the streamlined tree, or in line \
-            mode, every line of a pretty-printed rendering; m switches between them.",
+        detail: "Start in data mode (the default), the tree without its punctuation, or \
+            in line mode, every line as JSON prints it; m switches between them.",
     },
     Opt {
         short: None,
@@ -218,9 +219,11 @@ pub const OPTIONS: &[Opt] = &[
         arg: Some(("N", Value::Text)),
         section: Section::Viewer,
         repeats: false,
-        summary: "fold containers deeper than N levels",
-        detail: "Fold the containers deeper than N levels when a file opens (default: \
-            every container open); :depth N does the same inside aless.",
+        summary: "open only the first N levels",
+        detail: "Open only the first N levels when a file opens: a container N levels \
+            below the root starts folded, and so does everything in it, so --depth 0 \
+            folds the root (by default every container is open). :depth N does the \
+            same inside aless.",
     },
     Opt {
         short: None,
@@ -230,7 +233,7 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "indentation per level (default 2)",
-        detail: "Indent the tree N spaces a level (default 2; at most 16); < and > \
+        detail: "Indent the tree N spaces a level (default 2, at most 16); < and > \
             change it inside aless.",
     },
     Opt {
@@ -240,8 +243,8 @@ pub const OPTIONS: &[Opt] = &[
         arg: None,
         section: Section::Viewer,
         repeats: false,
-        summary: "show absolute line numbers",
-        detail: "Show absolute line numbers.",
+        summary: "number the rows",
+        detail: "Number the rows on screen, as a count before g or G takes them.",
     },
     Opt {
         short: Some('N'),
@@ -250,8 +253,8 @@ pub const OPTIONS: &[Opt] = &[
         arg: None,
         section: Section::Viewer,
         repeats: false,
-        summary: "hide absolute line numbers",
-        detail: "Hide absolute line numbers.",
+        summary: "do not number the rows",
+        detail: "Do not number the rows, undoing an -n before it.",
     },
     Opt {
         short: Some('r'),
@@ -260,8 +263,9 @@ pub const OPTIONS: &[Opt] = &[
         arg: None,
         section: Section::Viewer,
         repeats: false,
-        summary: "show relative line numbers",
-        detail: "Show line numbers relative to the focused row.",
+        summary: "number rows by distance from the focus",
+        detail: "Number each row by its distance from the focused row, the count j or \
+            k needs to reach it. With -n as well, the focused row shows its own number.",
     },
     Opt {
         short: Some('R'),
@@ -270,8 +274,8 @@ pub const OPTIONS: &[Opt] = &[
         arg: None,
         section: Section::Viewer,
         repeats: false,
-        summary: "hide relative line numbers",
-        detail: "Hide relative line numbers.",
+        summary: "do not number rows by distance",
+        detail: "Do not number the rows by distance, undoing an -r before it.",
     },
     Opt {
         short: None,
@@ -281,7 +285,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "rows kept around the focus (default 3)",
-        detail: "Keep N rows around the focus when scrolling (default 3).",
+        detail: "Keep N rows between the focused row and the top or the bottom of the \
+            screen (default 3).",
     },
     Opt {
         short: None,
@@ -301,7 +306,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "draw fold markers in ASCII",
-        detail: "Draw fold markers with ASCII characters (v and >).",
+        detail: "Draw the fold markers as v and >, for a font without the triangles \
+            aless draws by default.",
     },
     Opt {
         short: None,
@@ -311,7 +317,7 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "no colours (as NO_COLOR does)",
-        detail: "Draw without colours, as when NO_COLOR is set.",
+        detail: "Draw without colour, as when NO_COLOR is set.",
     },
     Opt {
         short: None,
@@ -321,7 +327,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::Viewer,
         repeats: false,
         summary: "do not capture the mouse",
-        detail: "Leave the mouse to the terminal rather than capture it.",
+        detail: "Leave the mouse to the terminal, for its own selection, rather than \
+            take its wheel and clicks.",
     },
     Opt {
         short: Some('h'),
@@ -351,8 +358,8 @@ pub const OPTIONS: &[Opt] = &[
         section: Section::About,
         repeats: false,
         summary: "a man page or a shell's completions",
-        detail: "Print a file made from this reference: man, the man page (aless.1); or \
-            complete-bash, complete-zsh, complete-fish or complete-powershell, that \
+        detail: "Print a file written from this reference: man, the man page (aless.1), \
+            or complete-bash, complete-zsh, complete-fish or complete-powershell, that \
             shell's completions. See FILES.",
     },
 ];
@@ -421,7 +428,7 @@ const TOPICS: &[Topic] = &[
                 ("aless [OPTIONS] DIRECTORY", "the file explorer"),
                 (
                     "<command> | aless [OPTIONS]",
-                    "standard input, read as JSON unless -k says",
+                    "standard input, read as JSON unless -k says otherwise",
                 ),
             ]),
             Block::Text("-h prints a summary of the options, and --help this whole reference."),
@@ -433,20 +440,20 @@ const TOPICS: &[Topic] = &[
         man: Man::Description("The viewer"),
         blocks: &[
             Block::Text(
-                "aless is a viewer: it draws on a terminal and reads keys from it. Each FILE opens in a tab of its own, watched and reloaded \
-                when it changes, keeping your place; a directory opens in the file \
-                explorer, where Enter opens a file; and without a FILE, aless reads \
-                standard input when it is not a terminal, and otherwise explores the \
-                current directory. A file that does not parse opens as a tab showing the \
-                parser's report, with the line and column it stopped at, and the tab \
-                reloads when the file is fixed.",
+                "aless is a viewer for the terminal. Each FILE opens in a tab of its own, \
+                as a tree to fold, search and copy from, and a directory opens in the file \
+                explorer. With no FILE, aless reads standard input when it is not a \
+                terminal, and otherwise explores the current directory. Every file is \
+                watched: when it changes on disk, aless reads it again and keeps your \
+                place. A file that does not parse opens as the parser's report, with the \
+                line and column where the parse stopped.",
             ),
             Block::Text(
-                "Without a terminal to draw on and read keys from (standard output a pipe \
-                or a file, no terminal to open, or TERM=dumb) aless refuses to start, at \
-                once and before reading any input, with a line on standard error and the \
-                status 2. Nothing but -h, --help, -V and --generate writes to standard \
-                output.",
+                "aless refuses to start without a terminal to draw on and read keys \
+                from: when standard output is a pipe or a file, when there is no terminal \
+                to open, or when TERM is dumb. It refuses before reading any input, with \
+                one line on standard error and the status 2. Only -h, --help, -V and \
+                --generate write to standard output.",
             ),
         ],
     },
@@ -474,23 +481,24 @@ const TOPICS: &[Topic] = &[
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "FILE is a path, or - for standard input. Without a FILE, aless reads \
-                standard input when it is not a terminal, and otherwise explores the \
-                current directory; a directory named opens in the file explorer. Options \
-                end at --, after which every argument is a FILE, and a long option's \
-                value may follow it or be attached to it (--kind=yaml).",
+                "FILE is a path, or - for standard input. Options end at --, after which \
+                every argument is a FILE, and a long option's value follows it or is \
+                attached with = (--kind=yaml).",
             ),
             Block::Text(
-                "The format comes from a file's extension, or from its whole name for a \
-                --grammar NAME (/etc/hosts), and -k FORMAT overrides it for every input; \
-                inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH \
-                FORMAT opens a file as one. A file whose extension no format claims is \
-                read as plain text, an array of its lines. Map keys keep their source \
-                order, and a number its source's spelling where the spelling is JSON's: \
-                the tree, search, :w and the copy commands give 1.0, 1e21 and an integer \
-                beyond 2^53 as spelled, and a spelling JSON has no syntax for (0x1F, \
-                1_000, +1) as the 64-bit float it denotes, the source view (s) having the \
-                spelling. The formats, with the extensions that imply each:",
+                "A file's format comes from its extension, or from its whole name when \
+                that is a --grammar NAME (/etc/hosts), and -k FORMAT overrides it for every \
+                input. Inside aless, :format FORMAT reads a tab again as FORMAT, and :open \
+                PATH FORMAT opens a file as one. A file whose extension no format claims is \
+                read as plain text, an array of its lines.",
+            ),
+            Block::Text(
+                "Keys keep their order in the source. A number keeps its spelling where \
+                JSON spells it the same way: 1.0, 1e21 and an integer beyond 2^53 are \
+                shown, searched, copied and written by :w as the source writes them. A \
+                spelling JSON has no syntax for (0x1F, 1_000, +1) gives the 64-bit float it \
+                stands for, and the source view (s) shows the spelling. The formats, with \
+                the extensions that imply each:",
             ),
             Block::Formats,
         ],
@@ -501,31 +509,38 @@ const TOPICS: &[Topic] = &[
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "The keys are jless's, and F1 or :help inside aless lists them all; the \
-                ones used most:",
+                "The keys are jless's. F1 or :help inside aless lists every key and \
+                command; these are the ones used most:",
             ),
             Block::Terms(&[
-                ("j k", "down / up; a count before a key repeats it (3j)"),
+                (
+                    "j k",
+                    "down and up a row; a count before a key repeats it (3j)",
+                ),
                 (
                     "h l",
-                    "collapse / expand, or go to the parent / first child",
+                    "fold and unfold, or go to the parent and the first child",
                 ),
-                ("J K", "next / previous sibling"),
-                ("g G", "first / last row; Ng goes to row N"),
-                ("C-d C-u", "half a page down / up"),
-                ("Space", "toggle the focused container"),
-                ("c e", "collapse / expand the focused node and its siblings"),
+                ("J K", "the next and the previous sibling"),
+                ("g G", "the first and the last row; Ng goes to row N"),
+                ("C-d C-u", "half a page down and up"),
+                ("Space", "fold or unfold the focused container"),
+                ("c e", "fold and unfold the focused node and its siblings"),
                 (
                     "/ ?",
-                    "search forward / backward; n N for the next / previous match",
+                    "search forward and backward; n and N go to the next and the \
+                    previous match",
                 ),
-                ("yy yp yq", "copy the value / its path / its jq path"),
+                (
+                    "yy yp yq",
+                    "copy the value, its path, or its path as jq writes it",
+                ),
                 ("m", "switch between data mode and line mode"),
-                ("s", "show the source text at the focused node"),
-                ("!", "show a parse error's report in full"),
-                ("Tab", "the next tab (Shift-Tab the previous)"),
+                ("s", "the source view, at the focused node's line"),
+                ("!", "the parse error report, full size"),
+                ("Tab S-Tab", "the next and the previous tab"),
                 (":", "a command: :open PATH, :format FORMAT, :w FILE, :help"),
-                ("q", "close the tab, quitting with the last; C-c quits"),
+                ("q", "close the tab, quitting with the last one; C-c quits"),
             ]),
         ],
     },
@@ -535,24 +550,31 @@ const TOPICS: &[Topic] = &[
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "--grammar NAME=FILE reads the files whose extension or whole name is \
+                "--grammar NAME=FILE reads every file whose extension or whole name is \
                 NAME, in any case, with the ABNF grammar in FILE (RFC 5234, compiled by \
-                tabnas/abnf), and -k NAME reads any input with it. ; @object a b and ; \
-                @array comments on a rule say what it builds; without them the value is \
-                the compiler's parse tree, a {\"rule\", \"src\", \"kids\"} node per rule. \
-                The input is read as plain text: { } [ ] : , are \
-                ordinary characters, # starts a comment to the end of the line, and a \
-                word is the token TX (NR, ST and VL bring numbers, quoted strings and \
-                true, false and null back). A grammar that does not compile is a usage \
-                error before any input is read, and so is a repetition count over 1,024, \
-                or repetitions that would have \
-                the compiler write more than 1,024 rules. An input the grammar does not \
-                accept opens as a parse error, with the grammar's name for its format.",
+                tabnas/abnf), and -k NAME reads any input with it, standard input \
+                included. Comments on a rule say what it builds: ; @object a b makes an \
+                object of its parts a and b, and ; @array an array. Without them the \
+                value is the compiler's parse tree, a {\"rule\", \"src\", \"kids\"} node \
+                for each rule.",
             ),
             Block::Text(
-                "Grammars for /etc/hosts, crontabs, /etc/passwd, /etc/group, /etc/fstab, \
-                /etc/resolv.conf and KEY=value files, each with a sample and a guide to \
-                writing one, are in aless's source:",
+                "A grammar reads its input as plain text: { } [ ] : , are ordinary \
+                characters, # starts a comment to the end of the line, and a word is the \
+                token TX. NR, ST and VL bring back numbers, quoted strings, and true, \
+                false and null.",
+            ),
+            Block::Text(
+                "A grammar that does not compile is refused before any input is read, \
+                as a usage error. So is a repetition count over 1,024, or repetitions \
+                that would have the compiler write more than 1,024 rules. An input the \
+                grammar does not accept opens as a parse error, with the grammar's name \
+                as its format.",
+            ),
+            Block::Text(
+                "aless's source holds grammars for /etc/hosts, crontabs, /etc/passwd, \
+                /etc/group, /etc/fstab, /etc/resolv.conf and KEY=value files, each with a \
+                sample, and a guide to writing one:",
             ),
             Block::Code("https://github.com/rjrodger/aless/tree/main/tests/fixtures/grammars"),
         ],
@@ -563,28 +585,33 @@ const TOPICS: &[Topic] = &[
         man: Man::Section,
         blocks: &[
             Block::Text(
-                "An input is read whole and parsed whole before anything is shown, at \
-                about a megabyte a second and 40 bytes of memory per byte of input. The \
-                parse holds the viewer: before a large file is read aless says so, and a \
-                reload of a large watched file pauses it for as long as the parse takes. \
-                --max-size (default 64M) refuses a larger input before it is read, as a \
-                tab that says so and names the size that would read it, and --timeout \
-                stops a parse that runs too long, as a tab that says how far it got.",
+                "aless reads an input whole and parses it whole before it shows \
+                anything. A parse runs at about a megabyte a second, and needs about 40 \
+                bytes of memory for each byte of input. The viewer waits for it: before a \
+                large file is read aless says so, and a reload of a large watched file \
+                pauses the viewer until the parse ends.",
             ),
             Block::Text(
-                "A document nested deeper than aless reads opens as a parse error with the \
-                code too_deep: past about 1,000 levels, or sooner where the grammar has a \
-                limit of its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, \
-                INI, ZON and expressions, an expression of 127 operations too, 256 for \
-                XML, 512 for JSONC, 768 open rules for CSS, braces 100 deep for a .proto \
-                file, counted before it is parsed, for C an expression of 127 \
-                operations, 1,024 open rules and a syntax tree 256 levels deep, or 256 \
-                values a byte of the file written out (33,554,432 at most) or 2,048 bytes \
-                of names and strings a byte (256 MB at most), its reader repeating \
-                subtrees, and \
-                for a grammar its compiler's, 2,048 open rules for ABNF, 520 for EBNF and \
-                512 for GBNF, some 500, 130 and 128 nested groups, and elements nested \
-                128 deep).",
+                "--max-size (64M unless set) refuses a larger input before reading it, \
+                in a tab that says so and names the size that would read it. --timeout \
+                stops a parse that runs too long, in a tab that says how far it got.",
+            ),
+            Block::Text(
+                "A document nested deeper than aless reads opens as a parse error with \
+                the code too_deep. Every parse stops at 3,000 open rules, about 1,000 \
+                levels, and most grammars stop sooner: at 127 levels for JSON, JSONL, \
+                jsonic, JSON5, YAML, TOML, INI, ZON and expressions, 256 for XML, 512 for \
+                JSONC, and 768 open rules for CSS. A .proto file's braces may nest 100 \
+                deep, counted before it is parsed. Markdown's tree stops at 205 levels, \
+                without an error.",
+            ),
+            Block::Text(
+                "C stops at an expression of about 127 operations, 1,024 open rules or a \
+                syntax tree 256 levels deep. Its tree repeats subtrees, so it also stops \
+                at a tree of more than 256 values, or more than 2,048 bytes of names and \
+                strings, for each byte of the file (between a million and 33,554,432 \
+                values, and between 8 MB and 256 MB). A grammar in ABNF, EBNF or GBNF may \
+                nest its groups and elements 127 deep.",
             ),
         ],
     },
@@ -612,11 +639,14 @@ const TOPICS: &[Topic] = &[
         note: "",
         man: Man::Section,
         blocks: &[Block::Terms(&[
-            ("NO_COLOR", "set and not empty: no colours, as --no-color"),
+            (
+                "NO_COLOR",
+                "set and not empty: draw without colour, as --no-color does",
+            ),
             (
                 "TERM",
-                "dumb: a terminal that cannot draw the viewer, which refuses to start, as \
-                without one",
+                "dumb: a terminal that cannot draw the viewer, so aless refuses to start, \
+                as it does without a terminal",
             ),
         ])],
     },
@@ -640,9 +670,8 @@ const TOPICS: &[Topic] = &[
                 ),
             ]),
             Block::Text(
-                "A shell reads its completions from where it looks for them (a \
-                package puts them there), or from its startup file each time it \
-                starts:",
+                "A shell reads its completions where it looks for them, which is where a \
+                package puts them, or from its startup file each time it starts:",
             ),
             Block::Code(
                 "eval \"$(aless --generate complete-bash)\"     # ~/.bashrc\n\
@@ -660,9 +689,10 @@ const TOPICS: &[Topic] = &[
              aless deploy.yaml values.toml a.csv    several files, a tab each\n\
              curl -s https://api.example/x | aless  standard input, read as JSON\n\
              aless -k yaml settings.conf            a file whose extension misleads\n\
-             aless --grammar hosts=hosts.abnf /etc/hosts    a format of your own\n\
+             aless --grammar hosts=hosts.abnf /etc/hosts\n\
+             \x20                                      a format of your own\n\
              aless --no-watch big.json              no reload when the file changes\n\
-             aless -m line -n x.json                line mode, with line numbers\n\
+             aless -m line -n x.json                line mode, the rows numbered\n\
              aless                                  explore the current directory",
         )],
     },
@@ -671,22 +701,19 @@ const TOPICS: &[Topic] = &[
         note: "",
         man: Man::Section,
         blocks: &[Block::Terms(&[
-            ("jless(1)", "where the keys come from"),
-            ("jq(1)", "whose syntax the copied paths (yq) take"),
+            ("jless(1)", "the viewer whose keys and design aless follows"),
+            ("jq(1)", "whose path syntax yq copies"),
             (
                 "the documentation",
                 concat!(
-                    "tutorial, how-to guides, this reference with every key of the \
-                    viewer, and how aless works: ",
+                    "a tutorial, how-to guides, this reference with every key, and why \
+                    aless works as it does: ",
                     env!("CARGO_PKG_HOMEPAGE")
                 ),
             ),
             (
                 "the source",
-                concat!(
-                    "the code, its README and the releases: ",
-                    env!("CARGO_PKG_REPOSITORY")
-                ),
+                concat!("the code and the releases: ", env!("CARGO_PKG_REPOSITORY")),
             ),
             (
                 "tabnas/abnf",
@@ -768,7 +795,7 @@ fn format_note(format: Format) -> &'static str {
         Format::Abnf | Format::Ebnf | Format::Gbnf => {
             " (the grammar spec its compiler writes, the three notations' one schema)"
         }
-        Format::Text => " (and every extension no format claims)",
+        Format::Text => " (and any file no format claims)",
         _ => "",
     }
 }
@@ -915,7 +942,7 @@ pub fn summary() -> String {
         &mut out,
         "aless --help prints the whole reference: what each option does, the formats, \
         the keys used most, custom grammars, the limits, the exit statuses and the files \
-        aless writes.",
+        a release carries.",
         0,
     );
     out
@@ -1541,6 +1568,161 @@ pub fn complete_powershell() -> String {
     out
 }
 
+/// What a command line asks for.
+pub enum Parsed {
+    /// The viewer.
+    Run(Box<Args>),
+    /// Text to print as it is, and exit: `-h`, `--help`, `--version`,
+    /// `--generate`.
+    Print(String),
+}
+
+/// The viewer's command line, read.
+pub struct Args {
+    pub files: Vec<std::path::PathBuf>,
+    /// `-k`, as given: resolved once the grammars are registered, since it
+    /// may name one.
+    pub kind_name: Option<String>,
+    pub kind: Option<Format>,
+    /// `--grammar` and `--grammar-expr`, in order.
+    pub grammars: Vec<crate::grammar::Definition>,
+    pub opts: crate::app::Options,
+    pub mouse: bool,
+    /// The largest input to read, in bytes; `None` for no limit.
+    pub max_size: Option<u64>,
+    /// The longest a parse may run; `None` for no limit.
+    pub timeout: Option<std::time::Duration>,
+}
+
+impl Args {
+    /// Register the grammars, resolve `-k` (which may name one of them)
+    /// and set the limits: what is done before any input is read. An
+    /// error is a usage error.
+    pub fn prepare(&mut self) -> Result<(), String> {
+        let grammars = std::mem::take(&mut self.grammars);
+        let limits = crate::load::Limits {
+            max_size: self.max_size,
+            timeout: self.timeout,
+        };
+        crate::grammar::register_all(grammars, limits).map_err(|e| e.to_string())?;
+        if let Some(name) = &self.kind_name {
+            match Format::from_name(name) {
+                Some(f) => self.kind = Some(f),
+                None => {
+                    return Err(format!(
+                        "unknown format: {name} (one of {})",
+                        Format::known_names().join(" ")
+                    ))
+                }
+            }
+        }
+        crate::load::set_limits(limits);
+        Ok(())
+    }
+}
+
+/// Read `argv`, without the program's name. An option [`OPTIONS`]
+/// does not list is refused (ADR-006).
+pub fn parse_args(argv: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Parsed, String> {
+    let mut args = Args {
+        files: Vec::new(),
+        kind_name: None,
+        kind: None,
+        grammars: Vec::new(),
+        opts: crate::app::Options::default(),
+        mouse: true,
+        max_size: crate::load::Limits::DEFAULT.max_size,
+        timeout: crate::load::Limits::DEFAULT.timeout,
+    };
+    let mut it = argv.into_iter();
+    let mut only_files = false;
+    while let Some(arg) = it.next() {
+        let s = arg.to_string_lossy().into_owned();
+        if only_files || !s.starts_with('-') || s == "-" {
+            args.files.push(std::path::PathBuf::from(arg));
+            continue;
+        }
+        // Options end at `--`: every argument after it is a file.
+        if s == "--" {
+            only_files = true;
+            continue;
+        }
+        // A long option's value may follow it or be attached: `--kind=json`.
+        let (name, mut inline) = match s.split_once('=') {
+            Some((n, v)) if n.starts_with("--") => (n.to_string(), Some(v.to_string())),
+            _ => (s.clone(), None),
+        };
+        if lookup(&name).is_none() {
+            return Err(format!("unknown option: {name} (see aless --help)"));
+        }
+        let mut value = || -> Result<String, String> {
+            match inline.take() {
+                Some(v) => Ok(v),
+                None => it
+                    .next()
+                    .map(|v| v.to_string_lossy().into_owned())
+                    .ok_or_else(|| format!("{name} needs a value")),
+            }
+        };
+        let number = |v: String| -> Result<usize, String> {
+            v.parse()
+                .map_err(|_| format!("{name} needs a number, not {v}"))
+        };
+        match name.as_str() {
+            "-h" => return Ok(Parsed::Print(summary())),
+            "--help" => return Ok(Parsed::Print(reference())),
+            "-V" | "--version" => return Ok(Parsed::Print(format!("aless {}\n", VERSION))),
+            "--generate" => return generate(&value()?).map(Parsed::Print),
+            "-k" | "--kind" | "--format" => args.kind_name = Some(value()?),
+            "--grammar" | "--grammar-expr" => {
+                // Raw, not through `value()`: FILE is a path, and a path's
+                // bytes need not be UTF-8. Attached (`--grammar=NAME=FILE`),
+                // the value is what follows the argument's own first `=`.
+                let v = match inline.take() {
+                    Some(_) => crate::grammar::after_eq(&arg),
+                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
+                };
+                args.grammars
+                    .push(crate::grammar::Definition::parse_os(&name, &v)?);
+            }
+            "--max-size" => args.max_size = crate::load::parse_size(&value()?)?,
+            "--timeout" => args.timeout = crate::load::parse_timeout(&value()?)?,
+            "--no-watch" => args.opts.watch = false,
+            "--watch" => args.opts.watch = true,
+            "-m" | "--mode" => args.opts.line_mode = parse_mode(&value()?)?,
+            "--depth" => {
+                args.opts.depth = Some(u32::try_from(number(value()?)?).unwrap_or(u32::MAX))
+            }
+            "-n" | "--line-numbers" => args.opts.numbers = true,
+            "-N" | "--no-line-numbers" => args.opts.numbers = false,
+            "-r" | "--relative-line-numbers" => args.opts.relative = true,
+            "-R" | "--no-relative-line-numbers" => args.opts.relative = false,
+            "--scrolloff" => args.opts.scrolloff = number(value()?)?,
+            "--indent" => args.opts.indent = number(value()?)?.min(16),
+            "--hidden" => args.opts.show_hidden = true,
+            "--ascii" => args.opts.ascii = true,
+            "--no-color" | "--no-colour" => args.opts.color = false,
+            "--no-mouse" => args.mouse = false,
+            other => return Err(format!("unknown option: {other} (see aless --help)")),
+        }
+        if let Some(v) = inline {
+            return Err(format!("{name} takes no value, but was given {v:?}"));
+        }
+    }
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        args.opts.color = false;
+    }
+    Ok(Parsed::Run(Box::new(args)))
+}
+
+fn parse_mode(v: &str) -> Result<bool, String> {
+    match v {
+        "line" => Ok(true),
+        "data" => Ok(false),
+        v => Err(format!("unknown mode: {v} (data or line)")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1804,5 +1986,76 @@ mod tests {
             desc.chars().count() <= 80,
             "at most 80 characters: {desc:?}"
         );
+    }
+
+    fn parse(argv: &[&str]) -> Result<Parsed, String> {
+        parse_args(argv.iter().map(std::ffi::OsString::from))
+    }
+
+    fn sample(long: &str, value: Value) -> &'static str {
+        match (long, value) {
+            (_, Value::Words(words)) => words[0],
+            (_, Value::Format) => "json",
+            ("--grammar", _) => "g=g.abnf",
+            ("--grammar-expr", _) => "g=doc = TX",
+            ("--max-size", _) => "1M",
+            _ => "1",
+        }
+    }
+
+    /// The table is the parser's gate, so every option the help, the man
+    /// page and the completions name is read, under each of its names.
+    #[test]
+    fn every_option_in_the_table_is_read() {
+        for opt in OPTIONS {
+            for name in opt.all_names() {
+                let mut argv = vec![name.as_str()];
+                if let Some((_, value)) = opt.arg {
+                    argv.push(sample(opt.long, value));
+                }
+                if let Err(e) = parse(&argv) {
+                    panic!("{argv:?}: {e}");
+                }
+                // Attached, a long option's value reads the same.
+                if let (Some((_, value)), true) = (opt.arg, name.starts_with("--")) {
+                    let attached = format!("{name}={}", sample(opt.long, value));
+                    if let Err(e) = parse(&[attached.as_str()]) {
+                        panic!("{attached}: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_option_the_table_does_not_list_is_refused() {
+        for argv in [&["--nope"][..], &["-x"], &["--Kind"], &["-kjson"]] {
+            match parse(argv) {
+                Err(e) => assert!(e.starts_with("unknown option: "), "{argv:?}: {e}"),
+                Ok(_) => panic!("{argv:?} was read"),
+            }
+        }
+        // After `--`, an option's name is a file's.
+        match parse(&["--", "--nope"]) {
+            Ok(Parsed::Run(args)) => assert_eq!(args.files, [std::path::PathBuf::from("--nope")]),
+            _ => panic!("-- --nope"),
+        }
+    }
+
+    #[test]
+    fn help_version_and_generate_print() {
+        let print = |argv: &[&str]| match parse(argv) {
+            Ok(Parsed::Print(text)) => text,
+            _ => panic!("{argv:?} prints nothing"),
+        };
+        assert_eq!(print(&["-h"]), summary());
+        assert_eq!(print(&["--help"]), reference());
+        assert_eq!(print(&["-V"]), format!("aless {}\n", VERSION));
+        assert_eq!(print(&["--generate", "man"]), man_page());
+        assert_eq!(print(&["--generate=complete-fish"]), complete_fish());
+        let Err(e) = parse(&["--generate", "nope"]) else {
+            panic!("--generate nope");
+        };
+        assert!(e.starts_with("--generate writes man, "), "{e}");
     }
 }

@@ -70,10 +70,10 @@ setting.
 
 ## The generated files
 
-Every option is in `cli::OPTIONS`. The parser in `src/main.rs` refuses
-an option the table does not list, and `-h`, `--help`, the man page and
-the completions are written from it. A new option goes into the table,
-with its summary and detail, and is read in `parse_args`;
+Every option is in `cli::OPTIONS`. The parser, `cli::parse_args`,
+refuses an option the table does not list, and `-h`, `--help`, the man
+page and the completions are written from it. A new option goes into
+the table, with its summary and detail, and is read in `parse_args`;
 `every_option_in_the_table_is_read` fails when it is not.
 
 `man/aless.1` and `completions/` are the committed output of
@@ -85,11 +85,11 @@ runs.
 ## The published crate
 
 The crate carries what `Cargo.toml`'s `include` names: `src/`, the
-licence files, and every file the README links to (the release and
-packaging guides, the man page, the completions, and the example
-grammars under `tests/fixtures/`). A file the build reads is under
-`src/` or on that list, and a file the README starts linking to joins
-it.
+licence files, the README and the changelog, the release and packaging
+guides, the man page, the completions, and the example grammars under
+`tests/fixtures/`. A file the build reads is under `src/` or on that
+list, and so is every file the README links to by a relative path; the
+README links anything else by its address on GitHub.
 
 ## Releases
 

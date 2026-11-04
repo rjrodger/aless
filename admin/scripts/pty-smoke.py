@@ -473,7 +473,7 @@ def main():
     expect("source view shows the raw text", "(source)")
     send("s")
     send(":help\r")
-    expect("help overlay opens", "aless help", "FOLDING")
+    expect("help overlay opens", "aless help", "MOVING")
     send("q")
     send("q")
     send("q")

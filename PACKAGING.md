@@ -92,7 +92,7 @@ The crate on crates.io holds the same source, without the tests.
 | nixpkgs | `pkgs/by-name/al/aless/package.nix`, built with `rustPlatform.buildRustPackage` | nixpkgs maintainers |
 | winget | a first manifest from `komac` or `wingetcreate` (portable zip), as a pull request to microsoft/winget-pkgs; later ones can be automated from `release.yml` | the release workflow, once added |
 | Scoop | a bucket of aless's own with the Windows zip; the main bucket asks for more popularity | the release workflow, once added |
-| Debian, Ubuntu, Fedora | each packages every crate separately, the 21 tabnas crates among them, so these follow the distributions' Rust teams | their Rust teams |
+| Debian, Ubuntu, Fedora | each packages every crate separately, the tabnas crates among them, so these follow the distributions' Rust teams | their Rust teams |
 
 ## Starting points
 

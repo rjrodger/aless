@@ -27,8 +27,9 @@ them.
 A page starts with `title`, `description` (one sentence) and, for a page
 in its section's list (every page of a section but its index), `order`,
 its place in the list. The how-to guides are listed by group, so each
-also names its `group`, the heading it is under: "Setting up" or "In the
-viewer". The layout writes the page's one `h1`, so the Markdown starts at
+also names its `group`, the heading it is under: "Setting up", "Reading
+a document" or "Files and formats", the groups `SECTIONS` in
+`tests/site.rs` declares. The layout writes the page's one `h1`, so the Markdown starts at
 `##`. A value holds no colon followed by a space: Vale reads the front
 matter as YAML, and the build reads each line as `key: value`.
 
@@ -44,9 +45,12 @@ not in its `links` list. `tests/site.rs` checks every link and every
 ## What the build writes from elsewhere
 
 The reference's pages are written from the binary, never by hand: the
-command line from the topics `--help` prints (`cli::reference_html`), the
-keys from the help F1 shows (`app::help_lines`), and the releases from
-`CHANGELOG.md`. A new option or key reaches the reference by itself, and
+command line from the topics `--help` prints (`cli::reference_html`), and
+the keys from the table F1 shows (`app::KEY_MAP`). The releases are
+`CHANGELOG.md`. The formats page is written by hand, and
+`the_formats_page_is_the_binarys` holds it to `Format::ALL`: a row for
+every format, naming every extension. A new option, key or format
+reaches the reference by itself, or fails a test until it does, and
 `the_reference_is_the_binarys` holds the pages to the binary.
 
 `{{version}}` and `{{tagline}}` in a page are filled in from the binary.
@@ -67,12 +71,42 @@ output differs from the page. Each command line is also held to the
 options aless takes. This is the harness `STYLE-GUIDE.md` asks a project
 to name; it reads `console` fences rather than test directives.
 
-A capture of the viewer is a `screen` fence, 80 columns wide, taken in a
-pseudo-terminal as `admin/scripts/pty-smoke.py` drives one: a small
-script that loads it with `importlib`, starts aless in a pty of the
-wanted size, sends keys and prints `Screen.text()`. Piped input goes
-through a pipe on standard input. Capture from a directory whose path
-reads well, since the status bar shows it.
+A capture of the viewer is a `screen` fence, and every one is drawn by
+aless, never pasted. The comment before it says how:
+
+```markdown
+<!-- screen: aless bookshelf-openapi.yaml
+keys: j j h c / listBooks Enter
+size: 80x14 -->
+```
+
+The first line is the command, as the reader would type it, or
+`printf 'TEXT' | aless ...` for standard input. `keys:` is what is
+typed after it opens, a word at a time: a key's name (`Enter`, `Esc`,
+`Tab`, `S-Tab`, `Space`, `Backspace`, an arrow such as `Up`, `Home`,
+`End`, `PgUp`, `PgDn`, `F1`, or `C-d`) is that key, and any other word
+is typed as it is spelled. `size:` is the terminal, 80 columns by 12
+rows unless it says otherwise. `rows: A-B` keeps those rows of the
+screen alone, `edit: FILE: OLD => NEW` changes the file once the keys
+are typed, and reloads it as the watcher would, and `cwd: ..` runs the
+command from the directory above the files.
+
+`the_screens_are_what_aless_draws` builds the app as the command line
+would (`cli::parse_args`), types the keys, and compares what
+`render::screen` draws with the fence, on every platform. It runs none
+of the effects the terminal side would, so a capture shows no `Copied`
+message, and it does not change directory, so a capture never writes a
+file: `:w` there would write into the repository. The files sit
+in a directory the pages show as `/home/user/bookshelf`; on Windows a
+capture that shows that path is skipped. To write the fences from the
+captures, after a change that moves what aless draws:
+
+```sh
+ALESS_SCREENS=write cargo test --test site the_screens
+```
+
+and read the diff before committing it. A screen block with no comment
+before it fails the test.
 
 ## Style
 

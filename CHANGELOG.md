@@ -21,6 +21,22 @@ bumps the version renames `Unreleased` to the version and its date
   the value it denotes, and the source view has the spelling.
 - `--help`, the man page and the line aless prints when it cannot start
   describe aless alone.
+- F1 lists every key, command and setting, grouped as the documentation
+  site's Keys page groups them: the prompt's editing keys, the keys of
+  the help and the error report, `:tabfirst`, `:tablast`, `:e!`,
+  `:expand`, `:collapse` and the whole of `:set` among them. The page is
+  written from the same table.
+- `--help` and the man page are rewritten in shorter sentences. They
+  number the rows with `-n` and `-r` where they said line numbers, give
+  `--depth N` as the first N levels open, which is what it does, and
+  give each format's nesting limit as aless reads it: Markdown's tree
+  stops at 205 levels without an error, and ABNF, EBNF and GBNF nest
+  groups 127 deep.
+- The documentation site is rewritten. It gains a Formats reference
+  page, and how-to guides to saving a document as JSON and to a file
+  that does not parse. Every capture of the viewer on it is drawn by
+  aless when the site is built, and the build fails when one no longer
+  matches.
 
 ## [0.6.0] - 2026-11-02
 

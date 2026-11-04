@@ -408,8 +408,8 @@ impl Doc {
         }
     }
 
-    /// Collapse everything deeper than `depth` (containers at exactly
-    /// `depth` stay expanded so their children show as collapsed rows).
+    /// Open the first `depth` levels: a container `depth` levels below the
+    /// root folds, and so does everything in it; at depth zero, the root.
     pub fn expand_to_depth(&mut self, depth: u32) {
         for n in &mut self.nodes {
             if n.is_foldable() {

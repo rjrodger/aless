@@ -76,8 +76,8 @@ fn help_describes_the_viewer() {
     // The reference, with its lines joined, so a wrapped sentence reads whole.
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
-        "aless is a viewer:",
-        "refuses to start, at once and before reading any input",
+        "aless is a viewer for the terminal.",
+        "It refuses before reading any input",
         "KEYS:",
         "CUSTOM GRAMMARS:",
         "LARGE INPUTS AND LIMITS:",

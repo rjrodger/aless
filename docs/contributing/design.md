@@ -2,8 +2,7 @@
 
 The modules, the invariants a change keeps, and the facts the code
 depends on that are too long for a comment. The decisions behind them
-are in `ADR.md`; the module map is in the README's
-[Development](../../README.md#development) section.
+are in `ADR.md`.
 
 ## The terminal and the library
 
@@ -14,6 +13,23 @@ without a screen (`tests/app_flow.rs`). Without a terminal the binary
 refuses to start before it reads any input, grammar files included, so a
 pipe left open or a FIFO nobody writes cannot hold a viewer that cannot
 start.
+
+| Module | What it holds |
+|---|---|
+| `cli` | every option, in one table; the parser that reads the command line from it; the reference `--help` prints, the summary `-h` prints, the man page and the shells' completions |
+| `load` | format detection; the tabnas grammars; the grammar notations compiled to their specs; errors with positions; the size, depth and time limits; the plain-text fallback |
+| `grammar` | custom grammars: `--grammar` and `--grammar-expr` read, ABNF compiled once, and the registry `Format::Custom` indexes |
+| `doc` | the parsed value as a pre-order arena; the visible rows; paths; folding |
+| `prov` | source positions, by aligning the token stream with the tree |
+| `fmt` | the text of keys and values, previews, the JSON `:w` writes, the path forms |
+| `search` | jless-style search patterns |
+| `tab` | one open document: focus, scroll, mode, search, navigation, and the reload that keeps your place |
+| `explorer` | directory trees as documents, listed as they are unfolded |
+| `app` | the tabs, the modes, the source view, the key map and `KEY_MAP`, the command line, watch scheduling, copying |
+| `highlight` | the source view's colour: tabnas-lsp's semantic tokens, made off the viewer's thread |
+| `render` | the screen as ratatui widgets, every width measured as the terminal places text |
+| `watch` | the notify file watcher |
+| `clip` | the clipboard, and OSC 52 |
 
 ## Tests
 

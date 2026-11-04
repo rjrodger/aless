@@ -4,11 +4,11 @@ description: Have your shell complete aless's options and their values, and man 
 group: Setting up
 order: 2
 ---
-aless carries its own manual page and completions for bash, zsh, fish and PowerShell. Homebrew installs them for you; with any other install, aless prints them.
+aless carries its own manual page, and completions for bash, zsh, fish and PowerShell. Homebrew installs them for you. With any other install, aless prints them.
 
 ## After a Homebrew install
 
-The formula puts each file where Homebrew keeps them, so all that is left is for your shell to look there. Homebrew's [shell completion guide](https://docs.brew.sh/Shell-Completion) has the steps for each shell: for zsh, `eval "$(brew shellenv)"` has to run before `compinit`. `man aless` works as soon as the formula is installed.
+The formula puts each file where Homebrew keeps them, so what is left is for your shell to look there. Homebrew's [shell completion guide](https://docs.brew.sh/Shell-Completion) has the steps for each shell; for zsh, `eval "$(brew shellenv)"` has to run before `compinit`. `man aless` works as soon as the formula is installed.
 
 ## Load the completions as the shell starts
 
@@ -26,7 +26,7 @@ In PowerShell, add them to your profile once:
 aless --generate complete-powershell | Add-Content $PROFILE
 ```
 
-The completions know every option and the values each one takes: the formats `--kind` reads, the modes, and a file where an option wants one.
+The completions know every option and the values each one takes: the formats `--kind` reads, the two modes, and a file where an option wants one.
 
 ## Or save them where the shell looks
 
@@ -38,7 +38,7 @@ aless --generate complete-zsh > ~/.zfunc/_aless          # a directory on $fpath
 aless --generate complete-fish > ~/.config/fish/completions/aless.fish
 ```
 
-A saved file is read without running aless as the shell starts. Write it again when you upgrade aless, since a release can add options.
+The shell then reads a saved file without running aless as it starts. Write the files again when you upgrade aless, since a release can add options.
 
 ## The man page
 
@@ -50,4 +50,4 @@ aless --generate man > ~/.local/share/man/man1/aless.1
 man aless
 ```
 
-If your `man` does not search `~/.local/share/man`, add it to `MANPATH`. The manual page holds the same reference as `aless --help`, and as this site's [command line reference](/reference/command-line.html).
+If your `man` does not search `~/.local/share/man`, add it to `MANPATH`. The manual page holds the same reference as `aless --help` and this site's [command line reference](/reference/command-line.html).

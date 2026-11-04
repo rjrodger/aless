@@ -16,16 +16,16 @@ _aless() {
     '--watch[reload files when they change (the default)]' \
     '(--mode -m)--mode=[start in data (default) or line mode]:MODE:(data line)' \
     '(--mode -m)-m[start in data (default) or line mode]:MODE:(data line)' \
-    '--depth=[fold containers deeper than N levels]:N: ' \
+    '--depth=[open only the first N levels]:N: ' \
     '--indent=[indentation per level (default 2)]:N: ' \
-    '(--line-numbers -n)--line-numbers[show absolute line numbers]' \
-    '(--line-numbers -n)-n[show absolute line numbers]' \
-    '(--no-line-numbers -N)--no-line-numbers[hide absolute line numbers]' \
-    '(--no-line-numbers -N)-N[hide absolute line numbers]' \
-    '(--relative-line-numbers -r)--relative-line-numbers[show relative line numbers]' \
-    '(--relative-line-numbers -r)-r[show relative line numbers]' \
-    '(--no-relative-line-numbers -R)--no-relative-line-numbers[hide relative line numbers]' \
-    '(--no-relative-line-numbers -R)-R[hide relative line numbers]' \
+    '(--line-numbers -n)--line-numbers[number the rows]' \
+    '(--line-numbers -n)-n[number the rows]' \
+    '(--no-line-numbers -N)--no-line-numbers[do not number the rows]' \
+    '(--no-line-numbers -N)-N[do not number the rows]' \
+    '(--relative-line-numbers -r)--relative-line-numbers[number rows by distance from the focus]' \
+    '(--relative-line-numbers -r)-r[number rows by distance from the focus]' \
+    '(--no-relative-line-numbers -R)--no-relative-line-numbers[do not number rows by distance]' \
+    '(--no-relative-line-numbers -R)-R[do not number rows by distance]' \
     '--scrolloff=[rows kept around the focus (default 3)]:N: ' \
     '--hidden[show dot-files in the explorer]' \
     '--ascii[draw fold markers in ASCII]' \

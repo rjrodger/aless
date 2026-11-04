@@ -20,23 +20,24 @@ one tree, and shows it in a jless\-style viewer in the terminal, with tabs,
 search, a source view and a watch mode that reloads a changed file and keeps
 your place.
 .SS "The viewer"
-aless is a viewer: it draws on a terminal and reads keys from it. Each FILE
-opens in a tab of its own, watched and reloaded when it changes, keeping your
-place; a directory opens in the file explorer, where Enter opens a file; and
-without a FILE, aless reads standard input when it is not a terminal, and
-otherwise explores the current directory. A file that does not parse opens as a
-tab showing the parser\(aqs report, with the line and column it stopped at, and
-the tab reloads when the file is fixed.
+aless is a viewer for the terminal. Each FILE opens in a tab of its own, as a
+tree to fold, search and copy from, and a directory opens in the file explorer.
+With no FILE, aless reads standard input when it is not a terminal, and
+otherwise explores the current directory. Every file is watched: when it
+changes on disk, aless reads it again and keeps your place. A file that does
+not parse opens as the parser\(aqs report, with the line and column where the
+parse stopped.
 .PP
-Without a terminal to draw on and read keys from (standard output a pipe or a
-file, no terminal to open, or TERM=dumb) aless refuses to start, at once and
-before reading any input, with a line on standard error and the status 2.
-Nothing but \-h, \-\-help, \-V and \-\-generate writes to standard output.
+aless refuses to start without a terminal to draw on and read keys from: when
+standard output is a pipe or a file, when there is no terminal to open, or when
+TERM is dumb. It refuses before reading any input, with one line on standard
+error and the status 2. Only \-h, \-\-help, \-V and \-\-generate write to
+standard output.
 .SH OPTIONS
 .SS "Input options"
 .TP 7
 \fB\-k\fR, \fB\-\-kind\fR, \fB\-\-format\fR \fIFORMAT\fR
-Parse every input as FORMAT instead of by its extension: a format\(aqs name
+Read every input as FORMAT, whatever its extension says: a format\(aqs name
 (json, jsonl, jsonic, jsonc, json5, yaml, toml, ini, csv, tsv, xml, zon,
 markdown, feed, css, proto, pgn, c, abnf, ebnf, gbnf, expr, semver or text),
 one of its extensions (yml, md, ndjson), or a \-\-grammar NAME. Standard input
@@ -44,74 +45,80 @@ is read as JSON unless this says otherwise. \-\-format is another name for this
 option.
 .TP 7
 \fB\-\-grammar\fR \fINAME=FILE\fR
-Read a file whose extension or whole name is NAME, in any case (x.hosts,
-/etc/hosts), with the ABNF grammar in FILE, which is read within \-\-max\-size
-and compiled within \-\-timeout before any input is read. NAME is then a
-format, as \-k and :format take it and the status bar shows it; NAME,NAME2=FILE
-gives it two names, and the option repeats. See CUSTOM GRAMMARS.
+Read every file whose extension or whole name is NAME, in any case (x.hosts,
+/etc/hosts), with the ABNF grammar in FILE. NAME is then a format, which \-k
+and :format take and the status bar shows; NAME,NAME2=FILE gives it two names,
+and the option repeats. FILE is read within \-\-max\-size and compiled within
+\-\-timeout, before any input is read. See CUSTOM GRAMMARS.
 .TP 7
 \fB\-\-grammar\-expr\fR \fINAME=ABNF\fR
-\-\-grammar, with the grammar\(aqs text on the command line: everything after
-the first =.
+As \-\-grammar, with the grammar\(aqs text on the command line: everything
+after the first =.
 .TP 7
 \fB\-\-max\-size\fR \fISIZE\fR
-Refuse an input larger than SIZE (default 64M; 0 for no limit), and a
-\-\-grammar file too: a parse takes about 40 bytes of memory per byte of input.
-A file over the limit opens as a tab that says so, and names the size that
-would read it; a grammar file over it is a usage error. SIZE is bytes, or a
-whole number with K, M or G (1024s).
+Refuse an input larger than SIZE, a \-\-grammar file included (default 64M; 0
+for no limit). SIZE is bytes, or a whole number with K, M or G, in 1024s. A
+file over the limit opens in a tab that says so and names the size that would
+read it; a grammar file over it is a usage error. A parse needs about 40 bytes
+of memory for each byte of input.
 .TP 7
 \fB\-\-timeout\fR \fISECONDS\fR
 Stop a parse, or a \-\-grammar compile, that runs longer than SECONDS (2.5,
-90s, 2m; default none; 0 for no limit). A parse stopped opens as a tab that
-says how far it got; a compile stopped is a usage error. A parse runs at about
-a megabyte a second. See LARGE INPUTS AND LIMITS.
+90s, 2m; default none; 0 for no limit). A parse that is stopped opens in a tab
+that says how far it got; a compile that is stopped is a usage error. A parse
+runs at about a megabyte a second. See LARGE INPUTS AND LIMITS.
 .SS "Viewer options"
 .TP 7
 \fB\-\-no\-watch\fR
-Do not reload a file when it changes.
+Do not reload a file when it changes on disk. W or :watch on starts watching a
+tab inside aless.
 .TP 7
 \fB\-\-watch\fR
 Reload a file when it changes, keeping your place (the default).
 .TP 7
 \fB\-m\fR, \fB\-\-mode\fR \fIMODE\fR
-Start in data mode (the default), the streamlined tree, or in line mode, every
-line of a pretty\-printed rendering; m switches between them.
+Start in data mode (the default), the tree without its punctuation, or in line
+mode, every line as JSON prints it; m switches between them.
 .TP 7
 \fB\-\-depth\fR \fIN\fR
-Fold the containers deeper than N levels when a file opens (default: every
-container open); :depth N does the same inside aless.
+Open only the first N levels when a file opens: a container N levels below the
+root starts folded, and so does everything in it, so \-\-depth 0 folds the root
+(by default every container is open). :depth N does the same inside aless.
 .TP 7
 \fB\-\-indent\fR \fIN\fR
-Indent the tree N spaces a level (default 2; at most 16); < and > change it
+Indent the tree N spaces a level (default 2, at most 16); < and > change it
 inside aless.
 .TP 7
 \fB\-n\fR, \fB\-\-line\-numbers\fR
-Show absolute line numbers.
+Number the rows on screen, as a count before g or G takes them.
 .TP 7
 \fB\-N\fR, \fB\-\-no\-line\-numbers\fR
-Hide absolute line numbers.
+Do not number the rows, undoing an \-n before it.
 .TP 7
 \fB\-r\fR, \fB\-\-relative\-line\-numbers\fR
-Show line numbers relative to the focused row.
+Number each row by its distance from the focused row, the count j or k needs to
+reach it. With \-n as well, the focused row shows its own number.
 .TP 7
 \fB\-R\fR, \fB\-\-no\-relative\-line\-numbers\fR
-Hide relative line numbers.
+Do not number the rows by distance, undoing an \-r before it.
 .TP 7
 \fB\-\-scrolloff\fR \fIN\fR
-Keep N rows around the focus when scrolling (default 3).
+Keep N rows between the focused row and the top or the bottom of the screen
+(default 3).
 .TP 7
 \fB\-\-hidden\fR
 Show dot\-files in the file explorer.
 .TP 7
 \fB\-\-ascii\fR
-Draw fold markers with ASCII characters (v and >).
+Draw the fold markers as v and >, for a font without the triangles aless draws
+by default.
 .TP 7
 \fB\-\-no\-color\fR, \fB\-\-no\-colour\fR
-Draw without colours, as when NO_COLOR is set.
+Draw without colour, as when NO_COLOR is set.
 .TP 7
 \fB\-\-no\-mouse\fR
-Leave the mouse to the terminal rather than capture it.
+Leave the mouse to the terminal, for its own selection, rather than take its
+wheel and clicks.
 .SS "Other options"
 .TP 7
 \fB\-h\fR, \fB\-\-help\fR
@@ -121,26 +128,26 @@ Print a summary of the options (\-h), or this reference (\-\-help).
 Print the version: aless 0.6.0.
 .TP 7
 \fB\-\-generate\fR \fIWHAT\fR
-Print a file made from this reference: man, the man page (aless.1); or
+Print a file written from this reference: man, the man page (aless.1), or
 complete\-bash, complete\-zsh, complete\-fish or complete\-powershell, that
 shell\(aqs completions. See FILES.
 .SH "INPUT AND FORMATS"
-FILE is a path, or \- for standard input. Without a FILE, aless reads standard
-input when it is not a terminal, and otherwise explores the current directory;
-a directory named opens in the file explorer. Options end at \-\-, after which
-every argument is a FILE, and a long option\(aqs value may follow it or be
-attached to it (\-\-kind=yaml).
+FILE is a path, or \- for standard input. Options end at \-\-, after which
+every argument is a FILE, and a long option\(aqs value follows it or is
+attached with = (\-\-kind=yaml).
 .PP
-The format comes from a file\(aqs extension, or from its whole name for a
-\-\-grammar NAME (/etc/hosts), and \-k FORMAT overrides it for every input;
-inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH FORMAT
-opens a file as one. A file whose extension no format claims is read as plain
-text, an array of its lines. Map keys keep their source order, and a number its
-source\(aqs spelling where the spelling is JSON\(aqs: the tree, search, :w and
-the copy commands give 1.0, 1e21 and an integer beyond 2\(ha53 as spelled, and
-a spelling JSON has no syntax for (0x1F, 1_000, +1) as the 64\-bit float it
-denotes, the source view (s) having the spelling. The formats, with the
-extensions that imply each:
+A file\(aqs format comes from its extension, or from its whole name when that
+is a \-\-grammar NAME (/etc/hosts), and \-k FORMAT overrides it for every
+input. Inside aless, :format FORMAT reads a tab again as FORMAT, and :open PATH
+FORMAT opens a file as one. A file whose extension no format claims is read as
+plain text, an array of its lines.
+.PP
+Keys keep their order in the source. A number keeps its spelling where JSON
+spells it the same way: 1.0, 1e21 and an integer beyond 2\(ha53 are shown,
+searched, copied and written by :w as the source writes them. A spelling JSON
+has no syntax for (0x1F, 1_000, +1) gives the 64\-bit float it stands for, and
+the source view (s) shows the spelling. The formats, with the extensions that
+imply each:
 .TP 10
 \fBjson\fR
 json geojson har jsonld webmanifest
@@ -213,74 +220,75 @@ and terms)
 none, \-k semver (a version: its major, minor, patch, prerelease and build)
 .TP 10
 \fBtext\fR
-txt text log (and every extension no format claims)
+txt text log (and any file no format claims)
 .SH "KEYS"
-The keys are jless\(aqs, and F1 or :help inside aless lists them all; the ones
-used most:
-.TP 10
+The keys are jless\(aqs. F1 or :help inside aless lists every key and command;
+these are the ones used most:
+.TP 11
 \fBj k\fR
-down / up; a count before a key repeats it (3j)
-.PD 0
-.TP 10
+down and up a row; a count before a key repeats it (3j)
+.TP 11
 \fBh l\fR
-collapse / expand, or go to the parent / first child
-.TP 10
+fold and unfold, or go to the parent and the first child
+.TP 11
 \fBJ K\fR
-next / previous sibling
-.TP 10
+the next and the previous sibling
+.TP 11
 \fBg G\fR
-first / last row; Ng goes to row N
-.TP 10
+the first and the last row; Ng goes to row N
+.TP 11
 \fBC\-d C\-u\fR
-half a page down / up
-.TP 10
+half a page down and up
+.TP 11
 \fBSpace\fR
-toggle the focused container
-.TP 10
+fold or unfold the focused container
+.TP 11
 \fBc e\fR
-collapse / expand the focused node and its siblings
-.TP 10
+fold and unfold the focused node and its siblings
+.TP 11
 \fB/ ?\fR
-search forward / backward; n N for the next / previous match
-.TP 10
+search forward and backward; n and N go to the next and the previous match
+.TP 11
 \fByy yp yq\fR
-copy the value / its path / its jq path
-.TP 10
+copy the value, its path, or its path as jq writes it
+.TP 11
 \fBm\fR
 switch between data mode and line mode
-.TP 10
+.TP 11
 \fBs\fR
-show the source text at the focused node
-.TP 10
+the source view, at the focused node\(aqs line
+.TP 11
 \fB!\fR
-show a parse error\(aqs report in full
-.TP 10
-\fBTab\fR
-the next tab (Shift\-Tab the previous)
-.TP 10
+the parse error report, full size
+.TP 11
+\fBTab S\-Tab\fR
+the next and the previous tab
+.TP 11
 \fB:\fR
 a command: :open PATH, :format FORMAT, :w FILE, :help
-.TP 10
+.TP 11
 \fBq\fR
-close the tab, quitting with the last; C\-c quits
-.PD
+close the tab, quitting with the last one; C\-c quits
 .SH "CUSTOM GRAMMARS"
-\-\-grammar NAME=FILE reads the files whose extension or whole name is NAME, in
-any case, with the ABNF grammar in FILE (RFC 5234, compiled by tabnas/abnf),
-and \-k NAME reads any input with it. ; @object a b and ; @array comments on a
-rule say what it builds; without them the value is the compiler\(aqs parse
-tree, a {"rule", "src", "kids"} node per rule. The input is read as plain text:
-{ } [ ] : , are ordinary characters, # starts a comment to the end of the line,
-and a word is the token TX (NR, ST and VL bring numbers, quoted strings and
-true, false and null back). A grammar that does not compile is a usage error
-before any input is read, and so is a repetition count over 1,024, or
-repetitions that would have the compiler write more than 1,024 rules. An input
-the grammar does not accept opens as a parse error, with the grammar\(aqs name
-for its format.
+\-\-grammar NAME=FILE reads every file whose extension or whole name is NAME,
+in any case, with the ABNF grammar in FILE (RFC 5234, compiled by tabnas/abnf),
+and \-k NAME reads any input with it, standard input included. Comments on a
+rule say what it builds: ; @object a b makes an object of its parts a and b,
+and ; @array an array. Without them the value is the compiler\(aqs parse tree,
+a {"rule", "src", "kids"} node for each rule.
 .PP
-Grammars for /etc/hosts, crontabs, /etc/passwd, /etc/group, /etc/fstab,
-/etc/resolv.conf and KEY=value files, each with a sample and a guide to writing
-one, are in aless\(aqs source:
+A grammar reads its input as plain text: { } [ ] : , are ordinary characters, #
+starts a comment to the end of the line, and a word is the token TX. NR, ST and
+VL bring back numbers, quoted strings, and true, false and null.
+.PP
+A grammar that does not compile is refused before any input is read, as a usage
+error. So is a repetition count over 1,024, or repetitions that would have the
+compiler write more than 1,024 rules. An input the grammar does not accept
+opens as a parse error, with the grammar\(aqs name as its format.
+.PP
+aless\(aqs source holds grammars for /etc/hosts, crontabs, /etc/passwd,
+/etc/group, /etc/fstab, /etc/resolv.conf and KEY=value files, each with a
+sample, and a guide to writing one:
 .PP
 .RS 2
 .nf
@@ -288,25 +296,29 @@ https://github.com/rjrodger/aless/tree/main/tests/fixtures/grammars
 .fi
 .RE
 .SH "LARGE INPUTS AND LIMITS"
-An input is read whole and parsed whole before anything is shown, at about a
-megabyte a second and 40 bytes of memory per byte of input. The parse holds the
-viewer: before a large file is read aless says so, and a reload of a large
-watched file pauses it for as long as the parse takes. \-\-max\-size (default
-64M) refuses a larger input before it is read, as a tab that says so and names
-the size that would read it, and \-\-timeout stops a parse that runs too long,
-as a tab that says how far it got.
+aless reads an input whole and parses it whole before it shows anything. A
+parse runs at about a megabyte a second, and needs about 40 bytes of memory for
+each byte of input. The viewer waits for it: before a large file is read aless
+says so, and a reload of a large watched file pauses the viewer until the parse
+ends.
+.PP
+\-\-max\-size (64M unless set) refuses a larger input before reading it, in a
+tab that says so and names the size that would read it. \-\-timeout stops a
+parse that runs too long, in a tab that says how far it got.
 .PP
 A document nested deeper than aless reads opens as a parse error with the code
-too_deep: past about 1,000 levels, or sooner where the grammar has a limit of
-its own (127 levels for JSON, JSONL, JSONic, JSON5, YAML, TOML, INI, ZON and
-expressions, an expression of 127 operations too, 256 for XML, 512 for JSONC,
-768 open rules for CSS, braces 100 deep for a .proto file, counted before it is
-parsed, for C an expression of 127 operations, 1,024 open rules and a syntax
-tree 256 levels deep, or 256 values a byte of the file written out (33,554,432
-at most) or 2,048 bytes of names and strings a byte (256 MB at most), its
-reader repeating subtrees, and for a grammar its compiler\(aqs, 2,048 open
-rules for ABNF, 520 for EBNF and 512 for GBNF, some 500, 130 and 128 nested
-groups, and elements nested 128 deep).
+too_deep. Every parse stops at 3,000 open rules, about 1,000 levels, and most
+grammars stop sooner: at 127 levels for JSON, JSONL, jsonic, JSON5, YAML, TOML,
+INI, ZON and expressions, 256 for XML, 512 for JSONC, and 768 open rules for
+CSS. A .proto file\(aqs braces may nest 100 deep, counted before it is parsed.
+Markdown\(aqs tree stops at 205 levels, without an error.
+.PP
+C stops at an expression of about 127 operations, 1,024 open rules or a syntax
+tree 256 levels deep. Its tree repeats subtrees, so it also stops at a tree of
+more than 256 values, or more than 2,048 bytes of names and strings, for each
+byte of the file (between a million and 33,554,432 values, and between 8 MB and
+256 MB). A grammar in ABNF, EBNF or GBNF may nest its groups and elements 127
+deep.
 .SH "EXIT STATUS"
 .TP 7
 \fB0\fR
@@ -322,11 +334,11 @@ and read keys from
 .SH "ENVIRONMENT"
 .TP 10
 \fBNO_COLOR\fR
-set and not empty: no colours, as \-\-no\-color
+set and not empty: draw without colour, as \-\-no\-color does
 .TP 10
 \fBTERM\fR
-dumb: a terminal that cannot draw the viewer, which refuses to start, as
-without one
+dumb: a terminal that cannot draw the viewer, so aless refuses to start, as it
+does without a terminal
 .SH "FILES"
 A release archive carries the man page and the completions, which \-\-generate
 also prints:
@@ -348,8 +360,8 @@ fish (\-\-generate complete\-fish)
 PowerShell (\-\-generate complete\-powershell)
 .PD
 .PP
-A shell reads its completions from where it looks for them (a package puts them
-there), or from its startup file each time it starts:
+A shell reads its completions where it looks for them, which is where a package
+puts them, or from its startup file each time it starts:
 .PP
 .RS 2
 .nf
@@ -364,25 +376,26 @@ aless config.yaml                      one file, in a tab
 aless deploy.yaml values.toml a.csv    several files, a tab each
 curl \-s https://api.example/x | aless  standard input, read as JSON
 aless \-k yaml settings.conf            a file whose extension misleads
-aless \-\-grammar hosts=hosts.abnf /etc/hosts    a format of your own
+aless \-\-grammar hosts=hosts.abnf /etc/hosts
+                                       a format of your own
 aless \-\-no\-watch big.json              no reload when the file changes
-aless \-m line \-n x.json                line mode, with line numbers
+aless \-m line \-n x.json                line mode, the rows numbered
 aless                                  explore the current directory
 .fi
 .SH "SEE ALSO"
 .TP 18
 \fBjless(1)\fR
-where the keys come from
+the viewer whose keys and design aless follows
 .TP 18
 \fBjq(1)\fR
-whose syntax the copied paths (yq) take
+whose path syntax yq copies
 .TP 18
 \fBthe documentation\fR
-tutorial, how\-to guides, this reference with every key of the viewer, and how
-aless works: https://aless.tabnas.dev
+a tutorial, how\-to guides, this reference with every key, and why aless works
+as it does: https://aless.tabnas.dev
 .TP 18
 \fBthe source\fR
-the code, its README and the releases: https://github.com/rjrodger/aless
+the code and the releases: https://github.com/rjrodger/aless
 .TP 18
 \fBtabnas/abnf\fR
 the ABNF compiler \-\-grammar uses, and its annotations:

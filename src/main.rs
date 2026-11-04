@@ -1,9 +1,7 @@
 //! The terminal side of aless: arguments, raw mode, the event loop,
 //! painting, and the effects the application asks for.
 
-use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,137 +19,11 @@ use crossterm::{execute, queue};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use aless::app::{App, Effect, Input, Key, KeyCode, Options};
-use aless::cli;
-use aless::grammar::{self, Definition};
+use aless::app::{App, Effect, Input, Key, KeyCode};
+use aless::cli::{self, Parsed};
 use aless::load::Format;
 use aless::render;
 use aless::watch::FileWatcher;
-
-enum Parsed {
-    /// The viewer.
-    Run(Box<Args>),
-    /// Text to print as it is, and exit: `-h`, `--help`, `--version`,
-    /// `--generate`.
-    Print(String),
-}
-
-struct Args {
-    files: Vec<PathBuf>,
-    /// `-k`, as given: resolved once the grammars are registered, since it
-    /// may name one.
-    kind_name: Option<String>,
-    kind: Option<Format>,
-    /// `--grammar` and `--grammar-expr`, in order.
-    grammars: Vec<Definition>,
-    opts: Options,
-    mouse: bool,
-    /// The largest input to read, in bytes; `None` for no limit.
-    max_size: Option<u64>,
-    /// The longest a parse may run; `None` for no limit.
-    timeout: Option<std::time::Duration>,
-}
-
-/// Read `argv`, without the program's name. An option [`cli::OPTIONS`]
-/// does not list is refused (ADR-006).
-fn parse_args(argv: impl IntoIterator<Item = OsString>) -> Result<Parsed, String> {
-    let mut args = Args {
-        files: Vec::new(),
-        kind_name: None,
-        kind: None,
-        grammars: Vec::new(),
-        opts: Options::default(),
-        mouse: true,
-        max_size: aless::load::Limits::DEFAULT.max_size,
-        timeout: aless::load::Limits::DEFAULT.timeout,
-    };
-    let mut it = argv.into_iter();
-    let mut only_files = false;
-    while let Some(arg) = it.next() {
-        let s = arg.to_string_lossy().into_owned();
-        if only_files || !s.starts_with('-') || s == "-" {
-            args.files.push(PathBuf::from(arg));
-            continue;
-        }
-        // Options end at `--`: every argument after it is a file.
-        if s == "--" {
-            only_files = true;
-            continue;
-        }
-        // A long option's value may follow it or be attached: `--kind=json`.
-        let (name, mut inline) = match s.split_once('=') {
-            Some((n, v)) if n.starts_with("--") => (n.to_string(), Some(v.to_string())),
-            _ => (s.clone(), None),
-        };
-        if cli::lookup(&name).is_none() {
-            return Err(format!("unknown option: {name} (see aless --help)"));
-        }
-        let mut value = || -> Result<String, String> {
-            match inline.take() {
-                Some(v) => Ok(v),
-                None => it
-                    .next()
-                    .map(|v| v.to_string_lossy().into_owned())
-                    .ok_or_else(|| format!("{name} needs a value")),
-            }
-        };
-        let number = |v: String| -> Result<usize, String> {
-            v.parse()
-                .map_err(|_| format!("{name} needs a number, not {v}"))
-        };
-        match name.as_str() {
-            "-h" => return Ok(Parsed::Print(cli::summary())),
-            "--help" => return Ok(Parsed::Print(cli::reference())),
-            "-V" | "--version" => return Ok(Parsed::Print(format!("aless {}\n", cli::VERSION))),
-            "--generate" => return cli::generate(&value()?).map(Parsed::Print),
-            "-k" | "--kind" | "--format" => args.kind_name = Some(value()?),
-            "--grammar" | "--grammar-expr" => {
-                // Raw, not through `value()`: FILE is a path, and a path's
-                // bytes need not be UTF-8. Attached (`--grammar=NAME=FILE`),
-                // the value is what follows the argument's own first `=`.
-                let v = match inline.take() {
-                    Some(_) => grammar::after_eq(&arg),
-                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
-                };
-                args.grammars.push(Definition::parse_os(&name, &v)?);
-            }
-            "--max-size" => args.max_size = aless::load::parse_size(&value()?)?,
-            "--timeout" => args.timeout = aless::load::parse_timeout(&value()?)?,
-            "--no-watch" => args.opts.watch = false,
-            "--watch" => args.opts.watch = true,
-            "-m" | "--mode" => args.opts.line_mode = parse_mode(&value()?)?,
-            "--depth" => {
-                args.opts.depth = Some(u32::try_from(number(value()?)?).unwrap_or(u32::MAX))
-            }
-            "-n" | "--line-numbers" => args.opts.numbers = true,
-            "-N" | "--no-line-numbers" => args.opts.numbers = false,
-            "-r" | "--relative-line-numbers" => args.opts.relative = true,
-            "-R" | "--no-relative-line-numbers" => args.opts.relative = false,
-            "--scrolloff" => args.opts.scrolloff = number(value()?)?,
-            "--indent" => args.opts.indent = number(value()?)?.min(16),
-            "--hidden" => args.opts.show_hidden = true,
-            "--ascii" => args.opts.ascii = true,
-            "--no-color" | "--no-colour" => args.opts.color = false,
-            "--no-mouse" => args.mouse = false,
-            other => return Err(format!("unknown option: {other} (see aless --help)")),
-        }
-        if let Some(v) = inline {
-            return Err(format!("{name} takes no value, but was given {v:?}"));
-        }
-    }
-    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
-        args.opts.color = false;
-    }
-    Ok(Parsed::Run(Box::new(args)))
-}
-
-fn parse_mode(v: &str) -> Result<bool, String> {
-    match v {
-        "line" => Ok(true),
-        "data" => Ok(false),
-        v => Err(format!("unknown mode: {v} (data or line)")),
-    }
-}
 
 /// The exit status of a run that could not start (ADR-001).
 const USAGE: i32 = 2;
@@ -174,7 +46,7 @@ fn refuse_usage(e: &str) -> ! {
 }
 
 fn main() {
-    let mut args = match parse_args(std::env::args_os().skip(1)) {
+    let mut args = match cli::parse_args(std::env::args_os().skip(1)) {
         Ok(Parsed::Run(a)) => *a,
         Ok(Parsed::Print(text)) => {
             // `aless --help | head` must not panic on the closed pipe.
@@ -193,24 +65,9 @@ fn main() {
     }
     // Grammars first, since -k or a file's extension may name one; a
     // grammar file is held to --max-size and --timeout as any input is.
-    let grammars = std::mem::take(&mut args.grammars);
-    let limits = aless::load::Limits {
-        max_size: args.max_size,
-        timeout: args.timeout,
-    };
-    if let Err(e) = grammar::register_all(grammars, limits) {
-        refuse_usage(&e.to_string());
+    if let Err(e) = args.prepare() {
+        refuse_usage(&e);
     }
-    if let Some(name) = &args.kind_name {
-        match Format::from_name(name) {
-            Some(f) => args.kind = Some(f),
-            None => refuse_usage(&format!(
-                "unknown format: {name} (one of {})",
-                Format::known_names().join(" ")
-            )),
-        }
-    }
-    aless::load::set_limits(limits);
     let (width, height) = terminal::size().unwrap_or((80, 24));
     let mut app = App::new(args.opts, width, height);
 
@@ -522,82 +379,5 @@ fn convert(ev: Event) -> Option<Input> {
             _ => None,
         },
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use aless::cli::{Value, OPTIONS};
-
-    fn parse(argv: &[&str]) -> Result<Parsed, String> {
-        parse_args(argv.iter().map(OsString::from))
-    }
-
-    fn sample(long: &str, value: Value) -> &'static str {
-        match (long, value) {
-            (_, Value::Words(words)) => words[0],
-            (_, Value::Format) => "json",
-            ("--grammar", _) => "g=g.abnf",
-            ("--grammar-expr", _) => "g=doc = TX",
-            ("--max-size", _) => "1M",
-            _ => "1",
-        }
-    }
-
-    /// The table is the parser's gate, so every option the help, the man
-    /// page and the completions name is read, under each of its names.
-    #[test]
-    fn every_option_in_the_table_is_read() {
-        for opt in OPTIONS {
-            for name in opt.all_names() {
-                let mut argv = vec![name.as_str()];
-                if let Some((_, value)) = opt.arg {
-                    argv.push(sample(opt.long, value));
-                }
-                if let Err(e) = parse(&argv) {
-                    panic!("{argv:?}: {e}");
-                }
-                // Attached, a long option's value reads the same.
-                if let (Some((_, value)), true) = (opt.arg, name.starts_with("--")) {
-                    let attached = format!("{name}={}", sample(opt.long, value));
-                    if let Err(e) = parse(&[attached.as_str()]) {
-                        panic!("{attached}: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn an_option_the_table_does_not_list_is_refused() {
-        for argv in [&["--nope"][..], &["-x"], &["--Kind"], &["-kjson"]] {
-            match parse(argv) {
-                Err(e) => assert!(e.starts_with("unknown option: "), "{argv:?}: {e}"),
-                Ok(_) => panic!("{argv:?} was read"),
-            }
-        }
-        // After `--`, an option's name is a file's.
-        match parse(&["--", "--nope"]) {
-            Ok(Parsed::Run(args)) => assert_eq!(args.files, [PathBuf::from("--nope")]),
-            _ => panic!("-- --nope"),
-        }
-    }
-
-    #[test]
-    fn help_version_and_generate_print() {
-        let print = |argv: &[&str]| match parse(argv) {
-            Ok(Parsed::Print(text)) => text,
-            _ => panic!("{argv:?} prints nothing"),
-        };
-        assert_eq!(print(&["-h"]), cli::summary());
-        assert_eq!(print(&["--help"]), cli::reference());
-        assert_eq!(print(&["-V"]), format!("aless {}\n", cli::VERSION));
-        assert_eq!(print(&["--generate", "man"]), cli::man_page());
-        assert_eq!(print(&["--generate=complete-fish"]), cli::complete_fish());
-        let Err(e) = parse(&["--generate", "nope"]) else {
-            panic!("--generate nope");
-        };
-        assert!(e.starts_with("--generate writes man, "), "{e}");
     }
 }
