@@ -70,7 +70,7 @@ finding names its rule:
 | `first-person-singular` | "I", "my" or "mine" appears anywhere |
 | `exclamation` | an exclamation mark appears outside a tutorial, or a second one inside one |
 | `emoji` | an emoji appears anywhere in the page |
-| `internal-citation` | a published page cites an internal record |
+| `internal-citation` | a published page cites an internal record, or names the documentation framework |
 | `name-spelling` | a name is spelled a way `names` refuses |
 | `dead-link` | a relative link names a file that does not exist, or a heading its file does not have |
 | `guide-category` | a category of `reject.txt` has no summary in this guide |
@@ -130,6 +130,13 @@ may do. Where a page sits and what it is called say which kind it is:
 A project whose pages predate this layout lists each page's kind in its
 `AGENTS.md`; the prose gate reads which pages are tutorials from
 `tutorials` in `prose-gate.json`.
+
+**The framework is the authors' tool, and a published page never names
+it.** A reader needs the page that teaches, or the one that states the
+facts, not the scheme that sorted them, so the four kinds show in what
+each page does and where it sits, never in what a page says about
+itself. The prose gate's `internal-citation` rule refuses the name on a
+published page; a contributor page may use it.
 
 One fact appears in all four kinds at different altitudes (met in the
 tutorial, used in a how-to, specified in the reference, argued in the
@@ -195,9 +202,10 @@ lists the exempt pages.
 
 The enforced subset is the prose gate's `internal-citation` rule: a
 decision record by number, as "the ADR" or as `ADR.md`, a path into
-`sketch/` or `admin/`, a design note, a numbered decision, and a link
-to `AGENTS.md`, `CLAUDE.md`, `DEV-PROCESS.md` or this guide, with the
-project's own records added under `internal`. Vale does not carry this
+`sketch/` or `admin/`, a design note, a numbered decision, the name of
+the documentation framework, and a link to `AGENTS.md`, `CLAUDE.md`,
+`DEV-PROCESS.md` or this guide, with the project's own records added
+under `internal`. Vale does not carry this
 one, because the file sets differ.
 
 ## The voice
@@ -532,10 +540,9 @@ argument.
 
 ## Updating this guide
 
-This guide is the same in every project that uses it. It is kept in
-[agent-info](https://github.com/rjrodger/agent-info), where a rule
-changes with its reasoning in the commit message, and a project takes
-the change by copying the file again, never by editing its copy.
+Change it the way behaviour changes: in the same commit as the first
+page that follows the new rule, with the reasoning in the commit
+message.
 
 To ban a phrase, add the regular expression to
 `.vale/styles/config/vocabularies/House/reject.txt` and summarise it in
