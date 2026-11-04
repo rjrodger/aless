@@ -13,7 +13,7 @@ const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// A Diátaxis kind: a directory of pages.
+/// A directory of pages: a Diátaxis kind, or a person's own writing.
 struct Section {
     dir: &'static str,
     /// The navigation's name for the section.
@@ -24,6 +24,10 @@ struct Section {
     /// a section listed flat. A page of a grouped section names its group
     /// in its front matter.
     groups: &'static [Group],
+    /// Written by a person, in their own words: each page names its
+    /// `author`, and the style guide's gates leave the section out
+    /// (`the_gates_read_every_page_but_the_human_ones`).
+    human: bool,
 }
 
 /// A heading in a section's list: the pages under it share a situation.
@@ -34,12 +38,13 @@ struct Group {
 }
 
 /// The sections, in the order the navigation lists them.
-const SECTIONS: [Section; 4] = [
+const SECTIONS: [Section; 5] = [
     Section {
         dir: "tutorials",
         label: "Tutorials",
         kind: "Tutorial",
         groups: &[],
+        human: false,
     },
     Section {
         dir: "how-to",
@@ -63,18 +68,28 @@ const SECTIONS: [Section; 4] = [
                         a format of your own.",
             },
         ],
+        human: false,
     },
     Section {
         dir: "reference",
         label: "Reference",
         kind: "Reference",
         groups: &[],
+        human: false,
     },
     Section {
         dir: "explanation",
         label: "Explanation",
         kind: "Explanation",
         groups: &[],
+        human: false,
+    },
+    Section {
+        dir: "why",
+        label: "Why",
+        kind: "Human written",
+        groups: &[],
+        human: true,
     },
 ];
 
@@ -102,6 +117,9 @@ struct Page {
     /// `groups`; `None` in a section listed flat, and for a page in no
     /// list.
     group: Option<usize>,
+    /// Who wrote it, for a page of a human-written section; `None` for
+    /// every other page.
+    author: Option<String>,
     /// The Markdown it was written in, without its front matter; `None`
     /// for a page written from the binary.
     markdown: Option<String>,
@@ -305,6 +323,14 @@ fn markdown_pages() -> Vec<Page> {
                 ),
                 (false, None) => None,
             };
+            let author = meta.get("author").cloned();
+            let human = section.is_some_and(|s| SECTIONS[s].human);
+            assert_eq!(
+                author.is_some(),
+                human,
+                "{origin}: a page of a human-written section names its author, and no \
+                 other page does"
+            );
             pages.push(Page {
                 path,
                 title: field("title"),
@@ -312,6 +338,7 @@ fn markdown_pages() -> Vec<Page> {
                 order,
                 section,
                 group,
+                author,
                 body: markdown_html(&markdown),
                 markdown: Some(markdown),
                 text: None,
@@ -349,7 +376,7 @@ fn front_matter(text: &str, origin: &str) -> (BTreeMap<String, String>, String) 
             .split_once(':')
             .unwrap_or_else(|| panic!("{origin}: {line:?} is not key: value"));
         assert!(
-            ["title", "description", "order", "group"].contains(&key),
+            ["title", "description", "order", "group", "author"].contains(&key),
             "{origin}: unknown front matter key {key}"
         );
         meta.insert(key.to_string(), value.trim().to_string());
@@ -449,6 +476,7 @@ fn reference_pages() -> Vec<Page> {
             order: 1,
             section: Some(REFERENCE),
             group: None,
+            author: None,
             markdown: None,
             text: Some(aless::cli::reference()),
             origin: "src/cli.rs".into(),
@@ -464,6 +492,7 @@ fn reference_pages() -> Vec<Page> {
             order: 2,
             section: Some(REFERENCE),
             group: None,
+            author: None,
             body: keys_html(),
             markdown: Some(keys_markdown()),
             text: Some(aless::app::help_lines().join("\n") + "\n"),
@@ -527,6 +556,7 @@ fn releases_page() -> Page {
         order: 4,
         section: Some(REFERENCE),
         group: None,
+        author: None,
         body: html,
         markdown: Some(markdown),
         text: None,
@@ -754,11 +784,15 @@ fn list_sections(pages: &mut [Page]) {
     }
 }
 
-/// A section's pages as a list of rows, grouped where the section is.
+/// A section's pages as a list of rows, grouped where the section is;
+/// nothing for a section whose one page is its index.
 fn list_html(pages: &[Page], section: usize) -> String {
     let groups = SECTIONS[section].groups;
     let members = members(pages, section);
     let mut out = String::new();
+    if members.is_empty() {
+        return out;
+    }
     if groups.is_empty() {
         out.push_str("<ul class=\"list\">\n");
         for &page in &members {
@@ -815,6 +849,13 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
     // A section's index is named for its kind already: "How-to guides"
     // needs no "How-to guide" above it.
     let head = match page.section {
+        // A person's own page is marked as theirs, under its title.
+        Some(s) if SECTIONS[s].human => format!(
+            "<p class=\"kind\">{}</p>\n<h1>{}</h1>\n<p class=\"lede\">By {}</p>\n",
+            SECTIONS[s].kind,
+            escape(&page.title),
+            escape(page.author.as_deref().unwrap())
+        ),
         Some(_) if page.is_index() => format!(
             "<h1>{}</h1>\n<p class=\"lede\">{}</p>\n",
             escape(&page.title),
@@ -860,8 +901,12 @@ fn render(layout: &str, page: &Page, pages: &[Page]) -> String {
                     .unwrap_or_default(),
                 pager(page, pages),
                 format!(
-                    "<p class=\"describes\">Describes aless {VERSION}. {edit} · \
+                    "<p class=\"describes\">{}{edit} · \
                      <a href=\"/{}\">This page as Markdown</a></p>\n",
+                    match page.author {
+                        Some(_) => String::new(),
+                        None => format!("Describes aless {VERSION}. "),
+                    },
                     twin_path(page)
                 ),
             )
@@ -934,7 +979,7 @@ fn sections(page: &Page, pages: &[Page]) -> String {
             "<a class=\"nav-link\" href=\"/{index}\"{current}>{}</a>\n",
             section.label
         ));
-        if page.section != Some(i) {
+        if page.section != Some(i) || members(pages, i).is_empty() {
             continue;
         }
         out.push_str(&format!(
@@ -985,7 +1030,7 @@ fn nav(page: &Page, pages: &[Page]) -> String {
             section.label
         ));
         let members = members(pages, i);
-        if section.groups.is_empty() {
+        if section.groups.is_empty() && !members.is_empty() {
             out.push_str("<ul>\n");
             for &member in &members {
                 out.push_str(&link(member));
@@ -1045,6 +1090,9 @@ fn pager(page: &Page, pages: &[Page]) -> String {
         .unwrap();
     let mut sequence = vec![index];
     sequence.extend(members(pages, section));
+    if sequence.len() == 1 {
+        return String::new();
+    }
     let at = sequence.iter().position(|p| p.path == page.path).unwrap();
     let link = |p: &Page, class: &str, label: &str| {
         format!(
@@ -1204,7 +1252,11 @@ fn twin(page: &Page, pages: &[Page]) -> String {
         }
         (None, None) => panic!("{}: neither Markdown nor text", page.path),
     };
-    let mut out = format!("# {}\n\n{}\n\n{body}", page.title, page.description);
+    let mut out = format!("# {}\n\n{}\n\n", page.title, page.description);
+    if let Some(author) = &page.author {
+        out.push_str(&format!("Human written, by {author}.\n\n"));
+    }
+    out.push_str(&body);
     if let Some(section) = page.section.filter(|_| page.is_index()) {
         out.push_str(&listing(pages, section, "## "));
     }
@@ -1225,6 +1277,9 @@ fn listing(pages: &[Page], section: usize, heading: &str) -> String {
         )
     };
     let mut out = String::new();
+    if members.is_empty() {
+        return out;
+    }
     if groups.is_empty() {
         out.push('\n');
         for &page in &members {
@@ -1244,7 +1299,8 @@ fn listing(pages: &[Page], section: usize, heading: &str) -> String {
 fn llms(pages: &[Page]) -> String {
     let mut out = format!(
         "# aless\n\n> {}.\n\nThe documentation of aless {VERSION}, in four kinds: \
-         tutorials, how-to guides, reference and explanation. Every page has a Markdown \
+         tutorials, how-to guides, reference and explanation, and why aless was written, \
+         in its author's words. Every page has a Markdown \
          version at its address with .md for .html, \
          and the reference is also plain text, as aless --help and F1 print it.\n",
         aless::cli::TAGLINE
@@ -1260,7 +1316,11 @@ fn llms(pages: &[Page]) -> String {
                 page.description
             )
         };
-        let members = members(pages, i);
+        // A section whose one page is its index lists that page.
+        let mut members = members(pages, i);
+        if members.is_empty() {
+            members.extend(pages.iter().filter(|p| p.section == Some(i)));
+        }
         if groups.is_empty() {
             out.push('\n');
             for &page in &members {
@@ -1546,6 +1606,35 @@ fn the_formats_page_is_the_binarys() {
                 format.name()
             );
         }
+    }
+}
+
+/// The style guide's gates read every page of the site but the pages a
+/// person wrote. `prose-gate.json` names each directory it gates rather
+/// than all of `docs/`, so a section added without its directory there
+/// would go unchecked, and this fails instead.
+#[test]
+fn the_gates_read_every_page_but_the_human_ones() {
+    let config = read(&root().join("admin/scripts/prose-gate.json"));
+    assert!(
+        !config.contains("\"docs/**"),
+        "prose-gate.json gates all of docs/, and with it the pages a person wrote"
+    );
+    for dir in ["docs/*.md", "docs/contributing/*.md"] {
+        assert!(
+            config.contains(&format!("\"{dir}\"")),
+            "prose-gate.json does not gate {dir}"
+        );
+    }
+    for section in &SECTIONS {
+        let glob = format!("\"docs/{}/*.md\"", section.dir);
+        assert_eq!(
+            config.contains(&glob),
+            !section.human,
+            "prose-gate.json gates docs/{}/ when, and only when, a person did not \
+             write it",
+            section.dir
+        );
     }
 }
 

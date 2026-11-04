@@ -5,7 +5,12 @@
     "RELEASING.md",
     "PACKAGING.md",
     "examples/README.md",
-    "docs/**/*.md"
+    "docs/*.md",
+    "docs/tutorials/*.md",
+    "docs/how-to/*.md",
+    "docs/reference/*.md",
+    "docs/explanation/*.md",
+    "docs/contributing/*.md"
   ],
   "tutorials": [
     "docs/tutorials/viewer.md"

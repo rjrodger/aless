@@ -18,6 +18,16 @@ from start to end), `how-to/` (one task each), `reference/` and
 `docs/index.md` and `docs/404.md`. `STYLE-GUIDE.md` names pages by file
 name; these predate that layout, so a page's kind is its directory.
 
+`why/` is none of the four. Its one page, `why/index.md`, is Richard
+Rodger's own account of why aless exists, and the site marks it "Human
+written" above its title, with a byline below. It names its `author` in its front
+matter, which a page of any other section may not, and it sits outside
+the style guide: `admin/scripts/prose-gate.json` names each directory
+it gates rather than all of `docs/`, leaving `why/` out, and
+`the_gates_read_every_page_but_the_human_ones` fails if a new section's
+directory is missing from that list. Its text changes only when its
+author changes it; its captures are drawn and checked like any other.
+
 The pages under `docs/contributing/` are contributor pages, for someone
 working on aless rather than with it. The site build does not publish
 them.
@@ -29,7 +39,8 @@ in its section's list (every page of a section but its index), `order`,
 its place in the list. The how-to guides are listed by group, so each
 also names its `group`, the heading it is under: "Setting up", "Reading
 a document" or "Files and formats", the groups `SECTIONS` in
-`tests/site.rs` declares. The layout writes the page's one `h1`, so the Markdown starts at
+`tests/site.rs` declares. A page of the human-written section names its
+`author` as well. The layout writes the page's one `h1`, so the Markdown starts at
 `##`. A value holds no colon followed by a space: Vale reads the front
 matter as YAML, and the build reads each line as `key: value`.
 
