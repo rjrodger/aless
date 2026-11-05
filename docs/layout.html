@@ -92,9 +92,9 @@
 </footer>
 <script>
 // The theme toggle, the header's menu on a narrow screen, the sidebar
-// scrolled to this page, a cue on a block that scrolls sideways, and, on
-// a site read from disk, the index.html a link to a directory leaves to
-// the server.
+// scrolled to this page, the focus for a block that scrolls sideways, a
+// copy button on each box of commands, and, on a site read from disk, the
+// index.html a link to a directory leaves to the server.
 (function () {
   if (location.protocol === "file:") {
     var dirs = document.querySelectorAll("a[href]");
@@ -151,25 +151,121 @@
       - side.clientHeight / 3;
   }
 
-  function cue(el) {
-    var wide = el.scrollWidth > el.clientWidth + 1;
-    el.classList.toggle("scrolls", wide && el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
-    if (wide && !el.hasAttribute("tabindex")) {
-      el.setAttribute("tabindex", "0");
-      if (el.classList.contains("table-wrap")) {
-        el.setAttribute("role", "region");
-        el.setAttribute("aria-label", "Table, scrolls sideways");
-      }
+  // A block wider than its column takes the focus, so that the arrow keys
+  // scroll it, and a table's box says that it scrolls.
+  function reachable(el) {
+    if (el.scrollWidth <= el.clientWidth + 1 || el.hasAttribute("tabindex")) return;
+    el.setAttribute("tabindex", "0");
+    if (el.classList.contains("table-wrap")) {
+      el.setAttribute("role", "region");
+      el.setAttribute("aria-label", "Table, scrolls sideways");
     }
   }
   var blocks = document.querySelectorAll("pre, .table-wrap");
-  function cueAll() { for (var i = 0; i < blocks.length; i++) cue(blocks[i]); }
-  for (var i = 0; i < blocks.length; i++) {
-    blocks[i].addEventListener("scroll", function (e) { cue(e.currentTarget); }, { passive: true });
+  function reachAll() { for (var i = 0; i < blocks.length; i++) reachable(blocks[i]); }
+  reachAll();
+  window.addEventListener("resize", reachAll);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(reachAll);
+
+  // A box of commands gets a copy button. A console block copies its
+  // commands alone, without the prompt or the output, and any other block
+  // copies its whole text.
+  var said = document.createElement("span");
+  said.className = "sr-only";
+  said.setAttribute("aria-live", "polite");
+  document.body.appendChild(said);
+  // What a block's button copies, as spans of the block's text, each a
+  // start and an end: in a console block a span for each command line.
+  function spans(code) {
+    var text = code.textContent, out = [];
+    if (code.classList.contains("language-console")) {
+      var lines = text.split("\n"), at = 0, more = false;
+      for (var i = 0; i < lines.length; i++) {
+        var start = at, end = at + lines[i].length;
+        at = end + 1;
+        if (lines[i].indexOf("$ ") === 0) start += 2;
+        else if (!more) continue;
+        out.push([start, end]);
+        more = /\\$/.test(lines[i]);
+      }
+    }
+    if (!out.length) out.push([0, text.replace(/\n+$/, "").length]);
+    return out;
   }
-  cueAll();
-  window.addEventListener("resize", cueAll);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(cueAll);
+  function commands(code) {
+    var text = code.textContent;
+    return spans(code).map(function (span) { return text.slice(span[0], span[1]); }).join("\n");
+  }
+  // Where no clipboard can be reached, what the button would have copied
+  // is selected instead: as one stretch of the block where it is one, and
+  // as the whole block where output lies between its commands.
+  function select(code) {
+    var parts = spans(code), node = code.firstChild, range = document.createRange();
+    var one = code.childNodes.length === 1 && node.nodeType === 3;
+    for (var i = 1; one && i < parts.length; i++) one = parts[i][0] === parts[i - 1][1] + 1;
+    if (one) {
+      range.setStart(node, parts[0][0]);
+      range.setEnd(node, parts[parts.length - 1][1]);
+    } else {
+      range.selectNodeContents(code);
+    }
+    var selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  function copy(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function (done, failed) {
+      var back = document.activeElement;
+      var area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(area);
+      // Selecting the text moved the focus to it, so the focus goes back.
+      if (back && back.focus) back.focus({ preventScroll: true });
+      if (ok) done(); else failed();
+    });
+  }
+  var key = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "Command+C" : "Ctrl+C";
+  var icons =
+    '<svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" ' +
+    'height="11" rx="2"></rect><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"></path></svg>' +
+    '<svg class="i-done" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
+  var boxes = document.querySelectorAll(".code-box");
+  for (var b = 0; b < boxes.length; b++) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy";
+    button.title = "Copy";
+    button.innerHTML = icons;
+    boxes[b].appendChild(button);
+  }
+  document.addEventListener("click", function (e) {
+    var button = e.target.closest && e.target.closest(".copy");
+    if (!button) return;
+    var code = button.parentNode.querySelector("code");
+    clearTimeout(button.timer);
+    copy(commands(code)).then(function () {
+      button.classList.add("done");
+      said.textContent = "Copied";
+      button.timer = setTimeout(function () {
+        button.classList.remove("done");
+        said.textContent = "";
+      }, 2000);
+    }, function () {
+      button.classList.remove("done");
+      select(code);
+      said.textContent = "The copy failed. The text is selected, so press " + key + " to copy it.";
+    });
+  });
 })();
 </script>
 </body>
