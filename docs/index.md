@@ -4,8 +4,14 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown, and more as 
 ---
 <section class="intro">
 <img class="logo logo-light" src="/logo-light.svg" alt="aless" width="1490" height="430" loading="lazy"><img class="logo logo-dark" src="/logo-dark.svg" alt="aless" width="1490" height="430" loading="lazy">
-<h1>Every format as one tree, in a viewer for the terminal</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, Markdown, and many more formats. Every format becomes the same kind of tree. aless shows that tree in your terminal. With the keys of jless, you move through the tree, fold it, search it, and copy from it. Several files open in tabs. A directory opens as an <a href="/how-to/explore.html">explorer</a>. When a file changes on disk, aless reads it again and keeps your place.</p>
+<h1>A terminal viewer for plain text data files</h1>
+<p class="lede">View JSON (and variants), YAML, TOML, CSV, XML, Markdown, and
+many more formats directly in your terminal. Review the tree
+structure of the data format directly with your keyboard. If the file
+changes, <code>aless</code> reloads and keeps your place. Great for reviewing
+generated OpenAPI specs, XML documents, CSV files and other large
+mucky things.</p>
+<p>A quick shout out to <a href="https://jless.io">jless</a>, which was the inspiration for this project.</p>
 <p class="actions"><a class="button primary" href="/tutorials/viewer.html">Take the tutorial</a> <a class="button" href="/how-to/install.html">Install aless</a></p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
@@ -71,19 +77,19 @@ For more information about the extensions that imply each format, and about what
 ## Documentation
 
 <div class="cards">
-<a class="card" href="/tutorials/index.html">
+<a class="card" href="/tutorials/">
 <h3>Tutorial</h3>
 <p>The tutorial is one lesson from the start: open a file, move through it, fold it, search it, and copy from it. Then change the file on disk, and watch aless keep your place.</p>
 </a>
-<a class="card" href="/how-to/index.html">
+<a class="card" href="/how-to/">
 <h3>How-to guides</h3>
 <p>Each guide solves one task: search a document, follow a file as it changes, open several files in tabs, browse a directory, find out why a file does not parse, or read a format of your own.</p>
 </a>
-<a class="card" href="/reference/index.html">
+<a class="card" href="/reference/">
 <h3>Reference</h3>
 <p>The reference holds every option, key, format, and limit, and every release. It is written from the aless binary and its changelog.</p>
 </a>
-<a class="card" href="/explanation/index.html">
+<a class="card" href="/explanation/">
 <h3>Explanation</h3>
 <p>The explanation pages say why aless works as it does: why every format becomes one tree, where each value came from, how a reload keeps your place, and what large inputs cost.</p>
 </a>

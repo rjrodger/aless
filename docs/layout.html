@@ -66,16 +66,16 @@
 </div>
 <nav class="col" aria-label="Documentation">
 <p class="col-head">Documentation</p>
-<a href="{{root}}tutorials/index.html">Tutorials</a>
-<a href="{{root}}how-to/index.html">How-to guides</a>
-<a href="{{root}}reference/index.html">Reference</a>
-<a href="{{root}}explanation/index.html">Explanation</a>
+<a href="{{root}}tutorials/">Tutorials</a>
+<a href="{{root}}how-to/">How-to guides</a>
+<a href="{{root}}reference/">Reference</a>
+<a href="{{root}}explanation/">Explanation</a>
 <a href="{{root}}reference/releases.html">Releases</a>
 <a href="{{root}}llms.txt">llms.txt</a>
 </nav>
 <nav class="col" aria-label="Project">
 <p class="col-head">Project</p>
-<a href="{{root}}why/index.html">Why aless</a>
+<a href="{{root}}why/">Why aless</a>
 <a href="https://github.com/rjrodger/aless">Source</a>
 <a href="https://github.com/rjrodger/aless/releases">Releases on GitHub</a>
 <a href="https://github.com/rjrodger/aless/issues">Issues</a>
@@ -92,8 +92,18 @@
 </footer>
 <script>
 // The theme toggle, the header's menu on a narrow screen, the sidebar
-// scrolled to this page, and a cue on a block that scrolls sideways.
+// scrolled to this page, a cue on a block that scrolls sideways, and, on
+// a site read from disk, the index.html a link to a directory leaves to
+// the server.
 (function () {
+  if (location.protocol === "file:") {
+    var dirs = document.querySelectorAll("a[href]");
+    for (var d = 0; d < dirs.length; d++) {
+      var to = /^([^:#?]*\/|\.\.?)(#.*)?$/.exec(dirs[d].getAttribute("href"));
+      if (to) dirs[d].setAttribute("href", to[1].replace(/\/?$/, "/") + "index.html" + (to[2] || ""));
+    }
+  }
+
   var root = document.documentElement;
   var media = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
   function dark() {

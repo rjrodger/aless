@@ -318,3 +318,54 @@ passed, and so deploy the site.
 ```
 Merge and deploy
 ```
+
+## 2026-11-05 10:56 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+on the site, the favicon should reflect the actual logo. no direct links to index.html files - use the domain and folder path format
+```
+
+## 2026-11-05 11:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+Sent after asking how to view local changes to the site, and whether the
+preview directory is ignored by git.
+
+```
+add a scripts top level folder, and add script to build the site, and then view it
+```
+
+## 2026-11-05 12:51 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+About the jless link in the owner's own uncommitted edit to docs/index.md.
+
+```
+fix the broken link
+```
+
+## 2026-11-05 12:54 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+About the home page's new intro in the owner's uncommitted edit, after
+the agent reported that its lede held a paragraph browsers close it on.
+
+```
+fix the intro. what does the prose gate say?
+```
+
+## 2026-11-05 13:00 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+Sent after the owner reworded the home page's intro to pass the prose
+gate; the go-ahead to push it with #114, merge, and deploy the site.
+
+```
+reworded, push and publish
+```

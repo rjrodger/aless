@@ -155,3 +155,8 @@ runtimes
 [Pp]arser's
 [Pp]arse's
 else's
+
+# The site's icon and the logo it is drawn from.
+[Ff]avicons?
+[Mm]ultitool
+[Ww]ordmark
