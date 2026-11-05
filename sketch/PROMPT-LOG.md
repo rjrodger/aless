@@ -407,3 +407,13 @@ bump of the release asked for above).
 ```
 merge 116 when green
 ```
+
+## 2026-11-05 17:31 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+A question, asked after the 0.7.0 release.
+
+```
+when a file reloads, are the changes highlighted?
+```
