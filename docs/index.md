@@ -11,7 +11,7 @@ structure of the data format directly with your keyboard. If the file
 changes, <code>aless</code> reloads and keeps your place. Great for reviewing
 generated OpenAPI specs, XML documents, CSV files and other large
 mucky things.</p>
-<p>A quick shout out to <a href="https://jless.io">jless</a>, which was the inspiration for this project.</p>
+<p>And a quick shout out to <a href="https://jless.io">jless</a>, which was the inspiration for this project.</p>
 <p class="actions"><a class="button primary" href="/tutorials/viewer.html">Take the tutorial</a> <a class="button" href="/how-to/install.html">Install aless</a></p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
