@@ -192,7 +192,7 @@ fn build() -> Site {
             );
         }
     }
-    for name in ["style.css", "favicon.svg", "logo.svg", "CNAME"] {
+    for name in ["style.css", "logo.svg", "CNAME"] {
         let bytes = std::fs::read(sources().join(name)).unwrap();
         files.insert(name.to_string(), bytes);
     }
@@ -212,6 +212,7 @@ fn build() -> Site {
         logo.replace(rule, "#aless-wordmark { fill: #f1e8cd }")
             .into_bytes(),
     );
+    files.insert("favicon.svg".into(), favicon(&logo).into_bytes());
     // The faces, served from the site itself: a page requests nothing
     // anywhere else.
     for entry in std::fs::read_dir(sources().join("fonts")).unwrap() {
@@ -235,6 +236,46 @@ fn build() -> Site {
     files.insert("llms.txt".into(), llms(&pages).into_bytes());
     files.insert("sitemap.xml".into(), sitemap(&pages).into_bytes());
     Site { pages, files }
+}
+
+/// The square of `docs/logo.svg` the favicon shows: the multitool's box,
+/// with a margin, and none of the wordmark. A logo whose multitool moves
+/// or changes size needs this measured again.
+const FAVICON_VIEW: &str = "111 169 573 573";
+
+/// The favicon: the logo's multitool, drawn from the logo's own paths, so
+/// the icon takes up any change to the tool's shapes and colours. The
+/// wordmark goes, since no tab is wide enough to read it. So do the logo's
+/// title, description and comments, and the rule that colours the wordmark.
+fn favicon(logo: &str) -> String {
+    let wordmark = Regex::new(r#"<path id="aless-wordmark"[^>]*/>\n?"#).unwrap();
+    assert!(
+        wordmark.is_match(logo),
+        "docs/logo.svg lacks the wordmark the favicon leaves out"
+    );
+    let words = Regex::new(
+        r"(?s)<title.*?</title>\n?|<desc.*?</desc>\n?|<!--.*?-->\n?|<style>.*?</style>\n?",
+    )
+    .unwrap();
+    let open = Regex::new(r"<svg\b[^>]*>").unwrap();
+    let tool = words
+        .replace_all(&wordmark.replace(logo, ""), "")
+        .into_owned();
+    let icon = open
+        .replace(
+            &tool,
+            format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" \
+                 viewBox=\"{FAVICON_VIEW}\">"
+            )
+            .as_str(),
+        )
+        .into_owned();
+    assert!(
+        icon.contains(&format!("viewBox=\"{FAVICON_VIEW}\"")) && !icon.contains("aless-wordmark"),
+        "the favicon is not the multitool alone: docs/logo.svg's root or wordmark changed shape"
+    );
+    icon
 }
 
 /// Every page written in Markdown: `docs/index.md`, `docs/404.md`, and
@@ -813,9 +854,9 @@ fn list_html(pages: &[Page], section: usize) -> String {
 /// A page's row in its section's list: its title and its description.
 fn row(page: &Page) -> String {
     format!(
-        "<li><a class=\"row\" href=\"/{}\"><span class=\"row-title\">{}</span>\
+        "<li><a class=\"row\" href=\"{}\"><span class=\"row-title\">{}</span>\
          <span class=\"row-desc\">{}</span></a></li>\n",
-        page.path,
+        href(&page.path),
         escape(&page.title),
         escape(&page.description)
     )
@@ -967,7 +1008,8 @@ fn sections(page: &Page, pages: &[Page]) -> String {
             (false, _) => "",
         };
         out.push_str(&format!(
-            "<a class=\"nav-link\" href=\"/{index}\"{current}>{}</a>\n",
+            "<a class=\"nav-link\" href=\"{}\"{current}>{}</a>\n",
+            href(&index),
             section.label
         ));
         if page.section != Some(i) || members(pages, i).is_empty() {
@@ -979,8 +1021,8 @@ fn sections(page: &Page, pages: &[Page]) -> String {
         ));
         for member in members(pages, i) {
             out.push_str(&format!(
-                "<li><a href=\"/{}\"{}>{}</a></li>\n",
-                member.path,
+                "<li><a href=\"{}\"{}>{}</a></li>\n",
+                href(&member.path),
                 match member.path == page.path {
                     true => " aria-current=\"page\"",
                     false => "",
@@ -1005,8 +1047,8 @@ fn nav(page: &Page, pages: &[Page]) -> String {
     };
     let link = |member: &Page| {
         format!(
-            "<li><a class=\"side-link\" href=\"/{}\"{}>{}</a></li>\n",
-            member.path,
+            "<li><a class=\"side-link\" href=\"{}\"{}>{}</a></li>\n",
+            href(&member.path),
             current(&member.path),
             escape(&member.title)
         )
@@ -1016,7 +1058,8 @@ fn nav(page: &Page, pages: &[Page]) -> String {
     for (i, section) in SECTIONS.iter().enumerate() {
         let index = format!("{}/index.html", section.dir);
         out.push_str(&format!(
-            "<div class=\"group\">\n<p class=\"group-head\"><a href=\"/{index}\"{}>{}</a></p>\n",
+            "<div class=\"group\">\n<p class=\"group-head\"><a href=\"{}\"{}>{}</a></p>\n",
+            href(&index),
             current(&index),
             section.label
         ));
@@ -1087,8 +1130,8 @@ fn pager(page: &Page, pages: &[Page]) -> String {
     let at = sequence.iter().position(|p| p.path == page.path).unwrap();
     let link = |p: &Page, class: &str, label: &str| {
         format!(
-            "<a class=\"pg {class}\" href=\"/{}\"><span>{label}</span>{}</a>",
-            p.path,
+            "<a class=\"pg {class}\" href=\"{}\"><span>{label}</span>{}</a>",
+            href(&p.path),
             escape(&p.title)
         )
     };
@@ -1103,23 +1146,23 @@ fn pager(page: &Page, pages: &[Page]) -> String {
     format!("<nav class=\"pager\" aria-label=\"Previous and next\">\n{prev}\n{next}\n</nav>\n")
 }
 
-/// Links from the site's root (`/how-to/search.html`) made relative to a
-/// page `root` above it (`../how-to/search.html`), so that the site reads
-/// the same from a directory on disk as from its domain.
+/// Links from the site's root (`/how-to/search.html`, `/how-to/`) made
+/// relative to a page `root` above it (`../how-to/`), so that the site
+/// reads the same from a directory on disk as from its domain. A link to a
+/// directory stays one, and the layout's script adds `index.html` to it on
+/// disk, where no server does.
 fn relative(html: &str, root: &str) -> String {
     let link = Regex::new(r#"(href|src)="/([^"/][^"]*)?""#).unwrap();
     link.replace_all(html, |c: &regex::Captures| {
-        let target = c.get(2).map_or("", |m| m.as_str());
-        let (path, fragment) = match target.split_once('#') {
-            Some((path, fragment)) => (path, format!("#{fragment}")),
-            None => (target, String::new()),
+        let target = format!("{root}{}", c.get(2).map_or("", |m| m.as_str()));
+        // The home page's link to itself is `./`, its directory. An empty
+        // link would name the address the page was opened at, which may
+        // be `/index.html`.
+        let target = match target.is_empty() || target.starts_with('#') {
+            true => format!("./{target}"),
+            false => target,
         };
-        let path = if path.is_empty() || path.ends_with('/') {
-            format!("{path}index.html")
-        } else {
-            path.to_string()
-        };
-        format!("{}=\"{root}{path}{fragment}\"", &c[1])
+        format!("{}=\"{target}\"", &c[1])
     })
     .into_owned()
 }
@@ -1211,8 +1254,13 @@ fn escape(text: &str) -> String {
 
 /// A page's address on the web: a directory's index by the directory.
 fn url(path: &str) -> String {
-    let path = path.strip_suffix("index.html").unwrap_or(path);
-    format!("{HOMEPAGE}/{path}")
+    format!("{HOMEPAGE}{}", href(path))
+}
+
+/// A link to a page from the site's root, a directory's index named by its
+/// directory: `/how-to/search.html`, `/how-to/`, and `/` for the home page.
+fn href(path: &str) -> String {
+    format!("/{}", path.strip_suffix("index.html").unwrap_or(path))
 }
 
 /// Where a page's Markdown twin is published: its path with `.md`.
@@ -1397,6 +1445,7 @@ fn the_site_builds_and_its_links_hold() {
     let pre = Regex::new(r"(?s)<pre[ >].*?</pre>").unwrap();
     let mut broken = Vec::new();
     let mut stray = Vec::new();
+    let mut named_index = Vec::new();
     for page in &site.pages {
         let html = String::from_utf8_lossy(&site.files[&page.path]).to_string();
         assert!(
@@ -1417,6 +1466,9 @@ fn the_site_builds_and_its_links_hold() {
         };
         for c in href.captures_iter(&html) {
             let link = c[1].replace("&amp;", "&");
+            if link.split('#').next().unwrap_or("").ends_with("index.html") {
+                named_index.push(format!("{}: {link}", page.path));
+            }
             if ["https://", "http://", "mailto:"]
                 .iter()
                 .any(|s| link.starts_with(s))
@@ -1424,12 +1476,19 @@ fn the_site_builds_and_its_links_hold() {
                 continue;
             }
             let (path, fragment) = link.split_once('#').unwrap_or((&link, ""));
+            // A directory is served as its index.
+            let folder = path.ends_with('/') || path == ".." || path == ".";
             let target = if path.is_empty() {
                 page.path.clone()
             } else if let Some(absolute) = path.strip_prefix('/') {
-                absolute.to_string()
+                resolve("", absolute)
             } else {
                 resolve(&dir, path)
+            };
+            let target = match (folder, target.is_empty()) {
+                (false, _) => target,
+                (true, true) => "index.html".to_string(),
+                (true, false) => format!("{target}/index.html"),
             };
             let Some(file) = site.files.get(&target) else {
                 broken.push(format!("{}: {link} (no {target})", page.path));
@@ -1464,6 +1523,27 @@ fn the_site_builds_and_its_links_hold() {
         broken.is_empty(),
         "links that reach nothing:\n{}",
         broken.join("\n")
+    );
+    // A directory's index is linked by the directory, as its address is:
+    // `/how-to/`, not `/how-to/index.html`. The same holds for the
+    // Markdown twins, the .txt files and the sitemap, which the walk over
+    // the pages above does not read.
+    let addressed =
+        Regex::new(r#"(?:href|src)="[^"]*index\.html|\]\([^)]*index\.html|<loc>[^<]*index\.html"#)
+            .unwrap();
+    for (path, bytes) in &site.files {
+        if [".md", ".txt", ".xml"].iter().any(|e| path.ends_with(e)) {
+            let text = String::from_utf8_lossy(bytes);
+            for m in addressed.find_iter(&text) {
+                named_index.push(format!("{path}: {}", m.as_str()));
+            }
+        }
+    }
+    assert!(
+        named_index.is_empty(),
+        "links that name index.html, where the directory is the address \
+         (/how-to/, not /how-to/index.html):\n{}",
+        named_index.join("\n")
     );
     // The comments the tests read are the build's, not the reader's.
     for (path, bytes) in &site.files {

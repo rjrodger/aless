@@ -56,8 +56,13 @@ matter as YAML and the build reads each line as `key: value`.
 ## Links
 
 A link between pages runs from the site's root, as `/how-to/search.html`
-does. The build makes each link relative, so the site reads the same
-from a directory on disk as from its domain. `docs/` is not in the prose
+does. A link to a section's index names the section's directory, as
+`/how-to/` does. A link to the home page is `/`. No link names
+`index.html`, because the directory is the page's address.
+`tests/site.rs` fails on a link that names `index.html`. The build makes each link
+relative, so the site reads the same from a directory on disk as from
+its domain. On disk, no server finds a directory's `index.html`, so the
+layout's script adds it to each link to a directory. `docs/` is not in the prose
 gate's `links` list, because the gate's link check reads repository
 files and these links name the built site's files. Instead,
 `tests/site.rs` checks every link and every `#anchor` of the built
@@ -90,6 +95,15 @@ Markdown pages.
 The site is drawn as tabnas.dev is: `docs/style.css` carries the design
 tokens of tabnas/web whole, and `docs/fonts/` carries the faces of
 tabnas/web. A page therefore requests nothing from anywhere else.
+
+The build draws the favicon from `docs/logo.svg`. The favicon is the
+logo's multitool without the wordmark, which no tab is wide enough to
+read. The favicon takes up any change to the multitool's shapes and
+colours, because the build draws it from the logo's own paths. Its crop
+is fixed: `FAVICON_VIEW` in `tests/site.rs` is the multitool's box,
+square, with a margin. A logo whose multitool moves or changes size
+needs that box measured again. In a browser, remove `#aless-wordmark`
+from the logo and read `getBBox()` of its root `<svg>`.
 
 ## Examples and captures
 

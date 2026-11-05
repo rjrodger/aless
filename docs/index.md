@@ -71,19 +71,19 @@ For more information about the extensions that imply each format, and about what
 ## Documentation
 
 <div class="cards">
-<a class="card" href="/tutorials/index.html">
+<a class="card" href="/tutorials/">
 <h3>Tutorial</h3>
 <p>The tutorial is one lesson from the start: open a file, move through it, fold it, search it, and copy from it. Then change the file on disk, and watch aless keep your place.</p>
 </a>
-<a class="card" href="/how-to/index.html">
+<a class="card" href="/how-to/">
 <h3>How-to guides</h3>
 <p>Each guide solves one task: search a document, follow a file as it changes, open several files in tabs, browse a directory, find out why a file does not parse, or read a format of your own.</p>
 </a>
-<a class="card" href="/reference/index.html">
+<a class="card" href="/reference/">
 <h3>Reference</h3>
 <p>The reference holds every option, key, format, and limit, and every release. It is written from the aless binary and its changelog.</p>
 </a>
-<a class="card" href="/explanation/index.html">
+<a class="card" href="/explanation/">
 <h3>Explanation</h3>
 <p>The explanation pages say why aless works as it does: why every format becomes one tree, where each value came from, how a reload keeps your place, and what large inputs cost.</p>
 </a>

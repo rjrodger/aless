@@ -60,6 +60,10 @@ For more information, see [Releasing aless](RELEASING.md).
   `S-Tab`.
 - The documentation site and the text aless prints are rewritten in
   shorter sentences, each with one claim.
+- The site's favicon is the logo's multitool.
+- The site links a section by its directory, such as
+  `https://aless.tabnas.dev/how-to/`. The site links the home page by its
+  domain, `https://aless.tabnas.dev/`. No link names `index.html`.
 
 ### Removed
 

@@ -318,3 +318,11 @@ passed, and so deploy the site.
 ```
 Merge and deploy
 ```
+
+## 2026-11-05 10:56 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+on the site, the favicon should reflect the actual logo. no direct links to index.html files - use the domain and folder path format
+```
