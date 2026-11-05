@@ -388,3 +388,22 @@ button on each box of commands), whose CI had passed, and so deploy it.
 ```
 merge 115
 ```
+
+## 2026-11-05 16:30 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+```
+do a full release
+```
+
+## 2026-11-05 16:37 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+Sent while the agent waited on the CI of #116 (aless 0.7.0, the version
+bump of the release asked for above).
+
+```
+merge 116 when green
+```

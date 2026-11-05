@@ -8,7 +8,7 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date.
 For more information, see [Releasing aless](RELEASING.md).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-05
 
 ### Changed
 
@@ -41,7 +41,7 @@ For more information, see [Releasing aless](RELEASING.md).
   error. For ABNF, EBNF, and GBNF, the limit is 127 levels of nested
   groups.
 - `--help`, `-h`, `F1`, and the messages aless shows use no em dash. For
-  example, `aless 0.6.0:` heads the help. As a second example, the
+  example, `aless 0.7.0:` heads the help. As a second example, the
   message of a failed `:format` or reload ends with
   `(! shows the report)`.
 - The documentation site is rewritten. It gains a Formats reference
