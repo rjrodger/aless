@@ -471,11 +471,37 @@ pre.screen {
 pre.screen code { font-size: 1em; line-height: inherit; color: var(--screen-ink); }
 pre.screen .status { background: var(--screen-ink); color: var(--screen-bg); }
 
-/* A block wider than its column fades at its right edge until it is
-   scrolled to the end (layout.html marks it). */
-pre.scrolls, .table-wrap.scrolls {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+/* A box of commands to type has a button that copies them, in a strip
+   above the first line. Every line keeps the box's whole width, and none
+   runs under the button. The box draws the border, and its block scrolls
+   inside it. */
+.code-box {
+  position: relative; margin: 1rem 0; padding-top: 1.9rem;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+}
+.code-box > pre { margin: 0; padding-top: 0.3rem; border: 0; border-radius: 0 0 10px 10px; }
+.copy {
+  position: absolute; top: 0.4rem; right: 0.45rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; padding: 0; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--code-bg); color: var(--ink-soft);
+}
+.copy:hover { color: var(--primary); }
+.copy svg { width: 1rem; height: 1rem; }
+.copy .i-done, .copy.done .i-copy { display: none; }
+.copy.done .i-done { display: block; }
+/* On paper there is no button, so its strip goes too. */
+@media print {
+  .copy { display: none; }
+  .code-box { padding-top: 0; }
+  .code-box > pre { padding-top: 1rem; }
+}
+
+/* Text for a screen reader alone: what a copy button did. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
 }
 
 .table-wrap { overflow-x: auto; margin: 1rem 0; max-width: 100%; }

@@ -422,10 +422,23 @@ fn front_matter(text: &str, origin: &str) -> (BTreeMap<String, String>, String) 
 /// the capture comments are taken out.
 fn markdown_html(markdown: &str) -> String {
     let markdown = strip_captures(&fill(markdown));
-    screens(&tabnas_markdown::to_html(
+    command_boxes(&screens(&tabnas_markdown::to_html(
         &markdown,
         &tabnas_markdown::DEFAULT_OPTIONS,
-    ))
+    )))
+}
+
+/// Each block of commands a reader types, a `sh`, `powershell` or
+/// `console` fence, in a box the layout's script gives a copy button.
+fn command_boxes(html: &str) -> String {
+    let block =
+        Regex::new(r#"(?s)<pre><code class="language-(?:sh|powershell|console)">.*?</code></pre>"#)
+            .unwrap();
+    block
+        .replace_all(html, |c: &regex::Captures| {
+            format!("<div class=\"code-box\">{}</div>", &c[0])
+        })
+        .into_owned()
 }
 
 /// Some Markdown without the comments the tests read: `<!-- screen: ...
@@ -499,7 +512,7 @@ fn reference_pages() -> Vec<Page> {
          also in the plain-text file \
          <a href=\"/reference/command-line.txt\"><code>command-line.txt</code></a>, \
          as the terminal shows it.</p>\n{}",
-        command_line_html(&aless::cli::reference_html())
+        command_boxes(&command_line_html(&aless::cli::reference_html()))
     );
     vec![
         Page {
@@ -1503,6 +1516,20 @@ fn the_site_builds_and_its_links_hold() {
                 ));
             }
         }
+        // Every block of commands has the box its copy button goes in.
+        let commands = html.matches("<pre><code class=\"language-sh\">").count()
+            + html
+                .matches("<pre><code class=\"language-powershell\">")
+                .count()
+            + html
+                .matches("<pre><code class=\"language-console\">")
+                .count();
+        assert_eq!(
+            html.matches("<div class=\"code-box\"><pre>").count(),
+            commands,
+            "{}: a block of commands without its box",
+            page.path
+        );
         let twin = twin_path(page);
         assert!(site.files.contains_key(&twin), "{}: no {twin}", page.path);
         if page.markdown.is_some() && page.path != "index.html" {

@@ -64,6 +64,11 @@ For more information, see [Releasing aless](RELEASING.md).
 - The site links a section by its directory, such as
   `https://aless.tabnas.dev/how-to/`. The site links the home page by its
   domain, `https://aless.tabnas.dev/`. No link names `index.html`.
+- On the site, a code box or a table wider than its column no longer
+  fades at its right edge.
+- On the site, a box of commands has a copy button. In a box that shows
+  a command with its output, the button copies the command alone,
+  without the `$ ` prompt.
 
 ### Removed
 

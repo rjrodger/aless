@@ -369,3 +369,22 @@ gate; the go-ahead to push it with #114, merge, and deploy the site.
 ```
 reworded, push and publish
 ```
+
+## 2026-11-05 13:17 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+```
+on the on the https://aless.tabnas.dev/how-to/install.html page, some of the code boxes are too wide and fading out on the right. don't do this, just user overflow scroll. Also for code boxes that show terminal cmds, which the user will copy, add a copy icon (the two overlapping squares convention)
+```
+
+## 2026-11-05 15:04 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+The go-ahead to merge #115 (code boxes scroll without a fade; a copy
+button on each box of commands), whose CI had passed, and so deploy it.
+
+```
+merge 115
+```

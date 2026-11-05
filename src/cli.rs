@@ -385,8 +385,11 @@ pub fn lookup(name: &str) -> Option<&'static Opt> {
 enum Block {
     /// A paragraph, filled to the width.
     Text(&'static str),
-    /// Lines kept as they are: commands, samples.
+    /// Lines kept as they are: samples, an address, the examples.
     Code(&'static str),
+    /// Lines a reader types at a shell, kept as they are like [`Block::Code`].
+    /// The site's reference marks them as shell, to give them a copy button.
+    Commands(&'static str),
     /// Terms, and what each means.
     Terms(&'static [(&'static str, &'static str)]),
     /// The options of a section, from [`OPTIONS`].
@@ -700,7 +703,7 @@ const TOPICS: &[Topic] = &[
                 puts them there. A shell can read them from its startup file instead, \
                 each time it starts:",
             ),
-            Block::Code(
+            Block::Commands(
                 "eval \"$(aless --generate complete-bash)\"     # ~/.bashrc\n\
                  eval \"$(aless --generate complete-zsh)\"      # ~/.zshrc, after compinit\n\
                  aless --generate complete-fish | source      # config.fish",
@@ -901,7 +904,7 @@ pub fn reference() -> String {
             }
             match block {
                 Block::Text(text) => push_filled(&mut out, &fill(text), 4),
-                Block::Code(code) => {
+                Block::Code(code) | Block::Commands(code) => {
                     let indent = if i == 0 { "    " } else { "      " };
                     for line in fill(code).lines() {
                         out.push_str(indent);
@@ -1001,6 +1004,10 @@ pub fn reference_html() -> String {
                 }
                 Block::Code(code) => out.push_str(&format!(
                     "<pre><code>{}</code></pre>\n",
+                    html_escape(&fill(code))
+                )),
+                Block::Commands(code) => out.push_str(&format!(
+                    "<pre><code class=\"language-sh\">{}</code></pre>\n",
                     html_escape(&fill(code))
                 )),
                 Block::Terms(terms) => push_html_terms(&mut out, &static_terms(terms)),
@@ -1270,7 +1277,7 @@ fn man_blocks(out: &mut String, blocks: &[Block]) {
                 out.push_str(paragraph);
                 roff_text(out, &roff(&fill(text)));
             }
-            Block::Code(code) => {
+            Block::Code(code) | Block::Commands(code) => {
                 out.push_str(paragraph);
                 out.push_str(if i == 0 { ".nf\n" } else { ".RS 2\n.nf\n" });
                 for line in fill(code).lines() {
@@ -1914,7 +1921,7 @@ mod tests {
     fn code_fits_a_man_page() {
         for topic in TOPICS {
             for (i, block) in topic.blocks.iter().enumerate() {
-                if let Block::Code(code) = block {
+                if let Block::Code(code) | Block::Commands(code) = block {
                     let room = if i == 0 { 73 } else { 71 };
                     for line in fill(code).lines() {
                         assert!(line.chars().count() <= room, "{}: {line}", topic.title);

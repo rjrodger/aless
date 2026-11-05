@@ -104,6 +104,10 @@ The site is drawn as tabnas.dev is: `docs/style.css` carries the design
 tokens of tabnas/web whole, and `docs/fonts/` carries the faces of
 tabnas/web. A page therefore requests nothing from anywhere else.
 
+A code block or a table wider than its column scrolls sideways. The
+script in `docs/layout.html` gives such a block a place in the tab
+order, so a keyboard can scroll it too.
+
 The build draws the favicon from `docs/logo.svg`. The favicon is the
 logo's multitool without the wordmark, which no tab is wide enough to
 read. The favicon takes up any change to the multitool's shapes and
@@ -123,6 +127,15 @@ publishes under `/examples/`: the files in `examples/`, and the
 fixtures `FIXTURES` names. It also holds each command line to the
 options aless takes. This test is the harness `STYLE-GUIDE.md` asks a
 project to name. It reads `console` fences rather than test directives.
+
+A command a reader types sits in a `sh` or `powershell` fence, or in a
+`console` fence with its output. The build puts each of these fences in
+a box. The script in `docs/layout.html` adds a copy button to each box.
+In a `sh` or `powershell` fence, the button copies the whole text. In a
+`console` fence, it copies the commands alone, without their `$ `
+prompts or the output. On the command-line reference, the lines to put
+in a startup file are a box too: `src/cli.rs` writes them as
+`Block::Commands`.
 
 A capture of the viewer is a `screen` fence. aless draws every capture,
 so none is pasted by hand. The comment before the fence says what to
