@@ -4,8 +4,14 @@ description: aless shows JSON, YAML, TOML, CSV, XML, INI, Markdown, and more as 
 ---
 <section class="intro">
 <img class="logo logo-light" src="/logo-light.svg" alt="aless" width="1490" height="430" loading="lazy"><img class="logo logo-dark" src="/logo-dark.svg" alt="aless" width="1490" height="430" loading="lazy">
-<h1>Every format as one tree, in a viewer for the terminal</h1>
-<p class="lede">aless reads JSON, YAML, TOML, CSV, XML, Markdown, and many more formats. Every format becomes the same kind of tree. aless shows that tree in your terminal. With the keys of jless, you move through the tree, fold it, search it, and copy from it. Several files open in tabs. A directory opens as an <a href="/how-to/explore.html">explorer</a>. When a file changes on disk, aless reads it again and keeps your place.</p>
+<h1>A terminal viewer for plain text data files</h1>
+<p class="lede">View JSON (and variants), YAML, TOML, CSV, XML, Markdown, and
+many more formats directly in your terminal. Review the tree
+structure of the data format directly with your keyboard. If the file
+changes, <code>aless</code> reloads and keeps your place. Great for reviewing
+generated OpenAPI specs, XML documents, CSV files and other large
+mucky things.</p>
+<p>A quick shout out to <a href="https://jless.io">jless</a>, which was the inspiration for this project.</p>
 <p class="actions"><a class="button primary" href="/tutorials/viewer.html">Take the tutorial</a> <a class="button" href="/how-to/install.html">Install aless</a></p>
 <p class="meta">aless {{version}} · MIT licensed · <a href="https://github.com/rjrodger/aless">github.com/rjrodger/aless</a></p>
 </section>
