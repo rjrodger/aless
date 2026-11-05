@@ -326,3 +326,14 @@ Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT
 ```
 on the site, the favicon should reflect the actual logo. no direct links to index.html files - use the domain and folder path format
 ```
+
+## 2026-11-05 11:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01D85fCHxLMUJrquF8wFT2Dv
+
+Sent after asking how to view local changes to the site, and whether the
+preview directory is ignored by git.
+
+```
+add a scripts top level folder, and add script to build the site, and then view it
+```

@@ -13,6 +13,14 @@ run the test with the variable set:
 ALESS_SITE_OUT=/tmp/aless-site cargo test --test site
 ```
 
+To build the site and view it in a browser, run `scripts/site.sh`. It
+builds the site into `target/site`, which git ignores. It serves that
+directory at `http://127.0.0.1:8000/` and opens the address in your
+browser. A port given as its argument, as in `scripts/site.sh 8001`,
+replaces 8000. `Ctrl+C` stops the server. After an edit, run the script
+again to rebuild. The script builds the site with the one test that
+writes it, so run `cargo test --test site` for every check of the site.
+
 ## Pages and their kinds
 
 A page's kind is its directory. `docs/` holds a directory for each of
