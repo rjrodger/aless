@@ -417,3 +417,14 @@ A question, asked after the 0.7.0 release.
 ```
 when a file reloads, are the changes highlighted?
 ```
+
+## 2026-11-05 17:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+Sent after the agent answered that a reload does not highlight what
+changed.
+
+```
+note this as a feature request, posting it to github issues for the repo, and crediting https://x.com/KyrelleBuckley
+```
