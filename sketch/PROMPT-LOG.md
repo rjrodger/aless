@@ -407,3 +407,101 @@ bump of the release asked for above).
 ```
 merge 116 when green
 ```
+
+## 2026-11-05 17:31 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+A question, asked after the 0.7.0 release.
+
+```
+when a file reloads, are the changes highlighted?
+```
+
+## 2026-11-05 17:34 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+Sent after the agent answered that a reload does not highlight what
+changed.
+
+```
+note this as a feature request, posting it to github issues for the repo, and crediting https://x.com/KyrelleBuckley
+```
+
+## 2026-11-06 10:54 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+```
+How does aless deal with $ref in yaml
+```
+
+## 2026-11-06 11:04 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About the two YAML bugs the agent found while answering the question
+about `$ref`: an alias to a missing anchor read as null, and an alias's
+copied nodes taking a wrong source position.
+
+```
+Are those bigs in tabnas-yaml? If so file them in the tabnas/yaml repo
+```
+
+## 2026-11-06 11:12 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About the second YAML bug, an alias's copied nodes taking a wrong source
+position, which the agent found to be aless's own and offered to file.
+
+```
+File on on rjrodger/aless
+```
+
+## 2026-11-06 13:29 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About tabnas/yaml#135, the alias to an undefined anchor that reads as
+null, which the agent filed on tabnas/yaml.
+
+```
+add the tabnas/yaml repo pushable, and fix the yaml bugs in that parser
+```
+
+## 2026-11-06 14:19 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+The answer to the agent's offer to open a pull request on tabnas/yaml
+for the claude/undefined-alias branch (the fix for tabnas/yaml#135 and
+tabnas/yaml#108).
+
+```
+open the PR
+```
+
+## 2026-11-06 14:24 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+The answer to the agent's offer to watch tabnas/yaml#136, fixing CI
+failures and answering review comments, with the merge left to the
+owner.
+
+```
+yes, watch it and merge when green
+```
+
+## 2026-11-06 21:54 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+The answer to the agent's offer to release tabnas-yaml with the fix from
+tabnas/yaml#136, and to bump aless onto it.
+
+```
+Bump and release both
+```
