@@ -415,3 +415,11 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 list the open issues on the github repo
 ```
+
+## 2026-11-06 14:10 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+let's work on issue 117. changes should be highlighted by marking the actual data that changed, and marking the branch all the way to the root. a history of changes should be kept in memory and there should be keys to navigate backwards and forwards. the ui also needs to show the history, as both a timeline, and a ui note. before implementing, generate some examples of the new UI for review
+```
