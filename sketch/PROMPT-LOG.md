@@ -448,3 +448,14 @@ copied nodes taking a wrong source position.
 ```
 Are those bigs in tabnas-yaml? If so file them in the tabnas/yaml repo
 ```
+
+## 2026-11-06 11:12 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About the second YAML bug, an alias's copied nodes taking a wrong source
+position, which the agent found to be aless's own and offered to file.
+
+```
+File on on rjrodger/aless
+```
