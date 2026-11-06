@@ -459,3 +459,14 @@ position, which the agent found to be aless's own and offered to file.
 ```
 File on on rjrodger/aless
 ```
+
+## 2026-11-06 13:29 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About tabnas/yaml#135, the alias to an undefined anchor that reads as
+null, which the agent filed on tabnas/yaml.
+
+```
+add the tabnas/yaml repo pushable, and fix the yaml bugs in that parser
+```
