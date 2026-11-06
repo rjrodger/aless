@@ -137,7 +137,7 @@ The package `aless` builds from the tag's source archive, so that
 
 ```bash
 pkgname=aless
-pkgver=0.7.0
+pkgver=0.7.1
 pkgrel=1
 pkgdesc='Terminal viewer for JSON, YAML, TOML, CSV, XML and more, as one tree'
 arch=('x86_64' 'aarch64')
@@ -213,17 +213,17 @@ the manifest's `bin` names it without a directory:
 
 ```json
 {
-    "version": "0.7.0",
+    "version": "0.7.1",
     "description": "Terminal viewer for JSON, YAML, TOML, CSV, XML and more, as one tree",
     "homepage": "https://aless.tabnas.dev",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/rjrodger/aless/releases/download/v0.7.0/aless-x86_64-pc-windows-msvc.zip",
+            "url": "https://github.com/rjrodger/aless/releases/download/v0.7.1/aless-x86_64-pc-windows-msvc.zip",
             "hash": "the first word of aless-x86_64-pc-windows-msvc.zip.sha256"
         },
         "arm64": {
-            "url": "https://github.com/rjrodger/aless/releases/download/v0.7.0/aless-aarch64-pc-windows-msvc.zip",
+            "url": "https://github.com/rjrodger/aless/releases/download/v0.7.1/aless-aarch64-pc-windows-msvc.zip",
             "hash": "the first word of aless-aarch64-pc-windows-msvc.zip.sha256"
         }
     },
