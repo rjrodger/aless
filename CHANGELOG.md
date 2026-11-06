@@ -8,6 +8,16 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date.
 For more information, see [Releasing aless](RELEASING.md).
 
+## [Unreleased]
+
+### Fixed
+
+- YAML refuses an alias whose anchor does not come before it in the
+  document (tabnas-yaml 0.5.27). The error names the alias and its
+  line, for example `undefined alias: *hree`. Before, such an alias read
+  as null, so a mistyped name lost its value without a sign. As a key,
+  the alias read as its own text, such as `*hree`.
+
 ## [0.7.0] - 2026-11-05
 
 ### Changed
