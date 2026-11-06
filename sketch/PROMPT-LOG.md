@@ -428,3 +428,11 @@ changed.
 ```
 note this as a feature request, posting it to github issues for the repo, and crediting https://x.com/KyrelleBuckley
 ```
+
+## 2026-11-06 10:54 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+```
+How does aless deal with $ref in yaml
+```
