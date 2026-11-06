@@ -407,3 +407,11 @@ bump of the release asked for above).
 ```
 merge 116 when green
 ```
+
+## 2026-11-06 13:44 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+list the open issues on the github repo
+```
