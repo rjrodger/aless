@@ -436,3 +436,15 @@ Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV
 ```
 How does aless deal with $ref in yaml
 ```
+
+## 2026-11-06 11:04 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+About the two YAML bugs the agent found while answering the question
+about `$ref`: an alias to a missing anchor read as null, and an alias's
+copied nodes taking a wrong source position.
+
+```
+Are those bigs in tabnas-yaml? If so file them in the tabnas/yaml repo
+```
