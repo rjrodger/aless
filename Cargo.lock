@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "aless"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "arboard",
  "crossterm",
@@ -1422,9 +1422,9 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.26"
+version = "0.5.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4e1312feed8cff0517962cf4ed9f03f56d7211cf838cd3b2de4572790b722d1"
+checksum = "e1a29ba1faaaf4dcae5d5598b9d13964d133bcb11d73c4cd177bdbdf8964c9e2"
 dependencies = [
  "indexmap",
  "regex",
