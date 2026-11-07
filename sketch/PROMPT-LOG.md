@@ -574,3 +574,11 @@ after the merge, with main differing from 0.7.1 only in this log.
 ```
 Release: Hold the release
 ```
+
+## 2026-11-07 18:09 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+The work in this session added functionality to address issue 117, yes?
+```
