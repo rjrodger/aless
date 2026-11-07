@@ -505,3 +505,53 @@ tabnas/yaml#136, and to bump aless onto it.
 ```
 Bump and release both
 ```
+
+## 2026-11-06 13:44 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+list the open issues on the github repo
+```
+
+## 2026-11-06 14:10 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+let's work on issue 117. changes should be highlighted by marking the actual data that changed, and marking the branch all the way to the root. a history of changes should be kept in memory and there should be keys to navigate backwards and forwards. the ui also needs to show the history, as both a timeline, and a ui note. before implementing, generate some examples of the new UI for review
+```
+
+## 2026-11-06 15:38 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+there should be separate optional tab view of the history as a list, and the ability to export the source and json tree at that point. there should be an option to export the JSON tree in any case; ask me  for rulings on the open questions
+```
+
+## 2026-11-06 17:45 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+The rulings asked for in the prompt above, given as choices to the
+agent's questions on the open questions of issue 117. Each line is a
+question and the choice made, in the order they were asked.
+
+```
+Branch marks: Rails
+The note: Docked, closes on a key
+The timeline: Spaced by time
+A removed value: Counted on the parent
+What the marks compare against: The version before
+How many versions a tab keeps: Count and budget
+A save while an older version is on screen: Stay
+Keys to jump between changes: Yes, d and D
+How much of a changed string to mark: The whole value
+A save that does not parse: Yes, a ! mark
+JSON exports: :w on any version, From the command line
+Enter on a version in the history tab: Open it in a new tab
+The command-line export: --json FILE to stdout
+A key for the history tab: Yes, v
+The command-line export's name: --print-json FILE
+```
