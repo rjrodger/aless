@@ -555,3 +555,14 @@ The command-line export: --json FILE to stdout
 A key for the history tab: Yes, v
 The command-line export's name: --print-json FILE
 ```
+
+## 2026-11-07 17:38 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgQg2UPbMitgn5uV64t
+
+A question after the 0.7.1 release, about aless#117: whether a reload
+now marks what changed in a file.
+
+```
+Can aless 0.7.1 now show changes to the files? Show me screenshots
+```
