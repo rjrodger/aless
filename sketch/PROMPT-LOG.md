@@ -555,3 +555,22 @@ The command-line export: --json FILE to stdout
 A key for the history tab: Yes, v
 The command-line export's name: --print-json FILE
 ```
+
+## 2026-11-07 16:28 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+Merge and release
+```
+
+## 2026-11-07 16:31 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+The answer to the agent's question on the release asked for above,
+after the merge, with main differing from 0.7.1 only in this log.
+
+```
+Release: Hold the release
+```
