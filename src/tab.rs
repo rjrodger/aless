@@ -3,11 +3,13 @@
 //! reload that keeps the reader's place.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use crate::doc::{row_of, Doc, Key, NodeId, Row};
 use crate::explorer::Explorer;
 use crate::fmt;
+use crate::history::{self, ChangeKind, Counts, History, Keep, Marks};
 use crate::load::{self, Format, LoadError, Loaded};
 use crate::search::{Direction, Pattern};
 
@@ -102,12 +104,35 @@ pub struct Tab {
     /// `error` it marks nothing stale: the document on screen still
     /// parses as it did.
     pub format_error: Option<(Format, LoadError)>,
+    /// The versions of the file this tab has read, and the one on screen.
+    pub history: History,
+    /// What the changes of the version on screen put on its tree.
+    pub marks: Marks,
+    /// The note under the tree that lists those changes is open.
+    pub note: bool,
+}
+
+/// What a reload did, for the message that reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reloaded {
+    /// The text is as it was.
+    Same,
+    /// A new version, on screen.
+    Shown(Counts),
+    /// A new version, with an older one kept on screen.
+    Waiting(usize, SystemTime),
+    /// The first text of the file that parsed.
+    First,
+    Failed,
+    Listing,
 }
 
 impl Tab {
     /// A tab for a loaded document.
     pub fn new(id: u64, title: String, path: Option<PathBuf>, loaded: Loaded) -> Tab {
         let stamp = path.as_deref().and_then(Stamp::of);
+        let mut history = History::default();
+        history.start(&loaded.source, loaded.format, SystemTime::now());
         Tab {
             id,
             title,
@@ -133,6 +158,9 @@ impl Tab {
             explorer: None,
             has_doc: true,
             format_error: None,
+            history,
+            marks: Marks::default(),
+            note: false,
         }
     }
 
@@ -151,6 +179,7 @@ impl Tab {
             loaded,
         );
         tab.explorer = Some(ex);
+        tab.history = History::default();
         tab
     }
 
@@ -173,6 +202,7 @@ impl Tab {
         tab.error = Some(err);
         tab.gone = gone;
         tab.has_doc = false;
+        tab.history = History::default();
         tab
     }
 
@@ -718,34 +748,155 @@ impl Tab {
 
     /// Re-read the file and fold the result in, keeping the reader's place as
     /// docs/explanation/reloading.md describes.
-    pub fn reload(&mut self, view: View) {
+    pub fn reload(&mut self, view: View) -> Reloaded {
+        self.reload_at(view, SystemTime::now(), Keep::default())
+    }
+
+    /// [`Tab::reload`], stamping a new version `now` and keeping `keep`.
+    pub fn reload_at(&mut self, view: View, now: SystemTime, keep: Keep) -> Reloaded {
         if self.explorer.is_some() {
             self.explorer_refresh(view);
-            return;
+            return Reloaded::Listing;
         }
         let Some(path) = self.path.clone() else {
-            return;
+            return Reloaded::Same;
         };
         self.format_error = None;
         let format = self.explicit_format;
-        match load::load_path(&path, format) {
+        let outcome = match load::load_path(&path, format) {
             Ok(loaded) => {
-                self.apply(loaded, view);
                 self.gone = false;
                 self.error = None;
+                self.take_version(loaded, view, now, keep)
             }
             Err(err) => {
                 self.gone = !path.exists();
-                self.error = Some(err);
                 if let Ok(src) = std::fs::read_to_string(&path) {
+                    self.history.fail(&src, now, err.to_string());
                     self.source = src;
                 }
+                self.error = Some(err);
                 self.generation += 1;
                 self.clamp_source_scroll(view.height);
+                Reloaded::Failed
             }
-        }
+        };
         self.stamp = Stamp::of(&path);
         self.reload_due = None;
+        outcome
+    }
+
+    /// A text that parsed: a new version unless it is the newest's again,
+    /// on screen unless an older version is.
+    fn take_version(
+        &mut self,
+        loaded: Loaded,
+        view: View,
+        now: SystemTime,
+        keep: Keep,
+    ) -> Reloaded {
+        let Some(newest) = self.history.newest() else {
+            self.history.start(&loaded.source, loaded.format, now);
+            self.apply(loaded, view);
+            self.marks = Marks::default();
+            return Reloaded::First;
+        };
+        if *newest.source == *loaded.source && newest.format == loaded.format {
+            return Reloaded::Same;
+        }
+        let at_newest = self.history.at_newest();
+        let changes = if at_newest {
+            history::diff(&self.doc, &loaded.doc)
+        } else {
+            // The tree on screen is an older version's; the newest's is read
+            // again to compare with.
+            match load::load_str(newest.source.to_string(), newest.format) {
+                Ok(before) => history::diff(&before.doc, &loaded.doc),
+                Err(_) => Vec::new(),
+            }
+        };
+        let counts = Counts::of(&changes);
+        let source: Arc<str> = Arc::from(loaded.source.as_str());
+        let number = self.history.push(source, loaded.format, now, changes);
+        if at_newest {
+            self.history.show_newest();
+            self.apply(loaded, view);
+            self.refresh_marks();
+        }
+        self.history.prune(keep);
+        if at_newest {
+            Reloaded::Shown(counts)
+        } else {
+            Reloaded::Waiting(number, now)
+        }
+    }
+
+    /// The marks of the version on screen, for its tree as it now is.
+    pub fn refresh_marks(&mut self) {
+        self.marks = match self.history.shown() {
+            Some(v) if self.history.len() > 1 => Marks::of(&self.doc, &v.changes),
+            _ => Marks::default(),
+        };
+    }
+
+    /// Put the version at `index` on screen, parsing its text again; the
+    /// reader's place carries over as on a reload.
+    pub fn show_version(&mut self, index: usize, view: View) -> Result<(), String> {
+        let Some(v) = self.history.versions().get(index) else {
+            return Err("There is no such version".to_string());
+        };
+        let loaded = load::load_str(v.source.to_string(), v.format)
+            .map_err(|e| format!("Version {} no longer parses: {e}", v.number))?;
+        self.history.set_shown(index);
+        self.apply(loaded, view);
+        self.refresh_marks();
+        Ok(())
+    }
+
+    /// `d` (`forward`) / `D`: the n-th change from the focus, round the end
+    /// of the document, as `n` and `N` go round search matches.
+    pub fn next_change(&mut self, n: usize, forward: bool, view: View) -> String {
+        let count = self.marks.targets.len();
+        if count == 0 {
+            return match self.history.shown() {
+                Some(v) if self.history.len() > 1 => {
+                    format!("Version {} changed nothing in the data", v.number)
+                }
+                _ => format!("{} has no changes to go to", self.title),
+            };
+        }
+        let focused = self.focused_node();
+        let targets = &self.marks.targets;
+        let mut idx = if forward {
+            targets.iter().position(|&t| t > focused).unwrap_or(0)
+        } else {
+            targets
+                .iter()
+                .rposition(|&t| t < focused)
+                .unwrap_or(count - 1)
+        };
+        let extra = n.saturating_sub(1) % count;
+        idx = if forward {
+            (idx + extra) % count
+        } else {
+            (idx + count - extra) % count
+        };
+        let target = targets[idx];
+        let path = fmt::path_dot(&self.doc.path(target));
+        let path = if path.is_empty() {
+            ".".to_string()
+        } else {
+            path
+        };
+        let what = match self.marks.kinds[idx] {
+            ChangeKind::Removed => {
+                let n = self.marks.get(target).map_or(1, |m| m.removed);
+                format!("{path}: {n} removed")
+            }
+            kind => format!("{path} {}", kind.word()),
+        };
+        self.focus_node(target, view);
+        format!("Change {} of {count}: {what}", idx + 1)
     }
 
     /// Replace the document, re-anchoring the view (see [`Tab::reload`]).
@@ -835,13 +986,22 @@ impl Tab {
     }
 
     /// Parse the current source as another format (`:format yaml`). On
-    /// failure the document stays, and the report is kept for `!`.
+    /// failure the document stays, and the report is kept for `!`. The
+    /// versions start again, as trees read in different formats do not compare.
     pub fn reformat(&mut self, format: Format, view: View) -> Result<(), LoadError> {
         let origin = self.origin();
         match load::load_str(self.source.clone(), format) {
             Ok(loaded) => {
                 self.explicit_format = Some(format);
+                if !self.history.is_empty() {
+                    let time = self
+                        .history
+                        .shown()
+                        .map_or_else(SystemTime::now, |v| v.time);
+                    self.history.start(&loaded.source, format, time);
+                }
                 self.apply(loaded, view);
+                self.marks = Marks::default();
                 self.error = None;
                 self.format_error = None;
                 Ok(())

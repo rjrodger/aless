@@ -5,14 +5,15 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::doc::{Kind, NodeId};
 use crate::fmt;
 use crate::highlight::{self, Painted, Painter};
+use crate::history::{self, Keep};
 use crate::load::{self, Format};
 use crate::search::{self, Direction};
-use crate::tab::{Reposition, Tab, View};
+use crate::tab::{Reloaded, Reposition, Tab, View};
 
 // ----- input ---------------------------------------------------------------
 
@@ -214,6 +215,13 @@ pub struct Options {
     /// The explorer shows dot-files, as it does unless `:set nohidden`
     /// hides them.
     pub show_hidden: bool,
+    /// Mark what each version changed (`:set changes`, `--no-changes`).
+    pub changes: bool,
+    /// The most versions a tab keeps.
+    pub history: usize,
+    /// The local zone, in seconds east of UTC, read once at start: unknown,
+    /// times are shown in UTC.
+    pub utc_offset: Option<i32>,
 }
 
 impl Default for Options {
@@ -229,6 +237,9 @@ impl Default for Options {
             depth: None,
             color: true,
             show_hidden: true,
+            changes: true,
+            history: history::DEFAULT_VERSIONS,
+            utc_offset: None,
         }
     }
 }
@@ -259,6 +270,9 @@ pub struct App {
     pub source_view: bool,
     /// Colours for the text the source view shows, made off this thread.
     painter: Painter,
+    /// A fixed time to stamp versions with, for tests and captures; the
+    /// system clock when unset.
+    pub clock: Option<SystemTime>,
 }
 
 impl App {
@@ -282,6 +296,7 @@ impl App {
             last_search: None,
             source_view: false,
             painter: Painter::new(load::Limits::current().timeout),
+            clock: None,
         }
     }
 
@@ -292,10 +307,22 @@ impl App {
         usize::from(self.tabs.len() > 1)
     }
 
+    /// The row of the active tab's timeline, shown once it has versions
+    /// or failed saves to set side by side.
+    pub fn timeline_rows(&self) -> usize {
+        let shown = self.mode != Mode::Overlay
+            && self
+                .tab_ref()
+                .is_some_and(|t| t.explorer.is_none() && t.history.has_timeline());
+        usize::from(shown)
+    }
+
     /// Rows available to the pane: the tree, or the text the source view
     /// shows.
     pub fn pane_height(&self) -> usize {
-        self.height.saturating_sub(2 + self.strip_rows()).max(1)
+        self.height
+            .saturating_sub(2 + self.strip_rows() + self.timeline_rows())
+            .max(1)
     }
 
     /// Rows the error panel takes at the foot of the pane ([`panel_rows`]).
@@ -306,11 +333,46 @@ impl App {
         }
     }
 
+    /// Rows the note of the version's changes takes above the error panel:
+    /// its rule, and as many changes as a third of the pane holds. It takes
+    /// only rows below the focus and its scrolloff, so that the focused row
+    /// keeps its screen row; with no room for a change, it does not open.
+    pub fn note_rows(&self) -> usize {
+        let Some(tab) = self.tab_ref() else {
+            return 0;
+        };
+        if !tab.note || !self.opts.changes || self.source_view || self.error_panel_rows() > 0 {
+            return 0;
+        }
+        let changes = tab.history.shown().map_or(0, |v| v.changes.len());
+        let pane = self.pane_height();
+        let below = pane.saturating_sub(tab.focus.saturating_sub(tab.scroll) + 1);
+        let free = below.saturating_sub(self.opts.scrolloff);
+        let rows = 1 + changes.min((pane / 3).max(1));
+        if free < 2 {
+            0
+        } else {
+            rows.min(free)
+        }
+    }
+
     /// Rows the tree itself gets.
     pub fn tree_height(&self) -> usize {
         self.pane_height()
-            .saturating_sub(self.error_panel_rows())
+            .saturating_sub(self.error_panel_rows() + self.note_rows())
             .max(1)
+    }
+
+    /// The time a new version is stamped with.
+    pub fn now(&self) -> SystemTime {
+        self.clock.unwrap_or_else(SystemTime::now)
+    }
+
+    fn keep(&self) -> Keep {
+        Keep {
+            versions: self.opts.history,
+            ..Keep::default()
+        }
     }
 
     pub fn view(&self) -> View {
@@ -341,10 +403,10 @@ impl App {
             return;
         }
         let height = self.pane_height();
+        let rows = self.tree_height();
         let scrolloff = self.opts.scrolloff;
         let source = self.source_view;
         let tab = self.tab();
-        let rows = height.saturating_sub(panel_rows(tab, height)).max(1);
         tab.follow(View::new(rows, scrolloff));
         // The text view fills the pane, which may have grown taller.
         if source {
@@ -430,6 +492,7 @@ impl App {
                 tab.expand_to_depth(d, view);
             }
         }
+        tab.history.stamp_first(self.now());
         if self.opts.watch && tab.watchable() {
             tab.watch = true;
             if let Some(p) = &tab.path {
@@ -591,6 +654,14 @@ impl App {
     }
 
     fn browse_key(&mut self, key: Key) {
+        let keeps_note = !key.ctrl
+            && !key.alt
+            && matches!(key.code, KeyCode::Char('[' | ']' | '{' | '}' | 'd' | 'D'));
+        if !keeps_note {
+            for t in &mut self.tabs {
+                t.note = false;
+            }
+        }
         // A new key clears the previous message, unless it only edits the
         // count.
         let digit = match key.code {
@@ -732,9 +803,59 @@ impl App {
             (KeyCode::Tab, _) => self.next_tab(n),
             (KeyCode::BackTab, _) => self.prev_tab(n),
             (KeyCode::Char('s'), false) => self.show_source(),
+            (KeyCode::Char('['), false) => self.step_version(-(n as isize)),
+            (KeyCode::Char(']'), false) => self.step_version(n as isize),
+            (KeyCode::Char('{'), false) => self.step_version(isize::MIN / 2),
+            (KeyCode::Char('}'), false) => self.step_version(isize::MAX / 2),
+            (KeyCode::Char('d'), false) => {
+                let msg = self.tab().next_change(n, true, view);
+                self.info(msg);
+            }
+            (KeyCode::Char('D'), false) => {
+                let msg = self.tab().next_change(n, false, view);
+                self.info(msg);
+            }
             _ => {}
         }
         self.explorer_sync();
+    }
+
+    /// `[` `]` `{` `}`: show the version `delta` from the one on screen.
+    fn step_version(&mut self, delta: isize) {
+        let view = self.view();
+        let changes = self.opts.changes;
+        let offset = self.opts.utc_offset;
+        let tab = self.tab();
+        let title = tab.title.clone();
+        if tab.explorer.is_some() {
+            self.info("A directory keeps no versions");
+            return;
+        }
+        if tab.history.len() < 2 {
+            self.info(format!("{title} has one version so far"));
+            return;
+        }
+        let (to, moved) = tab.history.step(delta);
+        if !moved {
+            let number = tab.history.shown().map_or(1, |v| v.number);
+            let end = if delta < 0 {
+                "the oldest kept"
+            } else {
+                "the newest"
+            };
+            self.info(format!("Version {number} is {end}"));
+            return;
+        }
+        match tab.show_version(to, view) {
+            Ok(()) => {
+                tab.note = changes;
+                if !changes {
+                    let text = version_line(tab, offset);
+                    self.info(text);
+                }
+            }
+            Err(e) => self.error(e),
+        }
     }
 
     // ----- explorer ------------------------------------------------------------------
@@ -1276,6 +1397,20 @@ impl App {
                     Ok(n) => self.opts.indent = n.min(16),
                     Err(_) => self.error(format!(":set {name} needs a number, not {v}")),
                 },
+                ("changes", None) => self.opts.changes = true,
+                ("nochanges", None) => self.opts.changes = false,
+                ("changes!", None) => self.opts.changes = !self.opts.changes,
+                ("history", Some(v)) => match v.parse::<usize>() {
+                    Ok(n) => {
+                        self.opts.history = n;
+                        let keep = self.keep();
+                        for t in &mut self.tabs {
+                            t.history.prune(keep);
+                            t.refresh_marks();
+                        }
+                    }
+                    Err(_) => self.error(format!(":set {name} needs a number, not {v}")),
+                },
                 ("mode", Some(v)) => self.run_command(&format!("mode {v}")),
                 ("depth", Some(v)) => self.run_command(&format!("depth {v}")),
                 _ => self.error(format!("{word} is not a setting. F1 lists every setting.")),
@@ -1387,24 +1522,39 @@ impl App {
 
     fn reload_active(&mut self) {
         let view = self.view();
+        let (now, keep) = (self.now(), self.keep());
         let tab = self.tab();
         if !tab.watchable() {
             self.error("This tab has no file, so there is nothing to reload");
             return;
         }
-        tab.reload(view);
-        self.report_reload(self.active);
+        let outcome = tab.reload_at(view, now, keep);
+        self.report_reload(self.active, outcome);
     }
 
-    fn report_reload(&mut self, i: usize) {
+    fn report_reload(&mut self, i: usize, outcome: Reloaded) {
+        let offset = self.opts.utc_offset;
         let (title, err, gone, nodes) = {
             let t = &self.tabs[i];
             (t.title.clone(), t.error.clone(), t.gone, t.doc.len())
         };
-        match err {
-            Some(e) if gone => self.error(format!("{title}: the file is gone ({e})")),
-            Some(e) => self.error(format!("{title}: {e} (! shows the report)")),
-            None => self.info(format!(
+        if let Reloaded::Shown(counts) = outcome {
+            self.tabs[i].note = self.opts.changes && i == self.active && counts.total() > 0;
+        }
+        match (err, outcome) {
+            (Some(e), _) if gone => self.error(format!("{title}: the file is gone ({e})")),
+            (Some(e), _) => self.error(format!("{title}: {e} (! shows the report)")),
+            (None, Reloaded::Shown(counts)) if counts.total() > 0 => {
+                self.info(format!("Reloaded {title}: {}", counts.describe()))
+            }
+            (None, Reloaded::Shown(_)) => self.info(format!(
+                "Reloaded {title}: the text changed, the data did not"
+            )),
+            (None, Reloaded::Waiting(number, time)) => self.info(format!(
+                "{title} changed at {}: version {number} is the newest. }} shows it",
+                history::clock(time, offset)
+            )),
+            (None, _) => self.info(format!(
                 "Reloaded {title} ({} nodes)",
                 nodes.saturating_sub(1)
             )),
@@ -1422,6 +1572,7 @@ impl App {
 
     pub fn on_tick(&mut self, now: Instant) {
         let view = self.view();
+        let (wall, keep) = (self.now(), self.keep());
         for i in 0..self.tabs.len() {
             let tab = &mut self.tabs[i];
             if !tab.watch {
@@ -1432,8 +1583,8 @@ impl App {
                 None => tab.stamp_changed(),
             };
             if due {
-                tab.reload(view);
-                self.report_reload(i);
+                let outcome = tab.reload_at(view, wall, keep);
+                self.report_reload(i, outcome);
             }
         }
     }
@@ -1622,6 +1773,20 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// `Version 2 of 3, saved 14:02:11`: the version on screen.
+pub fn version_line(tab: &Tab, offset: Option<i32>) -> String {
+    let Some(v) = tab.history.shown() else {
+        return String::new();
+    };
+    let newest = tab.history.newest().map_or(v.number, |n| n.number);
+    let verb = if v.number == 1 { "opened" } else { "saved" };
+    format!(
+        "Version {} of {newest}, {verb} {}",
+        v.number,
+        history::clock(v.time, offset)
+    )
+}
+
 /// A part of the key map: what F1 shows, and the site's list of keys.
 /// Code in a note or an action is between backticks, which F1 leaves out.
 pub struct KeyGroup {
@@ -1676,6 +1841,18 @@ pub const KEY_MAP: &[KeyGroup] = &[
             ("%", "Go between a container's opening and closing brackets, in line mode."),
             ("s", "Show the source view in place of the tree: the text aless read, at the focused node's line. Any key but the scrolling ones, `:`, and `r` goes back."),
             ("< >", "Indent each level one space less or more."),
+        ],
+    },
+    KeyGroup {
+        title: "Versions of a watched file",
+        note: "Each reload that parses is a version. Marks show what the version on screen \
+               changed from the one before: yellow for a changed value, green for a new one, \
+               a red count for removed ones, and rails from the root down to each change.",
+        typed: false,
+        keys: &[
+            ("[ ]", "Show the version before, and the version after, the one on screen. `3[` goes back three."),
+            ("{ }", "Show the oldest version kept, and the newest."),
+            ("d D", "Go to the next and the previous change, round the end of the document."),
         ],
     },
     KeyGroup {
@@ -1773,6 +1950,8 @@ pub const KEY_MAP: &[KeyGroup] = &[
             ("ascii  noascii", "Draw the fold markers as `v` and `>`, or as `▼ ▽ ▶ ▷`."),
             ("hidden  nohidden  hidden!", "Show dot-files in the explorer, or hide them, or switch between the two."),
             ("watch  nowatch", "Start or stop watching the file."),
+            ("changes  nochanges  changes!", "Mark what each version changed, or stop, or switch between the two."),
+            ("history=N", "Keep up to N versions of each file, and fewer of a large one. The version on screen and the newest always stay."),
             ("mode=data  mode=line", "Switch to data mode or line mode."),
             ("depth=N", "Open the first N levels, and fold every container below them."),
         ],
@@ -1904,6 +2083,153 @@ mod tests {
     }
 
     const SRC: &str = r#"{"a": 1, "b": [true, {"c": "x", "d": [1, 2]}, null], "e": {"f": {"g": 2}}, "h": "last"}"#;
+
+    /// A file saved over and over: a year changes, a tag goes, a title
+    /// changes and a tag comes, a book comes.
+    const V1: &str = "[\n  {\"title\": \"A\", \"year\": 1999, \"tags\": [\"x\", \"y\"]},\n  {\"title\": \"B\", \"tags\": []}\n]\n";
+    const V2: &str = "[\n  {\"title\": \"A\", \"year\": 2001, \"tags\": [\"x\", \"y\"]},\n  {\"title\": \"B\", \"tags\": []}\n]\n";
+    const V3: &str = "[\n  {\"title\": \"A\", \"year\": 2001, \"tags\": [\"x\"]},\n  {\"title\": \"B!\", \"tags\": [\"z\"]}\n]\n";
+    const V4: &str = "[\n  {\"title\": \"A\", \"year\": 2001, \"tags\": [\"x\"]},\n  {\"title\": \"B!\", \"tags\": [\"z\"]},\n  {\"title\": \"C\"}\n]\n";
+
+    /// An app watching `text` in a file of its own, its clock at 14:00:05.
+    fn watched(name: &str, text: &str) -> (App, PathBuf) {
+        let p = write_temp(name, text);
+        let mut app = App::new(Options::default(), 80, 24);
+        app.opts.utc_offset = Some(0);
+        app.clock = Some(std::time::UNIX_EPOCH + Duration::from_secs(14 * 3600 + 5));
+        app.open_path(&p, None);
+        (app, p)
+    }
+
+    /// Write `text` and reload it as the watcher would, `secs` after 14:00.
+    fn save(app: &mut App, p: &Path, text: &str, secs: u64) {
+        std::fs::write(p, text).unwrap();
+        app.clock = Some(std::time::UNIX_EPOCH + Duration::from_secs(14 * 3600 + secs));
+        app.handle(Input::FileChanged(p.to_path_buf()));
+        app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
+    }
+
+    fn said(app: &App) -> String {
+        app.message
+            .as_ref()
+            .map(|m| m.text.clone())
+            .unwrap_or_default()
+    }
+
+    fn shown(app: &App) -> usize {
+        app.tab_ref().unwrap().history.shown().unwrap().number
+    }
+
+    #[test]
+    fn a_reload_records_a_version_and_marks_what_it_changed() {
+        let (mut app, p) = watched("versions.json", V1);
+        assert_eq!(app.timeline_rows(), 0, "one version has no timeline");
+        save(&mut app, &p, V2, 131);
+        assert_eq!(app.tab().history.len(), 2);
+        assert_eq!(said(&app), "Reloaded versions.json: 1 changed");
+        assert_eq!(app.timeline_rows(), 1);
+        assert_eq!(app.note_rows(), 2, "the rule and the change");
+        keys(&mut app, "j");
+        assert_eq!(app.note_rows(), 0, "the next key closes the note");
+        assert!(!app.tab().marks.is_empty(), "the marks stay");
+        save(&mut app, &p, V2, 140);
+        assert_eq!(
+            app.tab().history.len(),
+            2,
+            "the same text is no new version"
+        );
+        assert!(said(&app).starts_with("Reloaded"));
+    }
+
+    #[test]
+    fn brackets_step_through_the_versions_and_a_save_waits() {
+        let (mut app, p) = watched("steps.json", V1);
+        save(&mut app, &p, V2, 131);
+        save(&mut app, &p, V3, 220);
+        keys(&mut app, "[");
+        assert_eq!(shown(&app), 2);
+        assert!(app.tab().source.contains("\"y\""), "version 2's text");
+        assert!(app.note_rows() > 0, "the note opens for the version");
+        save(&mut app, &p, V4, 302);
+        assert_eq!(
+            shown(&app),
+            2,
+            "a save waits while an older version is on screen"
+        );
+        assert_eq!(
+            said(&app),
+            "steps.json changed at 14:05:02: version 4 is the newest. } shows it"
+        );
+        keys(&mut app, "{");
+        assert_eq!(shown(&app), 1);
+        assert!(
+            app.tab().marks.is_empty(),
+            "the file as opened changed nothing"
+        );
+        keys(&mut app, "[");
+        assert_eq!(said(&app), "Version 1 is the oldest kept");
+        keys(&mut app, "}");
+        assert_eq!(shown(&app), 4);
+        assert!(app.tab().history.at_newest());
+        keys(&mut app, "2[");
+        assert_eq!(shown(&app), 2);
+        keys(&mut app, "]");
+        assert_eq!(shown(&app), 3);
+    }
+
+    #[test]
+    fn d_and_shift_d_go_round_the_changes() {
+        let (mut app, p) = watched("jumps.json", V2);
+        save(&mut app, &p, V3, 220);
+        keys(&mut app, "d");
+        assert_eq!(said(&app), "Change 1 of 3: [0].tags: 1 removed");
+        assert_eq!(path(&mut app), "[0].tags");
+        keys(&mut app, "d");
+        assert_eq!(said(&app), "Change 2 of 3: [1].title changed");
+        keys(&mut app, "d");
+        assert_eq!(said(&app), "Change 3 of 3: [1].tags[0] added");
+        keys(&mut app, "d");
+        assert_eq!(
+            said(&app),
+            "Change 1 of 3: [0].tags: 1 removed",
+            "round the end"
+        );
+        keys(&mut app, "D");
+        assert_eq!(said(&app), "Change 3 of 3: [1].tags[0] added");
+        assert!(app.note_rows() > 0, "d and D keep the note open");
+    }
+
+    #[test]
+    fn settings_turn_the_marks_off_and_bound_the_versions() {
+        let (mut app, p) = watched("settings.json", V1);
+        save(&mut app, &p, V2, 131);
+        app.run_command("set nochanges");
+        assert_eq!(app.note_rows(), 0, "no note without the marks");
+        save(&mut app, &p, V3, 220);
+        assert!(!app.tab().note);
+        keys(&mut app, "[");
+        assert_eq!(said(&app), "Version 2 of 3, saved 14:02:11");
+        app.run_command("set changes history=2");
+        let numbers: Vec<usize> = app
+            .tab()
+            .history
+            .versions()
+            .iter()
+            .map(|v| v.number)
+            .collect();
+        assert_eq!(numbers, [2, 3], "the version on screen and the newest");
+        app.run_command("set history=x");
+        assert!(app.message.as_ref().unwrap().error);
+    }
+
+    #[test]
+    fn a_tab_with_one_version_says_so() {
+        let mut app = app_with(SRC);
+        keys(&mut app, "[");
+        assert_eq!(said(&app), "t.json has one version so far");
+        keys(&mut app, "d");
+        assert_eq!(said(&app), "t.json has no changes to go to");
+    }
 
     #[test]
     fn counts_and_movement() {
@@ -2324,7 +2650,9 @@ mod tests {
         assert!(app.tab().error.is_some() && app.tab().has_doc);
         let panel = app.error_panel_rows();
         assert!(panel > 2 && panel <= full / 2, "{panel}");
-        assert_eq!(app.view().height, full - panel);
+        // The failed save goes on the timeline, whose row the pane gives up.
+        assert_eq!(app.timeline_rows(), 1);
+        assert_eq!(app.view().height, full - 1 - panel);
         assert!(app
             .message
             .as_ref()

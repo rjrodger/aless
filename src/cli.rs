@@ -208,6 +208,17 @@ pub const OPTIONS: &[Opt] = &[
             the default.",
     },
     Opt {
+        short: None,
+        long: "--no-changes",
+        also: &[],
+        arg: None,
+        section: Section::Viewer,
+        repeats: false,
+        summary: "do not mark what a reload changed",
+        detail: "Do not mark what each reload changed. aless keeps the versions all the \
+            same, and [ and ] show them. Inside aless, :set changes turns the marks on.",
+    },
+    Opt {
         short: Some('m'),
         long: "--mode",
         also: &[],
@@ -1726,6 +1737,7 @@ pub fn parse_args(argv: impl IntoIterator<Item = std::ffi::OsString>) -> Result<
             "--timeout" => args.timeout = crate::load::parse_timeout(&value()?)?,
             "--no-watch" => args.opts.watch = false,
             "--watch" => args.opts.watch = true,
+            "--no-changes" => args.opts.changes = false,
             "-m" | "--mode" => args.opts.line_mode = parse_mode(&value()?)?,
             "--depth" => {
                 args.opts.depth = Some(u32::try_from(number(value()?)?).unwrap_or(u32::MAX))

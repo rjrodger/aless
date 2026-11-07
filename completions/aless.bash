@@ -22,7 +22,7 @@ _aless() {
             ;;
     esac
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--kind --format -k --grammar --grammar-expr --max-size --timeout --no-watch --watch --mode -m --depth --indent --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
+        COMPREPLY=($(compgen -W "--kind --format -k --grammar --grammar-expr --max-size --timeout --no-watch --watch --no-changes --mode -m --depth --indent --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
     fi
     return 0
 }

@@ -17,9 +17,10 @@ use ratatui::{Frame, Terminal};
 use tabnas_lsp::TokenType;
 
 use crate::app::{panel_rows, App, Mode, PromptKind};
-use crate::doc::{Kind, Row};
+use crate::doc::{Doc, Kind, Row, NO_NODE};
 use crate::fmt;
 use crate::highlight::Run;
+use crate::history::{self, ChangeKind, Counts, Data, Entry, Marks};
 use crate::load;
 
 const PLAIN: Style = Style::new();
@@ -42,6 +43,21 @@ const GUTTER_FOCUS: Style = Style::new().fg(Color::Yellow);
 const REVERSED: Style = Style::new().add_modifier(Modifier::REVERSED);
 const BAR: Style = REVERSED;
 const ERROR: Style = Style::new().fg(Color::Red);
+/// The marks of a version's changes. Changed data is in reverse, as a
+/// screen without colour keeps reverse and drops the rest.
+const CHANGE: Style = Style::new().fg(Color::Yellow);
+const ADD: Style = Style::new().fg(Color::Green);
+const REMOVE: Style = Style::new().fg(Color::Red);
+const CHANGED_DATA: Style = Style::new()
+    .fg(Color::Yellow)
+    .bg(Color::Black)
+    .add_modifier(Modifier::REVERSED);
+const ADDED_DATA: Style = Style::new()
+    .fg(Color::Green)
+    .bg(Color::Black)
+    .add_modifier(Modifier::REVERSED);
+/// The status bar while an older version is on screen.
+const BAR_PAST: Style = CHANGED_DATA;
 
 /// What aless needs of a line beyond what ratatui's has: text that never
 /// carries a control character, and widths as the buffer counts them.
@@ -418,6 +434,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> Option<Position> {
     let strip = band(area, &mut top, app.strip_rows());
     let pane_h = app.pane_height();
     let pane = band(area, &mut top, pane_h);
+    let timeline = band(area, &mut top, app.timeline_rows());
     let status = band(area, &mut top, 1);
     let prompt = band(area, &mut top, 1);
 
@@ -428,6 +445,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> Option<Position> {
         frame.render_widget(Rows(overlay_lines(app, width, pane_h)), pane);
     } else {
         draw_pane(frame, app, pane);
+    }
+    if timeline.height > 0 {
+        frame.render_widget(Rows(vec![timeline_line(app, width)]), timeline);
     }
     frame.render_widget(Rows(vec![status_bar(app, width)]), status);
     let (line, col) = prompt_line(app, width);
@@ -562,6 +582,9 @@ fn draw_tree_pane(frame: &mut Frame, app: &mut App, area: Rect) {
     let relative = app.opts.relative;
     let indent = app.opts.indent;
     let ascii = app.opts.ascii;
+    let changes = app.opts.changes;
+    let note = app.note_rows();
+    let note_text = (note > 0).then(|| note_lines(app, width, note));
     let tab = app.tab();
     let panel = panel_rows(tab, pane_h);
     if tab.shows_error_only() {
@@ -589,6 +612,7 @@ fn draw_tree_pane(frame: &mut Frame, app: &mut App, area: Rect) {
         relative,
         indent,
         ascii,
+        changes,
     };
     let report = (panel > 0).then(|| {
         tab.error
@@ -596,11 +620,16 @@ fn draw_tree_pane(frame: &mut Frame, app: &mut App, area: Rect) {
             .map(|e| e.report.clone())
             .unwrap_or_default()
     });
+    let tree_h = pane_h.saturating_sub(panel + note);
     let mut top = area.top();
-    let tree_area = band(area, &mut top, pane_h - panel);
+    let tree_area = band(area, &mut top, tree_h);
+    let note_area = band(area, &mut top, note);
     let panel_area = band(area, &mut top, panel);
-    let lines = tree_lines(tab, &rows, &tree, pane_h - panel, scroll, focus);
+    let lines = tree_lines(tab, &rows, &tree, tree_h, scroll, focus);
     frame.render_widget(Rows(lines), tree_area);
+    if let Some(text) = note_text {
+        frame.render_widget(Rows(text), note_area);
+    }
     if let Some(report) = report {
         frame.render_widget(Rows(error_panel(&report, width, panel, ascii)), panel_area);
     }
@@ -648,6 +677,7 @@ struct TreeStyle {
     relative: bool,
     indent: usize,
     ascii: bool,
+    changes: bool,
 }
 
 fn tree_lines(
@@ -665,7 +695,9 @@ fn tree_lines(
         relative,
         indent,
         ascii,
+        changes,
     } = *style;
+    let marked = changes && !tab.marks.is_empty();
     let mut out = Vec::with_capacity(pane_h);
     for i in scroll..scroll + pane_h {
         let mut line = Line::default();
@@ -684,25 +716,50 @@ fn tree_lines(
             let line_mode = tab.line_mode;
             let is_match = tab.is_match(row.node) && !row.close;
             let has_next = tab.doc.next_sibling(row.node).is_some();
-            line.put(" ".repeat(node.depth as usize * indent), PLAIN);
-            // Indicator.
-            let indicator = if row.close || !node.is_foldable() {
-                "  "
-            } else if ascii {
-                if node.expanded {
-                    "v "
-                } else {
-                    "> "
+            let mark = tab.marks.get(row.node).copied().filter(|_| marked);
+            let data = mark.and_then(|m| m.data).filter(|_| !row.close);
+            if marked {
+                for (text, rail) in indentation(&tab.doc, &tab.marks, *row, indent, ascii) {
+                    line.put(text, if rail { CHANGE } else { PLAIN });
                 }
             } else {
-                match (node.expanded, focused) {
-                    (true, true) => "▼ ",
-                    (true, false) => "▽ ",
-                    (false, true) => "▶ ",
-                    (false, false) => "▷ ",
+                line.put(" ".repeat(node.depth as usize * indent), PLAIN);
+            }
+            // Indicator: a leaf's slot holds the mark of its change.
+            let (indicator, mut ind_style) = if row.close {
+                ("  ", PLAIN)
+            } else if !node.is_foldable() {
+                match data {
+                    Some(Data::Changed) => ("~ ", CHANGE),
+                    Some(Data::Added) => ("+ ", ADD),
+                    None => ("  ", PLAIN),
                 }
+            } else {
+                let glyph = if ascii {
+                    if node.expanded {
+                        "v "
+                    } else {
+                        "> "
+                    }
+                } else {
+                    match (node.expanded, focused) {
+                        (true, true) => "▼ ",
+                        (true, false) => "▽ ",
+                        (false, true) => "▶ ",
+                        (false, false) => "▷ ",
+                    }
+                };
+                let style = match (data, mark) {
+                    (Some(Data::Added), _) => ADD,
+                    (_, Some(_)) => CHANGE,
+                    _ => PLAIN,
+                };
+                (glyph, style)
             };
-            line.put(indicator, if focused { PLAIN.bold() } else { PLAIN });
+            if focused {
+                ind_style = ind_style.bold();
+            }
+            line.put(indicator, ind_style);
             if let Some(ex) = &tab.explorer {
                 explorer_row(
                     &mut line, ex, &tab.doc, row.node, focused, is_match, width, tab.xoff,
@@ -726,8 +783,24 @@ fn tree_lines(
                     key_shown = true;
                 }
             }
-            // Value.
-            let avail = width.saturating_sub(line.cols());
+            // Value, then the counts of what changed inside or was removed.
+            let badge = match mark {
+                Some(m) if !row.close && data.is_none() => {
+                    if node.is_foldable() && !node.expanded {
+                        counts_badge(m.inside, ascii)
+                    } else if m.removed > 0 {
+                        vec![(
+                            format!(" {}{}", ChangeKind::Removed.glyph(ascii), m.removed),
+                            REMOVE,
+                        )]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                _ => Vec::new(),
+            };
+            let badge_w: usize = badge.iter().map(|(t, _)| cols(t)).sum();
+            let avail = width.saturating_sub(line.cols() + badge_w);
             let (value, style, comma) = if row.close {
                 (
                     fmt::close_bracket(&node.kind).to_string(),
@@ -764,7 +837,11 @@ fn tree_lines(
             } else if is_match && !key_shown {
                 MATCH
             } else {
-                style
+                match data {
+                    Some(Data::Changed) => CHANGED_DATA,
+                    Some(Data::Added) => ADDED_DATA,
+                    None => style,
+                }
             };
             let xoff = if focused { tab.xoff } else { 0 };
             let comma_w = usize::from(comma);
@@ -773,9 +850,79 @@ fn tree_lines(
             if comma && !cut {
                 line.put(",", PLAIN);
             }
+            for (text, style) in badge {
+                line.put(text, style);
+            }
         }
         line.fit_cols(width, PLAIN);
         out.push(line);
+    }
+    out
+}
+
+/// The indentation of `row`, with the rails that pass through it: each
+/// rail runs down from its node's marker to the node's last marked child,
+/// where it turns into that child's marker.
+fn indentation(
+    doc: &Doc,
+    marks: &Marks,
+    row: Row,
+    indent: usize,
+    ascii: bool,
+) -> Vec<(String, bool)> {
+    let width = doc.node(row.node).depth as usize * indent;
+    let mut cells: Vec<Option<char>> = vec![None; width];
+    if indent > 0 {
+        let (down, tee, last, across) = if ascii {
+            ('|', '|', '`', '-')
+        } else {
+            ('│', '├', '└', '─')
+        };
+        let mut child = row.node;
+        let mut parent = doc.parent(row.node);
+        while let Some(a) = parent {
+            if let Some(m) = marks.get(a).filter(|m| m.last != NO_NODE) {
+                let col = doc.node(a).depth as usize * indent;
+                let own_row = child == row.node && !row.close;
+                if own_row && marks.carries(child) && child <= m.last {
+                    cells[col] = Some(if child == m.last { last } else { tee });
+                    for c in &mut cells[col + 1..(col + indent).min(width)] {
+                        *c = Some(across);
+                    }
+                } else if child < m.last {
+                    cells[col] = Some(down);
+                }
+            }
+            child = a;
+            parent = doc.parent(a);
+        }
+    }
+    let mut out: Vec<(String, bool)> = Vec::new();
+    for cell in cells {
+        let (ch, rail) = match cell {
+            Some(ch) => (ch, true),
+            None => (' ', false),
+        };
+        match out.last_mut() {
+            Some((text, r)) if *r == rail => text.push(ch),
+            _ => out.push((ch.to_string(), rail)),
+        }
+    }
+    out
+}
+
+/// `  ~1 +2 −1`: the changes inside a folded container, kind by kind.
+fn counts_badge(c: Counts, ascii: bool) -> Vec<(String, Style)> {
+    let mut out: Vec<(String, Style)> = Vec::new();
+    for (n, kind, style) in [
+        (c.changed, ChangeKind::Changed, CHANGE),
+        (c.added, ChangeKind::Added, ADD),
+        (c.removed, ChangeKind::Removed, REMOVE),
+    ] {
+        if n > 0 {
+            out.push((if out.is_empty() { "  " } else { " " }.to_string(), PLAIN));
+            out.push((format!("{}{n}", kind.glyph(ascii)), style));
+        }
     }
     out
 }
@@ -928,6 +1075,7 @@ fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>
         return out;
     }
     let ascii = app.opts.ascii;
+    let changes = app.opts.changes;
     let painted = app.painted();
     let tab = app.tab();
     // A tab with no text to show, one that never read (a program or a
@@ -949,10 +1097,22 @@ fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>
     let lines = load::lines(&tab.source);
     let gutter = digits(lines.len()) + 1;
     let scroll = tab.source_scroll;
+    let (kinds, spans) = if changes {
+        source_marks(tab, &lines)
+    } else {
+        Default::default()
+    };
+    let mark_col = if kinds.is_empty() { 0 } else { 2 };
     for i in 0..pane_h {
         let mut line = Line::default();
         let n = scroll + i;
         if let Some(text) = lines.get(n) {
+            if mark_col > 0 {
+                match kinds.get(&n) {
+                    Some(&k) => line.put(format!("{} ", k.glyph(ascii)), kind_style(k)),
+                    None => line.put("  ", PLAIN),
+                };
+            }
             let lineno = n + 1;
             let is_focus = focus_line == Some(lineno);
             let is_error = error_line == Some(lineno);
@@ -979,11 +1139,16 @@ fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>
                 num_style,
             );
             let avail = width.saturating_sub(line.cols());
+            let body_at = line.cols();
             // The focused and the failing line keep their one style.
+            let marks = spans.get(&n).filter(|_| !is_focus && !is_error);
             let runs = painted.as_ref().filter(|_| !is_focus && !is_error);
             if let Some(runs) = runs.map(|p| p.line(n)) {
                 let mut body = coloured(text, runs, avail);
                 line.spans.append(&mut body.spans);
+                for &(from, to, style) in marks.into_iter().flatten() {
+                    line = restyle(line, body_at + from, body_at + to, style);
+                }
                 line.fit_cols(width, PLAIN);
                 out.push(line);
                 continue;
@@ -1008,9 +1173,116 @@ fn source_lines(app: &mut App, width: usize, pane_h: usize) -> Vec<Line<'static>
             if is_focus {
                 line.fit_cols(width, REVERSED);
             }
+            for &(from, to, style) in marks.into_iter().flatten() {
+                line = restyle(line, body_at + from, body_at + to, style);
+            }
         }
         line.fit_cols(width, PLAIN);
         out.push(line);
+    }
+    out
+}
+
+fn kind_style(kind: ChangeKind) -> Style {
+    match kind {
+        ChangeKind::Changed => CHANGE,
+        ChangeKind::Added => ADD,
+        ChangeKind::Removed => REMOVE,
+    }
+}
+
+/// Columns of a line of text marked in a style: (first, past the last, style).
+type Spans = std::collections::HashMap<usize, Vec<(usize, usize, Style)>>;
+
+/// The marks of the version on screen in its text: the kind of change on
+/// each line, a changed value outranking an added one and both a removal,
+/// and the columns of each changed value where the line spells it.
+fn source_marks(
+    tab: &crate::tab::Tab,
+    lines: &[&str],
+) -> (std::collections::HashMap<usize, ChangeKind>, Spans) {
+    let mut kinds = std::collections::HashMap::new();
+    let mut spans = Spans::new();
+    for (id, m) in tab.marks.iter() {
+        let node = tab.doc.node(id);
+        let Some(n) = (node.line as usize).checked_sub(1) else {
+            continue;
+        };
+        if let Some(d) = m.data {
+            let (kind, style) = match d {
+                Data::Changed => (ChangeKind::Changed, CHANGED_DATA),
+                Data::Added => (ChangeKind::Added, ADDED_DATA),
+            };
+            let e = kinds.entry(n).or_insert(kind);
+            if kind == ChangeKind::Changed || *e == ChangeKind::Removed {
+                *e = kind;
+            }
+            let text = lines.get(n).copied().unwrap_or("");
+            if !node.is_container() {
+                if let Some((from, to)) = value_cols(text, node, &fmt::value_text(&tab.doc, id)) {
+                    spans.entry(n).or_default().push((from, to, style));
+                }
+            }
+        }
+        if m.removed > 0 {
+            kinds.entry(n).or_insert(ChangeKind::Removed);
+        }
+    }
+    (kinds, spans)
+}
+
+/// The columns `value` takes where `text` spells it, at the node's column
+/// and after its key; none where the text spells it otherwise.
+fn value_cols(text: &str, node: &crate::doc::Node, value: &str) -> Option<(usize, usize)> {
+    let col = (node.col as usize).checked_sub(1)?;
+    let mut at = text.char_indices().nth(col).map(|(b, _)| b)?;
+    if let crate::doc::Key::Name(k) = &node.key {
+        for spelled in [fmt::quote(k), k.to_string()] {
+            if text[at..].starts_with(&spelled) {
+                at += spelled.len();
+                break;
+            }
+        }
+    }
+    let start = at + text[at..].find(value)?;
+    let from = shown_cols(&text[..start]);
+    Some((from, from + shown_cols(value)))
+}
+
+/// The columns the source view gives `text`, a tab as four.
+fn shown_cols(text: &str) -> usize {
+    text.chars()
+        .map(|c| match c {
+            '\t' => 4,
+            c if (c as u32) < 0x20 || c.is_control() => 1,
+            c => cols(c.encode_utf8(&mut [0; 4])),
+        })
+        .sum()
+}
+
+/// `line` with its columns `from..to` drawn in `style`.
+fn restyle(line: Line<'static>, from: usize, to: usize, style: Style) -> Line<'static> {
+    let mut out = Line::default();
+    let mut col = 0;
+    for span in line.spans {
+        let mut run = String::new();
+        let mut run_style = None;
+        for ch in span.content.chars() {
+            let here = if (from..to).contains(&col) {
+                style
+            } else {
+                span.style
+            };
+            if run_style != Some(here) && !run.is_empty() {
+                out.put(std::mem::take(&mut run), run_style.unwrap_or(span.style));
+            }
+            run_style = Some(here);
+            run.push(ch);
+            col += cols(ch.encode_utf8(&mut [0; 4]));
+        }
+        if !run.is_empty() {
+            out.put(run, run_style.unwrap_or(span.style));
+        }
     }
     out
 }
@@ -1163,6 +1435,13 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
     if tab.gone {
         right.push("file gone".to_string());
     }
+    let past = !tab.history.at_newest();
+    if past {
+        if let (Some(v), Some(n)) = (tab.history.shown(), tab.history.newest()) {
+            right.push(format!("version {} of {}", v.number, n.number));
+        }
+    }
+    let bar = if past { BAR_PAST } else { BAR };
     if let Some((l, c)) = tab.focused_line() {
         right.push(format!("{l}:{c}"));
     }
@@ -1184,14 +1463,198 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
     } else {
         left
     };
-    line.put(&left, BAR);
+    line.put(&left, bar);
     let pad = width.saturating_sub(cols(&left) + cols(&right) + err_w);
-    line.put(" ".repeat(pad), BAR);
+    line.put(" ".repeat(pad), bar);
     if let Some(e) = err_text {
-        line.put(e, BAR.bold());
+        line.put(e, bar.bold());
     }
-    line.put(right, BAR);
-    line.fit_cols(width, BAR);
+    line.put(right, bar);
+    line.fit_cols(width, bar);
+    line
+}
+
+/// The timeline: a dot for each version, spaced by the time between them,
+/// a `!` for each save that did not parse, the version on screen lit; the
+/// first and last times at the ends.
+fn timeline_line(app: &App, width: usize) -> Line<'static> {
+    let mut line = Line::default();
+    let Some(tab) = app.tab_ref() else {
+        return line;
+    };
+    let h = &tab.history;
+    let entries = h.entries();
+    let (Some(&(first, _)), Some(&(last, _))) = (entries.first(), entries.last()) else {
+        return line;
+    };
+    let offset = app.opts.utc_offset;
+    let ascii = app.opts.ascii;
+    let shown = h.shown().map_or(0, |v| v.number);
+    let newest = h.newest().map_or(0, |v| v.number);
+    let left = format!(" {} ", history::clock(first, offset));
+    let right = format!(" {}  ", history::clock(last, offset));
+    let label = format!("{shown} of {newest}");
+    let len = width.saturating_sub(cols(&left) + cols(&right) + cols(&label) + 1);
+    if len < 4 {
+        line.put(format!(" {label}"), PLAIN);
+        line.fit_cols(width, PLAIN);
+        return line;
+    }
+    let span = last.duration_since(first).unwrap_or_default().as_secs_f64();
+    let at = |t: std::time::SystemTime| -> usize {
+        if span <= 0.0 {
+            return len - 1;
+        }
+        let x = t.duration_since(first).unwrap_or_default().as_secs_f64() / span;
+        ((x * (len - 1) as f64).round() as usize).min(len - 1)
+    };
+    let dash = if ascii { "-" } else { "─" };
+    let mut track: Vec<(&str, Style)> = vec![(dash, GREY); len];
+    // Drawn in rising order of weight: a version, a failed save, the
+    // version on screen, each over what shares its cell.
+    for &(t, e) in &entries {
+        if let Entry::Version(i) = e {
+            if i != h.shown_index() {
+                track[at(t)] = (if ascii { "o" } else { "○" }, PLAIN);
+            }
+        }
+    }
+    for &(t, e) in &entries {
+        if e == Entry::Failed {
+            track[at(t)] = ("!", ERROR);
+        }
+    }
+    if let Some(v) = h.shown() {
+        track[at(v.time)] = (if ascii { "@" } else { "●" }, BAR_PAST.bold());
+    }
+    line.put(left, GREY);
+    for (text, style) in track {
+        line.put(text, style);
+    }
+    line.put(right, GREY);
+    line.put(label, PLAIN);
+    line.fit_cols(width, PLAIN);
+    line
+}
+
+/// The note docked under the tree: a rule naming the version on screen and
+/// how to move, then a row for each of its changes, as many as fit.
+fn note_lines(app: &App, width: usize, height: usize) -> Vec<Line<'static>> {
+    let mut out = Vec::with_capacity(height);
+    let Some(tab) = app.tab_ref() else {
+        return out;
+    };
+    let Some(v) = tab.history.shown() else {
+        return out;
+    };
+    let ascii = app.opts.ascii;
+    let count = v.changes.len();
+    let head = if count == 0 {
+        crate::app::version_line(tab, app.opts.utc_offset)
+    } else {
+        let s = if count == 1 { "" } else { "s" };
+        format!("{count} change{s} in version {}", v.number)
+    };
+    let hint = if tab.history.at_newest() {
+        "[ older · d next change"
+    } else {
+        "] newer · } newest · d next change"
+    };
+    let label = format!(" {head} · {hint} ");
+    let dash = if ascii { "-" } else { "─" };
+    let mut rule = Line::default();
+    rule.put(dash.repeat(2), CHANGE);
+    rule.put(label.clone(), CHANGE.bold());
+    rule.put(dash.repeat(width.saturating_sub(cols(&label) + 2)), CHANGE);
+    rule.fit_cols(width, PLAIN);
+    out.push(rule);
+    let paths: Vec<String> = v
+        .changes
+        .iter()
+        .map(|c| {
+            let p = fmt::path_dot(&c.path);
+            if p.is_empty() {
+                ".".to_string()
+            } else {
+                p
+            }
+        })
+        .collect();
+    let pw = paths
+        .iter()
+        .map(|p| cols(p))
+        .max()
+        .unwrap_or(0)
+        .min(width / 3);
+    let room = height.saturating_sub(1);
+    let more = count.saturating_sub(room);
+    let listed = if more > 0 {
+        room.saturating_sub(1)
+    } else {
+        room
+    };
+    for (c, path) in v.changes.iter().zip(&paths).take(listed) {
+        let mut l = Line::default();
+        let style = match c.kind {
+            ChangeKind::Changed => CHANGE,
+            ChangeKind::Added => ADD,
+            ChangeKind::Removed => REMOVE,
+        };
+        l.put("  ", PLAIN);
+        l.put(c.kind.glyph(ascii), style);
+        l.put(" ", PLAIN);
+        let (p, _) = clip(path, 0, pw);
+        l.put(format!("{p:<pw$}  "), PLAIN);
+        match c.kind {
+            ChangeKind::Changed => {
+                l.put(c.old.clone().unwrap_or_default(), GREY);
+                l.put(if ascii { " -> " } else { " → " }, GREY);
+                let new = c.new.clone().unwrap_or_default();
+                let st = value_style(&new);
+                l.put(new, st);
+            }
+            ChangeKind::Added => {
+                let new = c.new.clone().unwrap_or_default();
+                let st = value_style(&new);
+                l.put(new, st);
+            }
+            ChangeKind::Removed => {
+                l.put(
+                    c.old.clone().unwrap_or_default(),
+                    REMOVE.add_modifier(Modifier::CROSSED_OUT),
+                );
+            }
+        }
+        out.push(fit_line(l, width));
+    }
+    if more > 0 {
+        let mut l = Line::default();
+        let n = more + usize::from(room > 0);
+        l.put(format!("  … and {n} more: d and D go to each"), GREY);
+        out.push(fit_line(l, width));
+    }
+    out.truncate(height);
+    out
+}
+
+/// The colour a value's text takes in the tree, read from its spelling.
+fn value_style(text: &str) -> Style {
+    match text.chars().next() {
+        Some('"') => STRING,
+        Some('t' | 'f') if text == "true" || text == "false" => BOOL,
+        Some('n') if text == "null" => NULL,
+        Some(c) if c == '-' || c.is_ascii_digit() => NUMBER,
+        _ => PLAIN,
+    }
+}
+
+/// A line cut to `width`, with `…` where it is cut.
+fn fit_line(mut line: Line<'static>, width: usize) -> Line<'static> {
+    if line.cols() > width {
+        line.fit_cols(width.saturating_sub(1), PLAIN);
+        line.put("…", GREY);
+    }
+    line.fit_cols(width, PLAIN);
     line
 }
 
@@ -1260,6 +1723,132 @@ mod tests {
         let mut app = App::new(Options::default(), w, h);
         app.open_source("t.json", src.to_string(), Format::Json);
         app
+    }
+
+    const BEFORE: &str = "[\n  {\"title\": \"A\", \"year\": 2001, \"tags\": [\"x\", \"y\"]},\n  {\"title\": \"B\", \"tags\": []}\n]\n";
+    const AFTER: &str = "[\n  {\"title\": \"A\", \"year\": 2001, \"tags\": [\"x\"]},\n  {\"title\": \"B!\", \"tags\": [\"z\"]}\n]\n";
+
+    /// A file opened at 14:00:05 and saved at 14:02:11, in UTC as the zone.
+    fn saved(name: &str, opts: Options, w: u16, h: u16) -> App {
+        let dir = std::env::temp_dir().join(format!("aless-render-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, BEFORE).unwrap();
+        let at =
+            |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(14 * 3600 + secs);
+        let mut app = App::new(
+            Options {
+                utc_offset: Some(0),
+                ..opts
+            },
+            w,
+            h,
+        );
+        app.clock = Some(at(5));
+        app.open_path(&p, None);
+        std::fs::write(&p, AFTER).unwrap();
+        app.clock = Some(at(131));
+        app.handle(Input::FileChanged(p.clone()));
+        app.handle(Input::Tick(
+            std::time::Instant::now() + crate::app::RELOAD_DEBOUNCE * 2,
+        ));
+        app
+    }
+
+    /// What a cell's style draws: its colours and modifiers.
+    fn drawn(st: Style) -> (Option<Color>, Option<Color>, Modifier) {
+        (st.fg, st.bg, st.add_modifier)
+    }
+
+    fn rows(s: &Screen) -> Vec<String> {
+        (0..s.height)
+            .map(|y| s.row(y).trim_end().to_string())
+            .collect()
+    }
+
+    /// The rails run in the indentation from the root to each change, and
+    /// the changed data is drawn in reverse in its kind's colour.
+    #[test]
+    fn rails_lead_from_the_root_to_each_change() {
+        let mut a = saved("rails.json", Options::default(), 60, 20);
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert_eq!(
+            r[1..10],
+            [
+                "├─▽ {",
+                "│ │   title: \"A\"",
+                "│ │   year: 2001",
+                "│ └─▽ tags: [ −1",
+                "│       \"x\"",
+                "└─▽ {",
+                "  ├─~ title: \"B!\"",
+                "  └─▽ tags: [",
+                "    └─+ \"z\"",
+            ],
+            "{}",
+            s.text()
+        );
+        let (x, y) = find(&s, "\"B!\"");
+        assert_eq!(drawn(s.style(x, y)), drawn(CHANGED_DATA), "a changed value");
+        let (x, y) = find(&s, "\"z\"");
+        assert_eq!(drawn(s.style(x, y)), drawn(ADDED_DATA), "an added value");
+        assert_eq!(s.style(0, 1).fg, Some(Color::Yellow), "a rail");
+        let (x, y) = find(&s, "−1");
+        assert_eq!(s.style(x, y).fg, Some(Color::Red), "a removal, counted");
+        find(&s, "── 3 changes in version 2 · [ older · d next change ──");
+        find(&s, "~ [1].title    \"B\" → \"B!\"");
+        let timeline = &r[17];
+        assert!(timeline.starts_with(" 14:00:05 ○─"), "{timeline}");
+        assert!(timeline.ends_with("● 14:02:11  2 of 2"), "{timeline}");
+    }
+
+    #[test]
+    fn an_older_version_turns_the_status_bar_yellow() {
+        let mut a = saved("older.json", Options::default(), 60, 20);
+        a.handle(Input::Key(Key::ch('[')));
+        let s = screen(&mut a);
+        let (x, y) = find(&s, "version 1 of 2");
+        assert_eq!(drawn(s.style(x, y)), drawn(BAR_PAST));
+        assert_eq!(drawn(s.style(0, y)), drawn(BAR_PAST), "the whole bar");
+        find(&s, "Version 1 of 2, opened 14:00:05 · ] newer");
+    }
+
+    /// Without colour the rails are ASCII where asked, and the changed data
+    /// keeps its reverse.
+    #[test]
+    fn without_colour_the_marks_keep_their_shape() {
+        let opts = Options {
+            color: false,
+            ascii: true,
+            ..Options::default()
+        };
+        let mut a = saved("plain.json", opts, 60, 20);
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert_eq!(r[1], "|-v {");
+        assert_eq!(r[4], "| `-v tags: [ -1");
+        let (x, y) = find(&s, "\"B!\"");
+        let st = s.style(x, y);
+        assert!(st.add_modifier.contains(Modifier::REVERSED), "{st:?}");
+        assert_eq!(st.fg, Some(Color::Reset));
+        assert!(rows(&s)[17].contains("@ 14:02:11"), "{}", s.text());
+    }
+
+    #[test]
+    fn the_source_view_marks_the_lines_that_hold_a_change() {
+        let mut a = saved("source.json", Options::default(), 60, 20);
+        a.handle(Input::Key(Key::ch('s')));
+        a.settle_colours();
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert!(r[1].starts_with("− 2 "), "{}", s.text());
+        assert!(r[2].starts_with("~ 3 "), "a change outranks an addition");
+        assert!(r[3].starts_with("  4 "));
+        let (x, y) = find(&s, "\"B!\"");
+        assert_eq!(drawn(s.style(x, y)), drawn(CHANGED_DATA));
+        let (x, y) = find(&s, "\"z\"");
+        assert_eq!(drawn(s.style(x, y)), drawn(ADDED_DATA));
     }
 
     /// Where `needle` first shows on screen: its column and row.

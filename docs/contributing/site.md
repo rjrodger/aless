@@ -163,10 +163,13 @@ fields:
 - `edit: FILE: OLD => NEW` changes `OLD` to `NEW` in `FILE` once the
   keys are typed. The capture then reloads the file as the watcher
   would.
+- `then:` is what is typed after the edit, as `keys:` is before it.
 - `cwd: ..` runs the command from the directory above the files.
 
 `the_screens_are_what_aless_draws` builds the app as the command line
-would, through `cli::parse_args`. It types the keys, then compares what
+would, through `cli::parse_args`. Its clock reads 14:00:05 UTC when the
+capture opens, and 14:02:11 at the edit, so the times a capture shows
+never change. It types the keys, then compares what
 `render::screen` draws with the fence. The comparison runs on every
 platform. The test runs none of the effects the terminal side would, so
 a capture shows no `Copied` message. The test does not change directory

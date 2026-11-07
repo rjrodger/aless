@@ -10,6 +10,7 @@ pub mod explorer;
 pub mod fmt;
 pub mod grammar;
 pub mod highlight;
+pub mod history;
 pub mod load;
 pub mod prov;
 pub mod render;

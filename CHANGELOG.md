@@ -8,6 +8,23 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date.
 For more information, see [Releasing aless](RELEASING.md).
 
+## [Unreleased]
+
+### Added
+
+- A reload marks what it changed. A changed value turns yellow, a new
+  value turns green, and a container that lost values counts them in
+  red. Rails in the indentation lead from the root down to each change.
+  A note under the tree lists the changes, with each value before and
+  after.
+- aless keeps up to 50 versions of each watched file. `[` and `]` show
+  the version before and after the one on screen, `{` and `}` the
+  oldest and the newest. A timeline above the status bar shows when
+  each version was saved, and marks a save that did not parse.
+- `d` and `D` go to the next and the previous change.
+- `:set changes`, `:set nochanges`, `:set history=N` and
+  `--no-changes`.
+
 ## [0.7.1] - 2026-11-06
 
 ### Fixed

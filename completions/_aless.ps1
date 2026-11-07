@@ -31,6 +31,7 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         [System.Management.Automation.CompletionResult]::new('--timeout', '--timeout', [System.Management.Automation.CompletionResultType]::ParameterName, 'stop a parse past SECONDS (default none)')
         [System.Management.Automation.CompletionResult]::new('--no-watch', '--no-watch', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not reload a file when it changes')
         [System.Management.Automation.CompletionResult]::new('--watch', '--watch', [System.Management.Automation.CompletionResultType]::ParameterName, 'reload a file when it changes (the default)')
+        [System.Management.Automation.CompletionResult]::new('--no-changes', '--no-changes', [System.Management.Automation.CompletionResultType]::ParameterName, 'do not mark what a reload changed')
         [System.Management.Automation.CompletionResult]::new('--mode', '--mode', [System.Management.Automation.CompletionResultType]::ParameterName, 'start in data (default) or line mode')
         [System.Management.Automation.CompletionResult]::new('-m', '-m', [System.Management.Automation.CompletionResultType]::ParameterName, 'start in data (default) or line mode')
         [System.Management.Automation.CompletionResult]::new('--depth', '--depth', [System.Management.Automation.CompletionResultType]::ParameterName, 'open only the first N levels')
