@@ -402,6 +402,9 @@ pub struct History {
     shown: usize,
     /// So that the same broken text read again is one failed save.
     failed_source: Option<Arc<str>>,
+    /// Counts the starts, so that a version is known by its epoch and
+    /// number once numbering starts again.
+    epoch: u64,
 }
 
 impl History {
@@ -414,6 +417,7 @@ impl History {
     }
 
     pub fn start(&mut self, source: &str, format: Format, time: SystemTime) {
+        self.epoch += 1;
         self.versions.clear();
         self.failed.clear();
         self.failed_source = None;
@@ -436,6 +440,10 @@ impl History {
 
     pub fn is_empty(&self) -> bool {
         self.versions.is_empty()
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn len(&self) -> usize {
@@ -595,6 +603,26 @@ pub struct Listing {
     pub of: u64,
     pub name: String,
     pub items: Vec<Item>,
+}
+
+/// What `/` matches in row `id` of a listing tab: the text the row shows.
+pub fn item_text(list: &Listing, id: NodeId) -> String {
+    match list.items.get(id as usize) {
+        Some(Item::Root { versions, .. }) => format!("{}  {versions} versions", list.name),
+        Some(Item::Version { number, time, .. }) => format!("version {number}  {time}"),
+        Some(Item::Change { change, .. }) => {
+            let old = change.old.as_deref().unwrap_or("");
+            let new = change.new.as_deref().unwrap_or("");
+            let values = match change.kind {
+                ChangeKind::Changed => format!("{old} → {new}"),
+                ChangeKind::Added => new.to_string(),
+                ChangeKind::Removed => old.to_string(),
+            };
+            format!("{}  {values}", fmt::path_dot(&change.path))
+        }
+        Some(Item::Failed { time, message }) => format!("did not parse  {time}  {message}"),
+        None => String::new(),
+    }
 }
 
 /// The tree of a listing tab, newest first: each version holding its

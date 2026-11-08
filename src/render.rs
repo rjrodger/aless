@@ -777,7 +777,12 @@ fn tree_lines(
             }
             line.put(indicator, ind_style);
             if let Some(list) = &tab.listing {
-                listing_row(&mut line, list, row.node, focused, ascii);
+                let mut text = Line::default();
+                listing_row(&mut text, list, row.node, focused, is_match, ascii);
+                let avail = width.saturating_sub(line.cols());
+                let over = text.cols().saturating_sub(avail);
+                let xoff = if focused { tab.xoff.min(over) } else { 0 };
+                line.spans.extend(pan(text, xoff, avail).spans);
                 line.fit_cols(width, PLAIN);
                 out.push(line);
                 continue;
@@ -941,9 +946,14 @@ fn listing_row(
     list: &Listing,
     id: crate::doc::NodeId,
     focused: bool,
+    is_match: bool,
     ascii: bool,
 ) {
-    let label = |plain: Style| if focused { FOCUS } else { plain };
+    let label = |plain: Style| match (focused, is_match) {
+        (true, _) => FOCUS,
+        (false, true) => MATCH,
+        _ => plain,
+    };
     match list.items.get(id as usize) {
         Some(Item::Root { versions, failed }) => {
             line.put(list.name.clone(), label(KEY.bold()));
@@ -1951,6 +1961,31 @@ mod tests {
         );
         find(&s, "list.json history version 2");
         find(&s, "history · 2 versions");
+    }
+
+    #[test]
+    fn a_long_history_row_pans_with_the_focus() {
+        let mut a = saved("pan.json", Options::default(), 40, 12);
+        a.handle(Input::Key(Key::ch('v')));
+        a.handle(Input::Key(Key::ch('j')));
+        a.handle(Input::Key(Key::ch('j')));
+        let s = screen(&mut a);
+        let row = rows(&s)[4].clone();
+        assert!(
+            row.starts_with("    ~ [1].title  \"B\" → \"B!\""),
+            "{}",
+            s.text()
+        );
+        for _ in 0..30 {
+            a.handle(Input::Key(Key::ch('.')));
+        }
+        let s = screen(&mut a);
+        assert_eq!(rows(&s)[4], row, "a row that fits does not pan");
+        a.handle(Input::Resize(24, 12));
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert!(r[4].starts_with("    ~ …"), "{}", s.text());
+        assert!(r[4].trim_end().ends_with("\"B!\""), "{}", s.text());
     }
 
     #[test]

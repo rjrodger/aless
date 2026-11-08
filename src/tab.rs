@@ -116,11 +116,21 @@ pub struct Tab {
     pub frozen: Option<Frozen>,
 }
 
+/// What `/` matches in node `i`: in a listing tab, the text its row shows.
+fn search_text(listing: Option<&Listing>, doc: &Doc, i: NodeId) -> String {
+    match listing {
+        Some(l) => history::item_text(l, i),
+        None => fmt::search_text(doc, i),
+    }
+}
+
 /// A version in a tab of its own: the tab whose file it is a version of,
 /// and its number there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Frozen {
     pub of: u64,
+    /// The epoch of the versions there, which `:format` starts again.
+    pub epoch: u64,
     pub number: usize,
 }
 
@@ -665,8 +675,9 @@ impl Tab {
         n: usize,
         view: View,
     ) -> String {
+        let listing = self.listing.as_ref();
         let matches: Vec<NodeId> = (0..self.doc.len() as NodeId)
-            .filter(|&i| pattern.regex.is_match(&fmt::search_text(&self.doc, i)))
+            .filter(|&i| pattern.regex.is_match(&search_text(listing, &self.doc, i)))
             .collect();
         if matches.is_empty() {
             let msg = format!("Pattern not found: {}", pattern.input);
@@ -964,9 +975,10 @@ impl Tab {
         doc.reveal(anchor);
 
         // Matches are node ids into the replaced document.
+        let listing = self.listing.as_ref();
         if let Some(s) = self.search.as_mut() {
             s.matches = (0..doc.len() as NodeId)
-                .filter(|&i| s.pattern.regex.is_match(&fmt::search_text(&doc, i)))
+                .filter(|&i| s.pattern.regex.is_match(&search_text(listing, &doc, i)))
                 .collect();
             s.current = None;
         }

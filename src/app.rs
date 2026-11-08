@@ -965,8 +965,9 @@ impl App {
                 format: Format::Text,
                 source,
             };
-            tab.apply(loaded, view);
+            // Before the tree, so a search's matches are found in its rows.
             tab.listing = Some(list);
+            tab.apply(loaded, view);
         }
     }
 
@@ -980,7 +981,7 @@ impl App {
             _ => return None,
         };
         let src = self.tabs.iter().position(|t| t.id == list.of)?;
-        Some((src, index))
+        (index < self.tabs[src].history.len()).then_some((src, index))
     }
 
     /// Enter in a listing tab: the focused version in a tab of its own,
@@ -1024,7 +1025,8 @@ impl App {
         };
         let name = self.tabs[src].title.clone();
         let (number, time) = (v.number, v.time);
-        let frozen = Frozen { of, number };
+        let epoch = self.tabs[src].history.epoch();
+        let frozen = Frozen { of, epoch, number };
         if let Some(i) = self.tabs.iter().position(|t| t.frozen == Some(frozen)) {
             self.active = i;
             if let Some(place) = at {
@@ -1516,7 +1518,10 @@ impl App {
             "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
                 Some(f) => match self.tab().reformat(f, view) {
-                    Ok(()) => self.info(format!("Parsed as {f}")),
+                    Ok(()) => {
+                        self.sync_listings();
+                        self.info(format!("Parsed as {f}"))
+                    }
                     Err(e) => self.error(format!("{f}: {e} (! shows the report)")),
                 },
                 None if rest.is_empty() => self.error(format!(
@@ -2671,6 +2676,51 @@ mod tests {
             said(&app),
             "The file's own tab is closed, so its versions are gone"
         );
+    }
+
+    #[test]
+    fn format_starts_the_versions_again_in_the_history_tab_too() {
+        let (mut app, p) = watched("again.json", V1);
+        save(&mut app, &p, V2, 131);
+        save(&mut app, &p, V3, 220);
+        keys(&mut app, "vG");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tab().title, "again.json v1");
+        let tabs = app.tabs.len();
+        app.goto_tab(0);
+        app.run_command("format text");
+        keys(&mut app, "v");
+        assert_eq!(listed(&app), 1, "the versions start again");
+        keys(&mut app, "G");
+        let text = fresh("again-text.json");
+        app.run_command(&format!("ws {}", text.display()));
+        assert_eq!(std::fs::read_to_string(&text).unwrap(), V3);
+        // After `:format`, Enter on the oldest version opens another tab.
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tabs.len(), tabs + 1);
+        assert_eq!(app.tab().format, Format::Text);
+    }
+
+    #[test]
+    fn search_in_the_history_tab_matches_what_its_rows_show() {
+        let (mut app, p) = watched("found.json", V1);
+        save(&mut app, &p, V2, 131);
+        keys(&mut app, "v/year");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        let at = app.tab().focused_node() as usize;
+        let list = app.tab_ref().unwrap().listing.as_ref().unwrap();
+        assert!(
+            history::item_text(list, at as NodeId).starts_with("[0].year  1999 → 2001"),
+            "{}",
+            said(&app)
+        );
+        // A save rebuilds the rows, and the matches with them.
+        save(&mut app, &p, V3, 220);
+        let tab = app.tab_ref().unwrap();
+        let list = tab.listing.as_ref().unwrap();
+        let found = &tab.search.as_ref().unwrap().matches;
+        assert_eq!(found.len(), 1);
+        assert!(history::item_text(list, found[0]).contains("year"));
     }
 
     #[test]
