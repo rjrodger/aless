@@ -13,7 +13,8 @@ The decisions everything here rests on are in [ADR.md](ADR.md):
 **ADR-002** (every format through a tabnas grammar), **ADR-003** (jless's
 interface, unless the README says otherwise), **ADR-004** (correctness
 and uniformity before performance), **ADR-005** (published crates,
-pinned) and **ADR-006** (the reference written from the option table).
+pinned), **ADR-006** (the reference written from the option table) and
+**ADR-007** (`--print-json`, the one exception to ADR-001).
 Read them before a change that bends one.
 
 ## Where the detail lives
@@ -106,6 +107,8 @@ covers nor a `<!-- test: skip REASON -->` excuses
 - The prompt log, `sketch/PROMPT-LOG.md`, is kept to the rules in
   `DEV-PROCESS.md`: every prompt is appended before its work starts.
 - A feature that runs without a terminal does not belong here (ADR-001).
+  `--print-json` is the one exception, and its contract is fixed
+  (ADR-007).
 - `docs/why/` is human written. An agent does not edit its text, or hold
   it to the style guide, unless its author asks; its captures are
   redrawn like any other.

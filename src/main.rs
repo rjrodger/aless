@@ -57,6 +57,7 @@ fn main() {
             let _ = io::stdout().write_all(text.as_bytes());
             std::process::exit(0);
         }
+        Ok(Parsed::PrintJson(a, file)) => print_json(*a, &file),
         Err(e) => refuse_usage(&e),
     };
     // Before any input is read, grammar files included: a pipe left open
@@ -112,6 +113,25 @@ fn main() {
         Err(Failed::Running(e)) => {
             let _ = restore_terminal(args.mouse);
             eprintln!("aless: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `--print-json FILE`, with no terminal looked for (ADR-007).
+fn print_json(mut args: cli::Args, file: &std::path::Path) -> ! {
+    if let Err(e) = args.prepare() {
+        refuse_usage(&e);
+    }
+    match cli::print_json(file, args.kind, io::stdin()) {
+        Ok(json) => {
+            // A reader that stops early, as `head` does, is not an error.
+            let mut out = io::stdout().lock();
+            let _ = out.write_all(json.as_bytes()).and_then(|()| out.flush());
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("{}", e.plain_report().trim_end());
             std::process::exit(1);
         }
     }

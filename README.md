@@ -15,8 +15,9 @@ once, each in a tab of its own. A directory opens as an
 changes on disk, aless reads the file again and keeps your place.
 
 aless is a viewer: it draws on a terminal and reads keys from the
-terminal, so without one it refuses to start. It is written in Rust.
-It runs on Linux, macOS, and Windows.
+terminal, so without one it refuses to start. The one exception is
+`--print-json FILE`, which prints the tree of FILE as JSON and exits.
+aless is written in Rust. It runs on Linux, macOS, and Windows.
 
 The documentation is at [aless.tabnas.dev](https://aless.tabnas.dev).
 It holds a tutorial, how-to guides, the whole reference, and the

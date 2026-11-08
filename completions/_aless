@@ -37,6 +37,7 @@ _aless() {
     '(--version -V)--version[print the version]' \
     '(--version -V)-V[print the version]' \
     '--generate=[print the man page or a shell'\''s completions]:WHAT:(man complete-bash complete-zsh complete-fish complete-powershell)' \
+    '--print-json=[print FILE'\''s tree as JSON, and exit]:FILE:_files' \
     '*:file:_files'
 }
 

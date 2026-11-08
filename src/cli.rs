@@ -28,7 +28,7 @@ pub enum Section {
     Input,
     /// How the viewer shows it.
     Viewer,
-    /// Prints something about aless, and exits.
+    /// Prints something, and exits, without the viewer.
     About,
 }
 
@@ -374,6 +374,22 @@ pub const OPTIONS: &[Opt] = &[
             or complete-powershell for that shell's completions. For more information, \
             see FILES.",
     },
+    Opt {
+        short: None,
+        long: "--print-json",
+        also: &[],
+        arg: Some(("FILE", Value::File)),
+        section: Section::About,
+        repeats: false,
+        summary: "print FILE's tree as JSON, and exit",
+        detail: "Print the tree of FILE as JSON on standard output, and exit. The viewer \
+            does not start, so no terminal is needed. FILE is read as the viewer reads \
+            it: -k, --grammar, --grammar-expr, --max-size, and --timeout apply, and the \
+            viewer's options make no difference. FILE - is standard input, read as JSON \
+            unless -k says otherwise. The JSON is what :w writes: two spaces a level, \
+            the keys in their order in the source. When FILE cannot be read or does not \
+            parse, the report goes to standard error and the exit status is 1.",
+    },
 ];
 
 /// The option `name` names: a long name (`--kind`), another name for it
@@ -472,7 +488,9 @@ const TOPICS: &[Topic] = &[
                 from. It refuses when standard output is a pipe or a file, when there is \
                 no terminal to open, or when TERM is dumb. It refuses before reading any \
                 input. It writes one line on standard error and exits with the status 2. \
-                Only -h, --help, -V, and --generate write to standard output.",
+                Only -h, --help, -V, --generate, and --print-json write to standard \
+                output. --print-json is the one option that reads an input without a \
+                terminal: it prints the input's tree as JSON, and exits.",
             ),
         ],
     },
@@ -650,18 +668,19 @@ const TOPICS: &[Topic] = &[
         note: "",
         man: Man::Section,
         blocks: &[Block::Terms(&[
-            ("0", "You quit the viewer."),
+            ("0", "You quit the viewer, or --print-json printed its file's tree."),
             (
                 "1",
                 "The viewer failed while it ran: aless could not draw on the terminal or \
-                read from it.",
+                read from it. Or --print-json could not read its file, or the file did \
+                not parse, and the report is on standard error.",
             ),
             (
                 "2",
-                "The viewer could not start. Either there was a usage error, or there was \
-                no terminal to draw on and read keys from. A usage error is an unknown \
-                option, a bad value, or a --grammar that does not compile or cannot be \
-                read.",
+                "The viewer could not start, or --print-json could not. Either there was \
+                a usage error, or there was no terminal to draw on and read keys from. A \
+                usage error is an unknown option, a bad value, or a --grammar that does \
+                not compile or cannot be read.",
             ),
         ])],
     },
@@ -1621,6 +1640,33 @@ pub enum Parsed {
     /// Text to print as it is, and exit: `-h`, `--help`, `--version`,
     /// `--generate`.
     Print(String),
+    /// `--print-json FILE`: FILE's tree as JSON, with no terminal
+    /// (ADR-007). The arguments carry the input options.
+    PrintJson(Box<Args>, std::path::PathBuf),
+}
+
+/// What `--print-json FILE` prints: FILE's tree as the JSON `:w` writes.
+/// FILE `-` is `stdin`, read as JSON unless `kind` says otherwise. Run
+/// after [`Args::prepare`], whose limits hold.
+pub fn print_json(
+    file: &std::path::Path,
+    kind: Option<Format>,
+    stdin: impl std::io::Read,
+) -> Result<String, crate::load::LoadError> {
+    use crate::load::{self, Limits, LoadError};
+    let loaded = if file.as_os_str() == "-" {
+        let bytes = load::read_within(stdin, Limits::current().max_size)
+            .map_err(|e| e.with_origin("(stdin)"))?;
+        let text = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        load::load_str(text, kind.unwrap_or(Format::Json)).map_err(|e| e.with_origin("(stdin)"))?
+    } else if file.is_dir() {
+        let origin = load::origin_of(file);
+        return Err(LoadError::new("a directory has no tree to print").with_origin(&origin));
+    } else {
+        load::load_path(file, kind)?
+    };
+    Ok(crate::fmt::to_json_pretty(&loaded.doc, 0, 2) + "\n")
 }
 
 /// The viewer's command line, read.
@@ -1682,6 +1728,7 @@ pub fn parse_args(argv: impl IntoIterator<Item = std::ffi::OsString>) -> Result<
     };
     let mut it = argv.into_iter();
     let mut only_files = false;
+    let mut print_json = None;
     while let Some(arg) = it.next() {
         let s = arg.to_string_lossy().into_owned();
         if only_files || !s.starts_with('-') || s == "-" {
@@ -1733,6 +1780,14 @@ pub fn parse_args(argv: impl IntoIterator<Item = std::ffi::OsString>) -> Result<
                 args.grammars
                     .push(crate::grammar::Definition::parse_os(&name, &v)?);
             }
+            "--print-json" => {
+                // Raw, as a --grammar FILE is: a path need not be UTF-8.
+                let v = match inline.take() {
+                    Some(_) => crate::grammar::after_eq(&arg),
+                    None => it.next().ok_or_else(|| format!("{name} needs a value"))?,
+                };
+                print_json = Some(std::path::PathBuf::from(v));
+            }
             "--max-size" => args.max_size = crate::load::parse_size(&value()?)?,
             "--timeout" => args.timeout = crate::load::parse_timeout(&value()?)?,
             "--no-watch" => args.opts.watch = false,
@@ -1763,6 +1818,15 @@ pub fn parse_args(argv: impl IntoIterator<Item = std::ffi::OsString>) -> Result<
     }
     if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         args.opts.color = false;
+    }
+    if let Some(file) = print_json {
+        if let Some(more) = args.files.first() {
+            return Err(format!(
+                "--print-json prints the one file it names. Leave out {}.",
+                more.display()
+            ));
+        }
+        return Ok(Parsed::PrintJson(Box::new(args), file));
     }
     Ok(Parsed::Run(Box::new(args)))
 }
@@ -2092,6 +2156,37 @@ mod tests {
             Ok(Parsed::Run(args)) => assert_eq!(args.files, [std::path::PathBuf::from("--nope")]),
             _ => panic!("-- --nope"),
         }
+    }
+
+    #[test]
+    fn print_json_names_one_file_and_keeps_the_input_options() {
+        let Ok(Parsed::PrintJson(args, file)) = parse(&["-k", "yaml", "--print-json", "x.yml"])
+        else {
+            panic!("--print-json x.yml");
+        };
+        assert_eq!(file, std::path::PathBuf::from("x.yml"));
+        assert_eq!(args.kind_name.as_deref(), Some("yaml"));
+        let Ok(Parsed::PrintJson(_, file)) = parse(&["--print-json=-"]) else {
+            panic!("--print-json=-");
+        };
+        assert_eq!(file, std::path::PathBuf::from("-"));
+        let Err(e) = parse(&["--print-json", "a.json", "b.json"]) else {
+            panic!("a second file");
+        };
+        assert_eq!(
+            e,
+            "--print-json prints the one file it names. Leave out b.json."
+        );
+    }
+
+    #[test]
+    fn print_json_writes_what_w_writes() {
+        let dash = std::path::Path::new("-");
+        let yaml = Format::from_name("yaml");
+        let json = print_json(dash, yaml, "a: [1, 2]\n".as_bytes()).unwrap();
+        assert_eq!(json, "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n");
+        let e = print_json(dash, None, "{,".as_bytes()).unwrap_err();
+        assert!(e.plain_report().contains("--> (stdin):1:2"), "{e}");
     }
 
     #[test]

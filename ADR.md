@@ -14,16 +14,19 @@ what superseded it, so the citations of it still resolve.
 
 | ADR | Decision | Status |
 |-----|----------|--------|
-| [ADR-001](#adr-001-aless-is-a-terminal-viewer) | aless is a terminal viewer | Accepted |
+| [ADR-001](#adr-001-aless-is-a-terminal-viewer) | aless is a terminal viewer | Accepted, amended by ADR-007 |
 | [ADR-002](#adr-002-every-format-is-read-through-a-tabnas-grammar) | Every format is read through a tabnas grammar | Accepted |
 | [ADR-003](#adr-003-the-interface-is-jlesss-unless-the-readme-says-otherwise) | The interface is jless's, unless the README says otherwise | Accepted |
 | [ADR-004](#adr-004-correctness-and-uniformity-come-before-performance) | Correctness and uniformity come before performance | Accepted |
 | [ADR-005](#adr-005-dependencies-are-published-crates-pinned-by-the-lock) | Dependencies are published crates, pinned by the lock | Accepted |
 | [ADR-006](#adr-006-the-reference-is-written-from-the-option-table) | The reference is written from the option table | Accepted |
+| [ADR-007](#adr-007---print-json-is-the-one-thing-aless-does-without-a-terminal) | `--print-json` is the one thing aless does without a terminal | Accepted |
 
 ## ADR-001: aless is a terminal viewer
 
-**Status:** Accepted, 2026-11-02.
+**Status:** Accepted, 2026-11-02. Amended by
+[ADR-007](#adr-007---print-json-is-the-one-thing-aless-does-without-a-terminal),
+2026-11-08: `--print-json` is the one exception.
 
 **Decision.** aless draws a document on a terminal and reads keys from
 it. Without a terminal to draw on (standard output a pipe or a file, no
@@ -140,3 +143,34 @@ detail. `man/aless.1` and `completions/` are committed output of
 **Enforcement.** `every_option_in_the_table_is_read` in `src/cli.rs`,
 `the_generated_files_are_current` in `tests/binary.rs`, and
 `the_reference_is_the_binarys` in `tests/site.rs`.
+
+## ADR-007: `--print-json` is the one thing aless does without a terminal
+
+**Status:** Accepted, 2026-11-08. Amends ADR-001.
+
+**Decision.** `aless --print-json FILE` reads FILE as the viewer would,
+prints its tree on standard output as JSON, and exits. The viewer does
+not start, and no terminal is looked for. FILE `-` is standard input.
+The JSON is what `:w` writes. The input options apply (`-k`,
+`--grammar`, `--grammar-expr`, `--max-size`, `--timeout`), and the
+viewer's options make no difference. The exit statuses are 0 when the
+JSON is printed, 1 when FILE cannot be read or does not parse, with the
+report on standard error, and 2 for a usage error. It is the one
+exception to ADR-001.
+
+**Context.** Every format aless reads becomes one tree (ADR-002), and
+`:w` already writes that tree as JSON. Without this option, a reader
+who wants a YAML, TOML or custom-grammar file as JSON in a script opens
+the viewer and types `:w`, which a script cannot do.
+
+**Consequences.** The option's contract is narrow, and it is fixed: one
+input, the whole tree, and the JSON `:w` writes. It takes no query, no
+path, no other output format, and no option that changes the tree. A
+feature that would add one still does not belong in aless (ADR-001). A
+change to the JSON `:w` writes changes what scripts read, so the
+changelog lists it as such a change.
+
+**Enforcement.** `tests/binary.rs` runs `--print-json` with no terminal,
+holds its output to the JSON `:w` writes, and holds a file it cannot
+print to the report and the status 1. `without_a_terminal_the_viewer_refuses`
+still holds every other command line to ADR-001.
