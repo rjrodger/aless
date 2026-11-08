@@ -14,6 +14,7 @@ _aless() {
     '--timeout=[stop a parse past SECONDS (default none)]:SECONDS: ' \
     '--no-watch[do not reload a file when it changes]' \
     '--watch[reload a file when it changes (the default)]' \
+    '--no-changes[do not mark what a reload changed]' \
     '(--mode -m)--mode=[start in data (default) or line mode]:MODE:(data line)' \
     '(--mode -m)-m[start in data (default) or line mode]:MODE:(data line)' \
     '--depth=[open only the first N levels]:N: ' \

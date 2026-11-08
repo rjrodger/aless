@@ -1926,14 +1926,15 @@ fn the_console_examples_print_what_the_pages_say() {
 
 /// What a `screen` block on a page was captured from, read from the
 /// comment before it: `<!-- screen: COMMAND -->`, with `keys:`, `size:`,
-/// `rows:`, `edit:` and `cwd:` lines after the command where they apply
-/// (`docs/contributing/site.md`).
+/// `rows:`, `edit:`, `then:` and `cwd:` lines after the command where they
+/// apply (`docs/contributing/site.md`).
 struct Capture {
     command: String,
     keys: Vec<String>,
     size: (u16, u16),
     rows: Option<(usize, usize)>,
     edit: Option<(String, String, String)>,
+    then: Vec<String>,
     cwd: String,
 }
 
@@ -1946,6 +1947,7 @@ fn capture_spec(comment: &str) -> Result<Capture, String> {
         size: (80, 12),
         rows: None,
         edit: None,
+        then: Vec::new(),
         cwd: ".".into(),
     };
     for line in lines {
@@ -1955,6 +1957,7 @@ fn capture_spec(comment: &str) -> Result<Capture, String> {
             .ok_or_else(|| format!("not a field: {line:?}"))?;
         match field {
             "keys" => spec.keys = value.split_whitespace().map(str::to_string).collect(),
+            "then" => spec.then = value.split_whitespace().map(str::to_string).collect(),
             "size" => {
                 let (w, h) = value.split_once('x').ok_or("size is COLSxROWS")?;
                 spec.size = (
@@ -2087,7 +2090,12 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
         }
     }
     args.prepare()?;
+    // A capture's clock reads 14:00:05 UTC when it opens and 14:02:11 at
+    // its edit, so that the times it shows never move.
+    args.opts.utc_offset = Some(0);
+    let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(14 * 3600 + secs);
     let mut app = App::new(args.opts, spec.size.0, spec.size.1);
+    app.clock = Some(at(5));
     for file in &args.files {
         app.open_path(&here.join(file), args.kind);
     }
@@ -2099,16 +2107,19 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
         app.open_explorer(&here);
     }
     app.active = 0;
-    for name in &spec.keys {
-        match named_key(name) {
-            Some(key) => app.handle(Input::Key(key)),
-            None => {
-                for c in name.chars() {
-                    app.handle(Input::Key(Key::ch(c)));
+    let type_keys = |app: &mut App, words: &[String]| {
+        for name in words {
+            match named_key(name) {
+                Some(key) => app.handle(Input::Key(key)),
+                None => {
+                    for c in name.chars() {
+                        app.handle(Input::Key(Key::ch(c)));
+                    }
                 }
             }
         }
-    }
+    };
+    type_keys(&mut app, &spec.keys);
     if let Some((file, old, new)) = &spec.edit {
         let path = here.join(file);
         let text = read(&path);
@@ -2116,9 +2127,11 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
             return Err(format!("{file} does not hold {old:?}"));
         }
         std::fs::write(&path, text.replacen(old.as_str(), new, 1)).map_err(|e| e.to_string())?;
+        app.clock = Some(at(131));
         app.handle(Input::FileChanged(path));
         app.handle(Input::Tick(std::time::Instant::now() + RELOAD_DEBOUNCE * 2));
     }
+    type_keys(&mut app, &spec.then);
     let text = aless::render::screen(&mut app).text();
     let mut rows: Vec<&str> = text.lines().collect();
     if let Some((a, b)) = spec.rows {

@@ -46,6 +46,7 @@ dependencies = [
  "tabnas-xml",
  "tabnas-yaml",
  "tabnas-zon",
+ "time",
  "unicode-width",
 ]
 

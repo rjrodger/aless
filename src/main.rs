@@ -46,6 +46,10 @@ fn refuse_usage(e: &str) -> ! {
 }
 
 fn main() {
+    // The local zone can be read only while the process has one thread.
+    let utc_offset = time::UtcOffset::current_local_offset()
+        .ok()
+        .map(|o| o.whole_seconds());
     let mut args = match cli::parse_args(std::env::args_os().skip(1)) {
         Ok(Parsed::Run(a)) => *a,
         Ok(Parsed::Print(text)) => {
@@ -69,6 +73,7 @@ fn main() {
         refuse_usage(&e);
     }
     let (width, height) = terminal::size().unwrap_or((80, 24));
+    args.opts.utc_offset = utc_offset;
     let mut app = App::new(args.opts, width, height);
 
     let stdin_format = args.kind.unwrap_or(Format::Json);

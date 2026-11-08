@@ -67,21 +67,21 @@ edit: bookshelf-openapi.yaml: The books on a shelf => Every book on a shelf, in 
 size: 80x16 -->
 ```screen
  1:bookshelf-openapi.yaml*   2:books.json*   3:hosts.abnf*
-          ▽ "404": {
-              $ref: "#/components/responses/NotFound"
-    ▽ "/api/shelf/{shelf_id}/book": {
-      ▽ parameters: [
-        ▽ {
-            $ref: "#/components/parameters/ShelfId"
-      ▽ get: {
-        ▽ tags: [
-            "shelf"
-          operationId: "listBooks"
-          summary: "Every book on a shelf, in order"
+  │           $ref: "#/components/responses/NotFound"
+  └─▽ "/api/shelf/{shelf_id}/book": {
+    │ ▽ parameters: [
+    │   ▽ {
+    │       $ref: "#/components/parameters/ShelfId"
+    └─▽ get: {
+      │ ▽ tags: [
+      │     "shelf"
+      │   operationId: "listBooks"
+      └─~ summary: "Every book on a shelf, in order"
         ▽ parameters: [
           ▽ {
+ 14:00:05 ○──────────────────────────────────────────────────● 14:02:11  2 of 2
 …l .paths["/api/shelf/{shelf_id}/book"].get.operationId yaml · watching · 104:7
-Reloaded bookshelf-openapi.yaml (328 nodes)
+Reloaded bookshelf-openapi.yaml: 1 changed
 ```
 
 <!-- screen: printf 'title,author,year\nA Book of Examples,A. N. Author,1999\nShelves and How to Fill Them,B. Bookworm,2012\nThe Index,C. Cataloguer,2021\n' | aless -k csv

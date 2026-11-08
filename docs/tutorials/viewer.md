@@ -216,20 +216,20 @@ keys: j j h c J J J l / listBooks Enter
 edit: bookshelf-openapi.yaml: The books on a shelf => Every book on a shelf, in order
 size: 80x14 -->
 ```screen
-              $ref: "#/components/responses/NotFound"
-    ▽ "/api/shelf/{shelf_id}/book": {
-      ▽ parameters: [
-        ▽ {
-            $ref: "#/components/parameters/ShelfId"
-      ▽ get: {
-        ▽ tags: [
-            "shelf"
-          operationId: "listBooks"
-          summary: "Every book on a shelf, in order"
+  └─▽ "/api/shelf/{shelf_id}/book": {
+    │ ▽ parameters: [
+    │   ▽ {
+    │       $ref: "#/components/parameters/ShelfId"
+    └─▽ get: {
+      │ ▽ tags: [
+      │     "shelf"
+      │   operationId: "listBooks"
+      └─~ summary: "Every book on a shelf, in order"
         ▽ parameters: [
           ▽ {
+ 14:00:05 ○──────────────────────────────────────────────────● 14:02:11  2 of 2
 …l .paths["/api/shelf/{shelf_id}/book"].get.operationId yaml · watching · 104:7
-Reloaded bookshelf-openapi.yaml (328 nodes)
+Reloaded bookshelf-openapi.yaml: 1 changed
 ```
 
 The new summary is there. The focus is still on `listBooks`, because aless found the node again by its path. An edit above the node or around it doesn't move you. That's the whole loop: you read, something rewrites the file, and you go on reading where you were!

@@ -42,6 +42,8 @@ notify = "8"
 regex = "1.13"
 unicode-width = "0.2"
 serde_json = { version = "1.0", features = ["preserve_order"] }
+# The local zone's offset, for the times of a file's versions.
+time = { version = "0.3.55", default-features = false, features = ["local-offset"] }
 arboard = { version = "3.6", optional = true, default-features = false, features = ["wayland-data-control"] }
 
 # The tabnas engine and grammars, from crates.io. The engine's package is

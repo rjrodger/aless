@@ -124,7 +124,8 @@ aless differs from jless in these ways:
   jless, the `--json` and `--yaml` options name the format.
 
 Everything aless adds is on a key jless leaves free. The additions are
-tabs, watching, the explorer, and the [source
+tabs, watching and the versions of a watched file, the explorer, and
+the [source
 view](https://aless.tabnas.dev/how-to/display.html#data-mode-and-line-mode).
 For more information, see
 [aless and jless](https://aless.tabnas.dev/explanation/jless.html).

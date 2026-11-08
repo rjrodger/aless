@@ -41,6 +41,13 @@ fn edit_reload_keeps_the_place_and_the_screen_row() {
     let path = temp("place.json", &src);
     let mut app = App::new(Options::default(), 60, 12);
     app.open_path(&path, None);
+    // A first save brings the timeline, whose row comes from the pane once,
+    // before the place is taken.
+    let src = src.replace("\"end\": true", "\"end\": false");
+    std::fs::write(&path, &src).unwrap();
+    app.handle(Input::FileChanged(path.clone()));
+    app.handle(Input::Tick(Instant::now() + RELOAD_DEBOUNCE * 2));
+    assert_eq!(app.timeline_rows(), 1);
     // Fold everything to one level, walk down, open one entry.
     app.run_command("depth 1");
     keys(&mut app, "20j");
