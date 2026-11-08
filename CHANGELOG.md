@@ -24,6 +24,11 @@ For more information, see [Releasing aless](RELEASING.md).
 - `d` and `D` go to the next and the previous change.
 - `:set changes`, `:set nochanges`, `:set history=N` and
   `--no-changes`.
+- `v` and `:history` list the versions in a history tab, the newest
+  first, each with its changes. `Enter` opens a version in a tab of its
+  own, which is not watched.
+- `:ws FILE` writes the text of the version on screen. In the history
+  tab, `:w` and `:ws` write the focused version.
 
 ## [0.7.1] - 2026-11-06
 

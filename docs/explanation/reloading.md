@@ -39,6 +39,8 @@ A version keeps its text, not its tree. A tree takes many times the memory of it
 
 A save that does not parse is not a version, because it has no tree to show. It shows on the timeline as a `!` at the time of the save.
 
+The versions belong to the file's tab, so the history tab that lists them closes with that tab. A version opened in a tab of its own takes its text along, so that tab stays open after the file's tab closes.
+
 ## Paying for each reload
 
 Reloading is not free. Each reload parses the whole file again, and the viewer waits for the parse. A large file that changes every second therefore keeps the viewer busy. `--no-watch` and `W` are there for that case. For more information, see [Follow a file as it changes](/how-to/watch.html).

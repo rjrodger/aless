@@ -9,7 +9,7 @@ use std::time::{Instant, SystemTime};
 use crate::doc::{row_of, Doc, Key, NodeId, Row};
 use crate::explorer::Explorer;
 use crate::fmt;
-use crate::history::{self, ChangeKind, Counts, History, Keep, Marks};
+use crate::history::{self, ChangeKind, Counts, History, Keep, Listing, Marks};
 use crate::load::{self, Format, LoadError, Loaded};
 use crate::search::{Direction, Pattern};
 
@@ -110,6 +110,18 @@ pub struct Tab {
     pub marks: Marks,
     /// The note under the tree that lists those changes is open.
     pub note: bool,
+    /// Set when this tab lists another tab's versions.
+    pub listing: Option<Listing>,
+    /// Set when this tab holds one version of another tab's file.
+    pub frozen: Option<Frozen>,
+}
+
+/// A version in a tab of its own: the tab whose file it is a version of,
+/// and its number there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Frozen {
+    pub of: u64,
+    pub number: usize,
 }
 
 /// What a reload did, for the message that reports it.
@@ -161,6 +173,8 @@ impl Tab {
             history,
             marks: Marks::default(),
             note: false,
+            listing: None,
+            frozen: None,
         }
     }
 
@@ -834,7 +848,7 @@ impl Tab {
     /// The marks of the version on screen, for its tree as it now is.
     pub fn refresh_marks(&mut self) {
         self.marks = match self.history.shown() {
-            Some(v) if self.history.len() > 1 => Marks::of(&self.doc, &v.changes),
+            Some(v) if !v.changes.is_empty() => Marks::of(&self.doc, &v.changes),
             _ => Marks::default(),
         };
     }

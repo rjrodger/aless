@@ -99,6 +99,55 @@ While an older version is on screen, the status bar turns yellow and names the v
 
 To keep more or fewer versions, type `:set history=N`. To stop marking changes, type `:set nochanges`, or start aless with `--no-changes`. `:format` starts the versions again, because trees read in different formats do not compare.
 
+## List the versions and keep one
+
+To list the versions aless keeps, press `v` or type `:history`. A history tab opens with the newest version first. Each version holds its changes, and the version on screen in the file's tab is unfolded:
+
+<!-- screen: aless books.json
+edit: books.json: "year": 1999, => "year": 2001,
+then: v
+size: 80x7 -->
+```screen
+ 1:books.json*   2:books.json history
+▽ books.json  2 versions
+  ▼ version 2  14:02:11  ~1  the newest, on screen
+    ~ [0].year  1999 → 2001
+    version 1  14:00:05
+ books.json history version 2                              history · 2 versions
+books.json: 2 versions. Enter opens one in a tab of its own
+```
+
+The history tab follows the file, so each save adds a row. The tab closes when you close the file's tab.
+
+To open a version in a tab of its own, focus the version and press `Enter`. Focus a change instead, and the version opens at that change. The version's tab isn't watched, so it keeps that version while the file goes on changing. Its tab name ends in the version's number:
+
+<!-- screen: aless books.json
+edit: books.json: "year": 1999, => "year": 2001,
+then: v j Enter
+size: 80x16 -->
+```screen
+ 1:books.json*   2:books.json history   3:books.json v2
+▽ [
+└─▽ {
+  │   title: "A Book of Examples"
+  │   author: "A. N. Author"
+  └─~ year: 2001
+    ▽ tags: [
+        "examples"
+        "reference"
+  ▽ {
+      title: "Shelves and How to Fill Them"
+      author: "B. Bookworm"
+── 1 change in version 2 · d next change · v history ───────────────────────────
+  ~ [0].year  1999 → 2001
+ books.json v2 [0].year                                  json · version 2 · 5:5
+Version 2 of books.json, saved 14:02:11, in a tab of its own
+```
+
+To go back to the history tab from a version's tab, press `v`.
+
+To write a version to a file, type `:ws FILE` for its text as saved, or `:w FILE` for its tree as JSON. In the history tab, both commands write the focused version. Elsewhere, they write the version on screen, so `[` and then `:ws FILE` keeps the text of the version before. Neither command writes over a file that exists, unless you type `:ws!` or `:w!`.
+
 ## Keep reading when the file breaks or disappears
 
 A save that doesn't parse doesn't take your document away. The last version that parsed stays on screen. Beneath that version, aless docks the parser's report. In this example, a comma too many has gone into the first book in [`books.json`](/examples/books.json):
