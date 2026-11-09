@@ -466,7 +466,8 @@ def main():
     time.sleep(0.3)
     with open(nested, "w") as f:
         f.write(text.replace('"TAPL"', '"TAPL, 2nd edition"'))
-    expect("the change is picked up and reloaded", "Reloaded nested.json", "2nd edition", timeout=6.0)
+    expect("the change is picked up and reloaded", "Reloaded nested.json: 1 changed", "2nd edition", timeout=6.0)
+    expect("the change is marked: the note and the timeline", "1 change in version 2", "2 of 2")
     expect("the focus stayed on the edited title", "books[1].title")
 
     send("s")

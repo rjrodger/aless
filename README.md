@@ -50,6 +50,35 @@ size: 80x18 -->
 
 aless draws each folded node with a preview of what the node holds.
 
+When a watched file changes, aless reloads it and marks what changed.
+Here a save changed the first book's year in `books.json` and removed
+one of its tags:
+
+<!-- screen: aless books.json
+edit: books.json: "year": 1999,\n    "tags": ["examples", "reference"] => "year": 2001,\n    "tags": ["examples"]
+size: 80x13 -->
+```screen
+▼ [
+└─▽ {
+  │   title: "A Book of Examples"
+  │   author: "A. N. Author"
+  ├─~ year: 2001
+  └─▽ tags: [ −1
+        "examples"
+── 2 changes in version 2 · [ older · d next change ────────────────────────────
+  ~ [0].year     1999 → 2001
+  − [0].tags[1]  "reference"
+ 14:00:05 ○──────────────────────────────────────────────────● 14:02:11  2 of 2
+ books.json .                                             json · watching · 1:1
+Reloaded books.json: 1 changed, 1 removed
+```
+
+A `~` marks a changed value, and `−1` counts a removed one. Rails lead
+from the root to each change. The note under the tree lists the
+changes, and the timeline above the status bar has a dot for each
+version. aless keeps up to 50 versions of each file: `[` and `]` step
+through them, and `v` lists them in a tab of their own.
+
 ## Thanks to jless
 
 [jless](https://jless.io) is the inspiration for aless. jless is Paul
@@ -96,6 +125,7 @@ aless config.toml deploy.yaml data.csv   # several files, a tab each
 curl -s https://api.example/items | aless   # standard input, read as JSON
 aless -k yaml settings.conf              # a file whose extension misleads
 aless --grammar hosts=hosts.abnf /etc/hosts   # a format of your own
+aless --print-json spec.yaml > spec.json # the tree as JSON, no viewer
 aless                                    # explore the current directory
 ```
 

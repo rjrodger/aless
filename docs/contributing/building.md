@@ -20,7 +20,9 @@ cargo package --locked
 That time includes the site build and its console examples.
 
 The pseudo-terminal (pty) smoke test runs on Unix. It drives the real
-binary in a pseudo-terminal. It also checks that aless refuses to start
+binary in a pseudo-terminal. It edits a watched file behind the
+viewer's back, and checks that the reload marks the change and adds a
+version to the timeline. It also checks that aless refuses to start
 without a terminal.
 
 `cargo package` runs on Linux in CI. It checks that the crate builds

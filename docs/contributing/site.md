@@ -162,13 +162,20 @@ fields:
 - `rows: A-B` keeps only rows `A` to `B` of the screen.
 - `edit: FILE: OLD => NEW` changes `OLD` to `NEW` in `FILE` once the
   keys are typed. The capture then reloads the file as the watcher
-  would.
+  would. `\n` in `OLD` or `NEW` is a line break, so one save can change
+  several lines.
 - `then:` is what is typed after the edit, as `keys:` is before it.
+
+`edit:` and `then:` can each appear more than once, and they run in the
+order the comment gives them. Each `edit:` is one save, and so one
+version of the file, or a failed save when `NEW` doesn't parse.
 - `cwd: ..` runs the command from the directory above the files.
 
 `the_screens_are_what_aless_draws` builds the app as the command line
 would, through `cli::parse_args`. Its clock reads 14:00:05 UTC when the
-capture opens, and 14:02:11 at the edit, so the times a capture shows
+capture opens, and 14:02:11 at the first edit. Later edits land at
+14:05:47, 14:06:49, 14:10:55, 14:12:11, and 14:17:02, unevenly apart as
+saves are, so a timeline shows its spacing. The times a capture shows
 never change. It types the keys, then compares what
 `render::screen` draws with the fence. The comparison runs on every
 platform. The test runs none of the effects the terminal side would, so
