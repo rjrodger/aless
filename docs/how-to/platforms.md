@@ -47,6 +47,8 @@ The viewer takes the mouse's wheel and clicks. `--no-mouse` leaves the mouse to 
 
 aless refuses to start on a terminal that can't draw the viewer at all, or with a pipe on standard output. `TERM=dumb` names such a terminal. In both cases aless says why on standard error and exits with the status 2.
 
+`--print-json FILE` is the one exception: it prints the tree of FILE as JSON without the viewer, so it needs no terminal. For more information, see [Save a document as JSON](/how-to/json.html#print-the-json-from-the-shell).
+
 ## File watching
 
 aless watches a file through the platform's own file watcher. That file watcher is inotify on Linux, FSEvents on macOS, and ReadDirectoryChangesW on Windows. aless watches the file's directory, so it sees a save that renames a new file over the old one. While the viewer is idle, aless also checks each watched file's size and modification time about every half second. That check catches what a watcher misses, for example on a network share.

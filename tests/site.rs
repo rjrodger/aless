@@ -2081,7 +2081,9 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
     }
     let mut args = match aless::cli::parse_args(argv[1..].iter().map(std::ffi::OsString::from))? {
         aless::cli::Parsed::Run(args) => *args,
-        aless::cli::Parsed::Print(_) => return Err("a capture runs the viewer".into()),
+        aless::cli::Parsed::Print(_) | aless::cli::Parsed::PrintJson(..) => {
+            return Err("a capture runs the viewer".into())
+        }
     };
     // The paths the command names, as `sh` in `here` would find them.
     for def in &mut args.grammars {

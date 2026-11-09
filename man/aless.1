@@ -32,7 +32,9 @@ aless refuses to start without a terminal to draw on and read keys from. It
 refuses when standard output is a pipe or a file, when there is no terminal to
 open, or when TERM is dumb. It refuses before reading any input. It writes one
 line on standard error and exits with the status 2. Only \-h, \-\-help, \-V,
-and \-\-generate write to standard output.
+\-\-generate, and \-\-print\-json write to standard output. \-\-print\-json is
+the one option that reads an input without a terminal: it prints the input\(aqs
+tree as JSON, and exits.
 .SH OPTIONS
 .SS "Input options"
 .TP 7
@@ -142,6 +144,15 @@ Print a file written from this reference. WHAT is man for the man page. The man
 page is aless.1. WHAT is complete\-bash, complete\-zsh, complete\-fish, or
 complete\-powershell for that shell\(aqs completions. For more information, see
 FILES.
+.TP 7
+\fB\-\-print\-json\fR \fIFILE\fR
+Print the tree of FILE as JSON on standard output, and exit. The viewer does
+not start, so no terminal is needed. FILE is read as the viewer reads it: \-k,
+\-\-grammar, \-\-grammar\-expr, \-\-max\-size, and \-\-timeout apply, and the
+viewer\(aqs options make no difference. FILE \- is standard input, read as JSON
+unless \-k says otherwise. The JSON is what :w writes: two spaces a level, the
+keys in their order in the source. When FILE cannot be read or does not parse,
+the report goes to standard error and the exit status is 1.
 .SH "INPUT AND FORMATS"
 FILE is a path, or \- for standard input. Options end at \-\-, so every
 argument after \-\- is a FILE, even one that starts with \-. A long option\(aqs
@@ -342,16 +353,18 @@ in ABNF, EBNF, or GBNF can nest its groups and elements 127 deep.
 .SH "EXIT STATUS"
 .TP 7
 \fB0\fR
-You quit the viewer.
+You quit the viewer, or \-\-print\-json printed its file\(aqs tree.
 .TP 7
 \fB1\fR
 The viewer failed while it ran: aless could not draw on the terminal or read
-from it.
+from it. Or \-\-print\-json could not read its file, or the file did not parse,
+and the report is on standard error.
 .TP 7
 \fB2\fR
-The viewer could not start. Either there was a usage error, or there was no
-terminal to draw on and read keys from. A usage error is an unknown option, a
-bad value, or a \-\-grammar that does not compile or cannot be read.
+The viewer could not start, or \-\-print\-json could not. Either there was a
+usage error, or there was no terminal to draw on and read keys from. A usage
+error is an unknown option, a bad value, or a \-\-grammar that does not compile
+or cannot be read.
 .SH "ENVIRONMENT"
 .TP 10
 \fBNO_COLOR\fR

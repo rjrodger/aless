@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::doc::Key as PathKey;
 use crate::doc::{Kind, NodeId};
 use crate::fmt;
 use crate::highlight::{self, Painted, Painter};
-use crate::history::{self, Keep};
-use crate::load::{self, Format};
+use crate::history::{self, ChangeKind, History, Item, Keep};
+use crate::load::{self, Format, Loaded};
 use crate::search::{self, Direction};
-use crate::tab::{Reloaded, Reposition, Tab, View};
+use crate::tab::{Frozen, Reloaded, Reposition, Tab, View};
 
 // ----- input ---------------------------------------------------------------
 
@@ -486,13 +487,15 @@ impl App {
 
     fn adopt(&mut self, mut tab: Tab) {
         let view = self.view();
-        if tab.explorer.is_none() {
+        if tab.explorer.is_none() && tab.listing.is_none() {
             tab.line_mode = self.opts.line_mode;
             if let Some(d) = self.opts.depth {
                 tab.expand_to_depth(d, view);
             }
         }
-        tab.history.stamp_first(self.now());
+        if tab.frozen.is_none() {
+            tab.history.stamp_first(self.now());
+        }
         if self.opts.watch && tab.watchable() {
             tab.watch = true;
             if let Some(p) = &tab.path {
@@ -709,6 +712,20 @@ impl App {
                 _ => {}
             }
         }
+        if self.tab().listing.is_some() {
+            match (key.code, key.ctrl) {
+                (KeyCode::Enter, false) => {
+                    self.history_enter();
+                    return;
+                }
+                (KeyCode::Char('m' | '%' | 's'), false) => return,
+                (KeyCode::Char('[' | ']' | '{' | '}' | 'd' | 'D'), false) => {
+                    self.info("The history tab lists the versions: Enter opens one");
+                    return;
+                }
+                _ => {}
+            }
+        }
         match (key.code, key.ctrl) {
             (KeyCode::Char('c'), true) => self.quit = true,
             (KeyCode::Char('z'), true) => self.effects.push(Effect::Suspend),
@@ -803,6 +820,7 @@ impl App {
             (KeyCode::Tab, _) => self.next_tab(n),
             (KeyCode::BackTab, _) => self.prev_tab(n),
             (KeyCode::Char('s'), false) => self.show_source(),
+            (KeyCode::Char('v'), false) => self.open_history(),
             (KeyCode::Char('['), false) => self.step_version(-(n as isize)),
             (KeyCode::Char(']'), false) => self.step_version(n as isize),
             (KeyCode::Char('{'), false) => self.step_version(isize::MIN / 2),
@@ -831,6 +849,13 @@ impl App {
             self.info("A directory keeps no versions");
             return;
         }
+        if let Some(f) = tab.frozen {
+            self.info(format!(
+                "This tab holds version {} alone. [ and ] step in the file's own tab",
+                f.number
+            ));
+            return;
+        }
         if tab.history.len() < 2 {
             self.info(format!("{title} has one version so far"));
             return;
@@ -853,9 +878,198 @@ impl App {
                     let text = version_line(tab, offset);
                     self.info(text);
                 }
+                self.sync_listings();
             }
             Err(e) => self.error(e),
         }
+    }
+
+    // ----- the listing of versions -------------------------------------------------
+
+    /// `v`: go to the tab that lists the versions of the file on screen,
+    /// and open it first if need be.
+    fn open_history(&mut self) {
+        let tab = self.tab();
+        if tab.listing.is_some() {
+            self.info("This is the history tab: Enter opens a version");
+            return;
+        }
+        if tab.explorer.is_some() {
+            self.info("A directory keeps no versions");
+            return;
+        }
+        let of = tab.frozen.map_or(tab.id, |f| f.of);
+        let open = self
+            .tabs
+            .iter()
+            .position(|t| t.listing.as_ref().is_some_and(|l| l.of == of));
+        if let Some(i) = open {
+            self.active = i;
+            return;
+        }
+        let Some(src) = self.tabs.iter().position(|t| t.id == of) else {
+            self.error("The file's own tab is closed, so its versions are gone");
+            return;
+        };
+        let name = self.tabs[src].title.clone();
+        let count = self.tabs[src].history.len();
+        if count == 0 {
+            self.info(format!("{name} has no versions yet"));
+            return;
+        }
+        let offset = self.opts.utc_offset;
+        let (doc, list) = history::listing(&self.tabs[src].history, of, &name, offset);
+        let shown = list
+            .items
+            .iter()
+            .position(|i| matches!(i, Item::Version { shown: true, .. }));
+        let id = self.next_id;
+        self.next_id += 1;
+        let source = String::new();
+        let loaded = Loaded {
+            doc,
+            format: Format::Text,
+            source,
+        };
+        let mut tab = Tab::new(id, format!("{name} history"), None, loaded);
+        tab.history = History::default();
+        tab.listing = Some(list);
+        self.adopt(tab);
+        let view = self.view();
+        if let Some(row) = shown {
+            self.tab().focus_node(row as NodeId, view);
+        }
+        let s = if count == 1 { "" } else { "s" };
+        self.info(format!(
+            "{name}: {count} version{s}. Enter opens one in a tab of its own"
+        ));
+    }
+
+    /// Build each listing tab again from the versions of the tab it lists.
+    fn sync_listings(&mut self) {
+        let view = self.view();
+        let offset = self.opts.utc_offset;
+        for li in 0..self.tabs.len() {
+            let Some(of) = self.tabs[li].listing.as_ref().map(|l| l.of) else {
+                continue;
+            };
+            let Some(src) = self.tabs.iter().position(|t| t.id == of) else {
+                continue;
+            };
+            let name = self.tabs[src].title.clone();
+            let (doc, list) = history::listing(&self.tabs[src].history, of, &name, offset);
+            let tab = &mut self.tabs[li];
+            let source = String::new();
+            let loaded = Loaded {
+                doc,
+                format: Format::Text,
+                source,
+            };
+            // Before the tree, so a search's matches are found in its rows.
+            tab.listing = Some(list);
+            tab.apply(loaded, view);
+        }
+    }
+
+    /// In a listing tab: the tab listed, and the index of the focused
+    /// version, or of the version of the focused change.
+    fn listed_version(&mut self) -> Option<(usize, usize)> {
+        let node = self.tab().focused_node();
+        let list = self.tab_ref()?.listing.as_ref()?;
+        let index = match list.items.get(node as usize)? {
+            Item::Version { index, .. } | Item::Change { index, .. } => *index,
+            _ => return None,
+        };
+        let src = self.tabs.iter().position(|t| t.id == list.of)?;
+        (index < self.tabs[src].history.len()).then_some((src, index))
+    }
+
+    /// Enter in a listing tab: the focused version in a tab of its own,
+    /// or a focused change's version, at that change.
+    fn history_enter(&mut self) {
+        let view = self.view();
+        let node = self.tab().focused_node();
+        let Some((of, item)) = self
+            .tab_ref()
+            .and_then(|t| t.listing.as_ref())
+            .map(|l| (l.of, l.items.get(node as usize).cloned()))
+        else {
+            return;
+        };
+        match item {
+            Some(Item::Root { .. }) => self.tab().toggle(view),
+            Some(Item::Failed { .. }) => {
+                self.info("This save did not parse, so it has no tree to open")
+            }
+            Some(Item::Version { index, .. }) => self.open_version(of, index, None),
+            Some(Item::Change { index, mut change }) => {
+                if change.kind == ChangeKind::Removed {
+                    change.path.pop();
+                }
+                self.open_version(of, index, Some(change.path))
+            }
+            None => {}
+        }
+    }
+
+    /// Version `index` of the tab `of`, in a tab of its own that is not
+    /// watched, at `at` or at the place the file's own tab is. A version
+    /// already in a tab is not opened twice.
+    fn open_version(&mut self, of: u64, index: usize, at: Option<Vec<PathKey>>) {
+        let Some(src) = self.tabs.iter().position(|t| t.id == of) else {
+            self.error("The file's own tab is closed, so its versions are gone");
+            return;
+        };
+        let Some(v) = self.tabs[src].history.versions().get(index).cloned() else {
+            return;
+        };
+        let name = self.tabs[src].title.clone();
+        let (number, time) = (v.number, v.time);
+        let epoch = self.tabs[src].history.epoch();
+        let frozen = Frozen { of, epoch, number };
+        if let Some(i) = self.tabs.iter().position(|t| t.frozen == Some(frozen)) {
+            self.active = i;
+            if let Some(place) = at {
+                let view = self.view();
+                let tab = self.tab();
+                let (_, node) = tab.doc.resolve_prefix(&place);
+                tab.focus_node(node, view);
+            }
+        } else {
+            let place = match at {
+                Some(p) => p,
+                None => {
+                    let t = &mut self.tabs[src];
+                    let n = t.focused_node();
+                    t.doc.path(n)
+                }
+            };
+            let loaded = match load::load_str(v.source.to_string(), v.format) {
+                Ok(l) => l,
+                Err(e) => {
+                    self.error(format!("Version {number} no longer parses: {e}"));
+                    return;
+                }
+            };
+            let id = self.next_id;
+            self.next_id += 1;
+            let mut tab = Tab::new(id, format!("{name} v{number}"), None, loaded);
+            tab.history = History::of_version(v);
+            tab.frozen = Some(frozen);
+            self.adopt(tab);
+            let view = self.view();
+            let changes = self.opts.changes;
+            let tab = self.tab();
+            tab.refresh_marks();
+            tab.note = changes && !tab.marks.is_empty();
+            let (_, node) = tab.doc.resolve_prefix(&place);
+            tab.focus_node(node, view);
+        }
+        let verb = if number == 1 { "opened" } else { "saved" };
+        self.info(format!(
+            "Version {number} of {name}, {verb} {}, in a tab of its own",
+            history::clock(time, self.opts.utc_offset)
+        ));
     }
 
     // ----- explorer ------------------------------------------------------------------
@@ -1024,6 +1238,9 @@ impl App {
     /// The text a yank target names for the focused node, or why there is
     /// none.
     pub fn yank_text(&mut self, target: YankTarget) -> Result<String, String> {
+        if self.tab_ref().is_some_and(|t| t.listing.is_some()) {
+            return Err("Open a version with Enter to copy from it".to_string());
+        }
         let tab = self.tab();
         let node: NodeId = tab.focused_node();
         let doc = &tab.doc;
@@ -1262,12 +1479,21 @@ impl App {
             {
                 self.error(format!(":{cmd} applies to a document, not to the explorer"))
             }
+            "source" | "src" | "mode" | "format" | "kind" | "ft" | "filetype"
+                if self.tab_ref().is_some_and(|t| t.listing.is_some()) =>
+            {
+                self.error(format!(
+                    ":{cmd} applies to a document, not to the history tab"
+                ))
+            }
             "q" | "close" | "tabclose" => self.close_tab(),
             "qa" | "qall" | "quit" | "quitall" | "exit" => self.quit = true,
             "h" | "help" => self.show_help(),
             "error" | "errors" | "err" => self.show_error(),
             "set" | "se" => self.set_option(rest),
             "w" | "write" => self.write_file(rest, bang),
+            "ws" | "writesource" => self.write_source(rest, bang),
+            "history" => self.open_history(),
             // `:e!` (the bang was split off above) reloads, as in vim.
             "e" | "edit" if bang && rest.is_empty() => self.reload_active(),
             "open" | "o" | "e" | "edit" | "tabnew" | "tabe" | "tabedit" => self.cmd_open(rest),
@@ -1292,7 +1518,10 @@ impl App {
             "r" | "reload" => self.reload_active(),
             "format" | "kind" | "ft" | "filetype" => match Format::from_name(rest) {
                 Some(f) => match self.tab().reformat(f, view) {
-                    Ok(()) => self.info(format!("Parsed as {f}")),
+                    Ok(()) => {
+                        self.sync_listings();
+                        self.info(format!("Parsed as {f}"))
+                    }
                     Err(e) => self.error(format!("{f}: {e} (! shows the report)")),
                 },
                 None if rest.is_empty() => self.error(format!(
@@ -1408,6 +1637,7 @@ impl App {
                             t.history.prune(keep);
                             t.refresh_marks();
                         }
+                        self.sync_listings();
                     }
                     Err(_) => self.error(format!(":set {name} needs a number, not {v}")),
                 },
@@ -1439,19 +1669,69 @@ impl App {
             self.error(":w needs a file name. :w FILE writes the document to FILE as JSON.");
             return;
         }
-        let path = Path::new(rest);
-        if path.exists() && !bang {
-            self.error(format!("{rest} exists. :w! {rest} writes over it."));
+        match self.tree_json() {
+            Ok(text) => self.write_out(rest, bang, "w", text + "\n"),
+            Err(e) => self.error(e),
+        }
+    }
+
+    /// `:ws FILE`: the text of the version on screen, as it was saved.
+    fn write_source(&mut self, rest: &str, bang: bool) {
+        if rest.is_empty() {
+            self.error(":ws needs a file name. :ws FILE writes the text of the version on screen.");
             return;
         }
-        let text = {
-            let tab = self.tab();
-            fmt::to_json_pretty(&tab.doc, 0, 2)
-        };
-        match std::fs::write(path, text + "\n") {
+        match self.version_text() {
+            Ok(text) => self.write_out(rest, bang, "ws", text),
+            Err(e) => self.error(e),
+        }
+    }
+
+    fn write_out(&mut self, rest: &str, bang: bool, cmd: &str, text: String) {
+        let path = Path::new(rest);
+        if path.exists() && !bang {
+            self.error(format!("{rest} exists. :{cmd}! {rest} writes over it."));
+            return;
+        }
+        match std::fs::write(path, text) {
             Ok(()) => self.info(format!("Wrote {rest}")),
             Err(e) => self.error(format!("Could not write {rest}: {e}")),
         }
+    }
+
+    /// What `:w` writes: the tree on screen as JSON, or in a listing tab
+    /// the focused version's.
+    fn tree_json(&mut self) -> Result<String, String> {
+        if let Some((src, index)) = self.listed_version() {
+            let v = &self.tabs[src].history.versions()[index];
+            let loaded = load::load_str(v.source.to_string(), v.format)
+                .map_err(|e| format!("Version {} no longer parses: {e}", v.number))?;
+            return Ok(fmt::to_json_pretty(&loaded.doc, 0, 2));
+        }
+        let tab = self.tab();
+        if tab.listing.is_some() {
+            return Err("Focus a version to write it".to_string());
+        }
+        Ok(fmt::to_json_pretty(&tab.doc, 0, 2))
+    }
+
+    /// What `:ws` writes: the text of the version on screen, or in a
+    /// listing tab the focused version's.
+    fn version_text(&mut self) -> Result<String, String> {
+        if let Some((src, index)) = self.listed_version() {
+            return Ok(self.tabs[src].history.versions()[index].source.to_string());
+        }
+        let tab = self.tab();
+        if tab.listing.is_some() {
+            return Err("Focus a version to write its text".to_string());
+        }
+        if tab.explorer.is_some() {
+            return Err("A directory has no text to write".to_string());
+        }
+        Ok(match tab.history.shown() {
+            Some(v) => v.source.to_string(),
+            None => tab.source.clone(),
+        })
     }
 
     // ----- tabs -------------------------------------------------------------------------------
@@ -1465,6 +1745,22 @@ impl App {
         if tab.watch {
             if let Some(p) = tab.path {
                 self.effects.push(Effect::Unwatch(p));
+            }
+        }
+        // A listing tab's versions live in the tab just closed.
+        let mut i = 0;
+        while i < self.tabs.len() {
+            if self.tabs[i]
+                .listing
+                .as_ref()
+                .is_some_and(|l| l.of == tab.id)
+            {
+                self.tabs.remove(i);
+                if i < self.active {
+                    self.active -= 1;
+                }
+            } else {
+                i += 1;
             }
         }
         if self.tabs.is_empty() {
@@ -1530,6 +1826,7 @@ impl App {
         }
         let outcome = tab.reload_at(view, now, keep);
         self.report_reload(self.active, outcome);
+        self.sync_listings();
     }
 
     fn report_reload(&mut self, i: usize, outcome: Reloaded) {
@@ -1573,6 +1870,7 @@ impl App {
     pub fn on_tick(&mut self, now: Instant) {
         let view = self.view();
         let (wall, keep) = (self.now(), self.keep());
+        let mut reloaded = false;
         for i in 0..self.tabs.len() {
             let tab = &mut self.tabs[i];
             if !tab.watch {
@@ -1585,7 +1883,11 @@ impl App {
             if due {
                 let outcome = tab.reload_at(view, wall, keep);
                 self.report_reload(i, outcome);
+                reloaded = true;
             }
+        }
+        if reloaded {
+            self.sync_listings();
         }
     }
 
@@ -1853,6 +2155,7 @@ pub const KEY_MAP: &[KeyGroup] = &[
             ("[ ]", "Show the version before, and the version after, the one on screen. `3[` goes back three."),
             ("{ }", "Show the oldest version kept, and the newest."),
             ("d D", "Go to the next and the previous change, round the end of the document."),
+            ("v", "List the versions in the history tab, the newest first."),
         ],
     },
     KeyGroup {
@@ -1910,6 +2213,18 @@ pub const KEY_MAP: &[KeyGroup] = &[
         ],
     },
     KeyGroup {
+        title: "The history tab",
+        note: "`v` lists the versions of a watched file in a tab, the newest first, each with \
+               what it changed. The tab follows the file as it changes, and closes with the \
+               file's tab. `:w` and `:ws` write the focused version. `m`, `%`, and `s` do \
+               nothing in it.",
+        typed: false,
+        keys: &[
+            ("Enter", "Open the focused version in a tab of its own, which is not watched, at the focused change."),
+            ("v", "Go to the history tab from a version's own tab, or from the file's tab."),
+        ],
+    },
+    KeyGroup {
         title: "Commands",
         note: "Type `:` and the command, then `Enter`.",
         typed: true,
@@ -1922,6 +2237,9 @@ pub const KEY_MAP: &[KeyGroup] = &[
             (":tabfirst  :tablast", "Go to the first and the last tab."),
             (":w FILE", "Write the document to FILE as JSON, but not over a file that exists."),
             (":w! FILE", "Write the document to FILE as JSON, over a file that exists."),
+            (":ws FILE", "Write the text of the version on screen to FILE, but not over a file that exists."),
+            (":ws! FILE", "Write the text of the version on screen to FILE, over a file that exists."),
+            (":history", "List the versions in the history tab."),
             (":format FORMAT", "Read the tab's text again as FORMAT."),
             (":mode data  :mode line", "Switch to data mode or line mode."),
             (":depth N", "Open the first N levels, and fold every container below them."),
@@ -2220,6 +2538,201 @@ mod tests {
         assert_eq!(numbers, [2, 3], "the version on screen and the newest");
         app.run_command("set history=x");
         assert!(app.message.as_ref().unwrap().error);
+    }
+
+    fn listed(app: &App) -> usize {
+        let list = app.tab_ref().unwrap().listing.as_ref().unwrap();
+        list.items
+            .iter()
+            .filter(|i| matches!(i, Item::Version { .. }))
+            .count()
+    }
+
+    /// A path for a file a test writes, with nothing there yet.
+    fn fresh(name: &str) -> PathBuf {
+        let p = write_temp(name, "");
+        std::fs::remove_file(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn v_lists_the_versions_and_enter_opens_one_in_its_own_tab() {
+        let (mut app, p) = watched("listed.json", V1);
+        save(&mut app, &p, V2, 131);
+        save(&mut app, &p, V3, 220);
+        keys(&mut app, "v");
+        assert_eq!(app.tab().title, "listed.json history");
+        assert_eq!(
+            said(&app),
+            "listed.json: 3 versions. Enter opens one in a tab of its own"
+        );
+        assert_eq!(app.tab().focused_node(), 1, "on the version on screen");
+        keys(&mut app, "J");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        let tab = app.tab();
+        assert_eq!(tab.title, "listed.json v2");
+        assert!(!tab.watch, "a version's own tab is not watched");
+        assert_eq!(tab.frozen.map(|f| f.number), Some(2));
+        assert!(!tab.marks.is_empty(), "version 2's own marks");
+        assert_eq!(
+            said(&app),
+            "Version 2 of listed.json, saved 14:02:11, in a tab of its own"
+        );
+        let text = fresh("v2.json");
+        app.run_command(&format!("ws {}", text.display()));
+        assert_eq!(
+            std::fs::read_to_string(&text).unwrap(),
+            V2,
+            "the text as saved"
+        );
+        let json = fresh("v2-tree.json");
+        app.run_command(&format!("w {}", json.display()));
+        let written = std::fs::read_to_string(&json).unwrap();
+        assert!(
+            written.contains("2001") && written.contains("\"y\""),
+            "{written}"
+        );
+        keys(&mut app, "[");
+        assert!(said(&app).starts_with("This tab holds version 2 alone"));
+        keys(&mut app, "v");
+        assert_eq!(
+            app.tab().title,
+            "listed.json history",
+            "v goes back to the list"
+        );
+    }
+
+    #[test]
+    fn the_history_tab_follows_the_saves_and_writes_the_focused_version() {
+        let (mut app, p) = watched("follows.json", V1);
+        save(&mut app, &p, V2, 131);
+        keys(&mut app, "v");
+        assert_eq!(listed(&app), 2);
+        save(&mut app, &p, V3, 220);
+        assert_eq!(listed(&app), 3, "a save to the file adds a row");
+        let at = app.tab().focused_node();
+        let list = app.tab_ref().unwrap().listing.as_ref().unwrap();
+        assert!(
+            matches!(list.items[at as usize], Item::Version { number: 2, .. }),
+            "the focus stays on its version"
+        );
+        let text = fresh("focused.json");
+        app.run_command(&format!("ws {}", text.display()));
+        assert_eq!(std::fs::read_to_string(&text).unwrap(), V2);
+        keys(&mut app, "yy");
+        assert_eq!(said(&app), "Open a version with Enter to copy from it");
+        app.run_command("format yaml");
+        assert_eq!(
+            said(&app),
+            ":format applies to a document, not to the history tab"
+        );
+        app.run_command("set mode=line");
+        assert!(!app.tab().line_mode, "{}", said(&app));
+        keys(&mut app, "[");
+        assert_eq!(
+            said(&app),
+            "The history tab lists the versions: Enter opens one"
+        );
+    }
+
+    #[test]
+    fn enter_on_a_change_opens_its_version_there_and_reuses_the_tab() {
+        let (mut app, p) = watched("there.json", V1);
+        save(&mut app, &p, V2, 131);
+        save(&mut app, &p, V3, 220);
+        save(&mut app, &p, "[1,,]", 300);
+        app.run_command("history");
+        assert_eq!(app.tab().title, "there.json history");
+        // The focus starts on the version on screen: `j` is its first change.
+        keys(&mut app, "j");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tab().title, "there.json v3");
+        assert_eq!(path(&mut app), "[0].tags", "a removed value: its parent");
+        let tabs = app.tabs.len();
+        keys(&mut app, "v");
+        keys(&mut app, "jj");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tabs.len(), tabs, "the tab of version 3 again");
+        assert_eq!(app.tab().title, "there.json v3");
+        assert_eq!(path(&mut app), "[1].tags[0]");
+        keys(&mut app, "v");
+        // The failed save, as the newest entry, is the first row inside.
+        keys(&mut app, "ggj");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(
+            said(&app),
+            "This save did not parse, so it has no tree to open"
+        );
+        keys(&mut app, "G");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tab().title, "there.json v1");
+        // The file's own tab goes, and its listing tab with it.
+        app.goto_tab(0);
+        app.close_tab();
+        assert!(app.tabs.iter().all(|t| t.listing.is_none()));
+        assert_eq!(app.tab().title, "there.json v3", "a version keeps its tab");
+        keys(&mut app, "v");
+        assert_eq!(
+            said(&app),
+            "The file's own tab is closed, so its versions are gone"
+        );
+    }
+
+    #[test]
+    fn format_starts_the_versions_again_in_the_history_tab_too() {
+        let (mut app, p) = watched("again.json", V1);
+        save(&mut app, &p, V2, 131);
+        save(&mut app, &p, V3, 220);
+        keys(&mut app, "vG");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tab().title, "again.json v1");
+        let tabs = app.tabs.len();
+        app.goto_tab(0);
+        app.run_command("format text");
+        keys(&mut app, "v");
+        assert_eq!(listed(&app), 1, "the versions start again");
+        keys(&mut app, "G");
+        let text = fresh("again-text.json");
+        app.run_command(&format!("ws {}", text.display()));
+        assert_eq!(std::fs::read_to_string(&text).unwrap(), V3);
+        // After `:format`, Enter on the oldest version opens another tab.
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        assert_eq!(app.tabs.len(), tabs + 1);
+        assert_eq!(app.tab().format, Format::Text);
+    }
+
+    #[test]
+    fn search_in_the_history_tab_matches_what_its_rows_show() {
+        let (mut app, p) = watched("found.json", V1);
+        save(&mut app, &p, V2, 131);
+        keys(&mut app, "v/year");
+        app.handle(Input::Key(Key::code(KeyCode::Enter)));
+        let at = app.tab().focused_node() as usize;
+        let list = app.tab_ref().unwrap().listing.as_ref().unwrap();
+        assert!(
+            history::item_text(list, at as NodeId).starts_with("[0].year  1999 → 2001"),
+            "{}",
+            said(&app)
+        );
+        // A save rebuilds the rows, and the matches with them.
+        save(&mut app, &p, V3, 220);
+        let tab = app.tab_ref().unwrap();
+        let list = tab.listing.as_ref().unwrap();
+        let found = &tab.search.as_ref().unwrap().matches;
+        assert_eq!(found.len(), 1);
+        assert!(history::item_text(list, found[0]).contains("year"));
+    }
+
+    #[test]
+    fn ws_writes_the_text_of_the_version_on_screen() {
+        let (mut app, p) = watched("text.json", V1);
+        save(&mut app, &p, V2, 131);
+        keys(&mut app, "[");
+        let text = fresh("first.json");
+        app.run_command(&format!("ws {}", text.display()));
+        assert_eq!(std::fs::read_to_string(&text).unwrap(), V1);
+        app.run_command(&format!("ws {}", text.display()));
+        assert!(said(&app).ends_with(&format!(":ws! {} writes over it.", text.display())));
     }
 
     #[test]

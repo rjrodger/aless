@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::doc::{Doc, Key, Kind, NodeId, NO_NODE};
+use crate::doc::{Doc, Key, Kind, Node, NodeId, NO_NODE};
 use crate::fmt;
 use crate::load::Format;
 
@@ -386,11 +386,11 @@ impl Default for Keep {
     }
 }
 
-/// A point on the timeline: a version by its index, or a failed save.
+/// A point on the timeline: a version or a failed save, by its index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
     Version(usize),
-    Failed,
+    Failed(usize),
 }
 
 /// A tab's versions, oldest first, the one on screen, and the saves that
@@ -402,10 +402,22 @@ pub struct History {
     shown: usize,
     /// So that the same broken text read again is one failed save.
     failed_source: Option<Arc<str>>,
+    /// Counts the starts, so that a version is known by its epoch and
+    /// number once numbering starts again.
+    epoch: u64,
 }
 
 impl History {
+    /// A single version, as the tab that holds it alone keeps it.
+    pub fn of_version(v: Version) -> History {
+        History {
+            versions: VecDeque::from([v]),
+            ..History::default()
+        }
+    }
+
     pub fn start(&mut self, source: &str, format: Format, time: SystemTime) {
+        self.epoch += 1;
         self.versions.clear();
         self.failed.clear();
         self.failed_source = None;
@@ -428,6 +440,10 @@ impl History {
 
     pub fn is_empty(&self) -> bool {
         self.versions.is_empty()
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn len(&self) -> usize {
@@ -539,10 +555,143 @@ impl History {
             .enumerate()
             .map(|(i, v)| (v.time, Entry::Version(i)))
             .collect();
-        out.extend(self.failed.iter().map(|f| (f.time, Entry::Failed)));
+        out.extend(
+            self.failed
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (f.time, Entry::Failed(i))),
+        );
         out.sort_by_key(|(t, _)| *t);
         out
     }
+}
+
+// ----- the listing of versions --------------------------------------------------
+
+/// What a row of a listing tab stands for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Item {
+    /// The file, and how many versions and failed saves it has.
+    Root {
+        versions: usize,
+        failed: usize,
+    },
+    Version {
+        /// Into the versions of the tab listed.
+        index: usize,
+        number: usize,
+        time: String,
+        counts: Counts,
+        newest: bool,
+        /// On screen in the tab listed.
+        shown: bool,
+    },
+    Change {
+        index: usize,
+        change: Change,
+    },
+    Failed {
+        time: String,
+        message: String,
+    },
+}
+
+/// A listing tab: the versions of the tab `of`, whose file is `name`,
+/// and what each node of its tree stands for, by node id.
+#[derive(Clone, Debug)]
+pub struct Listing {
+    pub of: u64,
+    pub name: String,
+    pub items: Vec<Item>,
+}
+
+/// What `/` matches in row `id` of a listing tab: the text the row shows.
+pub fn item_text(list: &Listing, id: NodeId) -> String {
+    match list.items.get(id as usize) {
+        Some(Item::Root { versions, .. }) => format!("{}  {versions} versions", list.name),
+        Some(Item::Version { number, time, .. }) => format!("version {number}  {time}"),
+        Some(Item::Change { change, .. }) => {
+            let old = change.old.as_deref().unwrap_or("");
+            let new = change.new.as_deref().unwrap_or("");
+            let values = match change.kind {
+                ChangeKind::Changed => format!("{old} → {new}"),
+                ChangeKind::Added => new.to_string(),
+                ChangeKind::Removed => old.to_string(),
+            };
+            format!("{}  {values}", fmt::path_dot(&change.path))
+        }
+        Some(Item::Failed { time, message }) => format!("did not parse  {time}  {message}"),
+        None => String::new(),
+    }
+}
+
+/// The tree of a listing tab, newest first: each version holding its
+/// changes, unfolded for the version on screen, and each failed save where
+/// it fell between the versions.
+pub fn listing(h: &History, of: u64, name: &str, offset: Option<i32>) -> (Doc, Listing) {
+    let entries = h.entries();
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
+    let mut add = |parent: NodeId, key: Key, depth: u32, children: usize, expanded: bool| {
+        nodes.push(Node {
+            parent,
+            key,
+            kind: if children > 0 {
+                Kind::Object
+            } else {
+                Kind::Null
+            },
+            depth,
+            size: 1,
+            children: children as u32,
+            expanded,
+            line: 0,
+            col: 0,
+        });
+        (nodes.len() - 1) as NodeId
+    };
+    add(NO_NODE, Key::Root, 0, entries.len(), true);
+    items.push(Item::Root {
+        versions: h.len(),
+        failed: h.failed().len(),
+    });
+    let newest = h.len().saturating_sub(1);
+    for &(_, e) in entries.iter().rev() {
+        match e {
+            Entry::Version(i) => {
+                let v = &h.versions()[i];
+                let shown = i == h.shown_index();
+                let key = Key::Name(Arc::from(format!("version {}", v.number)));
+                let id = add(0, key, 1, v.changes.len(), shown);
+                debug_assert_eq!(id as usize, items.len());
+                items.push(Item::Version {
+                    index: i,
+                    number: v.number,
+                    time: clock(v.time, offset),
+                    counts: Counts::of(&v.changes),
+                    newest: i == newest,
+                    shown,
+                });
+                for (ci, c) in v.changes.iter().enumerate() {
+                    add(id, Key::Index(ci as u32), 2, 0, true);
+                    items.push(Item::Change {
+                        index: i,
+                        change: c.clone(),
+                    });
+                }
+            }
+            Entry::Failed(k) => {
+                let f = &h.failed()[k];
+                add(0, Key::Name(Arc::from(format!("failed {k}"))), 1, 0, true);
+                items.push(Item::Failed {
+                    time: clock(f.time, offset),
+                    message: f.message.clone(),
+                });
+            }
+        }
+    }
+    let name = name.to_string();
+    (Doc::from_preorder(nodes), Listing { of, name, items })
 }
 
 // ----- time ------------------------------------------------------------------
@@ -755,7 +904,7 @@ mod tests {
         h.push(Arc::from("{\"a\": 1}"), Format::Json, at(30), Vec::new());
         assert_eq!(
             h.entries().iter().map(|(_, e)| *e).collect::<Vec<_>>(),
-            [Entry::Version(0), Entry::Failed, Entry::Version(1)]
+            [Entry::Version(0), Entry::Failed(0), Entry::Version(1)]
         );
         h.show_newest();
         h.prune(Keep {
@@ -763,6 +912,43 @@ mod tests {
             bytes: usize::MAX,
         });
         assert!(h.failed().is_empty(), "older than every version kept");
+    }
+
+    #[test]
+    fn the_listing_puts_the_newest_first_with_its_changes_inside() {
+        let mut h = History::default();
+        h.start("{}", Format::Json, at(10));
+        h.fail("{,", at(20), "1:2: unexpected".to_string());
+        let changes = diff(&doc("{}"), &doc(r#"{"a": 1}"#));
+        h.push(Arc::from(r#"{"a": 1}"#), Format::Json, at(30), changes);
+        h.show_newest();
+        let (d, list) = listing(&h, 7, "a.json", Some(0));
+        assert_eq!(list.of, 7);
+        assert_eq!(d.len(), list.items.len());
+        let kinds: Vec<&str> = list
+            .items
+            .iter()
+            .map(|i| match i {
+                Item::Root { .. } => "root",
+                Item::Version { .. } => "version",
+                Item::Change { .. } => "change",
+                Item::Failed { .. } => "failed",
+            })
+            .collect();
+        assert_eq!(kinds, ["root", "version", "change", "failed", "version"]);
+        assert!(matches!(
+            list.items[1],
+            Item::Version {
+                number: 2,
+                newest: true,
+                shown: true,
+                ..
+            }
+        ));
+        assert!(d.node(1).expanded, "the version on screen is open");
+        assert!(
+            matches!(&list.items[4], Item::Version { number: 1, time, .. } if time == "00:00:10")
+        );
     }
 
     #[test]

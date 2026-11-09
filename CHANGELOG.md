@@ -24,6 +24,16 @@ For more information, see [Releasing aless](RELEASING.md).
 - `d` and `D` go to the next and the previous change.
 - `:set changes`, `:set nochanges`, `:set history=N` and
   `--no-changes`.
+- `v` and `:history` list the versions in a history tab, the newest
+  first, each with its changes. `Enter` opens a version in a tab of its
+  own, which is not watched.
+- `:ws FILE` writes the text of the version on screen. In the history
+  tab, `:w` and `:ws` write the focused version.
+- `--print-json FILE` prints the tree of FILE as JSON on standard
+  output, the JSON `:w` writes, and exits. It needs no terminal: it is
+  the one thing aless does without one. FILE `-` is standard input. A
+  file that can't be read or doesn't parse prints its report on
+  standard error, and the exit status is 1.
 
 ## [0.7.1] - 2026-11-06
 

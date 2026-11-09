@@ -1,6 +1,6 @@
 ---
 title: Save a document as JSON
-description: Write the document in a tab to a file as JSON, whatever format the tab is read from, or copy one value of the document as JSON.
+description: Write the document in a tab to a file as JSON, whatever format the tab is read from, print a file's tree as JSON from the shell, or copy one value of the document as JSON.
 group: Reading a document
 order: 7
 ---
@@ -23,6 +23,54 @@ The file that `:w` writes holds the tree the viewer shows, not the text of the s
 - Comments aren't in the tree, so they aren't in the file.
 - A number keeps its spelling where JSON spells it the same way, so `1.0` stays `1.0`. A spelling that JSON lacks gives the value it stands for, so `0x1F` becomes `31`. For more information, see [Formats](/reference/formats.html#numbers).
 - A format whose tree has a shape of its own keeps that shape in the file. aless writes an XML file as element records, a Markdown file as its syntax tree, and a CSV file as an array of records. For more information, see [Formats](/reference/formats.html).
+
+## Print the JSON from the shell
+
+To get the same JSON in a script, pass `--print-json` and the file. aless prints the tree as JSON on standard output, and exits. The viewer doesn't start, so no terminal is needed, and the JSON can go to a pipe or a file. Here the start of the OpenAPI document's JSON goes to `head`:
+
+```console
+$ aless --print-json bookshelf-openapi.yaml | head -5
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Bookshelf demo API",
+    "version": "1.0.0",
+```
+
+The JSON is the same JSON that `:w` writes. `-k`, `--grammar`, and the other input options work as they do for the viewer. The viewer's own options, such as `--depth`, make no difference. A `-` in place of the file reads standard input, as JSON unless `-k` names another format:
+
+```console
+$ printf 'name: aless\ntags: [tree, json]\n' | aless -k yaml --print-json -
+{
+  "name": "aless",
+  "tags": [
+    "tree",
+    "json"
+  ]
+}
+```
+
+When the file can't be read or doesn't parse, aless prints the report on standard error, prints nothing on standard output, and exits with the status 1. A script can test for that status:
+
+```console
+$ aless --print-json broken.json; echo "exit status $?"
+[tabnas/unexpected]: unexpected character(s): ]
+  --> broken.json:3:36
+  1 | {
+  2 |   "title": "A Book of Examples",
+  3 |   "tags": ["examples", "reference",]
+                                         ^ unexpected character(s): ]
+  4 | }
+  5 |
+
+  The character(s) ] do not match any rule alternative active at
+  this position.
+
+  --internal: tag=-; rule=val~o; token=#CS; plugins=--
+exit status 1
+```
+
+For more information about the report, see [Find out why a file does not parse](/how-to/errors.html).
 
 ## Copy one value instead
 

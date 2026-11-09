@@ -16,6 +16,9 @@ unit tested.
 Without a terminal, the binary refuses to start before it reads any
 input, so a pipe left open, or a FIFO nobody writes, cannot hold a
 viewer that cannot start. Grammar files count as input.
+`--print-json` is the one exception (ADR-007): `cli::print_json` reads
+its file and writes the JSON `:w` writes, and `src/main.rs` prints that
+JSON without looking for a terminal.
 
 The modules are these:
 

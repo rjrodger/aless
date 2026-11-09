@@ -20,7 +20,7 @@ use crate::app::{panel_rows, App, Mode, PromptKind};
 use crate::doc::{Doc, Kind, Row, NO_NODE};
 use crate::fmt;
 use crate::highlight::Run;
-use crate::history::{self, ChangeKind, Counts, Data, Entry, Marks};
+use crate::history::{self, ChangeKind, Counts, Data, Entry, Item, Listing, Marks};
 use crate::load;
 
 const PLAIN: Style = Style::new();
@@ -726,8 +726,24 @@ fn tree_lines(
                 line.put(" ".repeat(node.depth as usize * indent), PLAIN);
             }
             // Indicator: a leaf's slot holds the mark of its change.
+            let item = tab
+                .listing
+                .as_ref()
+                .and_then(|l| l.items.get(row.node as usize));
             let (indicator, mut ind_style) = if row.close {
                 ("  ", PLAIN)
+            } else if let Some(Item::Change { change, .. }) = item {
+                (
+                    match change.kind {
+                        ChangeKind::Changed => "~ ",
+                        ChangeKind::Added => "+ ",
+                        ChangeKind::Removed if ascii => "- ",
+                        ChangeKind::Removed => "− ",
+                    },
+                    kind_style(change.kind),
+                )
+            } else if let Some(Item::Failed { .. }) = item {
+                ("! ", ERROR)
             } else if !node.is_foldable() {
                 match data {
                     Some(Data::Changed) => ("~ ", CHANGE),
@@ -760,6 +776,17 @@ fn tree_lines(
                 ind_style = ind_style.bold();
             }
             line.put(indicator, ind_style);
+            if let Some(list) = &tab.listing {
+                let mut text = Line::default();
+                listing_row(&mut text, list, row.node, focused, is_match, ascii);
+                let avail = width.saturating_sub(line.cols());
+                let over = text.cols().saturating_sub(avail);
+                let xoff = if focused { tab.xoff.min(over) } else { 0 };
+                line.spans.extend(pan(text, xoff, avail).spans);
+                line.fit_cols(width, PLAIN);
+                out.push(line);
+                continue;
+            }
             if let Some(ex) = &tab.explorer {
                 explorer_row(
                     &mut line, ex, &tab.doc, row.node, focused, is_match, width, tab.xoff,
@@ -909,6 +936,91 @@ fn indentation(
         }
     }
     out
+}
+
+/// A row of a listing tab after its marker: the file and its count of
+/// versions, a version's number, time and changes, a change's path and
+/// values, or a failed save's time and message.
+fn listing_row(
+    line: &mut Line<'static>,
+    list: &Listing,
+    id: crate::doc::NodeId,
+    focused: bool,
+    is_match: bool,
+    ascii: bool,
+) {
+    let label = |plain: Style| match (focused, is_match) {
+        (true, _) => FOCUS,
+        (false, true) => MATCH,
+        _ => plain,
+    };
+    match list.items.get(id as usize) {
+        Some(Item::Root { versions, failed }) => {
+            line.put(list.name.clone(), label(KEY.bold()));
+            let s = if *versions == 1 { "" } else { "s" };
+            let mut text = format!("  {versions} version{s}");
+            if *failed > 0 {
+                let s = if *failed == 1 { "a save" } else { "saves" };
+                text.push_str(&format!(", and {s} that did not parse"));
+            }
+            line.put(text, GREY);
+        }
+        Some(Item::Version {
+            number,
+            time,
+            counts,
+            newest,
+            shown,
+            ..
+        }) => {
+            line.put(format!("version {number}"), label(KEY));
+            line.put(format!("  {time}"), GREY);
+            for (text, style) in counts_badge(*counts, ascii) {
+                line.put(text, style);
+            }
+            let notes: Vec<&str> = [(*newest, "the newest"), (*shown, "on screen")]
+                .iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, w)| *w)
+                .collect();
+            if !notes.is_empty() {
+                line.put(format!("  {}", notes.join(", ")), GREY);
+            }
+        }
+        Some(Item::Change { change, .. }) => {
+            let path = fmt::path_dot(&change.path);
+            let path = if path.is_empty() {
+                ".".to_string()
+            } else {
+                path
+            };
+            line.put(path, label(PLAIN));
+            line.put("  ", PLAIN);
+            match change.kind {
+                ChangeKind::Changed => {
+                    line.put(change.old.clone().unwrap_or_default(), GREY);
+                    line.put(if ascii { " -> " } else { " → " }, GREY);
+                    let new = change.new.clone().unwrap_or_default();
+                    let style = value_style(&new);
+                    line.put(new, style);
+                }
+                ChangeKind::Added => {
+                    let new = change.new.clone().unwrap_or_default();
+                    let style = value_style(&new);
+                    line.put(new, style);
+                }
+                ChangeKind::Removed => {
+                    let old = change.old.clone().unwrap_or_default();
+                    line.put(old, REMOVE.add_modifier(Modifier::CROSSED_OUT));
+                }
+            }
+        }
+        Some(Item::Failed { time, message }) => {
+            line.put("did not parse", label(ERROR));
+            line.put(format!("  {time}  {message}"), GREY);
+        }
+        None => {}
+    }
 }
 
 /// `  ~1 +2 −1`: the changes inside a folded container, kind by kind.
@@ -1409,7 +1521,22 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
     let node_path = tab.doc.path(node);
     let mut left = format!(" {}", tab.title);
     let mut right = Vec::new();
-    if let Some(ex) = &tab.explorer {
+    if let Some(list) = &tab.listing {
+        let what = match list.items.get(node as usize) {
+            Some(Item::Version { number, .. }) => format!(" version {number}"),
+            Some(Item::Change { change, .. }) => format!(" {}", fmt::path_dot(&change.path)),
+            Some(Item::Failed { time, .. }) => format!(" the save at {time}"),
+            _ => String::new(),
+        };
+        left = format!(" {}{what}", tab.title);
+        right.push("history".to_string());
+        let n = list
+            .items
+            .iter()
+            .filter(|i| matches!(i, Item::Version { .. }))
+            .count();
+        right.push(format!("{n} version{}", if n == 1 { "" } else { "s" }));
+    } else if let Some(ex) = &tab.explorer {
         left = format!(" {}", ex.fs_path(&node_path).display());
         right.push("directory".to_string());
         let n = tab.doc.node(node);
@@ -1425,6 +1552,9 @@ fn status_bar(app: &mut App, width: usize) -> Line<'static> {
             left.push_str(if path.is_empty() { "." } else { &path });
         }
         right.push(tab.format.name().to_string());
+        if let Some(f) = tab.frozen {
+            right.push(format!("version {}", f.number));
+        }
     }
     if tab.line_mode {
         right.push("line".to_string());
@@ -1520,7 +1650,7 @@ fn timeline_line(app: &App, width: usize) -> Line<'static> {
         }
     }
     for &(t, e) in &entries {
-        if e == Entry::Failed {
+        if let Entry::Failed(_) = e {
             track[at(t)] = ("!", ERROR);
         }
     }
@@ -1555,7 +1685,9 @@ fn note_lines(app: &App, width: usize, height: usize) -> Vec<Line<'static>> {
         let s = if count == 1 { "" } else { "s" };
         format!("{count} change{s} in version {}", v.number)
     };
-    let hint = if tab.history.at_newest() {
+    let hint = if tab.frozen.is_some() {
+        "d next change · v history"
+    } else if tab.history.at_newest() {
         "[ older · d next change"
     } else {
         "] newer · } newest · d next change"
@@ -1801,6 +1933,75 @@ mod tests {
         let timeline = &r[17];
         assert!(timeline.starts_with(" 14:00:05 ○─"), "{timeline}");
         assert!(timeline.ends_with("● 14:02:11  2 of 2"), "{timeline}");
+    }
+
+    #[test]
+    fn the_history_tab_lists_the_versions_newest_first() {
+        let mut a = saved("list.json", Options::default(), 70, 16);
+        a.handle(Input::Key(Key::ch('v')));
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert_eq!(
+            r[1..7],
+            [
+                "▽ list.json  2 versions",
+                "  ▼ version 2  14:02:11  ~1 +1 −1  the newest, on screen",
+                "    − [0].tags[1]  \"y\"",
+                "    ~ [1].title  \"B\" → \"B!\"",
+                "    + [1].tags[0]  \"z\"",
+                "    version 1  14:00:05",
+            ],
+            "{}",
+            s.text()
+        );
+        assert!(
+            r[0].contains("2:list.json history"),
+            "the tab strip: {}",
+            r[0]
+        );
+        find(&s, "list.json history version 2");
+        find(&s, "history · 2 versions");
+    }
+
+    #[test]
+    fn a_long_history_row_pans_with_the_focus() {
+        let mut a = saved("pan.json", Options::default(), 40, 12);
+        a.handle(Input::Key(Key::ch('v')));
+        a.handle(Input::Key(Key::ch('j')));
+        a.handle(Input::Key(Key::ch('j')));
+        let s = screen(&mut a);
+        let row = rows(&s)[4].clone();
+        assert!(
+            row.starts_with("    ~ [1].title  \"B\" → \"B!\""),
+            "{}",
+            s.text()
+        );
+        for _ in 0..30 {
+            a.handle(Input::Key(Key::ch('.')));
+        }
+        let s = screen(&mut a);
+        assert_eq!(rows(&s)[4], row, "a row that fits does not pan");
+        a.handle(Input::Resize(24, 12));
+        let s = screen(&mut a);
+        let r = rows(&s);
+        assert!(r[4].starts_with("    ~ …"), "{}", s.text());
+        assert!(r[4].trim_end().ends_with("\"B!\""), "{}", s.text());
+    }
+
+    #[test]
+    fn a_version_in_a_tab_of_its_own_names_its_number() {
+        let mut a = saved("own.json", Options::default(), 70, 16);
+        a.handle(Input::Key(Key::ch('v')));
+        a.handle(Input::Key(Key::code(crate::app::KeyCode::Enter)));
+        let s = screen(&mut a);
+        assert!(rows(&s)[0].ends_with("3:own.json v2"), "{}", s.text());
+        find(
+            &s,
+            "── 3 changes in version 2 · d next change · v history ──",
+        );
+        find(&s, "json · version 2 · 1:1");
+        let (x, y) = find(&s, "−1");
+        assert_eq!(s.style(x, y).fg, REMOVE.fg, "its marks are its own");
     }
 
     #[test]

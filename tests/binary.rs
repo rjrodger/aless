@@ -1,9 +1,10 @@
-//! The built binary, run the way a shell runs it with no terminal: what it
+//! The built binary, run as a shell runs it with no terminal: what it
 //! prints about itself (`--version`, `-h`, `--help`, `--generate`), that
-//! the committed man page and completions are what it writes, and that,
-//! being a viewer, it refuses to start without a terminal, at once and with
-//! nothing on standard output.
+//! the committed man page and completions are what it writes, that the
+//! viewer refuses to start without a terminal, and that `--print-json`,
+//! the one exception (ADR-007), prints a file's tree as JSON.
 
+use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
 use aless::cli;
@@ -81,8 +82,9 @@ fn help_describes_the_viewer() {
         "KEYS:",
         "CUSTOM GRAMMARS:",
         "LARGE INPUTS AND LIMITS:",
-        "EXIT STATUS: 0 You quit the viewer. 1 The viewer failed while it ran",
-        "2 The viewer could not start",
+        "EXIT STATUS: 0 You quit the viewer, or --print-json printed its file's tree. 1 The viewer failed while it ran",
+        "2 The viewer could not start, or --print-json could not.",
+        "--print-json is the one option that reads an input without a terminal",
         "TERM dumb: a terminal that cannot draw the viewer",
         "-k, --kind, --format <FORMAT>",
         "--format is another name for this option",
@@ -155,6 +157,102 @@ fn without_a_terminal_the_viewer_refuses() {
     }
 }
 
+/// What `:w` writes for `path`: the JSON `--print-json` is held to.
+fn written(path: &str, kind: Option<aless::load::Format>) -> String {
+    let loaded = aless::load::load_path(std::path::Path::new(path), kind).unwrap();
+    aless::fmt::to_json_pretty(&loaded.doc, 0, 2) + "\n"
+}
+
+/// `--print-json FILE` needs no terminal: it prints the tree as JSON, the
+/// JSON `:w` writes, and exits with the status 0 and nothing on standard
+/// error, whatever FILE's format.
+#[test]
+fn print_json_prints_the_tree_without_a_terminal() {
+    for path in [
+        "tests/fixtures/sample.yaml",
+        "tests/fixtures/sample.toml",
+        "tests/fixtures/sample.csv",
+        "tests/fixtures/nested.json",
+    ] {
+        let out = aless(&["--print-json", path]);
+        assert_eq!(code(&out), 0, "{path}: {}", text(&out.stderr));
+        assert!(out.stderr.is_empty(), "{path}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout), written(path, None), "{path}");
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(json.is_object() || json.is_array(), "{path}");
+    }
+    // The input options apply, and a viewer's option makes no difference.
+    let out = aless(&[
+        "-k",
+        "yaml",
+        "--depth",
+        "1",
+        "--print-json=tests/fixtures/sample.yaml",
+    ]);
+    assert_eq!(code(&out), 0, "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        written("tests/fixtures/sample.yaml", None)
+    );
+}
+
+/// `--print-json -` reads standard input, as JSON unless `-k` says
+/// otherwise.
+#[test]
+fn print_json_reads_standard_input_for_a_dash() {
+    for (args, input, json) in [
+        (
+            &["--print-json", "-"][..],
+            "{\"a\": [1, 2]}",
+            "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n",
+        ),
+        (
+            &["-k", "yaml", "--print-json", "-"],
+            "a: 1\n",
+            "{\n  \"a\": 1\n}\n",
+        ),
+    ] {
+        let mut child = Command::new(BIN)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(code(&out), 0, "{args:?}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout), json, "{args:?}");
+    }
+}
+
+/// A FILE that cannot be read, or that does not parse, prints its report
+/// on standard error, nothing on standard output, and exits with the
+/// status 1.
+#[test]
+fn print_json_reports_a_file_it_cannot_print_with_status_1() {
+    for (path, said) in [
+        ("tests/fixtures/bad.json", "[tabnas/unexpected]: "),
+        ("no/such/file.json", "[aless/io]: "),
+        (
+            "tests/fixtures",
+            "[aless/io]: a directory has no tree to print",
+        ),
+    ] {
+        let out = aless(&["--print-json", path]);
+        let err = text(&out.stderr);
+        assert_eq!(code(&out), 1, "{path}: {err}");
+        assert!(out.stdout.is_empty(), "{path} wrote to standard output");
+        assert!(err.starts_with(said), "{path}: {err}");
+        assert!(err.contains(&format!("--> {path}")), "{path}: {err}");
+    }
+}
+
 /// A command line aless cannot read is refused with one line and the
 /// status 2, before the terminal is looked for.
 #[test]
@@ -179,6 +277,24 @@ fn usage_errors_are_one_line_with_status_2() {
             "aless: --generate writes man, complete-bash",
         ),
         (&["--kind"], "aless: --kind needs a value"),
+        (&["--print-json"], "aless: --print-json needs a value"),
+        (
+            &["--print-json", "a.json", "b.json"],
+            "aless: --print-json prints the one file it names. Leave out b.json.",
+        ),
+        (
+            &["-k", "nope", "--print-json", "tests/fixtures/nested.json"],
+            "aless: nope is not a format.",
+        ),
+        (
+            &[
+                "--grammar",
+                "nope=no/such/grammar.abnf",
+                "--print-json",
+                "tests/fixtures/nested.json",
+            ],
+            "aless: ",
+        ),
     ] {
         let out = aless(args);
         let err = text(&out.stderr);

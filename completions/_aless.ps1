@@ -12,7 +12,7 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         { $_ -cin '--kind', '--format', '-k' } { $values = @('json', 'jsonl', 'jsonic', 'jsonc', 'json5', 'yaml', 'toml', 'ini', 'csv', 'tsv', 'xml', 'zon', 'markdown', 'feed', 'css', 'proto', 'pgn', 'c', 'abnf', 'ebnf', 'gbnf', 'expr', 'semver', 'text') }
         { $_ -cin '--mode', '-m' } { $values = @('data', 'line') }
         { $_ -cin '--generate' } { $values = @('man', 'complete-bash', 'complete-zsh', 'complete-fish', 'complete-powershell') }
-        { $_ -cin '--grammar', '--grammar-expr', '--max-size', '--timeout', '--depth', '--indent', '--scrolloff' } { return }
+        { $_ -cin '--grammar', '--grammar-expr', '--max-size', '--timeout', '--depth', '--indent', '--scrolloff', '--print-json' } { return }
     }
     if ($null -ne $values) {
         $values | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -54,5 +54,6 @@ Register-ArgumentCompleter -Native -CommandName 'aless' -ScriptBlock {
         [System.Management.Automation.CompletionResult]::new('--version', '--version', [System.Management.Automation.CompletionResultType]::ParameterName, 'print the version')
         [System.Management.Automation.CompletionResult]::new('-V', '-V', [System.Management.Automation.CompletionResultType]::ParameterName, 'print the version')
         [System.Management.Automation.CompletionResult]::new('--generate', '--generate', [System.Management.Automation.CompletionResultType]::ParameterName, 'print the man page or a shell''s completions')
+        [System.Management.Automation.CompletionResult]::new('--print-json', '--print-json', [System.Management.Automation.CompletionResultType]::ParameterName, 'print FILE''s tree as JSON, and exit')
     ) | Where-Object { $_.CompletionText -clike "$wordToComplete*" }
 }

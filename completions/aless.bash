@@ -17,12 +17,12 @@ _aless() {
             COMPREPLY=($(compgen -W "man complete-bash complete-zsh complete-fish complete-powershell" -- "$cur"))
             return 0
             ;;
-        --grammar|--grammar-expr|--max-size|--timeout|--depth|--indent|--scrolloff)
+        --grammar|--grammar-expr|--max-size|--timeout|--depth|--indent|--scrolloff|--print-json)
             return 0
             ;;
     esac
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--kind --format -k --grammar --grammar-expr --max-size --timeout --no-watch --watch --no-changes --mode -m --depth --indent --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate" -- "$cur"))
+        COMPREPLY=($(compgen -W "--kind --format -k --grammar --grammar-expr --max-size --timeout --no-watch --watch --no-changes --mode -m --depth --indent --line-numbers -n --no-line-numbers -N --relative-line-numbers -r --no-relative-line-numbers -R --scrolloff --ascii --no-color --no-colour --no-mouse --help -h --version -V --generate --print-json" -- "$cur"))
     fi
     return 0
 }
