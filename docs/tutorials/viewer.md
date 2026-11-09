@@ -264,7 +264,7 @@ size: 80x10 -->
 bookshelf-openapi.yaml: 3 versions. Enter opens one in a tab of its own
 ```
 
-Each version holds what it changed. Version 3 is open, and it changed the API's version. To see the file as version 2 left it, press `j` twice to reach version 2, and press `Enter`:
+Each version holds what it changed. Version 3 is open, and it changed the version of the API. To see the file as version 2 left it, press `j` twice to reach version 2, and press `Enter`:
 
 <!-- screen: aless bookshelf-openapi.yaml
 keys: j j h c J J J l / listBooks Enter
