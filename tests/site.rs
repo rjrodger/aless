@@ -2309,14 +2309,17 @@ fn named_key(name: &str) -> Option<aless::app::Key> {
     Some(Key::code(code))
 }
 
-/// Run a capture in `dir`, a directory of the files the site publishes
-/// under `/examples/`, and return the screen aless draws.
 /// The site draws every screen in aless's colours: none falls back to
 /// plain text, the stylesheet colours each class a screen uses, and a
-/// changed value is dark on yellow, as aless draws it.
+/// changed value is dark on yellow, as aless draws it. With
+/// `ALESS_SCREENS=write` set, the test checks nothing, because the same
+/// run rewrites the pages it would check.
 #[cfg(unix)]
 #[test]
 fn the_screens_are_drawn_in_aless_colours() {
+    if std::env::var_os("ALESS_SCREENS").is_some_and(|v| v == "write") {
+        return;
+    }
     let site = site();
     let css = String::from_utf8_lossy(&site.files["style.css"]).into_owned();
     let screen = Regex::new(r#"(?s)<pre class="(screen[^"]*)"[^>]*>(.*?)</pre>"#).unwrap();
@@ -2355,6 +2358,8 @@ fn the_screens_are_drawn_in_aless_colours() {
 /// apart, as saves are, so a timeline shows its spacing.
 const SAVES: [u64; 6] = [131, 347, 409, 655, 731, 1022];
 
+/// Run a capture in `dir`, a directory of the files the site publishes
+/// under `/examples/`, and return the screen aless draws.
 fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
     let rows = capture_rows(spec, dir)?;
     let text: Vec<String> = rows
@@ -2408,6 +2413,12 @@ fn capture_rows(spec: &Capture, dir: &Path) -> Result<Vec<Vec<Cell>>, String> {
             return Err("a capture runs the viewer".into())
         }
     };
+    // Only the command's own --no-color draws a capture without colour:
+    // NO_COLOR where the test runs is no part of the capture.
+    args.opts.color = !argv[1..]
+        .iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--no-color" || a == "--no-colour");
     // The paths the command names, as `sh` in `here` would find them.
     for def in &mut args.grammars {
         if let aless::grammar::Source::File(path) = &mut def.source {
