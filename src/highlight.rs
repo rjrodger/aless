@@ -293,7 +293,7 @@ impl Painter {
         self.worker.as_ref()
     }
 
-    #[cfg(test)]
+    /// Take in the colours asked for, waiting at most `limit` for them.
     pub fn settle(&mut self, limit: Duration) {
         let until = Instant::now() + limit;
         while self.pending() && Instant::now() < until {

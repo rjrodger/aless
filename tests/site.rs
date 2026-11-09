@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use ratatui::style::{Color, Modifier, Style};
 use regex::Regex;
 
 const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
@@ -221,21 +222,32 @@ fn build() -> Site {
         files.insert(format!("fonts/{name}"), std::fs::read(&path).unwrap());
     }
     // The files the pages' examples read, for a reader to download.
-    let mut downloads: Vec<PathBuf> = std::fs::read_dir(root().join("examples"))
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.file_name().is_some_and(|n| n != "README.md"))
-        .collect();
-    downloads.extend(FIXTURES.iter().map(|f| root().join(f)));
-    for path in downloads {
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    for (name, bytes) in example_files() {
         let previous = files.insert(format!("examples/{name}"), bytes);
         assert!(previous.is_none(), "two downloads are named {name}");
     }
     files.insert("llms.txt".into(), llms(&pages).into_bytes());
     files.insert("sitemap.xml".into(), sitemap(&pages).into_bytes());
     Site { pages, files }
+}
+
+/// The files the pages' examples read, by name: those under `examples/`,
+/// and the sample hosts file and its grammar.
+fn example_files() -> Vec<(String, Vec<u8>)> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(root().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_name().is_some_and(|n| n != "README.md"))
+        .collect();
+    paths.extend(FIXTURES.iter().map(|f| root().join(f)));
+    paths
+        .into_iter()
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            (name, bytes)
+        })
+        .collect()
 }
 
 /// The square of `docs/logo.svg` the favicon shows: the multitool's box,
@@ -421,11 +433,13 @@ fn front_matter(text: &str, origin: &str) -> (BTreeMap<String, String>, String) 
 /// Markdown as HTML, after the values a page may name are filled in and
 /// the capture comments are taken out.
 fn markdown_html(markdown: &str) -> String {
-    let markdown = strip_captures(&fill(markdown));
-    command_boxes(&screens(&tabnas_markdown::to_html(
-        &markdown,
-        &tabnas_markdown::DEFAULT_OPTIONS,
-    )))
+    let markdown = fill(markdown);
+    let colours = screen_colours(&markdown);
+    let markdown = strip_captures(&markdown);
+    command_boxes(&screens(
+        &tabnas_markdown::to_html(&markdown, &tabnas_markdown::DEFAULT_OPTIONS),
+        &colours,
+    ))
 }
 
 /// Each block of commands a reader types, a `sh`, `powershell` or
@@ -476,25 +490,265 @@ fn wrap_tables(html: &str) -> String {
 /// and column, or in ` · watching` where the focused node has none. The
 /// stylesheet sizes the type to the box around it, and a block too wide
 /// to fit scrolls, and takes the focus so a keyboard can scroll it.
-fn screens(html: &str) -> String {
+fn screens(html: &str, colours: &[Option<String>]) -> String {
     let block = Regex::new(r#"(?s)<pre><code class="language-screen">(.*?)</code></pre>"#).unwrap();
     let status = Regex::new(r"^(?: \S|…).* · (?:\d+:\d+|watching)$").unwrap();
+    let mut index = 0;
     block
         .replace_all(html, |c: &regex::Captures| {
-            let rows: Vec<String> = c[1]
-                .split('\n')
-                .map(|row| match status.is_match(row) {
-                    true => format!("<span class=\"status\">{row}</span>"),
-                    false => row.to_string(),
-                })
-                .collect();
+            let coloured = colours.get(index).cloned().flatten();
+            index += 1;
+            let (class, body) = match coloured {
+                Some(body) => ("screen", body),
+                None => {
+                    let rows: Vec<String> = c[1]
+                        .split('\n')
+                        .map(|row| match status.is_match(row) {
+                            true => format!("<span class=\"status\">{row}</span>"),
+                            false => row.to_string(),
+                        })
+                        .collect();
+                    ("screen plain", rows.join("\n"))
+                }
+            };
             format!(
-                "<div class=\"screen-box\"><pre class=\"screen\" tabindex=\"0\">\
-                 <code class=\"language-screen\">{}</code></pre></div>",
-                rows.join("\n")
+                "<div class=\"screen-box\"><pre class=\"{class}\" tabindex=\"0\">\
+                 <code class=\"language-screen\">{body}</code></pre></div>"
             )
         })
         .into_owned()
+}
+
+/// Each `screen` block of a page in aless's own colours, in the order of
+/// the page, drawn again from its capture: `None` for a block whose
+/// capture draws other text than the block holds, which the page then
+/// shows plain, and which `the_screens_are_what_aless_draws` reports.
+fn screen_colours(markdown: &str) -> Vec<Option<String>> {
+    static RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let block =
+        Regex::new(r"(?ms)^(?:<!-- screen:(?P<spec>.*?)-->\n)?```screen\n(?P<body>.*?)^```$")
+            .unwrap();
+    // The same length as the screens test's directory, so that a path on
+    // screen is cut in the same place.
+    let work = short_temp().join(format!("aless-colours-{}", std::process::id()));
+    let shown = |rows: &[Vec<Cell>]| -> String {
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| row_text(r).trim_end().to_string())
+            .collect();
+        text.join("\n").trim_end().to_string()
+    };
+    block
+        .captures_iter(markdown)
+        .map(|c| {
+            let spec = capture_spec(c.name("spec")?.as_str()).ok()?;
+            let run = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = work.join(run.to_string());
+            let shelf = dir.join("bookshelf");
+            std::fs::create_dir_all(&shelf).ok()?;
+            for (name, bytes) in example_files() {
+                std::fs::write(shelf.join(name), bytes).ok()?;
+            }
+            let mut rows = capture_rows(&spec, &shelf).ok()?;
+            let canonical = std::fs::canonicalize(&dir).ok()?;
+            for from in [canonical, dir.clone()] {
+                let from = from.display().to_string();
+                for row in &mut rows {
+                    substitute_cells(row, &from, "/home/user");
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            let body: Vec<&str> = c["body"].lines().map(str::trim_end).collect();
+            (shown(&rows) == body.join("\n").trim_end()).then(|| screen_html(&rows))
+        })
+        .collect()
+}
+
+/// A short directory for captures, so that a path the viewer shows fits
+/// its status bar.
+fn short_temp() -> PathBuf {
+    match cfg!(unix) {
+        true => PathBuf::from("/tmp"),
+        false => std::env::temp_dir(),
+    }
+}
+
+/// One cell of a drawn screen: what it shows, and in what style.
+type Cell = (String, Style);
+
+/// Row `y` of a screen as its cells, a wide character's once.
+fn screen_cells(screen: &aless::render::Screen, y: usize) -> Vec<Cell> {
+    let mut out = Vec::new();
+    let mut covered = 0;
+    for x in 0..screen.width {
+        if covered > 0 {
+            covered -= 1;
+            continue;
+        }
+        let cell = &screen.buffer[(x as u16, y as u16)];
+        let symbol = cell.symbol().to_string();
+        covered = unicode_width::UnicodeWidthStr::width(symbol.as_str()).saturating_sub(1);
+        out.push((symbol, cell.style()));
+    }
+    out
+}
+
+fn row_text(row: &[Cell]) -> String {
+    row.iter().map(|(s, _)| s.as_str()).collect()
+}
+
+/// [`str::replace`] on a row of cells: each cell of `to` takes the style of
+/// the cell where `from` started.
+fn replace_cells(row: &mut Vec<Cell>, from: &str, to: &str) {
+    let len = from.chars().count();
+    let mut i = 0;
+    while len > 0 && i + len <= row.len() {
+        if row_text(&row[i..i + len]) == from {
+            let style = row[i].1;
+            let new: Vec<Cell> = to.chars().map(|c| (c.to_string(), style)).collect();
+            let step = new.len();
+            row.splice(i..i + len, new);
+            i += step;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// [`substitute`] on a row of cells.
+fn substitute_cells(row: &mut Vec<Cell>, from: &str, to: &str) {
+    let trimmed = |row: &[Cell]| row.iter().rposition(|(s, _)| s != " ").map_or(0, |i| i + 1);
+    let before = trimmed(row);
+    replace_cells(row, from, to);
+    let after = trimmed(row);
+    let grow = before as isize - after as isize;
+    if grow == 0 {
+        return;
+    }
+    // The widest run of spaces inside the row, the last of equal ones, as
+    // `substitute` finds it.
+    let spaces: Vec<bool> = row[..after].iter().map(|(s, _)| s == " ").collect();
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < spaces.len() {
+        let from = i;
+        while i < spaces.len() && spaces[i] {
+            i += 1;
+        }
+        if i > from {
+            runs.push((from, i));
+        } else {
+            i += 1;
+        }
+    }
+    let widest = runs
+        .into_iter()
+        .filter(|&(a, b)| b - a >= 2 && a > 0 && b < after)
+        .max_by_key(|&(a, b)| b - a);
+    if let Some((a, b)) = widest {
+        let len = ((b - a) as isize + grow).max(2) as usize;
+        let style = row[a].1;
+        row.splice(a..b, std::iter::repeat_n((" ".to_string(), style), len));
+    }
+}
+
+/// A screen's rows as HTML: each run of cells in one style a span whose
+/// classes `docs/style.css` colours as a terminal would.
+fn screen_html(rows: &[Vec<Cell>]) -> String {
+    let paints = |style: &Style| {
+        style.bg.is_some_and(|c| c != Color::Reset)
+            || style
+                .add_modifier
+                .intersects(Modifier::REVERSED | Modifier::UNDERLINED | Modifier::CROSSED_OUT)
+    };
+    rows.iter()
+        .map(|row| {
+            let end = row
+                .iter()
+                .rposition(|(s, style)| s != " " || paints(style))
+                .map_or(0, |i| i + 1);
+            let mut out = String::new();
+            let mut run: Option<(String, String)> = None;
+            for (symbol, style) in &row[..end] {
+                let class = cell_classes(style);
+                match &mut run {
+                    Some((c, text)) if *c == class => text.push_str(&escape(symbol)),
+                    _ => {
+                        if let Some((c, text)) = run.take() {
+                            push_run(&mut out, &c, &text);
+                        }
+                        run = Some((class, escape(symbol)));
+                    }
+                }
+            }
+            if let Some((c, text)) = run {
+                push_run(&mut out, &c, &text);
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn push_run(out: &mut String, class: &str, text: &str) {
+    match class.is_empty() {
+        true => out.push_str(text),
+        false => out.push_str(&format!("<span class=\"{class}\">{text}</span>")),
+    }
+}
+
+/// A cell's classes: its colours as the terminal shows them, reversed
+/// video swapped, and its attributes. Text in the terminal's own colours
+/// has none.
+fn cell_classes(style: &Style) -> String {
+    let colour = |c: Option<Color>| c.filter(|c| *c != Color::Reset).and_then(colour_name);
+    let (fg, bg) = (colour(style.fg), colour(style.bg));
+    let (fg, bg) = match style.add_modifier.contains(Modifier::REVERSED) {
+        true => (bg.unwrap_or("bg"), fg.unwrap_or("ink")),
+        false => (fg.unwrap_or("ink"), bg.unwrap_or("bg")),
+    };
+    let mut classes = Vec::new();
+    if fg != "ink" {
+        classes.push(format!("fg-{fg}"));
+    }
+    if bg != "bg" {
+        classes.push(format!("bg-{bg}"));
+    }
+    for (modifier, class) in [
+        (Modifier::BOLD, "b"),
+        (Modifier::DIM, "dim"),
+        (Modifier::ITALIC, "i"),
+        (Modifier::UNDERLINED, "u"),
+        (Modifier::CROSSED_OUT, "s"),
+    ] {
+        if style.add_modifier.contains(modifier) {
+            classes.push(class.to_string());
+        }
+    }
+    classes.join(" ")
+}
+
+/// The stylesheet's name for one of the terminal's colours.
+fn colour_name(colour: Color) -> Option<&'static str> {
+    Some(match colour {
+        Color::Black => "black",
+        Color::Red => "red",
+        Color::Green => "green",
+        Color::Yellow => "yellow",
+        Color::Blue => "blue",
+        Color::Magenta => "magenta",
+        Color::Cyan => "cyan",
+        Color::Gray => "gray",
+        Color::DarkGray => "darkgray",
+        Color::LightRed => "lightred",
+        Color::LightGreen => "lightgreen",
+        Color::LightYellow => "lightyellow",
+        Color::LightBlue => "lightblue",
+        Color::LightMagenta => "lightmagenta",
+        Color::LightCyan => "lightcyan",
+        Color::White => "white",
+        _ => return None,
+    })
 }
 
 /// `{{version}}` and `{{tagline}}` in a page, filled in.
@@ -2055,13 +2309,70 @@ fn named_key(name: &str) -> Option<aless::app::Key> {
     Some(Key::code(code))
 }
 
-/// Run a capture in `dir`, a directory of the files the site publishes
-/// under `/examples/`, and return the screen aless draws.
+/// The site draws every screen in aless's colours: none falls back to
+/// plain text, the stylesheet colours each class a screen uses, and a
+/// changed value is dark on yellow, as aless draws it. With
+/// `ALESS_SCREENS=write` set, the test checks nothing, because the same
+/// run rewrites the pages it would check.
+#[cfg(unix)]
+#[test]
+fn the_screens_are_drawn_in_aless_colours() {
+    if std::env::var_os("ALESS_SCREENS").is_some_and(|v| v == "write") {
+        return;
+    }
+    let site = site();
+    let css = String::from_utf8_lossy(&site.files["style.css"]).into_owned();
+    let screen = Regex::new(r#"(?s)<pre class="(screen[^"]*)"[^>]*>(.*?)</pre>"#).unwrap();
+    let span = Regex::new(r#"<span class="([^"]+)">"#).unwrap();
+    let mut classes = BTreeSet::new();
+    let mut drawn = 0;
+    for page in &site.pages {
+        for c in screen.captures_iter(&page.body) {
+            assert_eq!(&c[1], "screen", "{}: a screen drawn plain", page.path);
+            drawn += 1;
+            for s in span.captures_iter(&c[2]) {
+                classes.extend(s[1].split(' ').map(str::to_string));
+            }
+        }
+    }
+    assert!(drawn > 0, "no screens on the site");
+    for class in &classes {
+        assert!(
+            css.contains(&format!("pre.screen .{class} ")),
+            "docs/style.css colours no .{class}"
+        );
+    }
+    let versions = &site
+        .pages
+        .iter()
+        .find(|p| p.path == "how-to/versions.html")
+        .unwrap()
+        .body;
+    assert!(
+        versions.contains(r#"<span class="fg-black bg-yellow">2001</span>"#),
+        "a changed value is not dark on yellow"
+    );
+}
+
 /// When a capture's saves land, in seconds after 14:00 UTC: unevenly
 /// apart, as saves are, so a timeline shows its spacing.
 const SAVES: [u64; 6] = [131, 347, 409, 655, 731, 1022];
 
+/// Run a capture in `dir`, a directory of the files the site publishes
+/// under `/examples/`, and return the screen aless draws.
 fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
+    let rows = capture_rows(spec, dir)?;
+    let text: Vec<String> = rows
+        .iter()
+        .map(|r| row_text(r).trim_end().to_string())
+        .collect();
+    Ok(text.join("\n"))
+}
+
+/// The rows a capture shows, as cells: cropped to its `rows:`, the
+/// trailing blank rows dropped, and each file the command names written
+/// as `sh` in `here` names it.
+fn capture_rows(spec: &Capture, dir: &Path) -> Result<Vec<Vec<Cell>>, String> {
     use aless::app::{App, Input, Key, RELOAD_DEBOUNCE};
     let here = match spec.cwd.as_str() {
         "." => dir.to_path_buf(),
@@ -2102,6 +2413,12 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
             return Err("a capture runs the viewer".into())
         }
     };
+    // Only the command's own --no-color draws a capture without colour:
+    // NO_COLOR where the test runs is no part of the capture.
+    args.opts.color = !argv[1..]
+        .iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--no-color" || a == "--no-colour");
     // The paths the command names, as `sh` in `here` would find them.
     for def in &mut args.grammars {
         if let aless::grammar::Source::File(path) = &mut def.source {
@@ -2164,26 +2481,38 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
             }
         }
     }
-    let text = aless::render::screen(&mut app).text();
-    let mut rows: Vec<&str> = text.lines().collect();
+    // The source view's colours arrive from another thread, a moment late.
+    app.settle_colours();
+    let screen = aless::render::screen(&mut app);
+    // As many rows as the screen's text has lines: a blank last row has none.
+    let count = screen.text().lines().count();
+    let mut rows: Vec<Vec<Cell>> = (0..count).map(|y| screen_cells(&screen, y)).collect();
     if let Some((a, b)) = spec.rows {
         if a == 0 || b < a || b > rows.len() {
             return Err(format!("rows {a}-{b} of a screen of {}", rows.len()));
         }
         rows = rows[a - 1..b].to_vec();
     }
-    while rows.last().is_some_and(|r| r.is_empty()) {
+    while rows
+        .last()
+        .is_some_and(|r| row_text(r).trim_end().is_empty())
+    {
         rows.pop();
     }
     // A file named as `sh` in `here` would find it is named so on screen.
-    let mut screen = rows.join("\n");
     for file in args.files.iter().filter(|f| f.is_relative()) {
         let full = here.join(file);
         if full.is_file() {
-            screen = screen.replace(&full.display().to_string(), &file.display().to_string());
+            for row in &mut rows {
+                replace_cells(
+                    row,
+                    &full.display().to_string(),
+                    &file.display().to_string(),
+                );
+            }
         }
     }
-    Ok(screen)
+    Ok(rows)
 }
 
 /// `from` replaced by `to` in a captured screen, the widest run of
@@ -2228,12 +2557,7 @@ fn the_screens_are_what_aless_draws() {
     let block =
         Regex::new(r"(?ms)^(?:<!-- screen:(?P<spec>.*?)-->\n)?```screen\n(?P<body>.*?)^```$")
             .unwrap();
-    // A short directory, so that a path the viewer shows fits its status bar.
-    let base = match cfg!(unix) {
-        true => PathBuf::from("/tmp"),
-        false => std::env::temp_dir(),
-    };
-    let work = base.join(format!("aless-screens-{}", std::process::id()));
+    let work = short_temp().join(format!("aless-screens-{}", std::process::id()));
     let mut pages = vec![root().join("README.md")];
     let mut dirs = vec![sources()];
     while let Some(dir) = dirs.pop() {

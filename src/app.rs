@@ -461,8 +461,7 @@ impl App {
     }
 
     /// Ask for the colours the source view needs, wait for them and take them
-    /// in, as the terminal loop's ticks would.
-    #[cfg(test)]
+    /// in, as the terminal loop's ticks would: for a screen drawn whole.
     pub fn settle_colours(&mut self) {
         self.prepare();
         self.painter.settle(Duration::from_secs(30));

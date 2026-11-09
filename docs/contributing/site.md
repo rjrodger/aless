@@ -195,6 +195,18 @@ ALESS_SCREENS=write cargo test --test site the_screens
 Then read the diff before committing it. A `screen` fence with no
 comment before it fails the test.
 
+The site draws each screen in the colours aless draws it in. The build
+runs the capture again, and gives each run of cells the classes of its
+colours and attributes, with reversed video swapped. `docs/style.css`
+colours the classes as a terminal would, on the screen box's dark
+ground. A capture waits for the source view's colours before it draws.
+Only a command's own `--no-color` draws a capture without colour,
+whatever `NO_COLOR` says where the build runs. A screen whose capture
+draws other text than the page holds is published plain, and
+`the_screens_are_drawn_in_aless_colours` fails on it. With
+`ALESS_SCREENS=write` set, that test checks nothing, because the same
+run rewrites the pages.
+
 Every other example in a tutorial, a how-to guide, or a reference page
 is run too, or says why not. `every_example_is_run_or_says_why_not`
 fails on a fence that is neither followed by the capture of one of its
