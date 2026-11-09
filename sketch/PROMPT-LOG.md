@@ -630,3 +630,11 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 merge
 ```
+
+## 2026-11-09 15:15 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+0.8.0 installed via home brew. loaded openapi json, made change. file was reloaded, but no change indicators or history shown
+```
