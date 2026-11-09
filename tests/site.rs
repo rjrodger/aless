@@ -2148,10 +2148,15 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
                 let secs = *saves.next().ok_or("a capture saves too many times")?;
                 let path = here.join(file);
                 let text = read(&path);
+                // A checkout may end the file's lines with CRLF, as on Windows.
+                let (old, new) = match text.contains("\r\n") {
+                    true => (old.replace('\n', "\r\n"), new.replace('\n', "\r\n")),
+                    false => (old.clone(), new.clone()),
+                };
                 if !text.contains(old.as_str()) {
                     return Err(format!("{file} does not hold {old:?}"));
                 }
-                std::fs::write(&path, text.replacen(old.as_str(), new, 1))
+                std::fs::write(&path, text.replacen(old.as_str(), &new, 1))
                     .map_err(|e| e.to_string())?;
                 app.clock = Some(at(secs));
                 app.handle(Input::FileChanged(path));
