@@ -614,3 +614,19 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 close 117,29 and release 0.8.0
 ```
+
+## 2026-11-09 14:57 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+token updated, re-run the homebrew job
+```
+
+## 2026-11-09 15:09 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+merge
+```
