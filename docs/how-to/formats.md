@@ -2,7 +2,7 @@
 title: Choose the format aless reads
 description: Name the format for a file whose name does not say which format it holds, or for standard input, and read a tab again as another format.
 group: Files and formats
-order: 11
+order: 12
 ---
 aless takes a file's format from its extension. A file whose extension no format claims opens as plain text. aless reads plain text as an array of the file's lines. When the name is wrong or missing, name the format yourself, with `-k` on the command line or `:format` inside aless.
 

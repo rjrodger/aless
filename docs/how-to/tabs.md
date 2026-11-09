@@ -2,7 +2,7 @@
 title: Open several files in tabs
 description: Open several files at once, each in a tab of its own, move between the tabs, and open and close tabs from inside aless.
 group: Files and formats
-order: 9
+order: 10
 ---
 Every file named on the command line opens in a tab of its own. A file you open from inside aless gets a tab of its own too. When more than one tab is open, a strip above the tree names the tabs, so you can see which file each tab holds. The examples on this page open [`books.json`](/examples/books.json) and [`bookshelf-openapi.yaml`](/examples/bookshelf-openapi.yaml).
 

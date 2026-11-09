@@ -31,9 +31,10 @@ The modules are these:
 | `prov` | Source positions. The module finds them by aligning the token stream with the tree. |
 | `fmt` | The text of keys and values, previews, the JSON `:w` writes, and the path forms. |
 | `search` | jless-style search patterns. |
-| `tab` | One open document: its focus, scroll, mode, search, navigation, and the reload that keeps your place. |
+| `tab` | One open document: its focus, scroll, mode, search, navigation, and the reload that keeps your place and records each version. |
+| `history` | The versions of a watched file: the comparison of two trees, path by path, the marks it leaves on the tree, the versions kept within their count and size, and the rows of the history tab. |
 | `explorer` | Directory trees as documents. The module lists each directory as it is unfolded. |
-| `app` | The tabs, the modes, the source view, the key map and `KEY_MAP`, the command line, watch scheduling, and copying. |
+| `app` | The tabs, the modes, the source view, the key map and `KEY_MAP`, the command line, watch scheduling, the history tab and the tabs of single versions, and copying. |
 | `highlight` | The source view's colour, from tabnas-lsp's semantic tokens. The module makes those tokens off the viewer's thread. |
 | `render` | The screen as ratatui widgets. Every width, measured as the terminal places text. |
 | `watch` | The notify file watcher. |
@@ -49,7 +50,7 @@ Tests live in two places: next to the code under `#[cfg(test)]`, and in
 | `formats.rs` | Every fixture loads through its grammar. Each fixture's positions fall on the right lines. |
 | `grammars.rs` | Every grammar of the library, held to its sample's expected tree. |
 | `app_flow.rs` | The application, run without a terminal against real files. |
-| `binary.rs` | The built binary: what it prints about itself, the generated files, and its refusal without a terminal. |
+| `binary.rs` | The built binary: what it prints about itself, the generated files, its refusal without a terminal, and `--print-json`, which needs none. |
 | `site.rs` | The documentation site, built and checked. |
 | `render_memory.rs` | Drawing a long value costs a screenful, not the value. |
 

@@ -234,7 +234,64 @@ Reloaded bookshelf-openapi.yaml: 1 changed
 
 The new summary is there. The focus is still on `listBooks`, because aless found the node again by its path. An edit above the node or around it doesn't move you. That's the whole loop: you read, something rewrites the file, and you go on reading where you were!
 
-To quit, press `q`.
+aless also marks what the save changed. The `~` before `summary` marks a changed value, and the rails in the indentation lead from the root down to it. The timeline above the status bar now has two dots, one for each version of the file.
+
+## Look back at the versions
+
+Each save that parses is a version of the file, and aless keeps the versions. Make a second change in your editor:
+
+1. Change `version: 1.0.0` to `version: 1.1.0`.
+2. Save the file.
+
+Now press `v`. aless opens the history tab, which lists the versions with the newest first:
+
+<!-- screen: aless bookshelf-openapi.yaml
+keys: j j h c J J J l / listBooks Enter
+edit: bookshelf-openapi.yaml: The books on a shelf => Every book on a shelf, in order
+edit: bookshelf-openapi.yaml: version: 1.0.0 => version: 1.1.0
+then: v
+size: 80x10 -->
+```screen
+ 1:bookshelf-openapi.yaml*   2:bookshelf-openapi.yaml history
+▽ bookshelf-openapi.yaml  3 versions
+  ▼ version 3  14:05:47  ~1  the newest, on screen
+    ~ .info.version  "1.0.0" → "1.1.0"
+  ▷ version 2  14:02:11  ~1
+    version 1  14:00:05
+
+
+ bookshelf-openapi.yaml history version 3                  history · 3 versions
+bookshelf-openapi.yaml: 3 versions. Enter opens one in a tab of its own
+```
+
+Each version holds what it changed. Version 3 is open, and it changed the API's version. To see the file as version 2 left it, press `j` twice to reach version 2, and press `Enter`:
+
+<!-- screen: aless bookshelf-openapi.yaml
+keys: j j h c J J J l / listBooks Enter
+edit: bookshelf-openapi.yaml: The books on a shelf => Every book on a shelf, in order
+edit: bookshelf-openapi.yaml: version: 1.0.0 => version: 1.1.0
+then: v j j Enter
+size: 80x14 -->
+```screen
+ 1:bookshelf-openapi.yaml*   2:bookshelf-openapi.yaml history   3:bookshelf-open
+  └─▽ "/api/shelf/{shelf_id}/book": {
+    │ ▽ parameters: [
+    │   ▽ {
+    │       $ref: "#/components/parameters/ShelfId"
+    └─▽ get: {
+      │ ▽ tags: [
+      │     "shelf"
+      │   operationId: "listBooks"
+      └─~ summary: "Every book on a shelf, in order"
+        ▽ parameters: [
+          ▽ {
+… .paths["/api/shelf/{shelf_id}/book"].get.operationId yaml · version 2 · 104:7
+Version 2 of bookshelf-openapi.yaml, saved 14:02:11, in a tab of its own
+```
+
+Version 2 opens in a tab of its own, at the place you were reading. Its tab isn't watched, so it keeps version 2 however the file changes. Version 2 changed the summary, so its tab shows that change.
+
+To quit, type `:qa` and press `Enter`.
 
 ## Go further
 
@@ -244,5 +301,6 @@ For more information about every key, see [Keys](/reference/keys.html). `F1` sho
 - [Copy a value or its path](/how-to/copy.html)
 - [Choose how the viewer draws a document](/how-to/display.html)
 - [Follow a file as it changes](/how-to/watch.html)
+- [Compare the versions of a file](/how-to/versions.html)
 
 For more information about why the same keys work on a TOML file or a CSV file, see [One tree for every format](/explanation/one-tree.html).

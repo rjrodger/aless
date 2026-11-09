@@ -2,7 +2,7 @@
 title: Find out why a file does not parse
 description: Read the report aless shows for a file that does not parse, see it full size, find the line in the source view, and get the document back.
 group: Files and formats
-order: 12
+order: 13
 ---
 A file that doesn't parse still opens in a tab. In place of the tree, the tab shows the parser's report: where the parse stopped and what the parser met there. The example on this page is [`broken.json`](/examples/broken.json). Its array ends in a comma too many. Open the file:
 

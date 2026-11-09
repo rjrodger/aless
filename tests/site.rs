@@ -1933,9 +1933,15 @@ struct Capture {
     keys: Vec<String>,
     size: (u16, u16),
     rows: Option<(usize, usize)>,
-    edit: Option<(String, String, String)>,
-    then: Vec<String>,
+    /// The `edit:` and `then:` lines, in the order they are written.
+    steps: Vec<Step>,
     cwd: String,
+}
+
+/// A save behind the viewer's back, or keys typed after the saves before.
+enum Step {
+    Edit(String, String, String),
+    Keys(Vec<String>),
 }
 
 fn capture_spec(comment: &str) -> Result<Capture, String> {
@@ -1946,8 +1952,7 @@ fn capture_spec(comment: &str) -> Result<Capture, String> {
         keys: Vec::new(),
         size: (80, 12),
         rows: None,
-        edit: None,
-        then: Vec::new(),
+        steps: Vec::new(),
         cwd: ".".into(),
     };
     for line in lines {
@@ -1957,7 +1962,9 @@ fn capture_spec(comment: &str) -> Result<Capture, String> {
             .ok_or_else(|| format!("not a field: {line:?}"))?;
         match field {
             "keys" => spec.keys = value.split_whitespace().map(str::to_string).collect(),
-            "then" => spec.then = value.split_whitespace().map(str::to_string).collect(),
+            "then" => spec.steps.push(Step::Keys(
+                value.split_whitespace().map(str::to_string).collect(),
+            )),
             "size" => {
                 let (w, h) = value.split_once('x').ok_or("size is COLSxROWS")?;
                 spec.size = (
@@ -1976,7 +1983,10 @@ fn capture_spec(comment: &str) -> Result<Capture, String> {
                 let (old, new) = change
                     .split_once(" => ")
                     .ok_or("edit is FILE: OLD => NEW")?;
-                spec.edit = Some((file.into(), old.into(), new.into()));
+                // `\n` in OLD or NEW is a line break, so one save can span lines.
+                let lines = |s: &str| s.replace("\\n", "\n");
+                spec.steps
+                    .push(Step::Edit(file.into(), lines(old), lines(new)));
             }
             "cwd" => spec.cwd = value.into(),
             other => return Err(format!("no field {other}")),
@@ -2047,6 +2057,10 @@ fn named_key(name: &str) -> Option<aless::app::Key> {
 
 /// Run a capture in `dir`, a directory of the files the site publishes
 /// under `/examples/`, and return the screen aless draws.
+/// When a capture's saves land, in seconds after 14:00 UTC: unevenly
+/// apart, as saves are, so a timeline shows its spacing.
+const SAVES: [u64; 6] = [131, 347, 409, 655, 731, 1022];
+
 fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
     use aless::app::{App, Input, Key, RELOAD_DEBOUNCE};
     let here = match spec.cwd.as_str() {
@@ -2072,9 +2086,12 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
         return Err(format!("a capture runs aless: {command}"));
     }
     // A capture runs in the test's own directory, the repository's.
-    if spec
-        .keys
-        .windows(2)
+    let typed = std::iter::once(&spec.keys).chain(spec.steps.iter().filter_map(|s| match s {
+        Step::Keys(words) => Some(words),
+        Step::Edit(..) => None,
+    }));
+    if typed
+        .flat_map(|w| w.windows(2))
         .any(|k| k[0] == ":" && k[1].starts_with('w'))
     {
         return Err("a capture never writes a file, and :w would".into());
@@ -2092,8 +2109,9 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
         }
     }
     args.prepare()?;
-    // A capture's clock reads 14:00:05 UTC when it opens and 14:02:11 at
-    // its edit, so that the times it shows never move.
+    // A capture's clock reads 14:00:05 UTC when it opens, 14:02:11 at its
+    // first save and the times in `SAVES` at the rest, so that the times it
+    // shows never move.
     args.opts.utc_offset = Some(0);
     let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(14 * 3600 + secs);
     let mut app = App::new(args.opts, spec.size.0, spec.size.1);
@@ -2122,18 +2140,25 @@ fn capture(spec: &Capture, dir: &Path) -> Result<String, String> {
         }
     };
     type_keys(&mut app, &spec.keys);
-    if let Some((file, old, new)) = &spec.edit {
-        let path = here.join(file);
-        let text = read(&path);
-        if !text.contains(old.as_str()) {
-            return Err(format!("{file} does not hold {old:?}"));
+    let mut saves = SAVES.iter();
+    for step in &spec.steps {
+        match step {
+            Step::Keys(words) => type_keys(&mut app, words),
+            Step::Edit(file, old, new) => {
+                let secs = *saves.next().ok_or("a capture saves too many times")?;
+                let path = here.join(file);
+                let text = read(&path);
+                if !text.contains(old.as_str()) {
+                    return Err(format!("{file} does not hold {old:?}"));
+                }
+                std::fs::write(&path, text.replacen(old.as_str(), new, 1))
+                    .map_err(|e| e.to_string())?;
+                app.clock = Some(at(secs));
+                app.handle(Input::FileChanged(path));
+                app.handle(Input::Tick(std::time::Instant::now() + RELOAD_DEBOUNCE * 2));
+            }
         }
-        std::fs::write(&path, text.replacen(old.as_str(), new, 1)).map_err(|e| e.to_string())?;
-        app.clock = Some(at(131));
-        app.handle(Input::FileChanged(path));
-        app.handle(Input::Tick(std::time::Instant::now() + RELOAD_DEBOUNCE * 2));
     }
-    type_keys(&mut app, &spec.then);
     let text = aless::render::screen(&mut app).text();
     let mut rows: Vec<&str> = text.lines().collect();
     if let Some((a, b)) = spec.rows {

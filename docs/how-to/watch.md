@@ -57,96 +57,11 @@ Reloaded books.json: 1 changed
 
 The note under the tree lists each change, with the value before and after. The next key closes the note, and the marks stay until the next version. To go to each change in turn, press `d`. To go back a change, press `D`.
 
-A folded container counts the changes inside it, such as `~1 +1`. In the source view, a column before the line numbers marks each line that holds a change.
+A changed value has `~` before it, and a new value has `+` before it. A folded container counts the changes inside it, such as `~1 +1`. In the source view, a column before the line numbers marks each line that holds a change.
 
-## Go back to an earlier version
+## Compare the versions
 
-aless keeps up to 50 versions of each file it watches, and fewer of a large file. Above the status bar, a timeline shows a dot for each version, spaced by the time between the saves. The dot of the version on screen is lit. A save that doesn't parse shows as a red `!`.
-
-To show the version before the one on screen, press `[`. To show the version after it, press `]`. `{` shows the oldest version aless keeps, and `}` shows the newest. A count moves further: `3[` goes back three versions. Here `[` has gone back to the file as it was opened:
-
-<!-- screen: aless books.json
-edit: books.json: "year": 1999, => "year": 2001,
-then: [
-size: 80x24 -->
-```screen
-▼ [
-  ▽ {
-      title: "A Book of Examples"
-      author: "A. N. Author"
-      year: 1999
-    ▽ tags: [
-        "examples"
-        "reference"
-  ▽ {
-      title: "Shelves and How to Fill Them"
-      author: "B. Bookworm"
-      year: 2012
-    ▽ tags: [
-        "furniture"
-  ▽ {
-      title: "The Index"
-      author: "C. Cataloguer"
-      year: 2021
-      tags: []
-
-── Version 1 of 2, opened 14:00:05 · ] newer · } newest · d next change ────────
- 14:00:05 ●──────────────────────────────────────────────────○ 14:02:11  1 of 2
- books.json .                            json · watching · version 1 of 2 · 1:1
-```
-
-While an older version is on screen, the status bar turns yellow and names the version. A save that arrives in the meantime adds a version to the timeline and leaves the screen as it is. The message line says so, and `}` shows the new version. Your place carries across versions as it does across a reload.
-
-To keep more or fewer versions, type `:set history=N`. To stop marking changes, type `:set nochanges`, or start aless with `--no-changes`. `:format` starts the versions again, because trees read in different formats do not compare.
-
-## List the versions and keep one
-
-To list the versions aless keeps, press `v` or type `:history`. A history tab opens with the newest version first. Each version holds its changes, and the version on screen in the file's tab is unfolded:
-
-<!-- screen: aless books.json
-edit: books.json: "year": 1999, => "year": 2001,
-then: v
-size: 80x7 -->
-```screen
- 1:books.json*   2:books.json history
-▽ books.json  2 versions
-  ▼ version 2  14:02:11  ~1  the newest, on screen
-    ~ [0].year  1999 → 2001
-    version 1  14:00:05
- books.json history version 2                              history · 2 versions
-books.json: 2 versions. Enter opens one in a tab of its own
-```
-
-The history tab follows the file, so each save adds a row. The tab closes when you close the file's tab.
-
-To open a version in a tab of its own, focus the version and press `Enter`. Focus a change instead, and the version opens at that change. The version's tab isn't watched, so it keeps that version while the file goes on changing. Its tab name ends in the version's number:
-
-<!-- screen: aless books.json
-edit: books.json: "year": 1999, => "year": 2001,
-then: v j Enter
-size: 80x16 -->
-```screen
- 1:books.json*   2:books.json history   3:books.json v2
-▽ [
-└─▽ {
-  │   title: "A Book of Examples"
-  │   author: "A. N. Author"
-  └─~ year: 2001
-    ▽ tags: [
-        "examples"
-        "reference"
-  ▽ {
-      title: "Shelves and How to Fill Them"
-      author: "B. Bookworm"
-── 1 change in version 2 · d next change · v history ───────────────────────────
-  ~ [0].year  1999 → 2001
- books.json v2 [0].year                                  json · version 2 · 5:5
-Version 2 of books.json, saved 14:02:11, in a tab of its own
-```
-
-To go back to the history tab from a version's tab, press `v`.
-
-To write a version to a file, type `:ws FILE` for its text as saved, or `:w FILE` for its tree as JSON. In the history tab, both commands write the focused version. Elsewhere, they write the version on screen, so `[` and then `:ws FILE` keeps the text of the version before. Neither command writes over a file that exists, unless you type `:ws!` or `:w!`.
+aless keeps up to 50 versions of each file it watches. Above the status bar, a timeline shows a dot for each version, spaced by the time between the saves. `[` and `]` show the version before and after the one on screen. `v` lists the versions in a history tab of their own, and `:ws FILE` keeps the text of a version. For more information, see [Compare the versions of a file](/how-to/versions.html).
 
 ## Keep reading when the file breaks or disappears
 

@@ -638,3 +638,11 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 0.8.0 installed via home brew. loaded openapi json, made change. file was reloaded, but no change indicators or history shown
 ```
+
+## 2026-11-09 15:30 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+old version; confirmed working. Update repo documentation and site documentation, adding sections as need to cover this new functionality. make sure to include many screenshots. are we compliant with rjrodger/agent-info?
+```

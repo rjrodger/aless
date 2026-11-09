@@ -31,7 +31,52 @@ A file that disappears also keeps its document on screen. aless marks the file a
 
 ## Marking what a save changed
 
-Each save that parses is a version. aless compares the new version's tree with the version before it, path by path. A value whose path is new is added, a value whose path is gone is removed, and a value whose text or kind differs at the same path is changed. When a container becomes another kind, such as an object that becomes an array, aless counts one change and does not look inside. An array is compared index by index, so an item inserted at its start changes every index after it.
+Each save that parses is a version. aless compares the new version's tree with the version before it, path by path. A value whose path is new is added, a value whose path is gone is removed, and a value whose text or kind differs at the same path is changed.
+
+An array is compared index by index, so an item inserted at its start changes every index after it. Here the tag `"guides"` went in at the start of the first book's tags:
+
+<!-- screen: aless books.json
+edit: books.json: "tags": ["examples", "reference"] => "tags": ["guides", "examples", "reference"]
+size: 80x22
+rows: 1-9 -->
+```screen
+▼ [
+└─▽ {
+  │   title: "A Book of Examples"
+  │   author: "A. N. Author"
+  │   year: 1999
+  └─▽ tags: [
+    ├─~ "guides"
+    ├─~ "examples"
+    └─+ "reference"
+```
+
+One insertion shows as two changed values and one added value, because each tag now sits one index later. A comparison that matched items by their content could report one insertion instead. That comparison would guess, though, whenever two items are equal, and a guess that moves a mark to the wrong item misleads more than a mark too many.
+
+When a container becomes another kind, such as an array that becomes an object, aless counts one change, on the container. Here the second book's tags became an object:
+
+<!-- screen: aless books.json
+edit: books.json: "tags": ["furniture"] => "tags": {"furniture": true}
+size: 80x22
+rows: 9-22 -->
+```screen
+└─▽ {
+  │   title: "Shelves and How to Fill Them"
+  │   author: "B. Bookworm"
+  │   year: 2012
+  └─▽ tags: {
+      + furniture: true
+  ▽ {
+      title: "The Index"
+      author: "C. Cataloguer"
+── 1 change in version 2 · [ older · d next change ─────────────────────────────
+  ~ [1].tags  (1) ["furniture"] → (1) {furniture: true}
+ 14:00:05 ○──────────────────────────────────────────────────● 14:02:11  2 of 2
+ books.json .                                             json · watching · 1:1
+Reloaded books.json: 1 changed
+```
+
+The note counts one change, on `tags` itself. The value inside the new object is marked as new, because nothing in the version before sits at its path. The paths inside an array and inside an object never match, so counting what is inside would report every old value removed and every new value added. One change on the container says what happened.
 
 Each version keeps the changes from the version before it, so a version shows the same marks whenever it comes back on screen. Two quick saves show only the second save's changes until you go back a version.
 

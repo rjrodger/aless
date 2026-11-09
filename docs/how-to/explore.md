@@ -2,7 +2,7 @@
 title: Browse a directory
 description: Open a directory as a tree in the viewer, find a file in the tree, and open that file in a tab.
 group: Files and formats
-order: 10
+order: 11
 ---
 A directory opens in the viewer as the explorer, a tree of what the directory holds. You move through the tree, fold it, and search it with the same keys as a document.
 

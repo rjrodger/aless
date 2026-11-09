@@ -42,6 +42,29 @@ size: 80x18 -->
 
 The tutorial, [Look around a file in the viewer](/tutorials/viewer.html), walks through that document. The tutorial takes about 10 minutes.
 
+When a file changes, aless marks what changed and keeps the version it replaced. Here a save changed a year in [`books.json`](/examples/books.json) and removed a tag:
+
+<!-- screen: aless books.json
+edit: books.json: "year": 1999,\n    "tags": ["examples", "reference"] => "year": 2001,\n    "tags": ["examples"]
+size: 80x13 -->
+```screen
+▼ [
+└─▽ {
+  │   title: "A Book of Examples"
+  │   author: "A. N. Author"
+  ├─~ year: 2001
+  └─▽ tags: [ −1
+        "examples"
+── 2 changes in version 2 · [ older · d next change ────────────────────────────
+  ~ [0].year     1999 → 2001
+  − [0].tags[1]  "reference"
+ 14:00:05 ○──────────────────────────────────────────────────● 14:02:11  2 of 2
+ books.json .                                             json · watching · 1:1
+Reloaded books.json: 1 changed, 1 removed
+```
+
+A `~` marks a changed value, and `−1` counts a removed one. The timeline above the status bar has a dot for each version. For more information, see [Compare the versions of a file](/how-to/versions.html).
+
 ## Install
 
 aless is one binary. Each release has builds for Linux, macOS, and Windows. Each platform gets an x86_64 build and an aarch64 build. With Homebrew or Cargo, one command installs aless:
