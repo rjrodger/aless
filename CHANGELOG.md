@@ -8,7 +8,7 @@ A release's notes on GitHub are its section here: the pull request that
 bumps the version renames `Unreleased` to the version and its date.
 For more information, see [Releasing aless](RELEASING.md).
 
-## [Unreleased]
+## [0.8.0] - 2026-11-09
 
 ### Added
 

@@ -606,3 +606,11 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 merge; report on status - what is left to do?
 ```
+
+## 2026-11-09 12:47 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+close 117,29 and release 0.8.0
+```
