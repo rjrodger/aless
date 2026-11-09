@@ -13,7 +13,9 @@
     "docs/contributing/*.md"
   ],
   "tutorials": [
-    "docs/tutorials/viewer.md"
+    "docs/tutorials/viewer.md",
+    "docs/tutorials/changes.md",
+    "docs/tutorials/history.md"
   ],
   "contributor": [
     "README.md",

@@ -654,3 +654,19 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 merge and deploy
 ```
+
+## 2026-11-09 17:53 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+there should be a tutorial for change indications, and for history usage
+```
+
+## 2026-11-09 18:07 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+merge and deploy
+```
