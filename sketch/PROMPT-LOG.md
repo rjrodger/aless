@@ -646,3 +646,11 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 old version; confirmed working. Update repo documentation and site documentation, adding sections as need to cover this new functionality. make sure to include many screenshots. are we compliant with rjrodger/agent-info?
 ```
+
+## 2026-11-09 17:27 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPntqk7
+
+```
+merge and deploy
+```
