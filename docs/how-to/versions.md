@@ -4,7 +4,7 @@ description: See what each save of a watched file changed, step back through the
 group: Files and formats
 order: 9
 ---
-Each save of a watched file that parses is a new version of the file. aless keeps up to 50 versions of each file, and marks what each version changed from the one before. The examples on this page edit [`books.json`](/examples/books.json) while aless shows it. To follow a file in the first place, see [Follow a file as it changes](/how-to/watch.html).
+Each save of a watched file that parses is a new version of the file. aless keeps up to 50 versions of each file, and marks what each version changed from the one before. The examples on this page edit [`books.json`](/examples/books.json) while aless shows it. To follow a file in the first place, see [Follow a file as it changes](/how-to/watch.html). To learn the marks and the versions one step at a time, take the tutorials [Watch the changes to a file](/tutorials/changes.html) and [Look back through the versions of a file](/tutorials/history.html).
 
 ## Read the marks of a save
 

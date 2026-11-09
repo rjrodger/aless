@@ -295,6 +295,8 @@ To quit, type `:qa` and press `Enter`.
 
 ## Go further
 
+The next lessons go further on what you saw at the end of this one. [Watch the changes to a file](/tutorials/changes.html) reads each kind of change mark, and [Look back through the versions of a file](/tutorials/history.html) steps back through the versions aless keeps.
+
 For more information about every key, see [Keys](/reference/keys.html). `F1` shows the same keys inside aless. The how-to guides go further on each part of this walk:
 
 - [Search a document](/how-to/search.html)
