@@ -471,6 +471,70 @@ pre.screen {
 pre.screen code { font-size: 1em; line-height: inherit; color: var(--screen-ink); }
 pre.screen .status { background: var(--screen-ink); color: var(--screen-bg); }
 
+/* A capture in aless's own colours. The site build gives each run of
+   cells the classes of its colours and attributes as the terminal shows
+   them, reversed video swapped: ink is the terminal's text colour and bg
+   its background. The palette is a terminal's, on the box's dark ground
+   in either theme. */
+pre.screen {
+  --t-black: #0a0f0b;
+  --t-red: #ff6b6b;
+  --t-green: #7fd88a;
+  --t-yellow: #f2cf5b;
+  --t-blue: #6fb0ff;
+  --t-magenta: #dd8cf0;
+  --t-cyan: #5fd4d4;
+  --t-gray: #c9c4b4;
+  --t-darkgray: #8b978f;
+  --t-lightred: #ff9191;
+  --t-lightgreen: #a6ecae;
+  --t-lightyellow: #f8e08f;
+  --t-lightblue: #9bc8ff;
+  --t-lightmagenta: #ebb2f6;
+  --t-lightcyan: #8fe6e6;
+  --t-white: #ffffff;
+}
+pre.screen .fg-black { color: var(--t-black); }
+pre.screen .fg-red { color: var(--t-red); }
+pre.screen .fg-green { color: var(--t-green); }
+pre.screen .fg-yellow { color: var(--t-yellow); }
+pre.screen .fg-blue { color: var(--t-blue); }
+pre.screen .fg-magenta { color: var(--t-magenta); }
+pre.screen .fg-cyan { color: var(--t-cyan); }
+pre.screen .fg-gray { color: var(--t-gray); }
+pre.screen .fg-darkgray { color: var(--t-darkgray); }
+pre.screen .fg-lightred { color: var(--t-lightred); }
+pre.screen .fg-lightgreen { color: var(--t-lightgreen); }
+pre.screen .fg-lightyellow { color: var(--t-lightyellow); }
+pre.screen .fg-lightblue { color: var(--t-lightblue); }
+pre.screen .fg-lightmagenta { color: var(--t-lightmagenta); }
+pre.screen .fg-lightcyan { color: var(--t-lightcyan); }
+pre.screen .fg-white { color: var(--t-white); }
+pre.screen .bg-black { background: var(--t-black); }
+pre.screen .bg-red { background: var(--t-red); }
+pre.screen .bg-green { background: var(--t-green); }
+pre.screen .bg-yellow { background: var(--t-yellow); }
+pre.screen .bg-blue { background: var(--t-blue); }
+pre.screen .bg-magenta { background: var(--t-magenta); }
+pre.screen .bg-cyan { background: var(--t-cyan); }
+pre.screen .bg-gray { background: var(--t-gray); }
+pre.screen .bg-darkgray { background: var(--t-darkgray); }
+pre.screen .bg-lightred { background: var(--t-lightred); }
+pre.screen .bg-lightgreen { background: var(--t-lightgreen); }
+pre.screen .bg-lightyellow { background: var(--t-lightyellow); }
+pre.screen .bg-lightblue { background: var(--t-lightblue); }
+pre.screen .bg-lightmagenta { background: var(--t-lightmagenta); }
+pre.screen .bg-lightcyan { background: var(--t-lightcyan); }
+pre.screen .bg-white { background: var(--t-white); }
+pre.screen .fg-bg { color: var(--screen-bg); }
+pre.screen .bg-ink { background: var(--screen-ink); }
+pre.screen .b { font-weight: 700; }
+pre.screen .dim { opacity: 0.65; }
+pre.screen .i { font-style: italic; }
+pre.screen .u { text-decoration: underline; }
+pre.screen .s { text-decoration: line-through; }
+pre.screen .u.s { text-decoration: underline line-through; }
+
 /* A box of commands to type has a button that copies them, in a strip
    above the first line. Every line keeps the box's whole width, and none
    runs under the button. The box draws the border, and its block scrolls
