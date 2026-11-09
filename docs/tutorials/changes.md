@@ -184,12 +184,11 @@ Now take the first book's second tag away. Change `["examples", "reference"]` to
 edit: books.json: "year": 1999, => "year": 2001,
 then: j
 edit: books.json: ["furniture"] => ["furniture", "shelving"]
-then: j
 edit: books.json: ["examples", "reference"] => ["examples"]
 size: 80x24 -->
 ```screen
 ▽ [
-└─▽ {
+└─▼ {
   │   title: "A Book of Examples"
   │   author: "A. N. Author"
   │   year: 2001
@@ -210,7 +209,7 @@ size: 80x24 -->
 ── 1 change in version 4 · [ older · d next change ─────────────────────────────
   − [0].tags[1]  "reference"
  14:00:05 ○───────────────○──────────────────────────○───────● 14:06:49  4 of 4
- books.json [0].title                                     json · watching · 3:5
+ books.json [0]                                           json · watching · 2:3
 Reloaded books.json: 1 removed
 ```
 
@@ -218,15 +217,14 @@ A removed value has no row left to mark, so its container counts it. `tags: [ �
 
 ## Fold the changed book
 
-A folded container still shows the changes inside it. Press `k` to move up to the first book, and press `h` to fold it:
+A folded container still shows the changes inside it. The focus is still on the first book, where `j` left it. Press `h` to fold the first book:
 
 <!-- screen: aless books.json
 edit: books.json: "year": 1999, => "year": 2001,
 then: j
 edit: books.json: ["furniture"] => ["furniture", "shelving"]
-then: j
 edit: books.json: ["examples", "reference"] => ["examples"]
-then: k h
+then: h
 size: 80x12 -->
 ```screen
 ▽ [
@@ -252,9 +250,8 @@ To go to the next change, press `d`:
 edit: books.json: "year": 1999, => "year": 2001,
 then: j
 edit: books.json: ["furniture"] => ["furniture", "shelving"]
-then: j
 edit: books.json: ["examples", "reference"] => ["examples"]
-then: k h d
+then: h d
 size: 80x12 -->
 ```screen
 ▽ [
@@ -281,9 +278,8 @@ To see the file's text, press `s`:
 edit: books.json: "year": 1999, => "year": 2001,
 then: j
 edit: books.json: ["furniture"] => ["furniture", "shelving"]
-then: j
 edit: books.json: ["examples", "reference"] => ["examples"]
-then: k h d s
+then: h d s
 size: 80x12 -->
 ```screen
    2    {
