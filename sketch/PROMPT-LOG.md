@@ -686,3 +686,19 @@ Agent: Claude Code, session https://claude.ai/code/session_01MCLq6RzWqmwqdHWMPnt
 ```
 merge and deploy
 ```
+
+## 2026-11-10 10:00 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgS4cJZDcswgVQkU5Gu
+
+```
+fix pr 680 and merge
+```
+
+## 2026-11-10 10:01 UTC
+
+Agent: Claude Code, session https://claude.ai/code/session_0167vhgS4cJZDcswgVQkU5Gu
+
+```
+review the state of the aontu support for jsonschema - are there any divergences left? can aontu fully represent jsonschema?
+```
